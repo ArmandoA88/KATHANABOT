@@ -25,7 +25,7 @@ Double-click:
 
 ## Tabs
 
-- `Combat`: key matrix, priorities/cooldowns, start/stop, realtime log
+- `Combat`: key matrix, priorities/cooldowns, start/stop, realtime log, live detected mob name
 - `Vision`: window title, loop settings, calibration regions, snapshot, low-opacity overlay
 - `Auto-Pot`: quick trigger updates for heal/mana rows
 - `Unstuck`: retarget interval helper
@@ -44,8 +44,9 @@ Double-click:
 5. Optional: use `Bypass HP/MP Limits` button in Combat to ignore per-key MinHP/MinMP gating.
 6. Optional: use `Bypass Stuck Target` in Combat to auto-send `E` when target HP stays unchanged (prevents getting stuck on non-attackable targets).
 7. Optional: use `Retarget Now (E)` in Combat for an immediate manual retarget.
-8. Optional: click `Show Overlay` in Vision to draw calibration rectangles over the game window.
-9. Click `Save Settings`, then `Attack`.
+8. Monster blacklist is enforced from `Monster Filter` when enabled; detected mob name is shown live in Combat status.
+9. Optional: click `Show Overlay` in Vision to draw calibration rectangles over the game window.
+10. Click `Save Settings`, then `Attack`.
 
 ### Default calibration coordinates (saved baseline)
 

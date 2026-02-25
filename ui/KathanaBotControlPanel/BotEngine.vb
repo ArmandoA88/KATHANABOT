@@ -3,6 +3,7 @@ Imports System.Drawing
 Imports System.Drawing.Imaging
 Imports System.Linq
 Imports System.Runtime.InteropServices
+Imports System.Text.RegularExpressions
 Imports System.Text
 Imports System.Threading
 Imports System.Threading.Tasks
@@ -53,7 +54,7 @@ Public Class BotConfig
     Public Property MobNameRect As RectRegion = New RectRegion(862, 0, 162, 23)
     Public Property MobHpRect As RectRegion = New RectRegion(857, 24, 165, 11)
     Public Property BypassHpMpLimits As Boolean = False
-    Public Property BypassStuckTarget As Boolean = True
+    Public Property BypassStuckTarget As Boolean = False
     Public Property StuckTargetMs As Integer = 2200
     Public Property DeniedMobs As List(Of String) = New List(Of String)()
     Public Property Actions As List(Of ActionRule) = New List(Of ActionRule)()
@@ -175,6 +176,8 @@ Public Class BotEngine
     Private _lastAttackAction As DateTime = DateTime.MinValue
     Private _lastMobHpSample As Double = -1
     Private _lastMobHpMovement As DateTime = DateTime.MinValue
+    Private _lastMobNameRead As DateTime = DateTime.MinValue
+    Private _cachedMobName As String = ""
     Private ReadOnly _lastKeyTime As New Dictionary(Of String, DateTime)(StringComparer.OrdinalIgnoreCase)
 
     Private Shared ReadOnly KeyMap As New Dictionary(Of String, Integer)(StringComparer.OrdinalIgnoreCase) From {
@@ -214,6 +217,8 @@ Public Class BotEngine
             _lastAttackAction = DateTime.MinValue
             _lastMobHpSample = -1
             _lastMobHpMovement = DateTime.MinValue
+            _lastMobNameRead = DateTime.MinValue
+            _cachedMobName = ""
             _task = Task.Run(Sub() LoopAsync(_cts.Token).GetAwaiter().GetResult())
         End SyncLock
         RaiseEvent LogLine("Bot loop started.")
@@ -292,10 +297,10 @@ Public Class BotEngine
             Dim hpPct As Double = ComputeBarPercent(frame, cfg.HpBar, True)
             Dim mpPct As Double = ComputeBarPercent(frame, cfg.MpBar, False)
             Dim mobHpPct As Double = ComputeBarPercent(frame, cfg.MobHpRect, True)
-            Dim mobName As String = ""
-            Dim targetValid As Boolean = mobHpPct >= cfg.MobHpPresenceThreshold
-
             Dim now As DateTime = DateTime.UtcNow
+            Dim mobName As String = ReadMobNameIfNeeded(frame, cfg.MobNameRect, now)
+            Dim deniedTarget As Boolean = IsDeniedMob(mobName, cfg.DeniedMobs)
+            Dim targetValid As Boolean = (mobHpPct >= cfg.MobHpPresenceThreshold) AndAlso (Not deniedTarget)
             TrackMobHpMovement(targetValid, mobHpPct, now)
 
             Dim reason As String = ""
@@ -312,7 +317,8 @@ Public Class BotEngine
             End If
 
             If Not forcedRetarget Then
-                Dim chosen As ActionRule = ChooseAction(cfg, hpPct, mpPct, targetValid, AllowBlindAttackWhenTargetMissing, reason)
+                Dim allowBlindAttack As Boolean = AllowBlindAttackWhenTargetMissing AndAlso (Not deniedTarget)
+                Dim chosen As ActionRule = ChooseAction(cfg, hpPct, mpPct, targetValid, allowBlindAttack, reason)
                 If chosen IsNot Nothing AndAlso SendKey(hwnd, chosen.KeyName, 35) Then
                     SyncLock _sync
                         _lastKeyTime(chosen.KeyName) = DateTime.UtcNow
@@ -332,11 +338,19 @@ Public Class BotEngine
                         _lastRetarget = now
                         SetLastAction("E (retarget)")
                         If String.IsNullOrWhiteSpace(reason) Then
-                            reason = "No target detected. Retarget key sent."
+                            If deniedTarget Then
+                                reason = $"Monster filter blocked target '{If(String.IsNullOrWhiteSpace(mobName), "unknown", mobName)}'. Retarget key sent."
+                            Else
+                                reason = "No target detected. Retarget key sent."
+                            End If
                         End If
                     End If
                 ElseIf String.IsNullOrWhiteSpace(reason) Then
-                    reason = "No target detected. Waiting retarget cooldown."
+                    If deniedTarget Then
+                        reason = "Monster filter blocked target. Waiting retarget cooldown."
+                    Else
+                        reason = "No target detected. Waiting retarget cooldown."
+                    End If
                 End If
             End If
 
@@ -355,6 +369,70 @@ Public Class BotEngine
 
             Await Task.Delay(Math.Max(20, cfg.LoopMs), token)
         End While
+    End Function
+
+    Private Function ReadMobNameIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime) As String
+        If frame Is Nothing Then
+            Return ""
+        End If
+
+        If (now - _lastMobNameRead).TotalMilliseconds < 250 AndAlso Not String.IsNullOrWhiteSpace(_cachedMobName) Then
+            Return _cachedMobName
+        End If
+
+        Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
+        Dim crop As New Bitmap(Math.Max(1, rect.Width), Math.Max(1, rect.Height), PixelFormat.Format24bppRgb)
+        Try
+            Using g As Graphics = Graphics.FromImage(crop)
+                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
+            End Using
+
+            Dim candidate As String = OcrReader.ReadName(crop)
+            If Not String.IsNullOrWhiteSpace(candidate) Then
+                _cachedMobName = candidate.Trim()
+            ElseIf (now - _lastMobNameRead).TotalMilliseconds > 1200 Then
+                _cachedMobName = ""
+            End If
+            _lastMobNameRead = now
+            Return _cachedMobName
+        Finally
+            crop.Dispose()
+        End Try
+    End Function
+
+    Private Shared Function IsDeniedMob(mobName As String, denied As List(Of String)) As Boolean
+        If String.IsNullOrWhiteSpace(mobName) OrElse denied Is Nothing OrElse denied.Count = 0 Then
+            Return False
+        End If
+
+        Dim normMob As String = NormalizeMobName(mobName)
+        If normMob = "" Then
+            Return False
+        End If
+
+        For Each item In denied
+            Dim normDenied As String = NormalizeMobName(item)
+            If normDenied = "" Then
+                Continue For
+            End If
+            If normMob.Equals(normDenied, StringComparison.OrdinalIgnoreCase) Then
+                Return True
+            End If
+            If normMob.Contains(normDenied, StringComparison.OrdinalIgnoreCase) Then
+                Return True
+            End If
+        Next
+
+        Return False
+    End Function
+
+    Private Shared Function NormalizeMobName(raw As String) As String
+        If String.IsNullOrWhiteSpace(raw) Then
+            Return ""
+        End If
+        Dim cleaned As String = Regex.Replace(raw, "[^A-Za-z0-9 '\-]", " ")
+        cleaned = Regex.Replace(cleaned, "\s+", " ").Trim().ToLowerInvariant()
+        Return cleaned
     End Function
 
     Private Sub TrackMobHpMovement(targetValid As Boolean, mobHpPct As Double, now As DateTime)

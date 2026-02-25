@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net9.0-windows</TargetFramework>
+    <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
     <RootNamespace>KathanaBotControlPanel</RootNamespace>
     <StartupObject>Sub Main</StartupObject>
     <UseWindowsForms>true</UseWindowsForms>
@@ -21,18 +21,11 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <UiArtifacts Include="$(ArtifactSourceDir)$(AssemblyName).exe" />
-      <UiArtifacts Include="$(ArtifactSourceDir)$(AssemblyName).dll" />
-      <UiArtifacts Include="$(ArtifactSourceDir)$(AssemblyName).deps.json" />
-      <UiArtifacts Include="$(ArtifactSourceDir)$(AssemblyName).runtimeconfig.json" />
+      <!-- Copy all first-level build outputs so runtime dependencies are present in repo root. -->
+      <UiArtifacts Include="$(ArtifactSourceDir)*.*" />
     </ItemGroup>
 
-    <Copy
-      SourceFiles="@(UiArtifacts)"
-      DestinationFolder="$(RepoRoot)"
-      SkipUnchangedFiles="false"
-      OverwriteReadOnlyFiles="true"
-      ContinueOnError="WarnAndContinue" />
+    <Copy SourceFiles="@(UiArtifacts)" DestinationFolder="$(RepoRoot)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true" ContinueOnError="WarnAndContinue" />
   </Target>
 
 </Project>

@@ -21,6 +21,7 @@ Public Class Form1
     Private lblState As Label
     Private lblSystem As Label
     Private lblVitals As Label
+    Private lblMobName As Label
     Private btnAttack As Button
     Private btnSaveSettings As Button
     Private btnStopBot As Button
@@ -38,8 +39,9 @@ Public Class Form1
     Private _lastError As String = ""
     Private _lastNoAttackReason As String = ""
     Private _bypassHpMpLimits As Boolean = False
-    Private _bypassStuckTarget As Boolean = True
+    Private _bypassStuckTarget As Boolean = False
     Private _overlayForm As CalibrationOverlayForm
+    Private _autoStarted As Boolean = False
 
     Public Sub New()
         InitializeComponent()
@@ -241,7 +243,7 @@ Public Class Form1
     End Function
 
     Private Function BuildMonsterFilterGroup() As GroupBox
-        Dim group As New GroupBox() With {.Text = "Monster Filter (requires OCR in future update)", .Dock = DockStyle.Fill}
+        Dim group As New GroupBox() With {.Text = "Monster Filter", .Dock = DockStyle.Fill}
         Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3}
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 30.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
@@ -272,20 +274,21 @@ Public Class Form1
         lblState = New Label() With {.Text = "Status: Searching for target...", .Top = 16, .Left = 8, .Width = 260, .Height = 22}
         lblSystem = New Label() With {.Text = "System Active: False", .Top = 44, .Left = 8, .Width = 260, .Height = 22, .ForeColor = Color.LightGreen}
         lblVitals = New Label() With {.Text = "HP%: 0   MP%: 0", .Top = 72, .Left = 8, .Width = 260, .Height = 22}
-        btnAttack = New Button() With {.Text = "Attack", .Top = 108, .Left = 8, .Width = 210, .Height = 42, .BackColor = Color.FromArgb(40, 180, 80), .ForeColor = Color.White}
-        btnSaveSettings = New Button() With {.Text = "Save Settings", .Top = 162, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(55, 55, 55), .ForeColor = Color.White}
-        btnStopBot = New Button() With {.Text = "Stop Bot", .Top = 212, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(20, 130, 210), .ForeColor = Color.White}
-        btnBypassLimits = New Button() With {.Text = "Bypass HP/MP Limits: OFF", .Top = 262, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
+        lblMobName = New Label() With {.Text = "Mob: (none)", .Top = 96, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.LightSkyBlue}
+        btnAttack = New Button() With {.Text = "Attack", .Top = 126, .Left = 8, .Width = 210, .Height = 42, .BackColor = Color.FromArgb(40, 180, 80), .ForeColor = Color.White}
+        btnSaveSettings = New Button() With {.Text = "Save Settings", .Top = 180, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(55, 55, 55), .ForeColor = Color.White}
+        btnStopBot = New Button() With {.Text = "Stop Bot", .Top = 230, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(20, 130, 210), .ForeColor = Color.White}
+        btnBypassLimits = New Button() With {.Text = "Bypass HP/MP Limits: OFF", .Top = 280, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
         btnBypassStuck = New Button() With {
             .Text = If(_bypassStuckTarget, "Bypass Stuck Target: ON", "Bypass Stuck Target: OFF"),
-            .Top = 312,
+            .Top = 330,
             .Left = 8,
             .Width = 210,
             .Height = 38,
             .BackColor = If(_bypassStuckTarget, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
             .ForeColor = Color.White
         }
-        btnRetargetNow = New Button() With {.Text = "Retarget Now (E)", .Top = 362, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
+        btnRetargetNow = New Button() With {.Text = "Retarget Now (E)", .Top = 380, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
         AddHandler btnAttack.Click, AddressOf StartClicked
         AddHandler btnSaveSettings.Click, AddressOf SaveClicked
         AddHandler btnStopBot.Click, AddressOf StopClicked
@@ -295,6 +298,7 @@ Public Class Form1
         panel.Controls.Add(lblState)
         panel.Controls.Add(lblSystem)
         panel.Controls.Add(lblVitals)
+        panel.Controls.Add(lblMobName)
         panel.Controls.Add(btnAttack)
         panel.Controls.Add(btnSaveSettings)
         panel.Controls.Add(btnStopBot)
@@ -358,6 +362,25 @@ Public Class Form1
         _engine.UpdateConfig(BuildConfig())
         _engine.Start()
         UpdateAttackButtonAppearance(True)
+    End Sub
+
+    Private Sub AutoStartOnLaunch()
+        If _autoStarted Then
+            Return
+        End If
+        _autoStarted = True
+        If _engine.IsRunning() Then
+            Return
+        End If
+        _engine.UpdateConfig(BuildConfig())
+        _engine.Start()
+        UpdateAttackButtonAppearance(True)
+        AppendLog("Auto-start on launch enabled.")
+    End Sub
+
+    Protected Overrides Sub OnShown(e As EventArgs)
+        MyBase.OnShown(e)
+        AutoStartOnLaunch()
     End Sub
 
     Private Sub StopClicked(sender As Object, e As EventArgs)
@@ -478,6 +501,8 @@ Public Class Form1
             $"Window Found: {st.WindowFound}{Environment.NewLine}" &
             $"HP%: {st.HpPercent:0.0}{Environment.NewLine}" &
             $"MP%: {st.MpPercent:0.0}{Environment.NewLine}" &
+            $"MobName: {st.MobName}{Environment.NewLine}" &
+            $"OcrError: {OcrReader.LastError()}{Environment.NewLine}" &
             $"MobHP%: {st.MobHpPercent:0.0}{Environment.NewLine}" &
             $"TargetValid: {st.TargetValid}{Environment.NewLine}" &
             $"LastAction: {st.LastAction}{Environment.NewLine}" &
@@ -503,6 +528,7 @@ Public Class Form1
         lblState.Text = statusText
         lblSystem.Text = $"System Active: {status.Running}"
         lblVitals.Text = $"HP%: {status.HpPercent:0.0}    MP%: {status.MpPercent:0.0}"
+        lblMobName.Text = $"Mob: {If(String.IsNullOrWhiteSpace(status.MobName), "(none)", status.MobName)}"
         UpdateAttackButtonAppearance(status.Running)
 
         If status.LastAction <> "" AndAlso status.LastAction <> _lastAction Then
