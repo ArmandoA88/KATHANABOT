@@ -196,7 +196,7 @@ Public Class Form1
         layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
 
         layout.Controls.Add(New Label() With {.Text = "Heal Trigger %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
-        nudAutoPotHp = New NumericUpDown() With {.Minimum = 1, .Maximum = 99, .Value = 45, .Dock = DockStyle.Fill}
+        nudAutoPotHp = New NumericUpDown() With {.Minimum = 1, .Maximum = 99, .Value = 80, .Dock = DockStyle.Fill}
         layout.Controls.Add(nudAutoPotHp, 1, 0)
 
         layout.Controls.Add(New Label() With {.Text = "Mana Trigger %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
@@ -211,9 +211,14 @@ Public Class Form1
             End Sub
         layout.Controls.Add(nudAlarmVolume, 1, 2)
 
-        Dim btnApply As New Button() With {.Text = "Apply To Heal/Mana Rows", .Width = 220, .Height = 34, .BackColor = Color.FromArgb(42, 120, 80), .ForeColor = Color.White}
+        Dim buttonRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
+        Dim btnApply As New Button() With {.Text = "Apply To Heal/Mana Rows", .Width = 170, .Height = 30, .BackColor = Color.FromArgb(42, 120, 80), .ForeColor = Color.White}
         AddHandler btnApply.Click, Sub(_s As Object, _e As EventArgs) ApplyQuickAutoPotThresholds()
-        layout.Controls.Add(btnApply, 1, 3)
+        Dim btnTestAlarm As New Button() With {.Text = "Test HP=0 Alarm", .Width = 130, .Height = 30, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
+        AddHandler btnTestAlarm.Click, AddressOf TestAlarmClicked
+        buttonRow.Controls.Add(btnApply)
+        buttonRow.Controls.Add(btnTestAlarm)
+        layout.Controls.Add(buttonRow, 1, 3)
 
         Dim note As New Label() With {.Text = "Alarm sounds when HP reaches 0. Volume can be tuned above.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
         layout.Controls.Add(note, 2, 0)
@@ -367,7 +372,7 @@ Public Class Form1
         For Each key In PrimaryKeys
             Dim enabled As Boolean = (key = "1" OrElse key = "6")
             Dim role As String = If(key = "6", "heal", "attack")
-            Dim trigger As Integer = If(key = "6", 75, 40)
+            Dim trigger As Integer = If(key = "6", 80, 40)
             dgvCombat.Rows.Add(enabled, key, "1.0", role, keyIndex * 10, trigger, 1, 1)
             keyIndex += 1
         Next
@@ -375,6 +380,9 @@ Public Class Form1
             dgvCombat.Rows.Add(False, key, "1.0", "special", keyIndex * 10, 40, 1, 1)
             keyIndex += 1
         Next
+        If Not MonsterExists("avara kara") Then
+            lstMonsterFilter.Items.Add("avara kara")
+        End If
         _alarmVolumePercent = CInt(nudAlarmVolume.Value)
         UpdateAttackButtonAppearance(False)
         AppendLog("UI loaded. No API required.")
@@ -640,6 +648,12 @@ Public Class Form1
             End If
         Next
         AppendLog("Applied auto-pot thresholds to heal/mana rows.")
+    End Sub
+
+    Private Sub TestAlarmClicked(sender As Object, e As EventArgs)
+        _alarmVolumePercent = CInt(nudAlarmVolume.Value)
+        AppendLog($"Testing HP=0 alarm at {_alarmVolumePercent}% volume.")
+        Task.Run(Sub() PlayAlarmPulse(_alarmVolumePercent))
     End Sub
 
     Private Function BuildConfig() As BotConfig

@@ -57,6 +57,8 @@ Public Class BotConfig
     Public Property BypassHpMpLimits As Boolean = False
     Public Property BypassStuckTarget As Boolean = True
     Public Property StuckTargetMs As Integer = 2200
+    Public Property MovePulseEnabled As Boolean = True
+    Public Property MovePulseMs As Integer = 10000
     Public Property DeniedMobs As List(Of String) = New List(Of String)()
     Public Property Actions As List(Of ActionRule) = New List(Of ActionRule)()
 
@@ -75,7 +77,7 @@ Public Class BotConfig
             Else
                 role = "special"
             End If
-            Dim trigger As Integer = If(keyName = "6", 75, 40)
+            Dim trigger As Integer = If(keyName = "6", 80, 40)
             cfg.Actions.Add(New ActionRule() With {
                 .KeyName = keyName,
                 .Enabled = enabled,
@@ -180,11 +182,13 @@ Public Class BotEngine
     Private _lastMobNameRead As DateTime = DateTime.MinValue
     Private _cachedMobName As String = ""
     Private _lastPeriodicSnapshot As DateTime = DateTime.MinValue
+    Private _lastMovePulse As DateTime = DateTime.MinValue
+    Private _nextMovePulseKey As String = "W"
     Private ReadOnly _lastKeyTime As New Dictionary(Of String, DateTime)(StringComparer.OrdinalIgnoreCase)
 
     Private Shared ReadOnly KeyMap As New Dictionary(Of String, Integer)(StringComparer.OrdinalIgnoreCase) From {
         {"0", &H30}, {"1", &H31}, {"2", &H32}, {"3", &H33}, {"4", &H34}, {"5", &H35},
-        {"6", &H36}, {"7", &H37}, {"8", &H38}, {"9", &H39}, {"E", &H45},
+        {"6", &H36}, {"7", &H37}, {"8", &H38}, {"9", &H39}, {"E", &H45}, {"W", &H57}, {"S", &H53},
         {"F1", &H70}, {"F2", &H71}, {"F3", &H72}, {"F4", &H73}, {"F5", &H74},
         {"F6", &H75}, {"F7", &H76}, {"F8", &H77}, {"F9", &H78}, {"F10", &H79}
     }
@@ -222,6 +226,8 @@ Public Class BotEngine
             _lastMobNameRead = DateTime.MinValue
             _cachedMobName = ""
             _lastPeriodicSnapshot = DateTime.MinValue
+            _lastMovePulse = DateTime.MinValue
+            _nextMovePulseKey = "W"
             _task = Task.Run(Sub() LoopAsync(_cts.Token).GetAwaiter().GetResult())
         End SyncLock
         RaiseEvent LogLine("Bot loop started.")
@@ -358,6 +364,8 @@ Public Class BotEngine
                 End If
             End If
 
+            TrySendMovePulse(cfg, hwnd, now)
+
             frame.Dispose()
 
             SetStatus(Sub(s)
@@ -374,6 +382,25 @@ Public Class BotEngine
             Await Task.Delay(Math.Max(20, cfg.LoopMs), token)
         End While
     End Function
+
+    Private Sub TrySendMovePulse(cfg As BotConfig, hwnd As IntPtr, now As DateTime)
+        If Not cfg.MovePulseEnabled Then
+            Return
+        End If
+        If hwnd = IntPtr.Zero Then
+            Return
+        End If
+        If _lastMovePulse <> DateTime.MinValue AndAlso (now - _lastMovePulse).TotalMilliseconds < Math.Max(1000, cfg.MovePulseMs) Then
+            Return
+        End If
+
+        Dim pulseKey As String = If(String.IsNullOrWhiteSpace(_nextMovePulseKey), "W", _nextMovePulseKey.ToUpperInvariant())
+        If SendKey(hwnd, pulseKey, 35) Then
+            _lastMovePulse = now
+            _nextMovePulseKey = If(pulseKey = "W", "S", "W")
+            SetLastAction($"{pulseKey} (move pulse)")
+        End If
+    End Sub
 
     Private Sub SavePeriodicSnapshot(frame As Bitmap, now As DateTime)
         If frame Is Nothing Then

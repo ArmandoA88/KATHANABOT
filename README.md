@@ -63,4 +63,8 @@ Use this baseline if calibration is reset:
 - Background key input is sent directly to window title:
   `Kathana - The Coming of the Dark Ages`
 - Default at startup: bot auto-starts in attacking mode and `Bypass Stuck Target` is ON.
+- Default unstuck movement pulse: while bot is running, it sends `W` every 10 seconds, then `S` after the next 10 seconds, alternating continuously.
+- Monster filter defaults: enabled with `avara kara` preloaded in blacklist.
+- Default heal trigger is `80%` for the key `6` heal row.
+- Use `Test HP=0 Alarm` in `Auto-Pot` to preview current alarm loudness.
 - If the EXE is already running, rebuild can warn about locked files.
