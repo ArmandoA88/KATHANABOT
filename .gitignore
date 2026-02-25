@@ -1,0 +1,21 @@
+# Build outputs
+**/bin/
+**/obj/
+
+# User files
+**/*.user
+**/*.suo
+
+# VS settings
+.vs/
+
+# OCR runtime data can be placed here if desired
+# tessdata/
+
+# Root-level UI build artifacts copied by project target
+KathanaBotControlPanel.exe
+KathanaBotControlPanel.dll
+KathanaBotControlPanel.deps.json
+KathanaBotControlPanel.runtimeconfig.json
+KathanaBotControlPanel.pdb
+KathanaBotControlPanel - Copy*.exe
