@@ -27,7 +27,7 @@ Double-click:
 
 - `Combat`: key matrix, priorities/cooldowns, start/stop, realtime log, live detected mob name
 - `Vision`: window title, loop settings, calibration regions, snapshot, low-opacity overlay
-- `Auto-Pot`: quick trigger updates for heal/mana rows
+- `Auto-Pot`: quick trigger updates for heal/mana rows + HP=0 alarm volume
 - `Unstuck`: retarget interval helper
 - `Diagnostics`: live bot status
 
@@ -47,6 +47,7 @@ Double-click:
 8. Monster blacklist is enforced from `Monster Filter` when enabled; detected mob name is shown live in Combat status.
 9. Optional: click `Show Overlay` in Vision to draw calibration rectangles over the game window.
 10. Click `Save Settings`, then `Attack`.
+11. Bot automatically saves a screenshot every 15 minutes to your Pictures gallery folder: `Pictures\KathanaBot`.
 
 ### Default calibration coordinates (saved baseline)
 
@@ -61,4 +62,5 @@ Use this baseline if calibration is reset:
 
 - Background key input is sent directly to window title:
   `Kathana - The Coming of the Dark Ages`
+- Default at startup: bot auto-starts in attacking mode and `Bypass Stuck Target` is ON.
 - If the EXE is already running, rebuild can warn about locked files.

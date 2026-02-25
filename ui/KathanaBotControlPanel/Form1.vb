@@ -1,9 +1,14 @@
+Imports System.Media
+Imports System.Runtime.InteropServices
+Imports System.Threading
+Imports System.Threading.Tasks
+
 Public Class Form1
     Private Shared ReadOnly PrimaryKeys As String() = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"}
     Private Shared ReadOnly FunctionKeys As String() = {"F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10"}
 
     Private ReadOnly _engine As New BotEngine()
-    Private ReadOnly _uiTimer As New Timer()
+    Private ReadOnly _uiTimer As New System.Windows.Forms.Timer()
 
     Private txtWindowTitle As TextBox
     Private nudLoopMs As NumericUpDown
@@ -20,7 +25,8 @@ Public Class Form1
 
     Private lblState As Label
     Private lblSystem As Label
-    Private lblVitals As Label
+    Private lblHp As Label
+    Private lblMp As Label
     Private lblMobName As Label
     Private btnAttack As Button
     Private btnSaveSettings As Button
@@ -33,15 +39,28 @@ Public Class Form1
 
     Private nudAutoPotHp As NumericUpDown
     Private nudAutoPotMp As NumericUpDown
+    Private nudAlarmVolume As NumericUpDown
 
     Private _lastAction As String = ""
     Private _lastState As String = ""
     Private _lastError As String = ""
     Private _lastNoAttackReason As String = ""
     Private _bypassHpMpLimits As Boolean = False
-    Private _bypassStuckTarget As Boolean = False
+    Private _bypassStuckTarget As Boolean = True
     Private _overlayForm As CalibrationOverlayForm
     Private _autoStarted As Boolean = False
+    Private _alarmVolumePercent As Integer = 85
+    Private _hpZeroAlarmActive As Boolean = False
+    Private _hpAlarmCts As CancellationTokenSource = Nothing
+    Private _hpAlarmTask As Task = Nothing
+
+    <DllImport("winmm.dll")>
+    Private Shared Function waveOutGetVolume(hwo As IntPtr, ByRef dwVolume As UInteger) As Integer
+    End Function
+
+    <DllImport("winmm.dll")>
+    Private Shared Function waveOutSetVolume(hwo As IntPtr, dwVolume As UInteger) As Integer
+    End Function
 
     Public Sub New()
         InitializeComponent()
@@ -167,10 +186,14 @@ Public Class Form1
     Private Function BuildAutoPotTab() As TabPage
         Dim tab As New TabPage("Auto-Pot") With {.BackColor = Color.FromArgb(20, 20, 20)}
         Dim group As New GroupBox() With {.Text = "Quick Pot Thresholds", .Dock = DockStyle.Top, .Height = 190, .Padding = New Padding(10)}
-        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 3}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 4}
         layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 170.0F))
         layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 160.0F))
         layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
 
         layout.Controls.Add(New Label() With {.Text = "Heal Trigger %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
         nudAutoPotHp = New NumericUpDown() With {.Minimum = 1, .Maximum = 99, .Value = 45, .Dock = DockStyle.Fill}
@@ -180,13 +203,21 @@ Public Class Form1
         nudAutoPotMp = New NumericUpDown() With {.Minimum = 1, .Maximum = 99, .Value = 35, .Dock = DockStyle.Fill}
         layout.Controls.Add(nudAutoPotMp, 1, 1)
 
+        layout.Controls.Add(New Label() With {.Text = "HP=0 Alarm Volume %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
+        nudAlarmVolume = New NumericUpDown() With {.Minimum = 0, .Maximum = 100, .Value = 85, .Dock = DockStyle.Fill}
+        AddHandler nudAlarmVolume.ValueChanged,
+            Sub(_s As Object, _e As EventArgs)
+                _alarmVolumePercent = CInt(nudAlarmVolume.Value)
+            End Sub
+        layout.Controls.Add(nudAlarmVolume, 1, 2)
+
         Dim btnApply As New Button() With {.Text = "Apply To Heal/Mana Rows", .Width = 220, .Height = 34, .BackColor = Color.FromArgb(42, 120, 80), .ForeColor = Color.White}
         AddHandler btnApply.Click, Sub(_s As Object, _e As EventArgs) ApplyQuickAutoPotThresholds()
-        layout.Controls.Add(btnApply, 1, 2)
+        layout.Controls.Add(btnApply, 1, 3)
 
-        Dim note As New Label() With {.Text = "Updates Trigger% values for Role=heal and Role=mana rows in Combat tab.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        Dim note As New Label() With {.Text = "Alarm sounds when HP reaches 0. Volume can be tuned above.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
         layout.Controls.Add(note, 2, 0)
-        layout.SetRowSpan(note, 3)
+        layout.SetRowSpan(note, 4)
         group.Controls.Add(layout)
         tab.Controls.Add(group)
         Return tab
@@ -273,7 +304,8 @@ Public Class Form1
         Dim panel As New Panel() With {.Dock = DockStyle.Fill, .Padding = New Padding(12)}
         lblState = New Label() With {.Text = "Status: Searching for target...", .Top = 16, .Left = 8, .Width = 260, .Height = 22}
         lblSystem = New Label() With {.Text = "System Active: False", .Top = 44, .Left = 8, .Width = 260, .Height = 22, .ForeColor = Color.LightGreen}
-        lblVitals = New Label() With {.Text = "HP%: 0   MP%: 0", .Top = 72, .Left = 8, .Width = 260, .Height = 22}
+        lblHp = New Label() With {.Text = "HP%: 0", .Top = 72, .Left = 8, .Width = 120, .Height = 22, .ForeColor = Color.LimeGreen}
+        lblMp = New Label() With {.Text = "MP%: 0", .Top = 72, .Left = 136, .Width = 120, .Height = 22, .ForeColor = Color.DeepSkyBlue}
         lblMobName = New Label() With {.Text = "Mob: (none)", .Top = 96, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.LightSkyBlue}
         btnAttack = New Button() With {.Text = "Attack", .Top = 126, .Left = 8, .Width = 210, .Height = 42, .BackColor = Color.FromArgb(40, 180, 80), .ForeColor = Color.White}
         btnSaveSettings = New Button() With {.Text = "Save Settings", .Top = 180, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(55, 55, 55), .ForeColor = Color.White}
@@ -297,7 +329,8 @@ Public Class Form1
         AddHandler btnRetargetNow.Click, AddressOf ManualRetargetClicked
         panel.Controls.Add(lblState)
         panel.Controls.Add(lblSystem)
-        panel.Controls.Add(lblVitals)
+        panel.Controls.Add(lblHp)
+        panel.Controls.Add(lblMp)
         panel.Controls.Add(lblMobName)
         panel.Controls.Add(btnAttack)
         panel.Controls.Add(btnSaveSettings)
@@ -342,6 +375,7 @@ Public Class Form1
             dgvCombat.Rows.Add(False, key, "1.0", "special", keyIndex * 10, 40, 1, 1)
             keyIndex += 1
         Next
+        _alarmVolumePercent = CInt(nudAlarmVolume.Value)
         UpdateAttackButtonAppearance(False)
         AppendLog("UI loaded. No API required.")
     End Sub
@@ -385,6 +419,7 @@ Public Class Form1
 
     Private Sub StopClicked(sender As Object, e As EventArgs)
         _engine.Stop()
+        StopHpZeroAlarm()
         UpdateAttackButtonAppearance(False)
     End Sub
 
@@ -498,6 +533,8 @@ Public Class Form1
             $"Running: {st.Running}{Environment.NewLine}" &
             $"BypassHpMpLimits: {_bypassHpMpLimits}{Environment.NewLine}" &
             $"BypassStuckTarget: {_bypassStuckTarget}{Environment.NewLine}" &
+            $"AlarmVolume%: {_alarmVolumePercent}{Environment.NewLine}" &
+            $"HpZeroAlarm: {_hpZeroAlarmActive}{Environment.NewLine}" &
             $"Window Found: {st.WindowFound}{Environment.NewLine}" &
             $"HP%: {st.HpPercent:0.0}{Environment.NewLine}" &
             $"MP%: {st.MpPercent:0.0}{Environment.NewLine}" &
@@ -527,9 +564,13 @@ Public Class Form1
 
         lblState.Text = statusText
         lblSystem.Text = $"System Active: {status.Running}"
-        lblVitals.Text = $"HP%: {status.HpPercent:0.0}    MP%: {status.MpPercent:0.0}"
+        lblHp.Text = $"HP%: {status.HpPercent:0.0}"
+        lblMp.Text = $"MP%: {status.MpPercent:0.0}"
+        lblHp.ForeColor = HpColor(status.HpPercent)
+        lblMp.ForeColor = MpColor(status.MpPercent)
         lblMobName.Text = $"Mob: {If(String.IsNullOrWhiteSpace(status.MobName), "(none)", status.MobName)}"
         UpdateAttackButtonAppearance(status.Running)
+        HandleHpZeroAlarm(status.HpPercent)
 
         If status.LastAction <> "" AndAlso status.LastAction <> _lastAction Then
             AppendLog("Key action: " & status.LastAction)
@@ -710,6 +751,102 @@ Public Class Form1
         End If
     End Sub
 
+    Private Shared Function HpColor(percent As Double) As Color
+        If percent <= 0.1 Then
+            Return Color.FromArgb(255, 70, 70)
+        End If
+        If percent < 35.0 Then
+            Return Color.FromArgb(255, 140, 60)
+        End If
+        If percent < 70.0 Then
+            Return Color.Khaki
+        End If
+        Return Color.LimeGreen
+    End Function
+
+    Private Shared Function MpColor(percent As Double) As Color
+        If percent <= 0.1 Then
+            Return Color.FromArgb(255, 95, 95)
+        End If
+        If percent < 25.0 Then
+            Return Color.FromArgb(255, 170, 70)
+        End If
+        If percent < 60.0 Then
+            Return Color.SkyBlue
+        End If
+        Return Color.DeepSkyBlue
+    End Function
+
+    Private Sub HandleHpZeroAlarm(hpPercent As Double)
+        Dim shouldAlarm As Boolean = hpPercent <= 0.1
+        If shouldAlarm AndAlso Not _hpZeroAlarmActive Then
+            StartHpZeroAlarm()
+        ElseIf (Not shouldAlarm) AndAlso _hpZeroAlarmActive Then
+            StopHpZeroAlarm()
+        End If
+    End Sub
+
+    Private Sub StartHpZeroAlarm()
+        _hpZeroAlarmActive = True
+        AppendLog($"HP is zero. Alarm started at volume {_alarmVolumePercent}%.")
+
+        If _hpAlarmCts IsNot Nothing Then
+            _hpAlarmCts.Cancel()
+            _hpAlarmCts.Dispose()
+        End If
+
+        _hpAlarmCts = New CancellationTokenSource()
+        Dim token As CancellationToken = _hpAlarmCts.Token
+        _hpAlarmTask = Task.Run(
+            Async Function()
+                While Not token.IsCancellationRequested
+                    PlayAlarmPulse(_alarmVolumePercent)
+                    Try
+                        Await Task.Delay(1300, token)
+                    Catch ex As TaskCanceledException
+                        Exit While
+                    End Try
+                End While
+            End Function, token)
+    End Sub
+
+    Private Sub StopHpZeroAlarm()
+        If Not _hpZeroAlarmActive Then
+            Return
+        End If
+
+        _hpZeroAlarmActive = False
+        If _hpAlarmCts IsNot Nothing Then
+            _hpAlarmCts.Cancel()
+            _hpAlarmCts.Dispose()
+            _hpAlarmCts = Nothing
+        End If
+        AppendLog("HP recovered. Alarm stopped.")
+    End Sub
+
+    Private Sub PlayAlarmPulse(volumePercent As Integer)
+        Dim previous As UInteger = 0UI
+        Try
+            waveOutGetVolume(IntPtr.Zero, previous)
+            Dim level As Integer = Math.Max(0, Math.Min(100, volumePercent))
+            Dim scaled As UInteger = CUInt((65535 * level) \ 100)
+            Dim stereo As UInteger = scaled Or (scaled << 16)
+            waveOutSetVolume(IntPtr.Zero, stereo)
+
+            SystemSounds.Hand.Play()
+            Thread.Sleep(160)
+            SystemSounds.Exclamation.Play()
+            Thread.Sleep(160)
+            SystemSounds.Hand.Play()
+        Catch
+        Finally
+            Try
+                waveOutSetVolume(IntPtr.Zero, previous)
+            Catch
+            End Try
+        End Try
+    End Sub
+
     Private Sub ApplyDarkTheme(control As Control)
         control.BackColor = Color.FromArgb(28, 28, 28)
         control.ForeColor = Color.Gainsboro
@@ -749,6 +886,7 @@ Public Class Form1
 
     Protected Overrides Sub OnFormClosing(e As FormClosingEventArgs)
         _uiTimer.Stop()
+        StopHpZeroAlarm()
         If _overlayForm IsNot Nothing AndAlso Not _overlayForm.IsDisposed Then
             _overlayForm.Close()
         End If

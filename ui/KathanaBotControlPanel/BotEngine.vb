@@ -1,6 +1,7 @@
 Imports System.Collections.Generic
 Imports System.Drawing
 Imports System.Drawing.Imaging
+Imports System.IO
 Imports System.Linq
 Imports System.Runtime.InteropServices
 Imports System.Text.RegularExpressions
@@ -54,7 +55,7 @@ Public Class BotConfig
     Public Property MobNameRect As RectRegion = New RectRegion(862, 0, 162, 23)
     Public Property MobHpRect As RectRegion = New RectRegion(859, 20, 165, 11)
     Public Property BypassHpMpLimits As Boolean = False
-    Public Property BypassStuckTarget As Boolean = False
+    Public Property BypassStuckTarget As Boolean = True
     Public Property StuckTargetMs As Integer = 2200
     Public Property DeniedMobs As List(Of String) = New List(Of String)()
     Public Property Actions As List(Of ActionRule) = New List(Of ActionRule)()
@@ -178,6 +179,7 @@ Public Class BotEngine
     Private _lastMobHpMovement As DateTime = DateTime.MinValue
     Private _lastMobNameRead As DateTime = DateTime.MinValue
     Private _cachedMobName As String = ""
+    Private _lastPeriodicSnapshot As DateTime = DateTime.MinValue
     Private ReadOnly _lastKeyTime As New Dictionary(Of String, DateTime)(StringComparer.OrdinalIgnoreCase)
 
     Private Shared ReadOnly KeyMap As New Dictionary(Of String, Integer)(StringComparer.OrdinalIgnoreCase) From {
@@ -219,6 +221,7 @@ Public Class BotEngine
             _lastMobHpMovement = DateTime.MinValue
             _lastMobNameRead = DateTime.MinValue
             _cachedMobName = ""
+            _lastPeriodicSnapshot = DateTime.MinValue
             _task = Task.Run(Sub() LoopAsync(_cts.Token).GetAwaiter().GetResult())
         End SyncLock
         RaiseEvent LogLine("Bot loop started.")
@@ -298,6 +301,7 @@ Public Class BotEngine
             Dim mpPct As Double = ComputeBarPercent(frame, cfg.MpBar, False)
             Dim mobHpPct As Double = ComputeBarPercent(frame, cfg.MobHpRect, True)
             Dim now As DateTime = DateTime.UtcNow
+            SavePeriodicSnapshot(frame, now)
             Dim mobName As String = ReadMobNameIfNeeded(frame, cfg.MobNameRect, now)
             Dim deniedTarget As Boolean = IsDeniedMob(mobName, cfg.DeniedMobs)
             Dim targetValid As Boolean = (mobHpPct >= cfg.MobHpPresenceThreshold) AndAlso (Not deniedTarget)
@@ -370,6 +374,32 @@ Public Class BotEngine
             Await Task.Delay(Math.Max(20, cfg.LoopMs), token)
         End While
     End Function
+
+    Private Sub SavePeriodicSnapshot(frame As Bitmap, now As DateTime)
+        If frame Is Nothing Then
+            Return
+        End If
+        If _lastPeriodicSnapshot <> DateTime.MinValue AndAlso (now - _lastPeriodicSnapshot).TotalMinutes < 15 Then
+            Return
+        End If
+
+        _lastPeriodicSnapshot = now
+        Try
+            Dim picturesRoot As String = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures)
+            If String.IsNullOrWhiteSpace(picturesRoot) Then
+                picturesRoot = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)
+            End If
+            Dim galleryDir As String = Path.Combine(picturesRoot, "KathanaBot")
+            Directory.CreateDirectory(galleryDir)
+
+            Dim fileName As String = $"kathana_{now:yyyyMMdd_HHmmss}.png"
+            Dim fullPath As String = Path.Combine(galleryDir, fileName)
+            frame.Save(fullPath, ImageFormat.Png)
+            RaiseEvent LogLine("Snapshot saved: " & fullPath)
+        Catch ex As Exception
+            RaiseEvent LogLine("Snapshot save failed: " & ex.Message)
+        End Try
+    End Sub
 
     Private Function ReadMobNameIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime) As String
         If frame Is Nothing Then
