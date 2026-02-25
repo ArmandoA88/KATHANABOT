@@ -2,7 +2,7 @@
 
     <STAThread()>
     Friend Sub Main(args As String())
-        Application.SetHighDpiMode(HighDpiMode.SystemAware)
+        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2)
         Application.EnableVisualStyles()
         Application.SetCompatibleTextRenderingDefault(False)
         Application.Run(New Form1)

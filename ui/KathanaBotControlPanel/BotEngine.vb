@@ -1,4 +1,5 @@
 Imports System.Collections.Generic
+Imports System.Diagnostics
 Imports System.Drawing
 Imports System.Drawing.Imaging
 Imports System.IO
@@ -109,6 +110,8 @@ End Class
 
 Friend Module NativeMethods
     Friend Const PW_CLIENTONLY As UInteger = 1UI
+    Friend Const PW_RENDERFULLCONTENT As UInteger = 2UI
+    Friend Const CAPTUREBLT As CopyPixelOperation = CType(&H40000000, CopyPixelOperation)
     Friend Const WM_KEYDOWN As Integer = &H100
     Friend Const WM_KEYUP As Integer = &H101
 
@@ -140,6 +143,10 @@ Friend Module NativeMethods
     Friend Function IsWindowVisible(hWnd As IntPtr) As Boolean
     End Function
 
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function IsIconic(hWnd As IntPtr) As Boolean
+    End Function
+
     <DllImport("user32.dll", SetLastError:=True, CharSet:=CharSet.Auto)>
     Friend Function GetWindowText(hWnd As IntPtr, lpString As StringBuilder, nMaxCount As Integer) As Integer
     End Function
@@ -163,12 +170,18 @@ Friend Module NativeMethods
     <DllImport("user32.dll", SetLastError:=True)>
     Friend Function PrintWindow(hwnd As IntPtr, hdcBlt As IntPtr, nFlags As UInteger) As Boolean
     End Function
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function GetWindowThreadProcessId(hWnd As IntPtr, ByRef lpdwProcessId As UInteger) As UInteger
+    End Function
 End Module
 
 Public Class BotEngine
     Public Event StatusUpdated(status As BotStatus)
     Public Event LogLine(line As String)
     Private Const AllowBlindAttackWhenTargetMissing As Boolean = True
+    Private Const BaseClientWidth As Integer = 1024
+    Private Const BaseClientHeight As Integer = 768
 
     Private ReadOnly _sync As New Object()
     Private _config As BotConfig = BotConfig.CreateDefault()
@@ -185,6 +198,12 @@ Public Class BotEngine
     Private _lastMovePulse As DateTime = DateTime.MinValue
     Private _nextMovePulseKey As String = "W"
     Private ReadOnly _lastKeyTime As New Dictionary(Of String, DateTime)(StringComparer.OrdinalIgnoreCase)
+    Private _lastGoodHpPercent As Double = -1
+    Private _lastGoodMpPercent As Double = -1
+    Private _lastGoodMobHpPercent As Double = -1
+    Private _lastGoodMobName As String = ""
+    Private _zeroSpikeHoldCount As Integer = 0
+    Private _zeroPairConfirmCount As Integer = 0
 
     Private Shared ReadOnly KeyMap As New Dictionary(Of String, Integer)(StringComparer.OrdinalIgnoreCase) From {
         {"0", &H30}, {"1", &H31}, {"2", &H32}, {"3", &H33}, {"4", &H34}, {"5", &H35},
@@ -228,6 +247,12 @@ Public Class BotEngine
             _lastPeriodicSnapshot = DateTime.MinValue
             _lastMovePulse = DateTime.MinValue
             _nextMovePulseKey = "W"
+            _lastGoodHpPercent = -1
+            _lastGoodMpPercent = -1
+            _lastGoodMobHpPercent = -1
+            _lastGoodMobName = ""
+            _zeroSpikeHoldCount = 0
+            _zeroPairConfirmCount = 0
             _task = Task.Run(Sub() LoopAsync(_cts.Token).GetAwaiter().GetResult())
         End SyncLock
         RaiseEvent LogLine("Bot loop started.")
@@ -303,12 +328,51 @@ Public Class BotEngine
                 Continue While
             End If
 
-            Dim hpPct As Double = ComputeBarPercent(frame, cfg.HpBar, True)
-            Dim mpPct As Double = ComputeBarPercent(frame, cfg.MpBar, False)
-            Dim mobHpPct As Double = ComputeBarPercent(frame, cfg.MobHpRect, True)
+            Dim hpRegion As New RectRegion(0, 0, 1, 1)
+            Dim mpRegion As New RectRegion(0, 0, 1, 1)
+            Dim mobNameRegion As New RectRegion(0, 0, 1, 1)
+            Dim mobHpRegion As New RectRegion(0, 0, 1, 1)
+            ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion)
+
+            Dim hpPct As Double = ComputeBarPercent(frame, hpRegion, True)
+            Dim mpPct As Double = ComputeBarPercent(frame, mpRegion, False)
+            Dim mobHpPct As Double = ComputeBarPercent(frame, mobHpRegion, True)
+            Dim captureGlitch As Boolean = IsLikelyVisionCaptureGlitch(frame, hpRegion, mpRegion, hpPct, mpPct)
+
+            If captureGlitch Then
+                For retry As Integer = 1 To 2
+                    frame.Dispose()
+                    Thread.Sleep(12)
+                    frame = CaptureClient(hwnd)
+                    If frame Is Nothing Then
+                        Exit For
+                    End If
+
+                    ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion)
+                    hpPct = ComputeBarPercent(frame, hpRegion, True)
+                    mpPct = ComputeBarPercent(frame, mpRegion, False)
+                    mobHpPct = ComputeBarPercent(frame, mobHpRegion, True)
+                    captureGlitch = IsLikelyVisionCaptureGlitch(frame, hpRegion, mpRegion, hpPct, mpPct)
+                    If Not captureGlitch Then
+                        Exit For
+                    End If
+                Next
+
+                If frame Is Nothing Then
+                    SetStatus(Sub(s)
+                                  s.WindowFound = True
+                                  s.NotAttackingReason = "Capture failed."
+                                  s.ErrorMessage = "Unable to capture game client."
+                              End Sub)
+                    Await Task.Delay(120, token)
+                    Continue While
+                End If
+            End If
+
             Dim now As DateTime = DateTime.UtcNow
             SavePeriodicSnapshot(frame, now)
-            Dim mobName As String = ReadMobNameIfNeeded(frame, cfg.MobNameRect, now)
+            Dim mobName As String = ReadMobNameIfNeeded(frame, mobNameRegion, now)
+            ApplyVisionStabilityFilter(hpPct, mpPct, mobHpPct, mobName, captureGlitch)
             Dim deniedTarget As Boolean = IsDeniedMob(mobName, cfg.DeniedMobs)
             Dim targetValid As Boolean = (mobHpPct >= cfg.MobHpPresenceThreshold) AndAlso (Not deniedTarget)
             TrackMobHpMovement(targetValid, mobHpPct, now)
@@ -382,6 +446,98 @@ Public Class BotEngine
             Await Task.Delay(Math.Max(20, cfg.LoopMs), token)
         End While
     End Function
+
+    Private Function IsLikelyVisionCaptureGlitch(frame As Bitmap, hpRegion As RectRegion, mpRegion As RectRegion, hpPct As Double, mpPct As Double) As Boolean
+        If frame Is Nothing Then
+            Return True
+        End If
+        If IsLikelyBlackFrame(frame) Then
+            Return True
+        End If
+        If IsHudRegionVeryDark(frame, hpRegion) AndAlso IsHudRegionVeryDark(frame, mpRegion) Then
+            Return True
+        End If
+
+        Dim hasBaseline As Boolean = _lastGoodHpPercent >= 0 AndAlso _lastGoodMpPercent >= 0
+        If hasBaseline AndAlso hpPct <= 0.25 AndAlso mpPct <= 0.25 AndAlso (_lastGoodHpPercent >= 5.0 OrElse _lastGoodMpPercent >= 5.0) Then
+            Return True
+        End If
+
+        Return False
+    End Function
+
+    Private Shared Function IsHudRegionVeryDark(frame As Bitmap, region As RectRegion) As Boolean
+        Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then
+            Return True
+        End If
+
+        Dim stepX As Integer = Math.Max(1, rect.Width \ 14)
+        Dim stepY As Integer = Math.Max(1, rect.Height \ 6)
+        Dim samples As Integer = 0
+        Dim brightSamples As Integer = 0
+        Dim sumLuma As Long = 0
+
+        For y As Integer = rect.Top To rect.Bottom - 1 Step stepY
+            For x As Integer = rect.Left To rect.Right - 1 Step stepX
+                Dim c As Color = frame.GetPixel(x, y)
+                Dim luma As Integer = (CInt(c.R) * 30 + CInt(c.G) * 59 + CInt(c.B) * 11) \ 100
+                samples += 1
+                sumLuma += luma
+                If luma >= 28 Then
+                    brightSamples += 1
+                End If
+            Next
+        Next
+
+        If samples = 0 Then
+            Return True
+        End If
+
+        Dim avgLuma As Double = sumLuma / CDbl(samples)
+        Dim brightRatio As Double = brightSamples / CDbl(samples)
+        Return avgLuma <= 15.0 AndAlso brightRatio <= 0.04
+    End Function
+
+    Private Sub ApplyVisionStabilityFilter(ByRef hpPct As Double, ByRef mpPct As Double, ByRef mobHpPct As Double, ByRef mobName As String, captureGlitch As Boolean)
+        Dim hasBaseline As Boolean = _lastGoodHpPercent >= 0 AndAlso _lastGoodMpPercent >= 0
+        Dim bothNearZero As Boolean = hpPct <= 0.25 AndAlso mpPct <= 0.25
+        If bothNearZero Then
+            _zeroPairConfirmCount += 1
+        Else
+            _zeroPairConfirmCount = 0
+        End If
+
+        Dim suspiciousZeroSpike As Boolean =
+            hasBaseline AndAlso
+            bothNearZero AndAlso
+            (_lastGoodHpPercent >= 5.0 OrElse _lastGoodMpPercent >= 5.0) AndAlso
+            _zeroPairConfirmCount < 12
+
+        If captureGlitch OrElse suspiciousZeroSpike Then
+            _zeroSpikeHoldCount += 1
+            If hasBaseline Then
+                hpPct = _lastGoodHpPercent
+                mpPct = _lastGoodMpPercent
+                If _lastGoodMobHpPercent >= 0 Then
+                    mobHpPct = _lastGoodMobHpPercent
+                End If
+                If String.IsNullOrWhiteSpace(mobName) AndAlso Not String.IsNullOrWhiteSpace(_lastGoodMobName) Then
+                    mobName = _lastGoodMobName
+                End If
+                Return
+            End If
+        Else
+            _zeroSpikeHoldCount = 0
+        End If
+
+        _lastGoodHpPercent = hpPct
+        _lastGoodMpPercent = mpPct
+        _lastGoodMobHpPercent = mobHpPct
+        If Not String.IsNullOrWhiteSpace(mobName) Then
+            _lastGoodMobName = mobName
+        End If
+    End Sub
 
     Private Sub TrySendMovePulse(cfg As BotConfig, hwnd As IntPtr, now As DateTime)
         If Not cfg.MovePulseEnabled Then
@@ -661,27 +817,60 @@ Public Class BotEngine
     End Function
 
     Public Shared Function FindGameWindow(windowTitle As String) As IntPtr
-        Dim exact As IntPtr = NativeMethods.FindWindow(Nothing, windowTitle)
-        If exact <> IntPtr.Zero Then
-            Return exact
+        If String.IsNullOrWhiteSpace(windowTitle) Then
+            Return IntPtr.Zero
         End If
 
-        Dim found As IntPtr = IntPtr.Zero
+        Dim myPid As Integer = Process.GetCurrentProcess().Id
+        Dim best As IntPtr = IntPtr.Zero
+        Dim bestScore As Long = Long.MinValue
+        Dim needle As String = windowTitle.Trim()
+
         NativeMethods.EnumWindows(
             Function(hWnd As IntPtr, _lParam As IntPtr) As Boolean
                 If Not NativeMethods.IsWindowVisible(hWnd) Then
                     Return True
                 End If
+                If NativeMethods.IsIconic(hWnd) Then
+                    Return True
+                End If
+
                 Dim sb As New StringBuilder(512)
                 NativeMethods.GetWindowText(hWnd, sb, sb.Capacity)
                 Dim title As String = sb.ToString()
-                If title.IndexOf(windowTitle, StringComparison.OrdinalIgnoreCase) >= 0 Then
-                    found = hWnd
-                    Return False
+                If title.IndexOf(needle, StringComparison.OrdinalIgnoreCase) < 0 Then
+                    Return True
                 End If
+
+                Dim pid As UInteger = 0UI
+                NativeMethods.GetWindowThreadProcessId(hWnd, pid)
+                If CInt(pid) = myPid Then
+                    Return True
+                End If
+
+                Dim rc As NativeMethods.RECT
+                If Not NativeMethods.GetClientRect(hWnd, rc) Then
+                    Return True
+                End If
+
+                Dim w As Integer = Math.Max(0, rc.Right - rc.Left)
+                Dim h As Integer = Math.Max(0, rc.Bottom - rc.Top)
+                If w = 0 OrElse h = 0 Then
+                    Return True
+                End If
+
+                Dim score As Long = CLng(w) * CLng(h)
+                If title.Equals(needle, StringComparison.OrdinalIgnoreCase) Then
+                    score += 1000000000000L
+                End If
+                If score > bestScore Then
+                    bestScore = score
+                    best = hWnd
+                End If
+
                 Return True
             End Function, IntPtr.Zero)
-        Return found
+        Return best
     End Function
 
     Public Shared Function TryGetClientScreenRect(windowTitle As String, ByRef rect As Rectangle) As Boolean
@@ -720,29 +909,89 @@ Public Class BotEngine
         Dim bmp As New Bitmap(width, height, PixelFormat.Format24bppRgb)
 
         Try
-            Using g As Graphics = Graphics.FromImage(bmp)
-                Dim hdc As IntPtr = g.GetHdc()
-                Dim ok As Boolean = NativeMethods.PrintWindow(hwnd, hdc, NativeMethods.PW_CLIENTONLY)
-                g.ReleaseHdc(hdc)
-                If ok Then
-                    Return bmp
-                End If
-            End Using
-
-            Dim pt As New NativeMethods.POINT With {.X = 0, .Y = 0}
-            If Not NativeMethods.ClientToScreen(hwnd, pt) Then
-                bmp.Dispose()
-                Return Nothing
+            If TryCaptureWithPrintWindow(hwnd, bmp, NativeMethods.PW_CLIENTONLY) Then
+                Return bmp
             End If
 
-            Using g As Graphics = Graphics.FromImage(bmp)
-                g.CopyFromScreen(pt.X, pt.Y, 0, 0, New Size(width, height))
-            End Using
-            Return bmp
+            If TryCaptureWithPrintWindow(hwnd, bmp, NativeMethods.PW_RENDERFULLCONTENT) Then
+                Return bmp
+            End If
+
+            If TryCaptureWithPrintWindow(hwnd, bmp, NativeMethods.PW_CLIENTONLY Or NativeMethods.PW_RENDERFULLCONTENT) Then
+                Return bmp
+            End If
+
+            If TryCaptureWithPrintWindow(hwnd, bmp, 0UI) Then
+                Return bmp
+            End If
+
+            If TryCaptureWithCopyFromScreen(hwnd, bmp, width, height) Then
+                Return bmp
+            End If
+
+            Thread.Sleep(10)
+            If TryCaptureWithCopyFromScreen(hwnd, bmp, width, height) Then
+                Return bmp
+            End If
+
+            bmp.Dispose()
+            Return Nothing
         Catch
             bmp.Dispose()
             Return Nothing
         End Try
+    End Function
+
+    Private Shared Function TryCaptureWithPrintWindow(hwnd As IntPtr, bmp As Bitmap, flags As UInteger) As Boolean
+        Using g As Graphics = Graphics.FromImage(bmp)
+            Dim hdc As IntPtr = g.GetHdc()
+            Try
+                Dim ok As Boolean = NativeMethods.PrintWindow(hwnd, hdc, flags)
+                Return ok AndAlso (Not IsLikelyBlackFrame(bmp))
+            Finally
+                g.ReleaseHdc(hdc)
+            End Try
+        End Using
+    End Function
+
+    Private Shared Function TryCaptureWithCopyFromScreen(hwnd As IntPtr, bmp As Bitmap, width As Integer, height As Integer) As Boolean
+        Dim pt As New NativeMethods.POINT With {.X = 0, .Y = 0}
+        If Not NativeMethods.ClientToScreen(hwnd, pt) Then
+            Return False
+        End If
+
+        Using g As Graphics = Graphics.FromImage(bmp)
+            g.CopyFromScreen(pt.X, pt.Y, 0, 0, New Size(width, height), CopyPixelOperation.SourceCopy Or NativeMethods.CAPTUREBLT)
+        End Using
+        Return Not IsLikelyBlackFrame(bmp)
+    End Function
+
+    Private Shared Function IsLikelyBlackFrame(bmp As Bitmap) As Boolean
+        Dim stepX As Integer = Math.Max(1, bmp.Width \ 10)
+        Dim stepY As Integer = Math.Max(1, bmp.Height \ 10)
+        Dim samples As Integer = 0
+        Dim darkSamples As Integer = 0
+        Dim sumLuma As Long = 0
+
+        For y As Integer = 0 To bmp.Height - 1 Step stepY
+            For x As Integer = 0 To bmp.Width - 1 Step stepX
+                Dim c As Color = bmp.GetPixel(x, y)
+                samples += 1
+                Dim luma As Integer = (CInt(c.R) * 30 + CInt(c.G) * 59 + CInt(c.B) * 11) \ 100
+                sumLuma += luma
+                If luma <= 8 Then
+                    darkSamples += 1
+                End If
+            Next
+        Next
+
+        If samples = 0 Then
+            Return True
+        End If
+
+        Dim darkRatio As Double = darkSamples / CDbl(samples)
+        Dim avgLuma As Double = sumLuma / CDbl(samples)
+        Return darkRatio >= 0.96 AndAlso avgLuma <= 10.0
     End Function
 
     Private Shared Function ComputeBarPercent(frame As Bitmap, region As RectRegion, isHp As Boolean) As Double
@@ -761,7 +1010,7 @@ Public Class BotEngine
             rect.Height -= 2
         End If
 
-        Dim columnMinPixels As Integer = Math.Max(1, CInt(Math.Ceiling(rect.Height * 0.12)))
+        Dim columnMinPixels As Integer = Math.Max(1, CInt(Math.Ceiling(rect.Height * 0.1)))
         Dim gapTolerance As Integer = Math.Max(2, CInt(Math.Ceiling(rect.Width * 0.02)))
         Dim rightMost As Integer = -1
         Dim activeStarted As Boolean = False
@@ -797,9 +1046,139 @@ Public Class BotEngine
         Next
 
         If rightMost < 0 OrElse rect.Width <= 0 Then
+            Return ComputeBarPercentAdaptive(frame, rect, isHp)
+        End If
+
+        Dim colorPercent As Double = Math.Max(0, Math.Min(100, (rightMost + 1) * 100.0 / rect.Width))
+        If colorPercent < 2.0 Then
+            Dim adaptive As Double = ComputeBarPercentAdaptive(frame, rect, isHp)
+            If adaptive > colorPercent Then
+                Return adaptive
+            End If
+        End If
+        Return colorPercent
+    End Function
+
+    Private Shared Function ComputeBarPercentAdaptive(frame As Bitmap, rect As Rectangle, isHp As Boolean) As Double
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then
+            Return 0
+        End If
+
+        Dim scores(rect.Width - 1) As Long
+        Dim maxScore As Long = 0
+
+        For x As Integer = 0 To rect.Width - 1
+            Dim score As Long = 0
+            Dim px As Integer = rect.Left + x
+            For y As Integer = rect.Top To rect.Bottom - 1
+                Dim c As Color = frame.GetPixel(px, y)
+                Dim r As Integer = CInt(c.R)
+                Dim g As Integer = CInt(c.G)
+                Dim b As Integer = CInt(c.B)
+                Dim dominance As Integer
+                If isHp Then
+                    dominance = r - ((g + b) \ 2)
+                Else
+                    dominance = b - ((r + g) \ 2)
+                End If
+                If dominance > 0 Then
+                    score += dominance
+                End If
+            Next
+            scores(x) = score
+            If score > maxScore Then
+                maxScore = score
+            End If
+        Next
+
+        If maxScore <= 0 Then
+            Return 0
+        End If
+
+        Dim threshold As Long = Math.Max(CLng(Math.Round(maxScore * 0.24R)), Math.Max(8L, CLng(rect.Height) * 3L))
+        Dim localGapTolerance As Integer = Math.Max(2, CInt(Math.Ceiling(rect.Width * 0.03)))
+        Dim rightMost As Integer = -1
+        Dim activeStarted As Boolean = False
+        Dim gapCount As Integer = 0
+
+        For x As Integer = 0 To rect.Width - 1
+            Dim isActive As Boolean = scores(x) >= threshold
+            If isActive Then
+                activeStarted = True
+                rightMost = x
+                gapCount = 0
+            ElseIf activeStarted Then
+                gapCount += 1
+                If gapCount > localGapTolerance Then
+                    Exit For
+                End If
+            End If
+        Next
+
+        If rightMost < 0 Then
             Return 0
         End If
         Return Math.Max(0, Math.Min(100, (rightMost + 1) * 100.0 / rect.Width))
+    End Function
+
+    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion)
+        hpBar = CloneRegion(cfg.HpBar)
+        mpBar = CloneRegion(cfg.MpBar)
+        mobNameRect = CloneRegion(cfg.MobNameRect)
+        mobHpRect = CloneRegion(cfg.MobHpRect)
+
+        If frameWidth <= 0 OrElse frameHeight <= 0 Then
+            Exit Sub
+        End If
+        If Not IsDefaultVisionLayout(cfg) Then
+            Exit Sub
+        End If
+        If frameWidth = BaseClientWidth AndAlso frameHeight = BaseClientHeight Then
+            Exit Sub
+        End If
+
+        Dim sx As Double = frameWidth / CDbl(BaseClientWidth)
+        Dim sy As Double = frameHeight / CDbl(BaseClientHeight)
+        hpBar = ScaleRegionLeftTop(cfg.HpBar, sx, sy)
+        mpBar = ScaleRegionLeftTop(cfg.MpBar, sx, sy)
+        mobNameRect = ScaleRegionRightTop(cfg.MobNameRect, sx, sy, frameWidth)
+        mobHpRect = ScaleRegionRightTop(cfg.MobHpRect, sx, sy, frameWidth)
+    End Sub
+
+    Private Shared Function IsDefaultVisionLayout(cfg As BotConfig) As Boolean
+        Return SameRegion(cfg.HpBar, New RectRegion(11, 25, 151, 11)) AndAlso
+               SameRegion(cfg.MpBar, New RectRegion(3, 40, 161, 11)) AndAlso
+               SameRegion(cfg.MobNameRect, New RectRegion(862, 0, 162, 23)) AndAlso
+               SameRegion(cfg.MobHpRect, New RectRegion(859, 20, 165, 11))
+    End Function
+
+    Private Shared Function SameRegion(a As RectRegion, b As RectRegion) As Boolean
+        Return a IsNot Nothing AndAlso b IsNot Nothing AndAlso a.X = b.X AndAlso a.Y = b.Y AndAlso a.W = b.W AndAlso a.H = b.H
+    End Function
+
+    Private Shared Function CloneRegion(src As RectRegion) As RectRegion
+        If src Is Nothing Then
+            Return New RectRegion(0, 0, 1, 1)
+        End If
+        Return New RectRegion(src.X, src.Y, Math.Max(1, src.W), Math.Max(1, src.H))
+    End Function
+
+    Private Shared Function ScaleRegionLeftTop(src As RectRegion, sx As Double, sy As Double) As RectRegion
+        Return New RectRegion(
+            CInt(Math.Round(src.X * sx)),
+            CInt(Math.Round(src.Y * sy)),
+            Math.Max(1, CInt(Math.Round(src.W * sx))),
+            Math.Max(1, CInt(Math.Round(src.H * sy))))
+    End Function
+
+    Private Shared Function ScaleRegionRightTop(src As RectRegion, sx As Double, sy As Double, frameWidth As Integer) As RectRegion
+        Dim scaledW As Integer = Math.Max(1, CInt(Math.Round(src.W * sx)))
+        Dim scaledH As Integer = Math.Max(1, CInt(Math.Round(src.H * sy)))
+        Dim baseMarginRight As Integer = Math.Max(0, BaseClientWidth - (src.X + src.W))
+        Dim scaledMarginRight As Integer = Math.Max(0, CInt(Math.Round(baseMarginRight * sx)))
+        Dim scaledX As Integer = Math.Max(0, frameWidth - scaledMarginRight - scaledW)
+        Dim scaledY As Integer = CInt(Math.Round(src.Y * sy))
+        Return New RectRegion(scaledX, scaledY, scaledW, scaledH)
     End Function
 
     Private Shared Function IsHpColor(c As Color) As Boolean
