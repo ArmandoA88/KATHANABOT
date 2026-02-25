@@ -327,7 +327,7 @@ Public Class Form1
         dgvRegions.Rows.Add("hp_bar", "11", "25", "151", "11")
         dgvRegions.Rows.Add("mp_bar", "3", "40", "161", "11")
         dgvRegions.Rows.Add("mob_name_rect", "862", "0", "162", "23")
-        dgvRegions.Rows.Add("mob_hp_rect", "857", "24", "165", "11")
+        dgvRegions.Rows.Add("mob_hp_rect", "859", "20", "165", "11")
         nudMobHpThreshold.Value = 1.0D
 
         Dim keyIndex As Integer = 1

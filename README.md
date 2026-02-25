@@ -55,7 +55,7 @@ Use this baseline if calibration is reset:
 - `hp_bar`: `x=11, y=25, w=151, h=11`
 - `mp_bar`: `x=3, y=40, w=161, h=11`
 - `mob_name_rect`: `x=862, y=0, w=162, h=23`
-- `mob_hp_rect`: `x=857, y=24, w=165, h=11`
+- `mob_hp_rect`: `x=859, y=20, w=165, h=11`
 
 ## Notes
 

@@ -52,7 +52,7 @@ Public Class BotConfig
     Public Property HpBar As RectRegion = New RectRegion(11, 25, 151, 11)
     Public Property MpBar As RectRegion = New RectRegion(3, 40, 161, 11)
     Public Property MobNameRect As RectRegion = New RectRegion(862, 0, 162, 23)
-    Public Property MobHpRect As RectRegion = New RectRegion(857, 24, 165, 11)
+    Public Property MobHpRect As RectRegion = New RectRegion(859, 20, 165, 11)
     Public Property BypassHpMpLimits As Boolean = False
     Public Property BypassStuckTarget As Boolean = False
     Public Property StuckTargetMs As Integer = 2200
