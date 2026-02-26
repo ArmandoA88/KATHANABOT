@@ -500,6 +500,8 @@ Public Class Form1
         dgvRegions.Rows.Add("mob_name_rect", "862", "0", "162", "23")
         dgvRegions.Rows.Add("mob_hp_rect", "859", "20", "165", "11")
         dgvRegions.Rows.Add("prana_exp_rect", "472", "745", "78", "21")
+        dgvRegions.Rows.Add("party_invite_scan_rect", "349", "318", "328", "124")
+        dgvRegions.Rows.Add("party_invite_ok_rect", "463", "410", "59", "21")
         nudMobHpThreshold.Value = 1.0D
         nudRetargetMs.Value = 550D
 
@@ -875,6 +877,8 @@ Public Class Form1
         cfg.MobNameRect = BuildRect("mob_name_rect")
         cfg.MobHpRect = BuildRect("mob_hp_rect")
         cfg.PranaExpRect = BuildRect("prana_exp_rect")
+        cfg.PartyInviteScanRect = BuildRect("party_invite_scan_rect")
+        cfg.PartyInviteOkRect = BuildRect("party_invite_ok_rect")
         cfg.LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked)
         cfg.LootPickupIntervalMs = CInt(Math.Round(CDbl(If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value, 4D)) * 1000.0))
         cfg.LootPickupVerifyDelayMs = 200

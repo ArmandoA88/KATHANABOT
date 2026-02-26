@@ -95,6 +95,8 @@ Public Class CalibrationOverlayForm
         DrawRegion(e.Graphics, "mob_name_rect", _currentConfig.MobNameRect, Color.FromArgb(170, 250, 230, 80), "Mob Name")
         DrawRegion(e.Graphics, "mob_hp_rect", _currentConfig.MobHpRect, Color.FromArgb(170, 255, 140, 60), "Mob HP")
         DrawRegion(e.Graphics, "prana_exp_rect", _currentConfig.PranaExpRect, Color.FromArgb(170, 160, 220, 90), "Prana/EXP")
+        DrawRegion(e.Graphics, "party_invite_scan_rect", _currentConfig.PartyInviteScanRect, Color.FromArgb(170, 180, 120, 240), "Party Scan")
+        DrawRegion(e.Graphics, "party_invite_ok_rect", _currentConfig.PartyInviteOkRect, Color.FromArgb(170, 120, 220, 160), "Party OK")
 
         Dim tipRect As New Rectangle(8, 8, 520, 20)
         Using b As New SolidBrush(Color.FromArgb(185, 0, 0, 0))
@@ -228,7 +230,7 @@ Public Class CalibrationOverlayForm
     End Sub
 
     Private Function HitTestRegion(pt As System.Drawing.Point) As String
-        Dim keys As String() = {"prana_exp_rect", "mob_hp_rect", "mob_name_rect", "mp_bar", "hp_bar"}
+        Dim keys As String() = {"party_invite_ok_rect", "party_invite_scan_rect", "prana_exp_rect", "mob_hp_rect", "mob_name_rect", "mp_bar", "hp_bar"}
         For Each key In keys
             Dim rect As System.Drawing.Rectangle = GetRegionRect(key)
             If GetResizeHandleRect(rect).Contains(pt) OrElse rect.Contains(pt) Then
@@ -266,6 +268,10 @@ Public Class CalibrationOverlayForm
                 Return _currentConfig.MobHpRect
             Case "prana_exp_rect"
                 Return _currentConfig.PranaExpRect
+            Case "party_invite_scan_rect"
+                Return _currentConfig.PartyInviteScanRect
+            Case "party_invite_ok_rect"
+                Return _currentConfig.PartyInviteOkRect
             Case Else
                 Return Nothing
         End Select
@@ -283,6 +289,10 @@ Public Class CalibrationOverlayForm
                 _currentConfig.MobHpRect = value
             Case "prana_exp_rect"
                 _currentConfig.PranaExpRect = value
+            Case "party_invite_scan_rect"
+                _currentConfig.PartyInviteScanRect = value
+            Case "party_invite_ok_rect"
+                _currentConfig.PartyInviteOkRect = value
         End Select
     End Sub
 
@@ -301,6 +311,8 @@ Public Class CalibrationOverlayForm
         cfg.MobNameRect = CloneRegion(src.MobNameRect)
         cfg.MobHpRect = CloneRegion(src.MobHpRect)
         cfg.PranaExpRect = CloneRegion(src.PranaExpRect)
+        cfg.PartyInviteScanRect = CloneRegion(src.PartyInviteScanRect)
+        cfg.PartyInviteOkRect = CloneRegion(src.PartyInviteOkRect)
         Return cfg
     End Function
 

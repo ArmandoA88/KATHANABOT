@@ -56,6 +56,8 @@ Public Class BotConfig
     Public Property MobNameRect As RectRegion = New RectRegion(862, 0, 162, 23)
     Public Property MobHpRect As RectRegion = New RectRegion(859, 20, 165, 11)
     Public Property PranaExpRect As RectRegion = New RectRegion(472, 745, 78, 21)
+    Public Property PartyInviteScanRect As RectRegion = New RectRegion(349, 318, 328, 124)
+    Public Property PartyInviteOkRect As RectRegion = New RectRegion(463, 410, 59, 21)
     Public Property BypassHpMpLimits As Boolean = False
     Public Property BypassStuckTarget As Boolean = True
     Public Property StuckTargetMs As Integer = 2200
@@ -120,6 +122,10 @@ Friend Module NativeMethods
     Friend Const CAPTUREBLT As CopyPixelOperation = CType(&H40000000, CopyPixelOperation)
     Friend Const WM_KEYDOWN As Integer = &H100
     Friend Const WM_KEYUP As Integer = &H101
+    Friend Const WM_MOUSEMOVE As Integer = &H200
+    Friend Const WM_LBUTTONDOWN As Integer = &H201
+    Friend Const WM_LBUTTONUP As Integer = &H202
+    Friend Const MK_LBUTTON As Integer = &H1
 
     <StructLayout(LayoutKind.Sequential)>
     Friend Structure POINT
@@ -365,7 +371,9 @@ Public Class BotEngine
             Dim mobNameRegion As New RectRegion(0, 0, 1, 1)
             Dim mobHpRegion As New RectRegion(0, 0, 1, 1)
             Dim pranaExpRegion As New RectRegion(0, 0, 1, 1)
-            ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, pranaExpRegion)
+            Dim partyInviteScanRegion As New RectRegion(0, 0, 1, 1)
+            Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
+            ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, pranaExpRegion, partyInviteScanRegion, partyInviteOkRegion)
 
             Dim hpPct As Double = ComputeBarPercent(frame, hpRegion, True)
             Dim mpPct As Double = ComputeBarPercent(frame, mpRegion, False)
@@ -382,7 +390,7 @@ Public Class BotEngine
                         Exit For
                     End If
 
-                    ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, pranaExpRegion)
+                    ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, pranaExpRegion, partyInviteScanRegion, partyInviteOkRegion)
                     hpPct = ComputeBarPercent(frame, hpRegion, True)
                     mpPct = ComputeBarPercent(frame, mpRegion, False)
                     mobHpPct = ComputeBarPercent(frame, mobHpRegion, True)
@@ -424,7 +432,7 @@ Public Class BotEngine
             TrackMobHpMovement(targetValid, mobHpPct, now)
 
             Dim reason As String = ""
-            Dim actionSent As Boolean = TryHandlePartyInvite(cfg, hwnd, frame, now)
+            Dim actionSent As Boolean = TryHandlePartyInvite(cfg, hwnd, frame, now, partyInviteScanRegion, partyInviteOkRegion)
             If actionSent Then
                 reason = "Party invite detected and accepted."
             End If
@@ -697,7 +705,9 @@ Public Class BotEngine
             Dim mobNameRegion As New RectRegion(0, 0, 1, 1)
             Dim mobHpRegion As New RectRegion(0, 0, 1, 1)
             Dim pranaExpRegion As New RectRegion(0, 0, 1, 1)
-            ResolveVisionRegions(cfg, verifyFrame.Width, verifyFrame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, pranaExpRegion)
+            Dim partyInviteScanRegion As New RectRegion(0, 0, 1, 1)
+            Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
+            ResolveVisionRegions(cfg, verifyFrame.Width, verifyFrame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, pranaExpRegion, partyInviteScanRegion, partyInviteOkRegion)
 
             Dim selectedName As String = ReadMobNameIfNeeded(verifyFrame, mobNameRegion, DateTime.UtcNow, True)
             If IsAllowedLootName(selectedName, cfg.LootAllowedNames) Then
@@ -804,7 +814,7 @@ Public Class BotEngine
         Return _lastExpPerHour
     End Function
 
-    Private Function TryHandlePartyInvite(cfg As BotConfig, hwnd As IntPtr, frame As Bitmap, now As DateTime) As Boolean
+    Private Function TryHandlePartyInvite(cfg As BotConfig, hwnd As IntPtr, frame As Bitmap, now As DateTime, partyInviteScanRegion As RectRegion, partyInviteOkRegion As RectRegion) As Boolean
         If cfg Is Nothing OrElse (Not cfg.PartyAutoAcceptEnabled) Then
             _lastPartyInviteCandidate = ""
             Return False
@@ -826,9 +836,9 @@ Public Class BotEngine
         End If
 
         If IsPartyInvitePrompt(_lastPartyInviteCandidate) Then
-            If SendKey(hwnd, "ENTER", 35) Then
+            If ClickClientRegionCenter(hwnd, partyInviteOkRegion, frame.Width, frame.Height) Then
                 _lastPartyInviteAccept = now
-                SetLastAction($"ENTER (party invite accepted: {If(String.IsNullOrWhiteSpace(_lastPartyInviteCandidate), "detected", _lastPartyInviteCandidate)})")
+                SetLastAction($"Click OK (party invite accepted: {If(String.IsNullOrWhiteSpace(_lastPartyInviteCandidate), "detected", _lastPartyInviteCandidate)})")
                 RaiseEvent LogLine("Party invite detected and auto-accepted.")
                 _lastPartyInviteCandidate = ""
                 Return True
@@ -843,7 +853,7 @@ Public Class BotEngine
             Return False
         End If
 
-        Dim rect As Rectangle = BuildPartyInviteTextRect(frame.Width, frame.Height)
+        Dim rect As Rectangle = partyInviteScanRegion.Clamp(frame.Width, frame.Height)
         If rect.Width <= 1 OrElse rect.Height <= 1 Then
             Return False
         End If
@@ -870,19 +880,6 @@ Public Class BotEngine
         End Try
 
         Return False
-    End Function
-
-    Private Shared Function BuildPartyInviteTextRect(frameWidth As Integer, frameHeight As Integer) As Rectangle
-        Dim x As Integer = CInt(Math.Round(frameWidth * 0.12))
-        Dim y As Integer = CInt(Math.Round(frameHeight * 0.15))
-        Dim w As Integer = CInt(Math.Round(frameWidth * 0.76))
-        Dim h As Integer = CInt(Math.Round(frameHeight * 0.24))
-
-        x = Math.Max(0, Math.Min(Math.Max(0, frameWidth - 1), x))
-        y = Math.Max(0, Math.Min(Math.Max(0, frameHeight - 1), y))
-        w = Math.Max(1, Math.Min(w, Math.Max(1, frameWidth - x)))
-        h = Math.Max(1, Math.Min(h, Math.Max(1, frameHeight - y)))
-        Return New Rectangle(x, y, w, h)
     End Function
 
     Private Shared Function IsPartyInvitePrompt(rawText As String) As Boolean
@@ -1575,12 +1572,14 @@ Public Class BotEngine
         Return colored / CDbl(total)
     End Function
 
-    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef pranaExpRect As RectRegion)
+    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef pranaExpRect As RectRegion, ByRef partyInviteScanRect As RectRegion, ByRef partyInviteOkRect As RectRegion)
         hpBar = CloneRegion(cfg.HpBar)
         mpBar = CloneRegion(cfg.MpBar)
         mobNameRect = CloneRegion(cfg.MobNameRect)
         mobHpRect = CloneRegion(cfg.MobHpRect)
         pranaExpRect = CloneRegion(cfg.PranaExpRect)
+        partyInviteScanRect = CloneRegion(cfg.PartyInviteScanRect)
+        partyInviteOkRect = CloneRegion(cfg.PartyInviteOkRect)
 
         If frameWidth <= 0 OrElse frameHeight <= 0 Then
             Exit Sub
@@ -1599,6 +1598,8 @@ Public Class BotEngine
         mobNameRect = ScaleRegionRightTop(cfg.MobNameRect, sx, sy, frameWidth)
         mobHpRect = ScaleRegionRightTop(cfg.MobHpRect, sx, sy, frameWidth)
         pranaExpRect = ScaleRegionLeftTop(cfg.PranaExpRect, sx, sy)
+        partyInviteScanRect = ScaleRegionLeftTop(cfg.PartyInviteScanRect, sx, sy)
+        partyInviteOkRect = ScaleRegionLeftTop(cfg.PartyInviteOkRect, sx, sy)
     End Sub
 
     Private Shared Function IsDefaultVisionLayout(cfg As BotConfig) As Boolean
@@ -1606,7 +1607,9 @@ Public Class BotEngine
                SameRegion(cfg.MpBar, New RectRegion(3, 40, 161, 11)) AndAlso
                SameRegion(cfg.MobNameRect, New RectRegion(862, 0, 162, 23)) AndAlso
                SameRegion(cfg.MobHpRect, New RectRegion(859, 20, 165, 11)) AndAlso
-               SameRegion(cfg.PranaExpRect, New RectRegion(472, 745, 78, 21))
+               SameRegion(cfg.PranaExpRect, New RectRegion(472, 745, 78, 21)) AndAlso
+               SameRegion(cfg.PartyInviteScanRect, New RectRegion(349, 318, 328, 124)) AndAlso
+               SameRegion(cfg.PartyInviteOkRect, New RectRegion(463, 410, 59, 21))
     End Function
 
     Private Shared Function SameRegion(a As RectRegion, b As RectRegion) As Boolean
@@ -1682,6 +1685,39 @@ Public Class BotEngine
             NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_KEYDOWN), New IntPtr(vk), New IntPtr(lparamDown))
             Thread.Sleep(Math.Max(5, pressMs))
             NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_KEYUP), New IntPtr(vk), New IntPtr(lparamUp))
+            Return True
+        Catch
+            Return False
+        End Try
+    End Function
+
+    Public Shared Function ClickClientRegionCenter(hwnd As IntPtr, region As RectRegion, clientWidth As Integer, clientHeight As Integer) As Boolean
+        If hwnd = IntPtr.Zero OrElse region Is Nothing Then
+            Return False
+        End If
+
+        Dim rect As Rectangle = region.Clamp(Math.Max(1, clientWidth), Math.Max(1, clientHeight))
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then
+            Return False
+        End If
+
+        Dim x As Integer = rect.Left + (rect.Width \ 2)
+        Dim y As Integer = rect.Top + (rect.Height \ 2)
+        Return ClickClientPoint(hwnd, x, y)
+    End Function
+
+    Public Shared Function ClickClientPoint(hwnd As IntPtr, x As Integer, y As Integer) As Boolean
+        If hwnd = IntPtr.Zero Then
+            Return False
+        End If
+
+        Dim lParam As Integer = (x And &HFFFF) Or ((y And &HFFFF) << 16)
+        Try
+            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_MOUSEMOVE), IntPtr.Zero, New IntPtr(lParam))
+            Thread.Sleep(10)
+            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_LBUTTONDOWN), New IntPtr(NativeMethods.MK_LBUTTON), New IntPtr(lParam))
+            Thread.Sleep(25)
+            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_LBUTTONUP), IntPtr.Zero, New IntPtr(lParam))
             Return True
         Catch
             Return False
