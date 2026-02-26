@@ -1,5 +1,7 @@
 Imports System.Media
+Imports System.Net.Http
 Imports System.Runtime.InteropServices
+Imports System.Text
 Imports System.Threading
 Imports System.Threading.Tasks
 
@@ -20,26 +22,33 @@ Public Class Form1
 
     Private dgvCombat As DataGridView
     Private chkMonsterFilter As CheckBox
+    Private chkLootPickup As CheckBox
+    Private nudLootPickupSeconds As NumericUpDown
     Private lstMonsterFilter As ListBox
+    Private lstLootFilter As ListBox
     Private txtMonsterName As TextBox
+    Private txtLootName As TextBox
 
     Private lblState As Label
     Private lblSystem As Label
     Private lblHp As Label
     Private lblMp As Label
     Private lblMobName As Label
+    Private lblExpRate As Label
     Private btnAttack As Button
     Private btnSaveSettings As Button
     Private btnStopBot As Button
     Private btnBypassLimits As Button
     Private btnBypassStuck As Button
     Private btnRetargetNow As Button
+    Private btnPartyAutoAccept As Button
     Private rtbLog As RichTextBox
     Private txtDiagnostics As TextBox
 
     Private nudAutoPotHp As NumericUpDown
     Private nudAutoPotMp As NumericUpDown
     Private nudAlarmVolume As NumericUpDown
+    Private txtNtfyTopic As TextBox
 
     Private _lastAction As String = ""
     Private _lastState As String = ""
@@ -47,12 +56,20 @@ Public Class Form1
     Private _lastNoAttackReason As String = ""
     Private _bypassHpMpLimits As Boolean = False
     Private _bypassStuckTarget As Boolean = True
+    Private _partyAutoAccept As Boolean = True
     Private _overlayForm As CalibrationOverlayForm
     Private _autoStarted As Boolean = False
     Private _alarmVolumePercent As Integer = 85
     Private _hpZeroAlarmActive As Boolean = False
+    Private _hpZeroPending As Boolean = False
     Private _hpAlarmCts As CancellationTokenSource = Nothing
     Private _hpAlarmTask As Task = Nothing
+    Private _hpPendingCts As CancellationTokenSource = Nothing
+    Private _hpPendingTask As Task = Nothing
+    Private _lastHpZeroNotification As DateTime = DateTime.MinValue
+    Private Const HpZeroAlarmGraceMs As Integer = 60000
+    Private Const DefaultNtfyTopicName As String = "Katana12345"
+    Private Shared ReadOnly NtfyClient As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(7)}
 
     <DllImport("winmm.dll")>
     Private Shared Function waveOutGetVolume(hwo As IntPtr, ByRef dwVolume As UInteger) As Integer
@@ -66,6 +83,7 @@ Public Class Form1
         InitializeComponent()
         BuildUi()
         SeedDefaults()
+        SetupLiveConfigBindings()
         ApplyDarkTheme(Me)
 
         AddHandler _engine.StatusUpdated, AddressOf OnEngineStatusUpdated
@@ -74,6 +92,50 @@ Public Class Form1
         _uiTimer.Interval = 1000
         AddHandler _uiTimer.Tick, AddressOf UiTimerTick
         _uiTimer.Start()
+    End Sub
+
+    Private Sub SetupLiveConfigBindings()
+        AddHandler txtWindowTitle.TextChanged, AddressOf LiveConfigChanged
+        If txtNtfyTopic IsNot Nothing Then
+            AddHandler txtNtfyTopic.TextChanged, AddressOf LiveConfigChanged
+        End If
+        AddHandler nudLoopMs.ValueChanged, AddressOf LiveConfigChanged
+        AddHandler nudRetargetMs.ValueChanged, AddressOf LiveConfigChanged
+        AddHandler nudMobHpThreshold.ValueChanged, AddressOf LiveConfigChanged
+        AddHandler nudAutoPotHp.ValueChanged, AddressOf LiveConfigChanged
+        AddHandler nudAutoPotMp.ValueChanged, AddressOf LiveConfigChanged
+        AddHandler nudAlarmVolume.ValueChanged, AddressOf LiveConfigChanged
+        AddHandler chkMonsterFilter.CheckedChanged, AddressOf LiveConfigChanged
+        AddHandler chkLootPickup.CheckedChanged, AddressOf LiveConfigChanged
+        AddHandler nudLootPickupSeconds.ValueChanged, AddressOf LiveConfigChanged
+        AddHandler dgvCombat.CellValueChanged, AddressOf LiveConfigChanged
+        AddHandler dgvCombat.CellEndEdit, AddressOf LiveConfigChanged
+        AddHandler dgvRegions.CellValueChanged, AddressOf LiveConfigChanged
+        AddHandler dgvRegions.CellEndEdit, AddressOf LiveConfigChanged
+        AddHandler dgvCombat.CurrentCellDirtyStateChanged,
+            Sub(_s As Object, _e As EventArgs)
+                If dgvCombat.IsCurrentCellDirty Then
+                    dgvCombat.CommitEdit(DataGridViewDataErrorContexts.Commit)
+                End If
+            End Sub
+    End Sub
+
+    Private Sub LiveConfigChanged(_sender As Object, _e As EventArgs)
+        PushLiveConfig()
+    End Sub
+
+    Private Sub PushLiveConfig()
+        If dgvCombat IsNot Nothing AndAlso dgvCombat.IsCurrentCellInEditMode Then
+            Return
+        End If
+        If dgvRegions IsNot Nothing AndAlso dgvRegions.IsCurrentCellInEditMode Then
+            Return
+        End If
+
+        Try
+            _engine.UpdateConfig(BuildConfig())
+        Catch
+        End Try
     End Sub
 
     Private Sub BuildUi()
@@ -105,7 +167,7 @@ Public Class Form1
         left.RowStyles.Add(New RowStyle(SizeType.Percent, 72.0F))
         left.RowStyles.Add(New RowStyle(SizeType.Percent, 28.0F))
         left.Controls.Add(BuildCombatSkillsGroup(), 0, 0)
-        left.Controls.Add(BuildMonsterFilterGroup(), 0, 1)
+        left.Controls.Add(BuildFiltersPanel(), 0, 1)
 
         root.Controls.Add(left, 0, 0)
         root.Controls.Add(BuildCenterControlPanel(), 1, 0)
@@ -141,7 +203,7 @@ Public Class Form1
         generalLayout.Controls.Add(nudLoopMs, 1, 1)
 
         generalLayout.Controls.Add(New Label() With {.Text = "Retarget (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 2, 1)
-        nudRetargetMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 100, .Maximum = 5000, .Value = 700}
+        nudRetargetMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 100, .Maximum = 5000, .Value = 550}
         generalLayout.Controls.Add(nudRetargetMs, 3, 1)
 
         generalLayout.Controls.Add(New Label() With {.Text = "Mob HP Presence %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
@@ -185,11 +247,12 @@ Public Class Form1
 
     Private Function BuildAutoPotTab() As TabPage
         Dim tab As New TabPage("Auto-Pot") With {.BackColor = Color.FromArgb(20, 20, 20)}
-        Dim group As New GroupBox() With {.Text = "Quick Pot Thresholds", .Dock = DockStyle.Top, .Height = 190, .Padding = New Padding(10)}
-        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 4}
+        Dim group As New GroupBox() With {.Text = "Quick Pot Thresholds", .Dock = DockStyle.Top, .Height = 260, .Padding = New Padding(10)}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 5}
         layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 170.0F))
-        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 160.0F))
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 320.0F))
         layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
@@ -197,10 +260,12 @@ Public Class Form1
 
         layout.Controls.Add(New Label() With {.Text = "Heal Trigger %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
         nudAutoPotHp = New NumericUpDown() With {.Minimum = 1, .Maximum = 99, .Value = 80, .Dock = DockStyle.Fill}
+        AddHandler nudAutoPotHp.ValueChanged, Sub(_s As Object, _e As EventArgs) ApplyQuickAutoPotThresholds(True)
         layout.Controls.Add(nudAutoPotHp, 1, 0)
 
         layout.Controls.Add(New Label() With {.Text = "Mana Trigger %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
         nudAutoPotMp = New NumericUpDown() With {.Minimum = 1, .Maximum = 99, .Value = 35, .Dock = DockStyle.Fill}
+        AddHandler nudAutoPotMp.ValueChanged, Sub(_s As Object, _e As EventArgs) ApplyQuickAutoPotThresholds(True)
         layout.Controls.Add(nudAutoPotMp, 1, 1)
 
         layout.Controls.Add(New Label() With {.Text = "HP=0 Alarm Volume %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
@@ -211,18 +276,25 @@ Public Class Form1
             End Sub
         layout.Controls.Add(nudAlarmVolume, 1, 2)
 
+        layout.Controls.Add(New Label() With {.Text = "ntfy Channel", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 3)
+        txtNtfyTopic = New TextBox() With {.Dock = DockStyle.Fill, .Text = DefaultNtfyTopicName}
+        layout.Controls.Add(txtNtfyTopic, 1, 3)
+
         Dim buttonRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
         Dim btnApply As New Button() With {.Text = "Apply To Heal/Mana Rows", .Width = 170, .Height = 30, .BackColor = Color.FromArgb(42, 120, 80), .ForeColor = Color.White}
         AddHandler btnApply.Click, Sub(_s As Object, _e As EventArgs) ApplyQuickAutoPotThresholds()
-        Dim btnTestAlarm As New Button() With {.Text = "Test HP=0 Alarm", .Width = 130, .Height = 30, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
+        Dim btnTestAlarm As New Button() With {.Text = "Test Alarm + Phone", .Width = 130, .Height = 30, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
         AddHandler btnTestAlarm.Click, AddressOf TestAlarmClicked
+        Dim btnTestPhone As New Button() With {.Text = "Test Phone Alert", .Width = 130, .Height = 30, .BackColor = Color.FromArgb(55, 110, 170), .ForeColor = Color.White}
+        AddHandler btnTestPhone.Click, AddressOf TestPhoneAlertClicked
         buttonRow.Controls.Add(btnApply)
         buttonRow.Controls.Add(btnTestAlarm)
-        layout.Controls.Add(buttonRow, 1, 3)
+        buttonRow.Controls.Add(btnTestPhone)
+        layout.Controls.Add(buttonRow, 1, 4)
 
-        Dim note As New Label() With {.Text = "Alarm sounds when HP reaches 0. Volume can be tuned above.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        Dim note As New Label() With {.Text = "HP alarm triggers only at HP=0. Volume above is loudness only. You can set any ntfy channel above.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
         layout.Controls.Add(note, 2, 0)
-        layout.SetRowSpan(note, 4)
+        layout.SetRowSpan(note, 5)
         group.Controls.Add(layout)
         tab.Controls.Add(group)
         Return tab
@@ -240,7 +312,12 @@ Public Class Form1
         layout.Controls.Add(New Label() With {.Text = "E", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.LightGreen}, 1, 0)
         layout.Controls.Add(New Label() With {.Text = "Retarget Interval (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
 
-        Dim localRetarget As New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 100, .Maximum = 5000, .Value = 700}
+        Dim localRetarget As New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 100, .Maximum = 5000, .Value = 550}
+        AddHandler localRetarget.ValueChanged,
+            Sub(_s As Object, _e As EventArgs)
+                nudRetargetMs.Value = localRetarget.Value
+                PushLiveConfig()
+            End Sub
         layout.Controls.Add(localRetarget, 1, 1)
 
         Dim btnApply As New Button() With {.Text = "Use This Interval", .Width = 160, .BackColor = Color.FromArgb(45, 85, 135), .ForeColor = Color.White}
@@ -278,6 +355,15 @@ Public Class Form1
         Return group
     End Function
 
+    Private Function BuildFiltersPanel() As Control
+        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1, .Margin = New Padding(0)}
+        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
+        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
+        root.Controls.Add(BuildMonsterFilterGroup(), 0, 0)
+        root.Controls.Add(BuildLootFilterGroup(), 1, 0)
+        Return root
+    End Function
+
     Private Function BuildMonsterFilterGroup() As GroupBox
         Dim group As New GroupBox() With {.Text = "Monster Filter", .Dock = DockStyle.Fill}
         Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3}
@@ -286,14 +372,14 @@ Public Class Form1
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 35.0F))
         group.Controls.Add(layout)
 
-        chkMonsterFilter = New CheckBox() With {.Text = "Enable Monster Filter", .Dock = DockStyle.Fill, .Checked = True}
+        chkMonsterFilter = New CheckBox() With {.Text = "Enable Monster Filter (blacklist)", .Dock = DockStyle.Fill, .Checked = True}
         layout.Controls.Add(chkMonsterFilter, 0, 0)
 
         lstMonsterFilter = New ListBox() With {.Dock = DockStyle.Fill}
         layout.Controls.Add(lstMonsterFilter, 0, 1)
 
         Dim actionRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
-        txtMonsterName = New TextBox() With {.Width = 180}
+        txtMonsterName = New TextBox() With {.Width = 140}
         Dim btnAddMonster As New Button() With {.Text = "Add", .Width = 70}
         Dim btnRemoveMonster As New Button() With {.Text = "Remove", .Width = 80}
         AddHandler btnAddMonster.Click, AddressOf AddMonsterClicked
@@ -305,6 +391,40 @@ Public Class Form1
         Return group
     End Function
 
+    Private Function BuildLootFilterGroup() As GroupBox
+        Dim group As New GroupBox() With {.Text = "Loot Filter", .Dock = DockStyle.Fill}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 4}
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 30.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 30.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 35.0F))
+        group.Controls.Add(layout)
+
+        chkLootPickup = New CheckBox() With {.Text = "Enable Loot Pickup (F)", .Dock = DockStyle.Fill, .Checked = False}
+        layout.Controls.Add(chkLootPickup, 0, 0)
+
+        Dim intervalRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
+        intervalRow.Controls.Add(New Label() With {.Text = "Every (sec):", .AutoSize = True, .Padding = New Padding(0, 6, 0, 0)})
+        nudLootPickupSeconds = New NumericUpDown() With {.Minimum = 1, .Maximum = 20, .Value = 4, .Width = 55}
+        intervalRow.Controls.Add(nudLootPickupSeconds)
+        layout.Controls.Add(intervalRow, 0, 1)
+
+        lstLootFilter = New ListBox() With {.Dock = DockStyle.Fill}
+        layout.Controls.Add(lstLootFilter, 0, 2)
+
+        Dim actionRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
+        txtLootName = New TextBox() With {.Width = 140}
+        Dim btnAddLoot As New Button() With {.Text = "Add", .Width = 70}
+        Dim btnRemoveLoot As New Button() With {.Text = "Remove", .Width = 80}
+        AddHandler btnAddLoot.Click, AddressOf AddLootClicked
+        AddHandler btnRemoveLoot.Click, AddressOf RemoveLootClicked
+        actionRow.Controls.Add(txtLootName)
+        actionRow.Controls.Add(btnAddLoot)
+        actionRow.Controls.Add(btnRemoveLoot)
+        layout.Controls.Add(actionRow, 0, 3)
+        Return group
+    End Function
+
     Private Function BuildCenterControlPanel() As Panel
         Dim panel As New Panel() With {.Dock = DockStyle.Fill, .Padding = New Padding(12)}
         lblState = New Label() With {.Text = "Status: Searching for target...", .Top = 16, .Left = 8, .Width = 260, .Height = 22}
@@ -312,37 +432,50 @@ Public Class Form1
         lblHp = New Label() With {.Text = "HP%: 0", .Top = 72, .Left = 8, .Width = 120, .Height = 22, .ForeColor = Color.LimeGreen}
         lblMp = New Label() With {.Text = "MP%: 0", .Top = 72, .Left = 136, .Width = 120, .Height = 22, .ForeColor = Color.DeepSkyBlue}
         lblMobName = New Label() With {.Text = "Mob: (none)", .Top = 96, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.LightSkyBlue}
-        btnAttack = New Button() With {.Text = "Attack", .Top = 126, .Left = 8, .Width = 210, .Height = 42, .BackColor = Color.FromArgb(40, 180, 80), .ForeColor = Color.White}
-        btnSaveSettings = New Button() With {.Text = "Save Settings", .Top = 180, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(55, 55, 55), .ForeColor = Color.White}
-        btnStopBot = New Button() With {.Text = "Stop Bot", .Top = 230, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(20, 130, 210), .ForeColor = Color.White}
-        btnBypassLimits = New Button() With {.Text = "Bypass HP/MP Limits: OFF", .Top = 280, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
+        lblExpRate = New Label() With {.Text = "Prana/EXP: 0.00% | Rate: Calculating (1m)", .Top = 118, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.Khaki}
+        btnAttack = New Button() With {.Text = "Attack", .Top = 150, .Left = 8, .Width = 210, .Height = 42, .BackColor = Color.FromArgb(40, 180, 80), .ForeColor = Color.White}
+        btnSaveSettings = New Button() With {.Text = "Save Settings", .Top = 204, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(55, 55, 55), .ForeColor = Color.White}
+        btnStopBot = New Button() With {.Text = "Stop Bot", .Top = 254, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(20, 130, 210), .ForeColor = Color.White}
+        btnBypassLimits = New Button() With {.Text = "Ignore Skill Min HP/MP: OFF", .Top = 304, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
         btnBypassStuck = New Button() With {
-            .Text = If(_bypassStuckTarget, "Bypass Stuck Target: ON", "Bypass Stuck Target: OFF"),
-            .Top = 330,
+            .Text = If(_bypassStuckTarget, "Auto Retarget If Stuck: ON", "Auto Retarget If Stuck: OFF"),
+            .Top = 354,
             .Left = 8,
             .Width = 210,
             .Height = 38,
             .BackColor = If(_bypassStuckTarget, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
             .ForeColor = Color.White
         }
-        btnRetargetNow = New Button() With {.Text = "Retarget Now (E)", .Top = 380, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
+        btnRetargetNow = New Button() With {.Text = "Retarget Now (E)", .Top = 404, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
+        btnPartyAutoAccept = New Button() With {
+            .Text = If(_partyAutoAccept, "Auto Accept Party Invite: ON", "Auto Accept Party Invite: OFF"),
+            .Top = 454,
+            .Left = 8,
+            .Width = 210,
+            .Height = 38,
+            .BackColor = If(_partyAutoAccept, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
+            .ForeColor = Color.White
+        }
         AddHandler btnAttack.Click, AddressOf StartClicked
         AddHandler btnSaveSettings.Click, AddressOf SaveClicked
         AddHandler btnStopBot.Click, AddressOf StopClicked
         AddHandler btnBypassLimits.Click, AddressOf ToggleBypassLimitsClicked
         AddHandler btnBypassStuck.Click, AddressOf ToggleStuckTargetBypassClicked
         AddHandler btnRetargetNow.Click, AddressOf ManualRetargetClicked
+        AddHandler btnPartyAutoAccept.Click, AddressOf TogglePartyAutoAcceptClicked
         panel.Controls.Add(lblState)
         panel.Controls.Add(lblSystem)
         panel.Controls.Add(lblHp)
         panel.Controls.Add(lblMp)
         panel.Controls.Add(lblMobName)
+        panel.Controls.Add(lblExpRate)
         panel.Controls.Add(btnAttack)
         panel.Controls.Add(btnSaveSettings)
         panel.Controls.Add(btnStopBot)
         panel.Controls.Add(btnBypassLimits)
         panel.Controls.Add(btnBypassStuck)
         panel.Controls.Add(btnRetargetNow)
+        panel.Controls.Add(btnPartyAutoAccept)
         Return panel
     End Function
 
@@ -366,14 +499,17 @@ Public Class Form1
         dgvRegions.Rows.Add("mp_bar", "3", "40", "161", "11")
         dgvRegions.Rows.Add("mob_name_rect", "862", "0", "162", "23")
         dgvRegions.Rows.Add("mob_hp_rect", "859", "20", "165", "11")
+        dgvRegions.Rows.Add("prana_exp_rect", "472", "745", "78", "21")
         nudMobHpThreshold.Value = 1.0D
+        nudRetargetMs.Value = 550D
 
         Dim keyIndex As Integer = 1
         For Each key In PrimaryKeys
             Dim enabled As Boolean = (key = "1" OrElse key = "6")
             Dim role As String = If(key = "6", "heal", "attack")
             Dim trigger As Integer = If(key = "6", 80, 40)
-            dgvCombat.Rows.Add(enabled, key, "1.0", role, keyIndex * 10, trigger, 1, 1)
+            Dim cooldown As String = If(key = "1", "0.6", "1.0")
+            dgvCombat.Rows.Add(enabled, key, cooldown, role, keyIndex * 10, trigger, 1, 1)
             keyIndex += 1
         Next
         For Each key In FunctionKeys
@@ -383,13 +519,16 @@ Public Class Form1
         If Not MonsterExists("avara kara") Then
             lstMonsterFilter.Items.Add("avara kara")
         End If
+        If txtNtfyTopic IsNot Nothing Then
+            txtNtfyTopic.Text = DefaultNtfyTopicName
+        End If
         _alarmVolumePercent = CInt(nudAlarmVolume.Value)
         UpdateAttackButtonAppearance(False)
         AppendLog("UI loaded. No API required.")
     End Sub
 
     Private Sub SaveClicked(sender As Object, e As EventArgs)
-        _engine.UpdateConfig(BuildConfig())
+        PushLiveConfig()
         AppendLog("Settings saved to in-app engine.")
     End Sub
 
@@ -401,7 +540,7 @@ Public Class Form1
             AppendLog("Overlay hidden while bot is running.")
         End If
 
-        _engine.UpdateConfig(BuildConfig())
+        PushLiveConfig()
         _engine.Start()
         UpdateAttackButtonAppearance(True)
     End Sub
@@ -414,7 +553,7 @@ Public Class Form1
         If _engine.IsRunning() Then
             Return
         End If
-        _engine.UpdateConfig(BuildConfig())
+        PushLiveConfig()
         _engine.Start()
         UpdateAttackButtonAppearance(True)
         AppendLog("Auto-start on launch enabled.")
@@ -432,7 +571,7 @@ Public Class Form1
     End Sub
 
     Private Sub SnapshotClicked(sender As Object, e As EventArgs)
-        _engine.UpdateConfig(BuildConfig())
+        PushLiveConfig()
         Dim bmp As Bitmap = _engine.CaptureSnapshot()
         If bmp Is Nothing Then
             AppendLog("Snapshot failed. Window not found or capture failed.")
@@ -449,18 +588,26 @@ Public Class Form1
 
     Private Sub ToggleBypassLimitsClicked(sender As Object, e As EventArgs)
         _bypassHpMpLimits = Not _bypassHpMpLimits
-        btnBypassLimits.Text = If(_bypassHpMpLimits, "Bypass HP/MP Limits: ON", "Bypass HP/MP Limits: OFF")
+        btnBypassLimits.Text = If(_bypassHpMpLimits, "Ignore Skill Min HP/MP: ON", "Ignore Skill Min HP/MP: OFF")
         btnBypassLimits.BackColor = If(_bypassHpMpLimits, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
-        _engine.UpdateConfig(BuildConfig())
-        AppendLog(If(_bypassHpMpLimits, "Bypass HP/MP limits enabled.", "Bypass HP/MP limits disabled."))
+        PushLiveConfig()
+        AppendLog(If(_bypassHpMpLimits, "Ignoring skill minimum HP/MP checks enabled.", "Ignoring skill minimum HP/MP checks disabled."))
     End Sub
 
     Private Sub ToggleStuckTargetBypassClicked(sender As Object, e As EventArgs)
         _bypassStuckTarget = Not _bypassStuckTarget
-        btnBypassStuck.Text = If(_bypassStuckTarget, "Bypass Stuck Target: ON", "Bypass Stuck Target: OFF")
+        btnBypassStuck.Text = If(_bypassStuckTarget, "Auto Retarget If Stuck: ON", "Auto Retarget If Stuck: OFF")
         btnBypassStuck.BackColor = If(_bypassStuckTarget, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
-        _engine.UpdateConfig(BuildConfig())
-        AppendLog(If(_bypassStuckTarget, "Stuck target bypass enabled.", "Stuck target bypass disabled."))
+        PushLiveConfig()
+        AppendLog(If(_bypassStuckTarget, "Auto-retarget for stuck targets enabled.", "Auto-retarget for stuck targets disabled."))
+    End Sub
+
+    Private Sub TogglePartyAutoAcceptClicked(sender As Object, e As EventArgs)
+        _partyAutoAccept = Not _partyAutoAccept
+        btnPartyAutoAccept.Text = If(_partyAutoAccept, "Auto Accept Party Invite: ON", "Auto Accept Party Invite: OFF")
+        btnPartyAutoAccept.BackColor = If(_partyAutoAccept, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+        PushLiveConfig()
+        AppendLog(If(_partyAutoAccept, "Party invite auto-accept enabled.", "Party invite auto-accept disabled."))
     End Sub
 
     Private Sub ManualRetargetClicked(sender As Object, e As EventArgs)
@@ -508,7 +655,7 @@ Public Class Form1
         End If
 
         UpdateRegionGridRow(regionName, region)
-        _engine.UpdateConfig(BuildConfig())
+        PushLiveConfig()
     End Sub
 
     Private Sub OverlayRegionCommitted(regionName As String, region As RectRegion)
@@ -518,7 +665,7 @@ Public Class Form1
         End If
 
         UpdateRegionGridRow(regionName, region)
-        _engine.UpdateConfig(BuildConfig())
+        PushLiveConfig()
         AppendLog($"Overlay updated {regionName}: x={region.X}, y={region.Y}, w={region.W}, h={region.H}")
     End Sub
 
@@ -536,16 +683,24 @@ Public Class Form1
     End Sub
 
     Private Sub UiTimerTick(sender As Object, e As EventArgs)
+        PushLiveConfig()
         Dim st As BotStatus = _engine.GetStatus()
         txtDiagnostics.Text =
             $"Running: {st.Running}{Environment.NewLine}" &
             $"BypassHpMpLimits: {_bypassHpMpLimits}{Environment.NewLine}" &
             $"BypassStuckTarget: {_bypassStuckTarget}{Environment.NewLine}" &
+            $"PartyAutoAccept: {_partyAutoAccept}{Environment.NewLine}" &
+            $"NtfyTopic: {GetNtfyTopicName()}{Environment.NewLine}" &
+            $"LootPickupEnabled: {If(chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked, "True", "False")}{Environment.NewLine}" &
+            $"LootPickupIntervalSec: {If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value.ToString(), "4")}{Environment.NewLine}" &
             $"AlarmVolume%: {_alarmVolumePercent}{Environment.NewLine}" &
             $"HpZeroAlarm: {_hpZeroAlarmActive}{Environment.NewLine}" &
+            $"HpZeroPending: {_hpZeroPending}{Environment.NewLine}" &
             $"Window Found: {st.WindowFound}{Environment.NewLine}" &
             $"HP%: {st.HpPercent:0.0}{Environment.NewLine}" &
             $"MP%: {st.MpPercent:0.0}{Environment.NewLine}" &
+            $"Prana/EXP%: {st.ExpPercent:0.00}{Environment.NewLine}" &
+            $"Prana/EXP Rate %/hr: {If(st.ExpPerHour < 0, "Calculating (1m)", st.ExpPerHour.ToString("0.00"))}{Environment.NewLine}" &
             $"MobName: {st.MobName}{Environment.NewLine}" &
             $"OcrError: {OcrReader.LastError()}{Environment.NewLine}" &
             $"MobHP%: {st.MobHpPercent:0.0}{Environment.NewLine}" &
@@ -577,8 +732,9 @@ Public Class Form1
         lblHp.ForeColor = HpColor(status.HpPercent)
         lblMp.ForeColor = MpColor(status.MpPercent)
         lblMobName.Text = $"Mob: {If(String.IsNullOrWhiteSpace(status.MobName), "(none)", status.MobName)}"
+        lblExpRate.Text = $"Prana/EXP: {status.ExpPercent:0.00}% | Rate: {If(status.ExpPerHour < 0, "Calculating (1m)", status.ExpPerHour.ToString("0.00") & "%/hr")}"
         UpdateAttackButtonAppearance(status.Running)
-        HandleHpZeroAlarm(status.HpPercent)
+        HandleHpZeroAlarm(status)
 
         If status.LastAction <> "" AndAlso status.LastAction <> _lastAction Then
             AppendLog("Key action: " & status.LastAction)
@@ -616,6 +772,7 @@ Public Class Form1
         If Not MonsterExists(name) Then
             lstMonsterFilter.Items.Add(name)
             AppendLog("Monster filter added: " & name)
+            PushLiveConfig()
         End If
         txtMonsterName.Text = ""
     End Sub
@@ -627,6 +784,7 @@ Public Class Form1
         Dim removed As String = lstMonsterFilter.SelectedItem.ToString()
         lstMonsterFilter.Items.Remove(lstMonsterFilter.SelectedItem)
         AppendLog("Monster filter removed: " & removed)
+        PushLiveConfig()
     End Sub
 
     Private Function MonsterExists(name As String) As Boolean
@@ -638,7 +796,39 @@ Public Class Form1
         Return False
     End Function
 
-    Private Sub ApplyQuickAutoPotThresholds()
+    Private Sub AddLootClicked(sender As Object, e As EventArgs)
+        Dim name As String = txtLootName.Text.Trim()
+        If String.IsNullOrWhiteSpace(name) Then
+            Return
+        End If
+        If Not LootExists(name) Then
+            lstLootFilter.Items.Add(name)
+            AppendLog("Loot filter added: " & name)
+            PushLiveConfig()
+        End If
+        txtLootName.Text = ""
+    End Sub
+
+    Private Sub RemoveLootClicked(sender As Object, e As EventArgs)
+        If lstLootFilter.SelectedItem Is Nothing Then
+            Return
+        End If
+        Dim removed As String = lstLootFilter.SelectedItem.ToString()
+        lstLootFilter.Items.Remove(lstLootFilter.SelectedItem)
+        AppendLog("Loot filter removed: " & removed)
+        PushLiveConfig()
+    End Sub
+
+    Private Function LootExists(name As String) As Boolean
+        For Each item In lstLootFilter.Items
+            If String.Equals(item.ToString(), name, StringComparison.OrdinalIgnoreCase) Then
+                Return True
+            End If
+        Next
+        Return False
+    End Function
+
+    Private Sub ApplyQuickAutoPotThresholds(Optional silent As Boolean = False)
         For Each row As DataGridViewRow In dgvCombat.Rows
             Dim role As String = SafeCell(row, "Role", "attack").ToLowerInvariant()
             If role = "heal" Then
@@ -647,13 +837,28 @@ Public Class Form1
                 row.Cells("TriggerPercent").Value = CInt(nudAutoPotMp.Value).ToString()
             End If
         Next
-        AppendLog("Applied auto-pot thresholds to heal/mana rows.")
+        If Not silent Then
+            AppendLog("Applied auto-pot thresholds to heal/mana rows.")
+        End If
+        PushLiveConfig()
     End Sub
 
     Private Sub TestAlarmClicked(sender As Object, e As EventArgs)
         _alarmVolumePercent = CInt(nudAlarmVolume.Value)
-        AppendLog($"Testing HP=0 alarm at {_alarmVolumePercent}% volume.")
+        AppendLog($"Testing HP=0 alarm + phone alert at {_alarmVolumePercent}% volume.")
         Task.Run(Sub() PlayAlarmPulse(_alarmVolumePercent))
+        Task.Run(
+            Async Function()
+                Await SendPhoneNotificationAsync("KathanaBot Test", "Combined test: HP alarm sound + phone alert.")
+            End Function)
+    End Sub
+
+    Private Sub TestPhoneAlertClicked(sender As Object, e As EventArgs)
+        AppendLog($"Sending test phone alert to ntfy topic '{GetNtfyTopicName()}'.")
+        Task.Run(
+            Async Function()
+                Await SendPhoneNotificationAsync("KathanaBot Test", "Test phone alert from Auto-Pot tab.")
+            End Function)
     End Sub
 
     Private Function BuildConfig() As BotConfig
@@ -664,15 +869,29 @@ Public Class Form1
         cfg.MobHpPresenceThreshold = CDbl(nudMobHpThreshold.Value)
         cfg.BypassHpMpLimits = _bypassHpMpLimits
         cfg.BypassStuckTarget = _bypassStuckTarget
+        cfg.PartyAutoAcceptEnabled = _partyAutoAccept
         cfg.HpBar = BuildRect("hp_bar")
         cfg.MpBar = BuildRect("mp_bar")
         cfg.MobNameRect = BuildRect("mob_name_rect")
         cfg.MobHpRect = BuildRect("mob_hp_rect")
+        cfg.PranaExpRect = BuildRect("prana_exp_rect")
+        cfg.LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked)
+        cfg.LootPickupIntervalMs = CInt(Math.Round(CDbl(If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value, 4D)) * 1000.0))
+        cfg.LootPickupVerifyDelayMs = 200
 
         cfg.DeniedMobs.Clear()
-        If chkMonsterFilter.Checked Then
+        cfg.LootAllowedNames.Clear()
+        If chkMonsterFilter IsNot Nothing AndAlso chkMonsterFilter.Checked AndAlso lstMonsterFilter IsNot Nothing Then
             For Each item In lstMonsterFilter.Items
                 cfg.DeniedMobs.Add(item.ToString().Trim().ToLowerInvariant())
+            Next
+        End If
+        If lstLootFilter IsNot Nothing Then
+            For Each item In lstLootFilter.Items
+                Dim value As String = item.ToString().Trim().ToLowerInvariant()
+                If value <> "" Then
+                    cfg.LootAllowedNames.Add(value)
+                End If
             Next
         End If
 
@@ -749,6 +968,14 @@ Public Class Form1
         rtbLog.ScrollToCaret()
     End Sub
 
+    Private Sub AppendLogSafe(message As String)
+        If InvokeRequired Then
+            BeginInvoke(New Action(Of String)(AddressOf AppendLogSafe), message)
+            Return
+        End If
+        AppendLog(message)
+    End Sub
+
     Private Sub UpdateAttackButtonAppearance(isRunning As Boolean)
         If btnAttack Is Nothing Then
             Return
@@ -791,40 +1018,109 @@ Public Class Form1
         Return Color.DeepSkyBlue
     End Function
 
-    Private Sub HandleHpZeroAlarm(hpPercent As Double)
-        Dim shouldAlarm As Boolean = hpPercent <= 0.1
-        If shouldAlarm AndAlso Not _hpZeroAlarmActive Then
-            StartHpZeroAlarm()
-        ElseIf (Not shouldAlarm) AndAlso _hpZeroAlarmActive Then
+    Private Sub HandleHpZeroAlarm(status As BotStatus)
+        Dim shouldAlarm As Boolean =
+            status IsNot Nothing AndAlso
+            status.Running AndAlso
+            status.WindowFound AndAlso
+            status.ErrorMessage = "" AndAlso
+            status.HpPercent <= 0.1
+
+        If shouldAlarm Then
+            If Not _hpZeroAlarmActive AndAlso Not _hpZeroPending Then
+                StartHpZeroPendingCountdown()
+            End If
+            Return
+        End If
+
+        If _hpZeroPending Then
+            CancelHpZeroPendingCountdown(True)
+        End If
+        If _hpZeroAlarmActive Then
             StopHpZeroAlarm()
+        End If
+    End Sub
+
+    Private Sub StartHpZeroPendingCountdown()
+        _hpZeroPending = True
+        If _hpPendingCts IsNot Nothing Then
+            _hpPendingCts.Cancel()
+            _hpPendingCts.Dispose()
+        End If
+
+        _hpPendingCts = New CancellationTokenSource()
+        Dim token As CancellationToken = _hpPendingCts.Token
+        AppendLog("HP reached 0. Waiting 60 seconds before alarm/notification.")
+
+        _hpPendingTask = Task.Run(
+            Async Function()
+                Try
+                    Await Task.Delay(HpZeroAlarmGraceMs, token)
+                Catch ex As TaskCanceledException
+                    Return
+                End Try
+                If token.IsCancellationRequested Then
+                    Return
+                End If
+
+                If InvokeRequired Then
+                    BeginInvoke(New Action(AddressOf PromotePendingHpZeroAlarm))
+                Else
+                    PromotePendingHpZeroAlarm()
+                End If
+            End Function, token)
+    End Sub
+
+    Private Sub PromotePendingHpZeroAlarm()
+        If Not _hpZeroPending Then
+            Return
+        End If
+        _hpZeroPending = False
+
+        If _hpPendingCts IsNot Nothing Then
+            _hpPendingCts.Dispose()
+            _hpPendingCts = Nothing
+        End If
+
+        StartHpZeroAlarm()
+    End Sub
+
+    Private Sub CancelHpZeroPendingCountdown(logCancellation As Boolean)
+        If Not _hpZeroPending AndAlso _hpPendingCts Is Nothing Then
+            Return
+        End If
+
+        _hpZeroPending = False
+        If _hpPendingCts IsNot Nothing Then
+            _hpPendingCts.Cancel()
+            _hpPendingCts.Dispose()
+            _hpPendingCts = Nothing
+        End If
+
+        If logCancellation Then
+            AppendLog("HP recovered during 60-second grace period. Alarm canceled.")
         End If
     End Sub
 
     Private Sub StartHpZeroAlarm()
         _hpZeroAlarmActive = True
         AppendLog($"HP is zero. Alarm started at volume {_alarmVolumePercent}%.")
-
-        If _hpAlarmCts IsNot Nothing Then
-            _hpAlarmCts.Cancel()
-            _hpAlarmCts.Dispose()
-        End If
-
-        _hpAlarmCts = New CancellationTokenSource()
-        Dim token As CancellationToken = _hpAlarmCts.Token
-        _hpAlarmTask = Task.Run(
-            Async Function()
-                While Not token.IsCancellationRequested
-                    PlayAlarmPulse(_alarmVolumePercent)
-                    Try
-                        Await Task.Delay(1300, token)
-                    Catch ex As TaskCanceledException
-                        Exit While
-                    End Try
-                End While
-            End Function, token)
+        SendHpZeroPhoneAlert()
+        Task.Run(Sub() PlayAlarmPulse(_alarmVolumePercent))
+        StopBotAfterDeathAlert()
     End Sub
 
-    Private Sub StopHpZeroAlarm()
+    Private Sub StopBotAfterDeathAlert()
+        If _engine.IsRunning() Then
+            _engine.Stop()
+        End If
+        UpdateAttackButtonAppearance(False)
+        StopHpZeroAlarm("Death confirmed by HP=0 alert. Bot stopped to prevent repeated alarms.")
+    End Sub
+
+    Private Sub StopHpZeroAlarm(Optional reason As String = "HP recovered. Alarm stopped.")
+        CancelHpZeroPendingCountdown(False)
+
         If Not _hpZeroAlarmActive Then
             Return
         End If
@@ -835,8 +1131,59 @@ Public Class Form1
             _hpAlarmCts.Dispose()
             _hpAlarmCts = Nothing
         End If
-        AppendLog("HP recovered. Alarm stopped.")
+        AppendLog(reason)
     End Sub
+
+    Private Sub SendHpZeroPhoneAlert()
+        Dim now As DateTime = DateTime.UtcNow
+        If _lastHpZeroNotification <> DateTime.MinValue AndAlso (now - _lastHpZeroNotification).TotalSeconds < 20 Then
+            Return
+        End If
+
+        _lastHpZeroNotification = now
+        Task.Run(
+            Async Function()
+                Await SendPhoneNotificationAsync("KathanaBot HP Alert", "HP reached zero. Check your character.")
+            End Function)
+    End Sub
+
+    Private Function GetNtfyTopicName() As String
+        Dim raw As String = ""
+        If txtNtfyTopic IsNot Nothing Then
+            raw = txtNtfyTopic.Text.Trim()
+        End If
+        If raw = "" Then
+            Return DefaultNtfyTopicName
+        End If
+
+        Dim cleaned As String = raw.Replace(" ", "").Trim("/"c)
+        If cleaned = "" Then
+            Return DefaultNtfyTopicName
+        End If
+        Return cleaned
+    End Function
+
+    Private Async Function SendPhoneNotificationAsync(title As String, body As String) As Task
+        Try
+            Dim topic As String = GetNtfyTopicName()
+            Dim url As String = $"https://ntfy.sh/{Uri.EscapeDataString(topic)}"
+            Using request As New HttpRequestMessage(HttpMethod.Post, url)
+                request.Content = New StringContent(body, Encoding.UTF8, "text/plain")
+                request.Headers.Add("Title", title)
+                request.Headers.Add("Priority", "urgent")
+                request.Headers.Add("Tags", "warning,gamepad")
+
+                Dim response As HttpResponseMessage = Await NtfyClient.SendAsync(request)
+                If response.IsSuccessStatusCode Then
+                    AppendLogSafe($"Phone alert sent to ntfy topic '{topic}'.")
+                Else
+                    AppendLogSafe($"Phone alert failed ({CInt(response.StatusCode)}) for topic '{topic}'.")
+                End If
+            End Using
+        Catch ex As Exception
+            AppendLogSafe("Phone alert failed: " & ex.Message)
+        End Try
+    End Function
 
     Private Sub PlayAlarmPulse(volumePercent As Integer)
         Dim previous As UInteger = 0UI

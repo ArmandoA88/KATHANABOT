@@ -25,9 +25,9 @@ Double-click:
 
 ## Tabs
 
-- `Combat`: key matrix, priorities/cooldowns, start/stop, realtime log, live detected mob name
+- `Combat`: key matrix, priorities/cooldowns, start/stop, realtime log, live detected mob name, monster + loot filter
 - `Vision`: window title, loop settings, calibration regions, snapshot, low-opacity overlay
-- `Auto-Pot`: quick trigger updates for heal/mana rows + HP=0 alarm volume
+- `Auto-Pot`: quick trigger updates for heal/mana rows + HP=0 alarm volume + test alarm + phone alert test
 - `Unstuck`: retarget interval helper
 - `Diagnostics`: live bot status
 
@@ -41,13 +41,15 @@ Double-click:
    - `mob_name_rect`
    - `mob_hp_rect`
 4. In `Combat`, configure keys (`1..0` and optional `F1..F10`), roles, cooldowns, and priorities.
-5. Optional: use `Bypass HP/MP Limits` button in Combat to ignore per-key MinHP/MinMP gating.
-6. Optional: use `Bypass Stuck Target` in Combat to auto-send `E` when target HP stays unchanged (prevents getting stuck on non-attackable targets).
+5. Optional: use `Ignore Skill Min HP/MP` button in Combat to ignore per-key MinHP/MinMP gating.
+6. Optional: use `Auto Retarget If Stuck` in Combat to auto-send `E` when target HP stays unchanged (prevents getting stuck on non-attackable targets).
 7. Optional: use `Retarget Now (E)` in Combat for an immediate manual retarget.
 8. Monster blacklist is enforced from `Monster Filter` when enabled; detected mob name is shown live in Combat status.
-9. Optional: click `Show Overlay` in Vision to draw calibration rectangles over the game window.
-10. Click `Save Settings`, then `Attack`.
-11. Bot automatically saves a screenshot every 15 minutes to your Pictures gallery folder: `Pictures\KathanaBot`.
+9. Optional: enable `Loot Pickup Filter (F)` and set interval seconds in `Combat`; names in the filter list are also used as allowed loot names.
+10. Loot logic: bot presses `F`, waits about `200ms`, reads the selected name from the same name box, waits `700ms` when name is allowed, and sends random `W` or `S` when name is not on the list.
+11. Optional: click `Show Overlay` in Vision to draw calibration rectangles over the game window.
+12. Click `Save Settings`, then `Attack`.
+13. Bot automatically saves a screenshot every 15 minutes to your Pictures gallery folder: `Pictures\KathanaBot`.
 
 ### Default calibration coordinates (saved baseline)
 
@@ -62,9 +64,13 @@ Use this baseline if calibration is reset:
 
 - Background key input is sent directly to window title:
   `Kathana - The Coming of the Dark Ages`
-- Default at startup: bot auto-starts in attacking mode and `Bypass Stuck Target` is ON.
-- Default unstuck movement pulse: while bot is running, it sends `W` every 10 seconds, then `S` after the next 10 seconds, alternating continuously.
+- Default at startup: bot auto-starts in attacking mode and `Auto Retarget If Stuck` is ON.
+- Periodic unstuck movement pulses (`W/S`) are disabled.
 - Monster filter defaults: enabled with `avara kara` preloaded in blacklist.
 - Default heal trigger is `80%` for the key `6` heal row.
-- Use `Test HP=0 Alarm` in `Auto-Pot` to preview current alarm loudness.
+- `HP=0 Alarm Volume %` controls loudness only; alarm trigger is fixed to HP=0.
+- Real HP=0 alerts use a 60-second grace period before sound + notification (to avoid false alarms).
+- Use `Test Alarm + Phone` in `Auto-Pot` to trigger alarm sound and ntfy together.
+- `Test Phone Alert` and HP=0 automatic alerts publish to the ntfy channel set in `Auto-Pot` (`ntfy.sh/<your-channel>`).
+- Most setting changes auto-apply while the bot is running; stop/start is not required.
 - If the EXE is already running, rebuild can warn about locked files.

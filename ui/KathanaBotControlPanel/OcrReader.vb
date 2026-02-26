@@ -2,6 +2,7 @@ Imports System.Drawing
 Imports System.Drawing.Drawing2D
 Imports System.Drawing.Imaging
 Imports System.IO
+Imports System.Globalization
 Imports System.Runtime.InteropServices.WindowsRuntime
 Imports System.Collections.Generic
 Imports System.Text.RegularExpressions
@@ -39,6 +40,23 @@ Public NotInheritable Class OcrReader
         Return ReadNameStaFallback(source)
     End Function
 
+    Public Shared Function ReadPercent(source As Bitmap) As Double
+        If source Is Nothing Then
+            Return -1
+        End If
+
+        Dim direct As Double = -1
+        Try
+            direct = ReadPercentInternal(source)
+            If direct >= 0 Then
+                Return direct
+            End If
+        Catch
+        End Try
+
+        Return ReadPercentStaFallback(source)
+    End Function
+
     Public Shared Function LastError() As String
         SyncLock _sync
             Return _lastError
@@ -66,6 +84,31 @@ Public NotInheritable Class OcrReader
         If Not done.Wait(700) Then
             SetLastError("OCR timeout.")
             Return ""
+        End If
+        Return output
+    End Function
+
+    Private Shared Function ReadPercentStaFallback(source As Bitmap) As Double
+        Dim output As Double = -1
+        Dim done As New ManualResetEventSlim(False)
+
+        Dim worker As New Thread(
+            Sub()
+                Try
+                    output = ReadPercentInternal(source)
+                Catch ex As Exception
+                    SetLastError(ex.Message)
+                Finally
+                    done.Set()
+                End Try
+            End Sub)
+        worker.IsBackground = True
+        worker.SetApartmentState(ApartmentState.STA)
+        worker.Start()
+
+        If Not done.Wait(700) Then
+            SetLastError("OCR timeout.")
+            Return -1
         End If
         Return output
     End Function
@@ -101,6 +144,38 @@ Public NotInheritable Class OcrReader
         Return bestText
     End Function
 
+    Private Shared Function ReadPercentInternal(source As Bitmap) As Double
+        Dim engine = GetEngine()
+        If engine Is Nothing Then
+            Return -1
+        End If
+
+        Dim candidates As List(Of Bitmap) = BuildCandidates(source)
+        Dim bestPercent As Double = -1
+        Dim bestScore As Integer = -1
+
+        Try
+            For Each candidate In candidates
+                Dim text As String = ReadRawTextAsync(engine, candidate).GetAwaiter().GetResult()
+                Dim value As Double = ParsePercentFromText(text)
+                Dim score As Integer = ScorePercentText(text, value)
+                If score > bestScore Then
+                    bestScore = score
+                    bestPercent = value
+                End If
+                If value >= 0 AndAlso score >= 40 Then
+                    Exit For
+                End If
+            Next
+        Finally
+            For Each candidate In candidates
+                candidate.Dispose()
+            Next
+        End Try
+
+        Return bestPercent
+    End Function
+
     Private Shared Async Function ReadNameAsync(engine As OcrEngine, prepared As Bitmap) As Task(Of String)
         Dim soft As SoftwareBitmap = Await ConvertBitmapAsync(prepared)
         If soft Is Nothing Then
@@ -118,6 +193,20 @@ Public NotInheritable Class OcrReader
             Return ""
         End If
         Return cleaned
+    End Function
+
+    Private Shared Async Function ReadRawTextAsync(engine As OcrEngine, prepared As Bitmap) As Task(Of String)
+        Dim soft As SoftwareBitmap = Await ConvertBitmapAsync(prepared)
+        If soft Is Nothing Then
+            Return ""
+        End If
+
+        Dim result = Await engine.RecognizeAsync(soft)
+        If result Is Nothing OrElse String.IsNullOrWhiteSpace(result.Text) Then
+            Return ""
+        End If
+
+        Return result.Text.Trim()
     End Function
 
     Private Shared Function GetEngine() As OcrEngine
@@ -236,6 +325,102 @@ Public NotInheritable Class OcrReader
         Dim spaces As Integer = Regex.Matches(compact, "\s").Count
         Dim score As Integer = (alphaNum * 3) + compact.Length - spaces
         Return score
+    End Function
+
+    Private Shared Function ScorePercentText(text As String, value As Double) As Integer
+        If String.IsNullOrWhiteSpace(text) Then
+            Return -1
+        End If
+
+        Dim score As Integer = 0
+        score += Regex.Matches(text, "\d").Count * 2
+        If text.Contains("%") Then
+            score += 8
+        End If
+        If text.Contains(".") OrElse text.Contains(",") Then
+            score += 6
+        End If
+        If value >= 0 AndAlso value <= 100 Then
+            score += 30
+        End If
+        Return score
+    End Function
+
+    Private Shared Function ParsePercentFromText(raw As String) As Double
+        If String.IsNullOrWhiteSpace(raw) Then
+            Return -1
+        End If
+
+        Dim normalized As String = raw.ToLowerInvariant()
+        normalized = normalized.Replace("o", "0").Replace("l", "1").Replace("i", "1")
+        normalized = normalized.Replace(",", ".")
+        normalized = Regex.Replace(normalized, "[^0-9.% ]", " ")
+        normalized = Regex.Replace(normalized, "\s+", " ").Trim()
+        If normalized = "" Then
+            Return -1
+        End If
+
+        Dim matches = Regex.Matches(normalized, "\d{1,5}(?:\.\d{1,3})?")
+        Dim best As Double = -1
+        Dim bestWeight As Integer = -1
+        For Each m As Match In matches
+            Dim token As String = m.Value
+            Dim parsed As Double
+            If Not TryParsePercentToken(token, parsed) Then
+                Continue For
+            End If
+
+            Dim weight As Integer = token.Length
+            If token.Contains(".") Then
+                weight += 5
+            End If
+            If parsed >= 0 AndAlso parsed <= 100 Then
+                weight += 10
+            End If
+
+            If weight > bestWeight Then
+                bestWeight = weight
+                best = parsed
+            End If
+        Next
+
+        Return best
+    End Function
+
+    Private Shared Function TryParsePercentToken(token As String, ByRef value As Double) As Boolean
+        value = -1
+        If String.IsNullOrWhiteSpace(token) Then
+            Return False
+        End If
+
+        Dim direct As Double
+        If Double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, direct) Then
+            If direct >= 0 AndAlso direct <= 100 Then
+                value = direct
+                Return True
+            End If
+        End If
+
+        Dim digitsOnly As String = Regex.Replace(token, "[^0-9]", "")
+        If digitsOnly.Length < 3 Then
+            Return False
+        End If
+
+        Dim candidate As Double = -1
+        If digitsOnly.Length = 3 Then
+            candidate = Double.Parse($"{digitsOnly.Substring(0, 1)}.{digitsOnly.Substring(1, 2)}", CultureInfo.InvariantCulture)
+        ElseIf digitsOnly.Length = 4 Then
+            candidate = Double.Parse($"{digitsOnly.Substring(0, 2)}.{digitsOnly.Substring(2, 2)}", CultureInfo.InvariantCulture)
+        ElseIf digitsOnly.Length = 5 Then
+            candidate = Double.Parse($"{digitsOnly.Substring(0, 3)}.{digitsOnly.Substring(3, 2)}", CultureInfo.InvariantCulture)
+        End If
+
+        If candidate >= 0 AndAlso candidate <= 100 Then
+            value = candidate
+            Return True
+        End If
+
+        Return False
     End Function
 
     Private Shared Sub SetLastError(message As String)

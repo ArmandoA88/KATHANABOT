@@ -49,18 +49,22 @@ End Class
 Public Class BotConfig
     Public Property WindowTitle As String = "Kathana - The Coming of the Dark Ages"
     Public Property LoopMs As Integer = 80
-    Public Property RetargetMs As Integer = 700
+    Public Property RetargetMs As Integer = 550
     Public Property MobHpPresenceThreshold As Double = 1.0
     Public Property HpBar As RectRegion = New RectRegion(11, 25, 151, 11)
     Public Property MpBar As RectRegion = New RectRegion(3, 40, 161, 11)
     Public Property MobNameRect As RectRegion = New RectRegion(862, 0, 162, 23)
     Public Property MobHpRect As RectRegion = New RectRegion(859, 20, 165, 11)
+    Public Property PranaExpRect As RectRegion = New RectRegion(472, 745, 78, 21)
     Public Property BypassHpMpLimits As Boolean = False
     Public Property BypassStuckTarget As Boolean = True
     Public Property StuckTargetMs As Integer = 2200
-    Public Property MovePulseEnabled As Boolean = True
-    Public Property MovePulseMs As Integer = 10000
     Public Property DeniedMobs As List(Of String) = New List(Of String)()
+    Public Property LootPickupEnabled As Boolean = False
+    Public Property LootPickupIntervalMs As Integer = 4000
+    Public Property LootPickupVerifyDelayMs As Integer = 200
+    Public Property LootAllowedNames As List(Of String) = New List(Of String)()
+    Public Property PartyAutoAcceptEnabled As Boolean = True
     Public Property Actions As List(Of ActionRule) = New List(Of ActionRule)()
 
     Public Shared Function CreateDefault() As BotConfig
@@ -100,6 +104,8 @@ Public Class BotStatus
     Public Property HpPercent As Double
     Public Property MpPercent As Double
     Public Property MobHpPercent As Double
+    Public Property ExpPercent As Double
+    Public Property ExpPerHour As Double = -1
     Public Property MobName As String = ""
     Public Property TargetValid As Boolean
     Public Property LastAction As String = ""
@@ -179,7 +185,11 @@ End Module
 Public Class BotEngine
     Public Event StatusUpdated(status As BotStatus)
     Public Event LogLine(line As String)
-    Private Const AllowBlindAttackWhenTargetMissing As Boolean = True
+    Private Const AllowBlindAttackWhenTargetMissing As Boolean = False
+    Private Const NoTargetRetargetMs As Integer = 300
+    Private Const ExpRateSampleMs As Integer = 60000
+    Private Const ExpOcrMinIntervalMs As Integer = 900
+    Private Const PartyInviteOcrMinIntervalMs As Integer = 900
     Private Const BaseClientWidth As Integer = 1024
     Private Const BaseClientHeight As Integer = 768
 
@@ -195,8 +205,18 @@ Public Class BotEngine
     Private _lastMobNameRead As DateTime = DateTime.MinValue
     Private _cachedMobName As String = ""
     Private _lastPeriodicSnapshot As DateTime = DateTime.MinValue
-    Private _lastMovePulse As DateTime = DateTime.MinValue
-    Private _nextMovePulseKey As String = "W"
+    Private _lastLootPickup As DateTime = DateTime.MinValue
+    Private _lastPartyInviteScan As DateTime = DateTime.MinValue
+    Private _lastPartyInviteAccept As DateTime = DateTime.MinValue
+    Private _partyInviteOcrTask As Task(Of String) = Nothing
+    Private _lastPartyInviteCandidate As String = ""
+    Private _lastExpPercent As Double = -1
+    Private _lastExpOcrAt As DateTime = DateTime.MinValue
+    Private _expOcrTask As Task(Of Double) = Nothing
+    Private _lastExpRateSampleAt As DateTime = DateTime.MinValue
+    Private _lastExpRateSamplePercent As Double = -1
+    Private _lastExpPerHour As Double = -1
+    Private ReadOnly _lootRandom As New Random()
     Private ReadOnly _lastKeyTime As New Dictionary(Of String, DateTime)(StringComparer.OrdinalIgnoreCase)
     Private _lastGoodHpPercent As Double = -1
     Private _lastGoodMpPercent As Double = -1
@@ -207,7 +227,8 @@ Public Class BotEngine
 
     Private Shared ReadOnly KeyMap As New Dictionary(Of String, Integer)(StringComparer.OrdinalIgnoreCase) From {
         {"0", &H30}, {"1", &H31}, {"2", &H32}, {"3", &H33}, {"4", &H34}, {"5", &H35},
-        {"6", &H36}, {"7", &H37}, {"8", &H38}, {"9", &H39}, {"E", &H45}, {"W", &H57}, {"S", &H53},
+        {"6", &H36}, {"7", &H37}, {"8", &H38}, {"9", &H39}, {"E", &H45}, {"F", &H46}, {"W", &H57}, {"S", &H53},
+        {"ENTER", &HD}, {"RETURN", &HD},
         {"F1", &H70}, {"F2", &H71}, {"F3", &H72}, {"F4", &H73}, {"F5", &H74},
         {"F6", &H75}, {"F7", &H76}, {"F8", &H77}, {"F9", &H78}, {"F10", &H79}
     }
@@ -245,8 +266,17 @@ Public Class BotEngine
             _lastMobNameRead = DateTime.MinValue
             _cachedMobName = ""
             _lastPeriodicSnapshot = DateTime.MinValue
-            _lastMovePulse = DateTime.MinValue
-            _nextMovePulseKey = "W"
+            _lastLootPickup = DateTime.MinValue
+            _lastPartyInviteScan = DateTime.MinValue
+            _lastPartyInviteAccept = DateTime.MinValue
+            _partyInviteOcrTask = Nothing
+            _lastPartyInviteCandidate = ""
+            _lastExpPercent = -1
+            _lastExpOcrAt = DateTime.MinValue
+            _expOcrTask = Nothing
+            _lastExpRateSampleAt = DateTime.MinValue
+            _lastExpRateSamplePercent = -1
+            _lastExpPerHour = -1
             _lastGoodHpPercent = -1
             _lastGoodMpPercent = -1
             _lastGoodMobHpPercent = -1
@@ -308,6 +338,8 @@ Public Class BotEngine
                               s.HpPercent = 0
                               s.MpPercent = 0
                               s.MobHpPercent = 0
+                              s.ExpPercent = 0
+                              s.ExpPerHour = -1
                               s.MobName = ""
                               s.TargetValid = False
                               s.NotAttackingReason = "Window not found."
@@ -332,11 +364,13 @@ Public Class BotEngine
             Dim mpRegion As New RectRegion(0, 0, 1, 1)
             Dim mobNameRegion As New RectRegion(0, 0, 1, 1)
             Dim mobHpRegion As New RectRegion(0, 0, 1, 1)
-            ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion)
+            Dim pranaExpRegion As New RectRegion(0, 0, 1, 1)
+            ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, pranaExpRegion)
 
             Dim hpPct As Double = ComputeBarPercent(frame, hpRegion, True)
             Dim mpPct As Double = ComputeBarPercent(frame, mpRegion, False)
             Dim mobHpPct As Double = ComputeBarPercent(frame, mobHpRegion, True)
+            Dim expPct As Double = ReadPranaExpPercent(frame, pranaExpRegion)
             Dim captureGlitch As Boolean = IsLikelyVisionCaptureGlitch(frame, hpRegion, mpRegion, hpPct, mpPct)
 
             If captureGlitch Then
@@ -348,10 +382,11 @@ Public Class BotEngine
                         Exit For
                     End If
 
-                    ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion)
+                    ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, pranaExpRegion)
                     hpPct = ComputeBarPercent(frame, hpRegion, True)
                     mpPct = ComputeBarPercent(frame, mpRegion, False)
                     mobHpPct = ComputeBarPercent(frame, mobHpRegion, True)
+                    expPct = ReadPranaExpPercent(frame, pranaExpRegion)
                     captureGlitch = IsLikelyVisionCaptureGlitch(frame, hpRegion, mpRegion, hpPct, mpPct)
                     If Not captureGlitch Then
                         Exit For
@@ -371,14 +406,28 @@ Public Class BotEngine
 
             Dim now As DateTime = DateTime.UtcNow
             SavePeriodicSnapshot(frame, now)
-            Dim mobName As String = ReadMobNameIfNeeded(frame, mobNameRegion, now)
+            Dim shouldReadMobName As Boolean = mobHpPct >= Math.Max(0.6, cfg.MobHpPresenceThreshold * 0.7)
+            Dim mobName As String
+            If shouldReadMobName Then
+                mobName = ReadMobNameIfNeeded(frame, mobNameRegion, now)
+            Else
+                If (now - _lastMobNameRead).TotalMilliseconds > 1200 Then
+                    _cachedMobName = ""
+                End If
+                mobName = _cachedMobName
+            End If
             ApplyVisionStabilityFilter(hpPct, mpPct, mobHpPct, mobName, captureGlitch)
+            Dim expPerHour As Double = UpdateExpRate(expPct, now)
+            Dim targetWindowVisible As Boolean = HasTargetWindowSignal(frame, mobHpRegion, mobName, mobHpPct)
             Dim deniedTarget As Boolean = IsDeniedMob(mobName, cfg.DeniedMobs)
-            Dim targetValid As Boolean = (mobHpPct >= cfg.MobHpPresenceThreshold) AndAlso (Not deniedTarget)
+            Dim targetValid As Boolean = targetWindowVisible AndAlso (mobHpPct >= cfg.MobHpPresenceThreshold) AndAlso (Not deniedTarget)
             TrackMobHpMovement(targetValid, mobHpPct, now)
 
             Dim reason As String = ""
-            Dim actionSent As Boolean = False
+            Dim actionSent As Boolean = TryHandlePartyInvite(cfg, hwnd, frame, now)
+            If actionSent Then
+                reason = "Party invite detected and accepted."
+            End If
             Dim forcedRetarget As Boolean = False
 
             If ShouldBypassStuckTarget(cfg, targetValid, now) Then
@@ -390,30 +439,37 @@ Public Class BotEngine
                 End If
             End If
 
-            If Not forcedRetarget Then
-                Dim allowBlindAttack As Boolean = AllowBlindAttackWhenTargetMissing AndAlso (Not deniedTarget)
-                Dim chosen As ActionRule = ChooseAction(cfg, hpPct, mpPct, targetValid, allowBlindAttack, reason)
-                If chosen IsNot Nothing AndAlso SendKey(hwnd, chosen.KeyName, 35) Then
-                    SyncLock _sync
-                        _lastKeyTime(chosen.KeyName) = DateTime.UtcNow
-                    End SyncLock
-                    SetLastAction($"{chosen.KeyName} ({chosen.Role})")
+            If Not forcedRetarget AndAlso Not actionSent Then
+                Dim supportSent As Boolean = TrySendSupportActions(cfg, hwnd, hpPct, mpPct)
+                If supportSent Then
                     actionSent = True
                     reason = ""
-                    If chosen.Role = "attack" OrElse chosen.Role = "special" Then
-                        _lastAttackAction = now
+                Else
+                    Dim allowBlindAttack As Boolean = AllowBlindAttackWhenTargetMissing AndAlso (Not deniedTarget)
+                    Dim chosen As ActionRule = ChooseAction(cfg, hpPct, mpPct, targetValid, allowBlindAttack, reason)
+                    If chosen IsNot Nothing AndAlso SendKey(hwnd, chosen.KeyName, 35) Then
+                        MarkKeyUsed(chosen.KeyName)
+                        SetLastAction($"{chosen.KeyName} ({chosen.Role})")
+                        actionSent = True
+                        reason = ""
+                        If chosen.Role = "attack" OrElse chosen.Role = "special" Then
+                            _lastAttackAction = now
+                        End If
                     End If
                 End If
             End If
 
             If Not targetValid AndAlso Not actionSent Then
-                If (now - _lastRetarget).TotalMilliseconds >= cfg.RetargetMs Then
+                Dim retargetDelayMs As Integer = Math.Max(100, NoTargetRetargetMs)
+                If (now - _lastRetarget).TotalMilliseconds >= retargetDelayMs Then
                     If SendKey(hwnd, "E", 35) Then
                         _lastRetarget = now
                         SetLastAction("E (retarget)")
                         If String.IsNullOrWhiteSpace(reason) Then
                             If deniedTarget Then
                                 reason = $"Monster filter blocked target '{If(String.IsNullOrWhiteSpace(mobName), "unknown", mobName)}'. Retarget key sent."
+                            ElseIf Not targetWindowVisible Then
+                                reason = "No target window detected. Retarget key sent."
                             Else
                                 reason = "No target detected. Retarget key sent."
                             End If
@@ -422,13 +478,15 @@ Public Class BotEngine
                 ElseIf String.IsNullOrWhiteSpace(reason) Then
                     If deniedTarget Then
                         reason = "Monster filter blocked target. Waiting retarget cooldown."
+                    ElseIf Not targetWindowVisible Then
+                        reason = "No target window detected. Waiting 300ms retarget cooldown."
                     Else
-                        reason = "No target detected. Waiting retarget cooldown."
+                        reason = "No target detected. Waiting 300ms retarget cooldown."
                     End If
                 End If
             End If
 
-            TrySendMovePulse(cfg, hwnd, now)
+            TryHandleLootPickup(cfg, hwnd, now, actionSent)
 
             frame.Dispose()
 
@@ -437,6 +495,8 @@ Public Class BotEngine
                           s.HpPercent = Math.Round(hpPct, 1)
                           s.MpPercent = Math.Round(mpPct, 1)
                           s.MobHpPercent = Math.Round(mobHpPct, 1)
+                          s.ExpPercent = Math.Round(Math.Max(0, If(expPct < 0, 0, expPct)), 2)
+                          s.ExpPerHour = If(expPerHour < 0, -1, Math.Round(expPerHour, 2))
                           s.MobName = mobName
                           s.TargetValid = targetValid
                           s.NotAttackingReason = If(actionSent, "", reason)
@@ -539,25 +599,6 @@ Public Class BotEngine
         End If
     End Sub
 
-    Private Sub TrySendMovePulse(cfg As BotConfig, hwnd As IntPtr, now As DateTime)
-        If Not cfg.MovePulseEnabled Then
-            Return
-        End If
-        If hwnd = IntPtr.Zero Then
-            Return
-        End If
-        If _lastMovePulse <> DateTime.MinValue AndAlso (now - _lastMovePulse).TotalMilliseconds < Math.Max(1000, cfg.MovePulseMs) Then
-            Return
-        End If
-
-        Dim pulseKey As String = If(String.IsNullOrWhiteSpace(_nextMovePulseKey), "W", _nextMovePulseKey.ToUpperInvariant())
-        If SendKey(hwnd, pulseKey, 35) Then
-            _lastMovePulse = now
-            _nextMovePulseKey = If(pulseKey = "W", "S", "W")
-            SetLastAction($"{pulseKey} (move pulse)")
-        End If
-    End Sub
-
     Private Sub SavePeriodicSnapshot(frame As Bitmap, now As DateTime)
         If frame Is Nothing Then
             Return
@@ -584,12 +625,12 @@ Public Class BotEngine
         End Try
     End Sub
 
-    Private Function ReadMobNameIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime) As String
+    Private Function ReadMobNameIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime, Optional forceRefresh As Boolean = False) As String
         If frame Is Nothing Then
             Return ""
         End If
 
-        If (now - _lastMobNameRead).TotalMilliseconds < 250 AndAlso Not String.IsNullOrWhiteSpace(_cachedMobName) Then
+        If (Not forceRefresh) AndAlso (now - _lastMobNameRead).TotalMilliseconds < 650 Then
             Return _cachedMobName
         End If
 
@@ -613,6 +654,258 @@ Public Class BotEngine
         End Try
     End Function
 
+    Private Sub TryHandleLootPickup(cfg As BotConfig, hwnd As IntPtr, now As DateTime, actionSent As Boolean)
+        If Not cfg.LootPickupEnabled Then
+            Return
+        End If
+        If hwnd = IntPtr.Zero Then
+            Return
+        End If
+        If actionSent Then
+            Return
+        End If
+        If cfg.LootAllowedNames Is Nothing OrElse cfg.LootAllowedNames.Count = 0 Then
+            Return
+        End If
+
+        Dim intervalMs As Integer = Math.Max(1000, cfg.LootPickupIntervalMs)
+        If _lastLootPickup <> DateTime.MinValue AndAlso (now - _lastLootPickup).TotalMilliseconds < intervalMs Then
+            Return
+        End If
+
+        If _lastRetarget <> DateTime.MinValue AndAlso (now - _lastRetarget).TotalMilliseconds < 320 Then
+            Return
+        End If
+
+        _lastLootPickup = now
+        If Not SendKey(hwnd, "F", 35) Then
+            Return
+        End If
+
+        RaiseEvent LogLine("Loot scan sent (F).")
+        Thread.Sleep(Math.Max(120, cfg.LootPickupVerifyDelayMs))
+
+        Dim verifyFrame As Bitmap = CaptureClient(hwnd)
+        If verifyFrame Is Nothing Then
+            RaiseEvent LogLine("Loot scan skipped: capture failed.")
+            Return
+        End If
+
+        Try
+            Dim hpRegion As New RectRegion(0, 0, 1, 1)
+            Dim mpRegion As New RectRegion(0, 0, 1, 1)
+            Dim mobNameRegion As New RectRegion(0, 0, 1, 1)
+            Dim mobHpRegion As New RectRegion(0, 0, 1, 1)
+            Dim pranaExpRegion As New RectRegion(0, 0, 1, 1)
+            ResolveVisionRegions(cfg, verifyFrame.Width, verifyFrame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, pranaExpRegion)
+
+            Dim selectedName As String = ReadMobNameIfNeeded(verifyFrame, mobNameRegion, DateTime.UtcNow, True)
+            If IsAllowedLootName(selectedName, cfg.LootAllowedNames) Then
+                SetLastAction($"F (loot accepted: {If(String.IsNullOrWhiteSpace(selectedName), "unknown", selectedName)})")
+                Thread.Sleep(700)
+                Return
+            End If
+
+            Dim rejectKey As String = If(_lootRandom.Next(0, 2) = 0, "W", "S")
+            If SendKey(hwnd, rejectKey, 35) Then
+                SetLastAction($"{rejectKey} (loot rejected: {If(String.IsNullOrWhiteSpace(selectedName), "unknown", selectedName)})")
+            End If
+        Catch ex As Exception
+            RaiseEvent LogLine("Loot scan error: " & ex.Message)
+        Finally
+            verifyFrame.Dispose()
+        End Try
+    End Sub
+
+    Private Function ReadPranaExpPercent(frame As Bitmap, pranaExpRegion As RectRegion) As Double
+        Dim now As DateTime = DateTime.UtcNow
+        If _expOcrTask IsNot Nothing AndAlso _expOcrTask.IsCompleted Then
+            Try
+                Dim parsed As Double = _expOcrTask.Result
+                If parsed >= 0 AndAlso parsed <= 100 Then
+                    _lastExpPercent = parsed
+                End If
+            Catch
+            End Try
+            _expOcrTask = Nothing
+        End If
+
+        If _expOcrTask IsNot Nothing Then
+            Return _lastExpPercent
+        End If
+
+        If _lastExpOcrAt <> DateTime.MinValue AndAlso (now - _lastExpOcrAt).TotalMilliseconds < ExpOcrMinIntervalMs Then
+            Return _lastExpPercent
+        End If
+
+        If frame Is Nothing OrElse pranaExpRegion Is Nothing Then
+            Return _lastExpPercent
+        End If
+
+        Dim rect As Rectangle = pranaExpRegion.Clamp(frame.Width, frame.Height)
+        If rect.Width <= 1 OrElse rect.Height <= 1 Then
+            Return _lastExpPercent
+        End If
+
+        Dim crop As New Bitmap(Math.Max(1, rect.Width), Math.Max(1, rect.Height), PixelFormat.Format24bppRgb)
+        Try
+            Using g As Graphics = Graphics.FromImage(crop)
+                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
+            End Using
+            _lastExpOcrAt = now
+            _expOcrTask = Task.Run(
+                Function()
+                    Try
+                        Return OcrReader.ReadPercent(crop)
+                    Finally
+                        crop.Dispose()
+                    End Try
+                End Function)
+            Return _lastExpPercent
+        Catch
+            crop.Dispose()
+        End Try
+
+        Return _lastExpPercent
+    End Function
+
+    Private Function UpdateExpRate(expPercent As Double, now As DateTime) As Double
+        If expPercent < 0 Then
+            Return _lastExpPerHour
+        End If
+
+        If _lastExpRateSampleAt = DateTime.MinValue Then
+            _lastExpRateSampleAt = now
+            _lastExpRateSamplePercent = expPercent
+            _lastExpPerHour = -1
+            Return _lastExpPerHour
+        End If
+
+        Dim elapsedMs As Double = (now - _lastExpRateSampleAt).TotalMilliseconds
+        If elapsedMs < ExpRateSampleMs Then
+            Return _lastExpPerHour
+        End If
+
+        Dim delta As Double = expPercent - _lastExpRateSamplePercent
+        If delta < -50.0 Then
+            delta += 100.0
+        End If
+        If delta < 0 Then
+            delta = 0
+        End If
+
+        Dim hours As Double = elapsedMs / 3600000.0
+        If hours > 0 Then
+            _lastExpPerHour = delta / hours
+        End If
+
+        _lastExpRateSampleAt = now
+        _lastExpRateSamplePercent = expPercent
+        Return _lastExpPerHour
+    End Function
+
+    Private Function TryHandlePartyInvite(cfg As BotConfig, hwnd As IntPtr, frame As Bitmap, now As DateTime) As Boolean
+        If cfg Is Nothing OrElse (Not cfg.PartyAutoAcceptEnabled) Then
+            _lastPartyInviteCandidate = ""
+            Return False
+        End If
+        If hwnd = IntPtr.Zero OrElse frame Is Nothing Then
+            Return False
+        End If
+        If _lastPartyInviteAccept <> DateTime.MinValue AndAlso (now - _lastPartyInviteAccept).TotalMilliseconds < 2000 Then
+            Return False
+        End If
+
+        If _partyInviteOcrTask IsNot Nothing AndAlso _partyInviteOcrTask.IsCompleted Then
+            Try
+                _lastPartyInviteCandidate = If(_partyInviteOcrTask.Result, "").Trim()
+            Catch
+                _lastPartyInviteCandidate = ""
+            End Try
+            _partyInviteOcrTask = Nothing
+        End If
+
+        If IsPartyInvitePrompt(_lastPartyInviteCandidate) Then
+            If SendKey(hwnd, "ENTER", 35) Then
+                _lastPartyInviteAccept = now
+                SetLastAction($"ENTER (party invite accepted: {If(String.IsNullOrWhiteSpace(_lastPartyInviteCandidate), "detected", _lastPartyInviteCandidate)})")
+                RaiseEvent LogLine("Party invite detected and auto-accepted.")
+                _lastPartyInviteCandidate = ""
+                Return True
+            End If
+        End If
+
+        If _partyInviteOcrTask IsNot Nothing Then
+            Return False
+        End If
+
+        If _lastPartyInviteScan <> DateTime.MinValue AndAlso (now - _lastPartyInviteScan).TotalMilliseconds < PartyInviteOcrMinIntervalMs Then
+            Return False
+        End If
+
+        Dim rect As Rectangle = BuildPartyInviteTextRect(frame.Width, frame.Height)
+        If rect.Width <= 1 OrElse rect.Height <= 1 Then
+            Return False
+        End If
+
+        Dim crop As New Bitmap(rect.Width, rect.Height, PixelFormat.Format24bppRgb)
+        Try
+            Using g As Graphics = Graphics.FromImage(crop)
+                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
+            End Using
+
+            _lastPartyInviteScan = now
+            _partyInviteOcrTask = Task.Run(
+                Function()
+                    Try
+                        Return OcrReader.ReadName(crop)
+                    Catch
+                        Return ""
+                    Finally
+                        crop.Dispose()
+                    End Try
+                End Function)
+        Catch
+            crop.Dispose()
+        End Try
+
+        Return False
+    End Function
+
+    Private Shared Function BuildPartyInviteTextRect(frameWidth As Integer, frameHeight As Integer) As Rectangle
+        Dim x As Integer = CInt(Math.Round(frameWidth * 0.12))
+        Dim y As Integer = CInt(Math.Round(frameHeight * 0.15))
+        Dim w As Integer = CInt(Math.Round(frameWidth * 0.76))
+        Dim h As Integer = CInt(Math.Round(frameHeight * 0.24))
+
+        x = Math.Max(0, Math.Min(Math.Max(0, frameWidth - 1), x))
+        y = Math.Max(0, Math.Min(Math.Max(0, frameHeight - 1), y))
+        w = Math.Max(1, Math.Min(w, Math.Max(1, frameWidth - x)))
+        h = Math.Max(1, Math.Min(h, Math.Max(1, frameHeight - y)))
+        Return New Rectangle(x, y, w, h)
+    End Function
+
+    Private Shared Function IsPartyInvitePrompt(rawText As String) As Boolean
+        If String.IsNullOrWhiteSpace(rawText) Then
+            Return False
+        End If
+
+        Dim norm As String = NormalizeMobName(rawText)
+        If norm = "" Then
+            Return False
+        End If
+
+        Dim compact As String = norm.Replace(" ", "")
+        If compact.Contains("invitedyoutojointheparty", StringComparison.OrdinalIgnoreCase) Then
+            Return True
+        End If
+
+        Dim hasParty As Boolean = norm.Contains("party", StringComparison.OrdinalIgnoreCase) OrElse norm.Contains("parly", StringComparison.OrdinalIgnoreCase)
+        Dim hasInvite As Boolean = norm.Contains("invited", StringComparison.OrdinalIgnoreCase) OrElse norm.Contains("invite", StringComparison.OrdinalIgnoreCase)
+        Dim hasJoin As Boolean = norm.Contains("join", StringComparison.OrdinalIgnoreCase)
+        Return hasParty AndAlso (hasInvite OrElse hasJoin)
+    End Function
+
     Private Shared Function IsDeniedMob(mobName As String, denied As List(Of String)) As Boolean
         If String.IsNullOrWhiteSpace(mobName) OrElse denied Is Nothing OrElse denied.Count = 0 Then
             Return False
@@ -632,6 +925,32 @@ Public Class BotEngine
                 Return True
             End If
             If normMob.Contains(normDenied, StringComparison.OrdinalIgnoreCase) Then
+                Return True
+            End If
+        Next
+
+        Return False
+    End Function
+
+    Private Shared Function IsAllowedLootName(rawName As String, allowList As List(Of String)) As Boolean
+        If String.IsNullOrWhiteSpace(rawName) OrElse allowList Is Nothing OrElse allowList.Count = 0 Then
+            Return False
+        End If
+
+        Dim normName As String = NormalizeMobName(rawName)
+        If normName = "" Then
+            Return False
+        End If
+
+        For Each entry In allowList
+            Dim normAllowed As String = NormalizeMobName(entry)
+            If normAllowed = "" Then
+                Continue For
+            End If
+            If normName.Equals(normAllowed, StringComparison.OrdinalIgnoreCase) Then
+                Return True
+            End If
+            If normName.Contains(normAllowed, StringComparison.OrdinalIgnoreCase) Then
                 Return True
             End If
         Next
@@ -692,6 +1011,42 @@ Public Class BotEngine
         Return (now - _lastRetarget).TotalMilliseconds >= retargetCooldownMs
     End Function
 
+    Private Function TrySendSupportActions(cfg As BotConfig, hwnd As IntPtr, hpPercent As Double, mpPercent As Double) As Boolean
+        If hwnd = IntPtr.Zero Then
+            Return False
+        End If
+
+        Dim ordered = cfg.Actions.
+            Where(Function(a) a.Enabled AndAlso (a.Role = "heal" OrElse a.Role = "mana")).
+            OrderBy(Function(a) a.Priority).
+            ToList()
+        If ordered.Count = 0 Then
+            Return False
+        End If
+
+        Dim sentAny As Boolean = False
+        For Each action In ordered
+            Dim triggered As Boolean =
+                (action.Role = "heal" AndAlso hpPercent <= action.TriggerPercent) OrElse
+                (action.Role = "mana" AndAlso mpPercent <= action.TriggerPercent)
+            If Not triggered Then
+                Continue For
+            End If
+            If Not IsReady(action) Then
+                Continue For
+            End If
+            If Not SendKey(hwnd, action.KeyName, 35) Then
+                Continue For
+            End If
+
+            MarkKeyUsed(action.KeyName)
+            SetLastAction($"{action.KeyName} ({action.Role})")
+            sentAny = True
+        Next
+
+        Return sentAny
+    End Function
+
     Public Function ManualRetarget(windowTitle As String) As Boolean
         Dim title As String = If(windowTitle, "").Trim()
         If title = "" Then
@@ -717,20 +1072,6 @@ Public Class BotEngine
             reason = "No enabled keys."
             Return Nothing
         End If
-
-        For Each action In ordered
-            If action.Role = "heal" AndAlso hpPercent <= action.TriggerPercent AndAlso IsReady(action) Then
-                reason = ""
-                Return action
-            End If
-        Next
-
-        For Each action In ordered
-            If action.Role = "mana" AndAlso mpPercent <= action.TriggerPercent AndAlso IsReady(action) Then
-                reason = ""
-                Return action
-            End If
-        Next
 
         Dim hasAttackKey As Boolean = False
         Dim statBlocked As Boolean = False
@@ -783,6 +1124,15 @@ Public Class BotEngine
         End SyncLock
     End Function
 
+    Private Sub MarkKeyUsed(keyName As String)
+        If String.IsNullOrWhiteSpace(keyName) Then
+            Return
+        End If
+        SyncLock _sync
+            _lastKeyTime(keyName) = DateTime.UtcNow
+        End SyncLock
+    End Sub
+
     Private Sub SetLastAction(text As String)
         SetStatus(Sub(s)
                       s.LastAction = text
@@ -807,6 +1157,8 @@ Public Class BotEngine
             .HpPercent = src.HpPercent,
             .MpPercent = src.MpPercent,
             .MobHpPercent = src.MobHpPercent,
+            .ExpPercent = src.ExpPercent,
+            .ExpPerHour = src.ExpPerHour,
             .MobName = src.MobName,
             .TargetValid = src.TargetValid,
             .LastAction = src.LastAction,
@@ -1010,6 +1362,8 @@ Public Class BotEngine
             rect.Height -= 2
         End If
 
+        Dim leadingEdgeRatio As Double = ComputeLeadingEdgeFillRatio(frame, rect, isHp)
+
         Dim columnMinPixels As Integer = Math.Max(1, CInt(Math.Ceiling(rect.Height * 0.1)))
         Dim gapTolerance As Integer = Math.Max(2, CInt(Math.Ceiling(rect.Width * 0.02)))
         Dim rightMost As Integer = -1
@@ -1050,6 +1404,9 @@ Public Class BotEngine
         End If
 
         Dim colorPercent As Double = Math.Max(0, Math.Min(100, (rightMost + 1) * 100.0 / rect.Width))
+        If colorPercent >= 3.0 AndAlso leadingEdgeRatio < 0.02 Then
+            Return 0
+        End If
         If colorPercent < 2.0 Then
             Dim adaptive As Double = ComputeBarPercentAdaptive(frame, rect, isHp)
             If adaptive > colorPercent Then
@@ -1063,6 +1420,8 @@ Public Class BotEngine
         If rect.Width <= 0 OrElse rect.Height <= 0 Then
             Return 0
         End If
+
+        Dim leadingEdgeRatio As Double = ComputeLeadingEdgeFillRatio(frame, rect, isHp)
 
         Dim scores(rect.Width - 1) As Long
         Dim maxScore As Long = 0
@@ -1118,14 +1477,110 @@ Public Class BotEngine
         If rightMost < 0 Then
             Return 0
         End If
-        Return Math.Max(0, Math.Min(100, (rightMost + 1) * 100.0 / rect.Width))
+        Dim adaptivePercent As Double = Math.Max(0, Math.Min(100, (rightMost + 1) * 100.0 / rect.Width))
+        If adaptivePercent >= 3.0 AndAlso leadingEdgeRatio < 0.02 Then
+            Return 0
+        End If
+        Return adaptivePercent
     End Function
 
-    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion)
+    Private Shared Function ComputeLeadingEdgeFillRatio(frame As Bitmap, rect As Rectangle, isHp As Boolean) As Double
+        If frame Is Nothing OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then
+            Return 0
+        End If
+
+        Dim edgeCols As Integer = Math.Max(2, Math.Min(rect.Width, CInt(Math.Ceiling(rect.Width * 0.12))))
+        Dim colored As Integer = 0
+        Dim total As Integer = edgeCols * rect.Height
+        If total <= 0 Then
+            Return 0
+        End If
+
+        For x As Integer = 0 To edgeCols - 1
+            Dim px As Integer = rect.Left + x
+            For y As Integer = rect.Top To rect.Bottom - 1
+                Dim c As Color = frame.GetPixel(px, y)
+                If isHp Then
+                    If IsHpColor(c) Then
+                        colored += 1
+                    End If
+                Else
+                    If IsMpColor(c) Then
+                        colored += 1
+                    End If
+                End If
+            Next
+        Next
+
+        Return colored / CDbl(total)
+    End Function
+
+    Private Shared Function HasTargetWindowSignal(frame As Bitmap, mobHpRegion As RectRegion, mobName As String, mobHpPct As Double) As Boolean
+        If frame Is Nothing Then
+            Return False
+        End If
+
+        Dim outerRect As Rectangle = mobHpRegion.Clamp(frame.Width, frame.Height)
+        Dim rect As Rectangle = outerRect
+        If rect.Width > 3 Then
+            rect.X += 1
+            rect.Width -= 2
+        End If
+        If rect.Height > 3 Then
+            rect.Y += 1
+            rect.Height -= 2
+        End If
+
+        Dim edgeFill As Double = ComputeLeadingEdgeFillRatio(frame, rect, True)
+        Dim colorFill As Double = ComputeColorFillRatio(frame, rect, True)
+        Dim hasName As Boolean = Not String.IsNullOrWhiteSpace(mobName)
+
+        If edgeFill >= 0.04 AndAlso colorFill >= 0.01 Then
+            Return True
+        End If
+
+        If hasName AndAlso mobHpPct > 0.0 AndAlso edgeFill >= 0.015 AndAlso colorFill >= 0.004 Then
+            Return True
+        End If
+
+        Return False
+    End Function
+
+    Private Shared Function ComputeColorFillRatio(frame As Bitmap, rect As Rectangle, isHp As Boolean) As Double
+        If frame Is Nothing OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then
+            Return 0
+        End If
+
+        Dim colored As Integer = 0
+        Dim total As Integer = rect.Width * rect.Height
+        If total <= 0 Then
+            Return 0
+        End If
+
+        For y As Integer = rect.Top To rect.Bottom - 1
+            For x As Integer = rect.Left To rect.Right - 1
+                Dim c As Color = frame.GetPixel(x, y)
+                If isHp Then
+                    If IsHpColor(c) Then
+                        colored += 1
+                    End If
+                Else
+                    If IsMpColor(c) Then
+                        colored += 1
+                    End If
+                End If
+            Next
+        Next
+
+        Return colored / CDbl(total)
+    End Function
+
+    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef pranaExpRect As RectRegion)
         hpBar = CloneRegion(cfg.HpBar)
         mpBar = CloneRegion(cfg.MpBar)
         mobNameRect = CloneRegion(cfg.MobNameRect)
         mobHpRect = CloneRegion(cfg.MobHpRect)
+        pranaExpRect = CloneRegion(cfg.PranaExpRect)
 
         If frameWidth <= 0 OrElse frameHeight <= 0 Then
             Exit Sub
@@ -1143,13 +1598,15 @@ Public Class BotEngine
         mpBar = ScaleRegionLeftTop(cfg.MpBar, sx, sy)
         mobNameRect = ScaleRegionRightTop(cfg.MobNameRect, sx, sy, frameWidth)
         mobHpRect = ScaleRegionRightTop(cfg.MobHpRect, sx, sy, frameWidth)
+        pranaExpRect = ScaleRegionLeftTop(cfg.PranaExpRect, sx, sy)
     End Sub
 
     Private Shared Function IsDefaultVisionLayout(cfg As BotConfig) As Boolean
         Return SameRegion(cfg.HpBar, New RectRegion(11, 25, 151, 11)) AndAlso
                SameRegion(cfg.MpBar, New RectRegion(3, 40, 161, 11)) AndAlso
                SameRegion(cfg.MobNameRect, New RectRegion(862, 0, 162, 23)) AndAlso
-               SameRegion(cfg.MobHpRect, New RectRegion(859, 20, 165, 11))
+               SameRegion(cfg.MobHpRect, New RectRegion(859, 20, 165, 11)) AndAlso
+               SameRegion(cfg.PranaExpRect, New RectRegion(472, 745, 78, 21))
     End Function
 
     Private Shared Function SameRegion(a As RectRegion, b As RectRegion) As Boolean
