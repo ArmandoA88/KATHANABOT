@@ -53,8 +53,8 @@ Public Class BotConfig
     Public Property MobHpPresenceThreshold As Double = 1.0
     Public Property HpBar As RectRegion = New RectRegion(11, 25, 151, 11)
     Public Property MpBar As RectRegion = New RectRegion(3, 40, 161, 11)
-    Public Property MobNameRect As RectRegion = New RectRegion(862, 0, 162, 23)
-    Public Property MobHpRect As RectRegion = New RectRegion(859, 20, 165, 11)
+    Public Property MobNameRect As RectRegion = New RectRegion(860, 711, 162, 23)
+    Public Property MobHpRect As RectRegion = New RectRegion(859, 737, 165, 11)
     Public Property PranaExpRect As RectRegion = New RectRegion(472, 745, 78, 21)
     Public Property PartyInviteScanRect As RectRegion = New RectRegion(349, 318, 328, 124)
     Public Property PartyInviteOkRect As RectRegion = New RectRegion(463, 410, 59, 21)
@@ -75,7 +75,7 @@ Public Class BotConfig
         For i As Integer = 0 To keys.Length - 1
             Dim keyName As String = keys(i)
             Dim isPrimary As Boolean = i < 10
-            Dim enabled As Boolean = (keyName = "1" OrElse keyName = "6")
+            Dim enabled As Boolean = (keyName = "1" OrElse keyName = "2" OrElse keyName = "6")
             Dim role As String
             If keyName = "6" Then
                 role = "heal"
@@ -85,12 +85,20 @@ Public Class BotConfig
                 role = "special"
             End If
             Dim trigger As Integer = If(keyName = "6", 80, 40)
+            Dim cooldownMs As Integer
+            If keyName = "1" Then
+                cooldownMs = 600
+            ElseIf keyName = "2" Then
+                cooldownMs = 450
+            Else
+                cooldownMs = 1000
+            End If
             cfg.Actions.Add(New ActionRule() With {
                 .KeyName = keyName,
                 .Enabled = enabled,
                 .Role = role,
                 .Priority = (i + 1) * 10,
-                .CooldownMs = 500,
+                .CooldownMs = cooldownMs,
                 .TriggerPercent = trigger,
                 .MinHpPercent = 1,
                 .MinMpPercent = 1
@@ -193,6 +201,10 @@ Public Class BotEngine
     Public Event LogLine(line As String)
     Private Const AllowBlindAttackWhenTargetMissing As Boolean = False
     Private Const NoTargetRetargetMs As Integer = 300
+    Private Const FirstHitWindowMs As Integer = 800
+    Private Const BlacklistLockWindowMs As Integer = 800
+    Private Const TargetNameConfirmMinGapMs As Integer = 120
+    Private Const TargetNameConfirmRequiredCount As Integer = 2
     Private Const ExpRateSampleMs As Integer = 60000
     Private Const ExpOcrMinIntervalMs As Integer = 900
     Private Const PartyInviteOcrMinIntervalMs As Integer = 900
@@ -212,6 +224,15 @@ Public Class BotEngine
     Private _cachedMobName As String = ""
     Private _lastPeriodicSnapshot As DateTime = DateTime.MinValue
     Private _lastLootPickup As DateTime = DateTime.MinValue
+    Private _firstHitPending As Boolean = False
+    Private _firstHitTargetSignature As String = ""
+    Private _firstHitWindowUntil As DateTime = DateTime.MinValue
+    Private _blacklistLockUntil As DateTime = DateTime.MinValue
+    Private _nameConfirmCandidate As String = ""
+    Private _nameConfirmCount As Integer = 0
+    Private _nameConfirmConfirmedName As String = ""
+    Private _nameConfirmLastSampleAt As DateTime = DateTime.MinValue
+    Private _nameConfirmLastReadProcessedAt As DateTime = DateTime.MinValue
     Private _lastPartyInviteScan As DateTime = DateTime.MinValue
     Private _lastPartyInviteAccept As DateTime = DateTime.MinValue
     Private _partyInviteOcrTask As Task(Of String) = Nothing
@@ -273,6 +294,15 @@ Public Class BotEngine
             _cachedMobName = ""
             _lastPeriodicSnapshot = DateTime.MinValue
             _lastLootPickup = DateTime.MinValue
+            _firstHitPending = False
+            _firstHitTargetSignature = ""
+            _firstHitWindowUntil = DateTime.MinValue
+            _blacklistLockUntil = DateTime.MinValue
+            _nameConfirmCandidate = ""
+            _nameConfirmCount = 0
+            _nameConfirmConfirmedName = ""
+            _nameConfirmLastSampleAt = DateTime.MinValue
+            _nameConfirmLastReadProcessedAt = DateTime.MinValue
             _lastPartyInviteScan = DateTime.MinValue
             _lastPartyInviteAccept = DateTime.MinValue
             _partyInviteOcrTask = Nothing
@@ -414,21 +444,97 @@ Public Class BotEngine
 
             Dim now As DateTime = DateTime.UtcNow
             SavePeriodicSnapshot(frame, now)
-            Dim shouldReadMobName As Boolean = mobHpPct >= Math.Max(0.6, cfg.MobHpPresenceThreshold * 0.7)
+            Dim monsterFilterActive As Boolean = (cfg.DeniedMobs IsNot Nothing AndAlso cfg.DeniedMobs.Count > 0)
+            Dim targetWindowSignalNoName As Boolean = HasTargetWindowSignal(frame, mobHpRegion, "", mobHpPct)
+            Dim shouldReadMobName As Boolean = targetWindowSignalNoName OrElse (mobHpPct >= Math.Max(0.6, cfg.MobHpPresenceThreshold * 0.7))
+            Dim forceMobNameRefresh As Boolean = monsterFilterActive AndAlso targetWindowSignalNoName AndAlso ((now - _lastMobNameRead).TotalMilliseconds >= 180)
             Dim mobName As String
             If shouldReadMobName Then
-                mobName = ReadMobNameIfNeeded(frame, mobNameRegion, now)
+                mobName = ReadMobNameIfNeeded(frame, mobNameRegion, now, forceMobNameRefresh)
             Else
-                If (now - _lastMobNameRead).TotalMilliseconds > 1200 Then
-                    _cachedMobName = ""
-                End If
-                mobName = _cachedMobName
+                ' Avoid stale-name attacks after target switches.
+                _cachedMobName = ""
+                _lastMobNameRead = DateTime.MinValue
+                mobName = ""
             End If
             ApplyVisionStabilityFilter(hpPct, mpPct, mobHpPct, mobName, captureGlitch)
             Dim expPerHour As Double = UpdateExpRate(expPct, now)
             Dim targetWindowVisible As Boolean = HasTargetWindowSignal(frame, mobHpRegion, mobName, mobHpPct)
             Dim deniedTarget As Boolean = IsDeniedMob(mobName, cfg.DeniedMobs)
-            Dim targetValid As Boolean = targetWindowVisible AndAlso (mobHpPct >= cfg.MobHpPresenceThreshold) AndAlso (Not deniedTarget)
+            Dim normMobName As String = NormalizeMobName(mobName)
+
+            If monsterFilterActive AndAlso deniedTarget Then
+                _blacklistLockUntil = now.AddMilliseconds(BlacklistLockWindowMs)
+                _nameConfirmCandidate = ""
+                _nameConfirmCount = 0
+                _nameConfirmConfirmedName = ""
+                _nameConfirmLastSampleAt = DateTime.MinValue
+                _nameConfirmLastReadProcessedAt = DateTime.MinValue
+            End If
+
+            Dim nameSampleUpdated As Boolean = (_lastMobNameRead <> DateTime.MinValue AndAlso _lastMobNameRead > _nameConfirmLastReadProcessedAt)
+            If nameSampleUpdated Then
+                _nameConfirmLastReadProcessedAt = _lastMobNameRead
+            End If
+
+            If Not monsterFilterActive Then
+                _nameConfirmCandidate = ""
+                _nameConfirmCount = 0
+                _nameConfirmConfirmedName = ""
+                _nameConfirmLastSampleAt = DateTime.MinValue
+                _nameConfirmLastReadProcessedAt = DateTime.MinValue
+            ElseIf Not targetWindowVisible OrElse normMobName = "" Then
+                _nameConfirmCandidate = ""
+                _nameConfirmCount = 0
+                _nameConfirmConfirmedName = ""
+                _nameConfirmLastSampleAt = DateTime.MinValue
+            ElseIf deniedTarget Then
+                ' Already handled above; keep state reset while denied.
+            ElseIf _nameConfirmConfirmedName.Equals(normMobName, StringComparison.OrdinalIgnoreCase) Then
+                ' Keep confirmed state for current stable target name.
+            ElseIf nameSampleUpdated Then
+                If _nameConfirmCandidate.Equals(normMobName, StringComparison.OrdinalIgnoreCase) Then
+                    If _nameConfirmLastSampleAt = DateTime.MinValue OrElse (_lastMobNameRead - _nameConfirmLastSampleAt).TotalMilliseconds >= TargetNameConfirmMinGapMs Then
+                        _nameConfirmCount += 1
+                        _nameConfirmLastSampleAt = _lastMobNameRead
+                    End If
+                Else
+                    _nameConfirmCandidate = normMobName
+                    _nameConfirmCount = 1
+                    _nameConfirmLastSampleAt = _lastMobNameRead
+                End If
+
+                If _nameConfirmCount >= TargetNameConfirmRequiredCount Then
+                    _nameConfirmConfirmedName = normMobName
+                End If
+            End If
+
+            Dim blacklistLockActive As Boolean = monsterFilterActive AndAlso _blacklistLockUntil <> DateTime.MinValue AndAlso now < _blacklistLockUntil
+            Dim nameConfirmedForAttack As Boolean = (Not monsterFilterActive) OrElse (normMobName <> "" AndAlso _nameConfirmConfirmedName.Equals(normMobName, StringComparison.OrdinalIgnoreCase))
+            Dim missingNameBlockedByFilter As Boolean = monsterFilterActive AndAlso targetWindowVisible AndAlso normMobName = ""
+            Dim nameConfirmationBlockedByFilter As Boolean = monsterFilterActive AndAlso targetWindowVisible AndAlso (Not missingNameBlockedByFilter) AndAlso (Not deniedTarget) AndAlso (Not nameConfirmedForAttack)
+            Dim canTrackFirstHitTarget As Boolean = targetWindowVisible AndAlso (mobHpPct >= cfg.MobHpPresenceThreshold) AndAlso (Not deniedTarget) AndAlso (Not missingNameBlockedByFilter)
+            Dim currentFirstHitSignature As String = normMobName
+            If canTrackFirstHitTarget Then
+                Dim isNewFirstHitTarget As Boolean = (Not _firstHitPending) OrElse ((currentFirstHitSignature <> "") AndAlso (Not _firstHitTargetSignature.Equals(currentFirstHitSignature, StringComparison.OrdinalIgnoreCase)))
+                If isNewFirstHitTarget Then
+                    _firstHitPending = True
+                    _firstHitTargetSignature = currentFirstHitSignature
+                    _firstHitWindowUntil = now.AddMilliseconds(FirstHitWindowMs)
+                End If
+            ElseIf Not targetWindowVisible OrElse deniedTarget Then
+                _firstHitPending = False
+                _firstHitTargetSignature = ""
+                _firstHitWindowUntil = DateTime.MinValue
+            End If
+            Dim firstHitWindowActive As Boolean = _firstHitPending AndAlso now < _firstHitWindowUntil
+            Dim targetValid As Boolean =
+                targetWindowVisible AndAlso
+                (mobHpPct >= cfg.MobHpPresenceThreshold) AndAlso
+                (Not deniedTarget) AndAlso
+                (Not missingNameBlockedByFilter) AndAlso
+                (Not nameConfirmationBlockedByFilter) AndAlso
+                (Not blacklistLockActive)
             TrackMobHpMovement(targetValid, mobHpPct, now)
 
             Dim reason As String = ""
@@ -438,7 +544,7 @@ Public Class BotEngine
             End If
             Dim forcedRetarget As Boolean = False
 
-            If ShouldBypassStuckTarget(cfg, targetValid, now) Then
+            If (Not _firstHitPending) AndAlso ShouldBypassStuckTarget(cfg, targetValid, now) Then
                 If SendKey(hwnd, "E", 35) Then
                     _lastRetarget = now
                     SetLastAction("E (stuck target bypass)")
@@ -462,39 +568,63 @@ Public Class BotEngine
                         reason = ""
                         If chosen.Role = "attack" OrElse chosen.Role = "special" Then
                             _lastAttackAction = now
+                            _firstHitPending = False
+                            _firstHitWindowUntil = DateTime.MinValue
                         End If
                     End If
                 End If
             End If
 
             If Not targetValid AndAlso Not actionSent Then
-                Dim retargetDelayMs As Integer = Math.Max(100, NoTargetRetargetMs)
-                If (now - _lastRetarget).TotalMilliseconds >= retargetDelayMs Then
-                    If SendKey(hwnd, "E", 35) Then
-                        _lastRetarget = now
-                        SetLastAction("E (retarget)")
-                        If String.IsNullOrWhiteSpace(reason) Then
-                            If deniedTarget Then
-                                reason = $"Monster filter blocked target '{If(String.IsNullOrWhiteSpace(mobName), "unknown", mobName)}'. Retarget key sent."
-                            ElseIf Not targetWindowVisible Then
-                                reason = "No target window detected. Retarget key sent."
-                            Else
-                                reason = "No target detected. Retarget key sent."
-                            End If
+                If _firstHitPending Then
+                    If String.IsNullOrWhiteSpace(reason) Then
+                        If firstHitWindowActive Then
+                            reason = $"First-hit attack window active ({FirstHitWindowMs}ms). Waiting to send first attack."
+                        Else
+                            reason = "Waiting to send first attack before retarget."
                         End If
                     End If
-                ElseIf String.IsNullOrWhiteSpace(reason) Then
-                    If deniedTarget Then
-                        reason = "Monster filter blocked target. Waiting retarget cooldown."
-                    ElseIf Not targetWindowVisible Then
-                        reason = "No target window detected. Waiting 300ms retarget cooldown."
-                    Else
-                        reason = "No target detected. Waiting 300ms retarget cooldown."
+                Else
+                    Dim retargetDelayMs As Integer = Math.Max(100, NoTargetRetargetMs)
+                    If (now - _lastRetarget).TotalMilliseconds >= retargetDelayMs Then
+                        If SendKey(hwnd, "E", 35) Then
+                            _lastRetarget = now
+                            SetLastAction("E (retarget)")
+                            If String.IsNullOrWhiteSpace(reason) Then
+                                If deniedTarget Then
+                                    reason = $"Monster filter blocked target '{If(String.IsNullOrWhiteSpace(mobName), "unknown", mobName)}'. Retarget key sent."
+                                ElseIf blacklistLockActive Then
+                                    reason = $"Monster filter lock active ({BlacklistLockWindowMs}ms). Retarget key sent."
+                                ElseIf missingNameBlockedByFilter Then
+                                    reason = "Monster filter waiting for mob name OCR. Retarget key sent."
+                                ElseIf nameConfirmationBlockedByFilter Then
+                                    reason = "Monster filter waiting for 2x name confirmation. Retarget key sent."
+                                ElseIf Not targetWindowVisible Then
+                                    reason = "No target window detected. Retarget key sent."
+                                Else
+                                    reason = "No target detected. Retarget key sent."
+                                End If
+                            End If
+                        End If
+                    ElseIf String.IsNullOrWhiteSpace(reason) Then
+                        If deniedTarget Then
+                            reason = "Monster filter blocked target. Waiting retarget cooldown."
+                        ElseIf blacklistLockActive Then
+                            reason = $"Monster filter lock active ({BlacklistLockWindowMs}ms). Waiting retarget cooldown."
+                        ElseIf missingNameBlockedByFilter Then
+                            reason = "Monster filter waiting for mob name OCR. Waiting retarget cooldown."
+                        ElseIf nameConfirmationBlockedByFilter Then
+                            reason = "Monster filter waiting for 2x name confirmation. Waiting retarget cooldown."
+                        ElseIf Not targetWindowVisible Then
+                            reason = "No target window detected. Waiting 300ms retarget cooldown."
+                        Else
+                            reason = "No target detected. Waiting 300ms retarget cooldown."
+                        End If
                     End If
                 End If
             End If
 
-            TryHandleLootPickup(cfg, hwnd, now, actionSent)
+            TryHandleLootPickup(cfg, hwnd, now, actionSent OrElse _firstHitPending)
 
             frame.Dispose()
 
@@ -924,9 +1054,123 @@ Public Class BotEngine
             If normMob.Contains(normDenied, StringComparison.OrdinalIgnoreCase) Then
                 Return True
             End If
+            If IsFuzzyBlacklistMatch(normMob, normDenied) Then
+                Return True
+            End If
         Next
 
         Return False
+    End Function
+
+    Private Shared Function IsFuzzyBlacklistMatch(normMob As String, normDenied As String) As Boolean
+        If String.IsNullOrWhiteSpace(normMob) OrElse String.IsNullOrWhiteSpace(normDenied) Then
+            Return False
+        End If
+
+        If AreTextsClose(normMob, normDenied) Then
+            Return True
+        End If
+
+        Dim mobTokens As String() = normMob.Split({" "c}, StringSplitOptions.RemoveEmptyEntries)
+        Dim deniedTokens As String() = normDenied.Split({" "c}, StringSplitOptions.RemoveEmptyEntries)
+        If mobTokens.Length = 0 OrElse deniedTokens.Length = 0 Then
+            Return False
+        End If
+
+        If mobTokens.Length >= deniedTokens.Length Then
+            For start As Integer = 0 To mobTokens.Length - deniedTokens.Length
+                Dim window As String = String.Join(" ", mobTokens.Skip(start).Take(deniedTokens.Length))
+                If AreTextsClose(window, normDenied) Then
+                    Return True
+                End If
+            Next
+        End If
+
+        Return False
+    End Function
+
+    Private Shared Function AreTextsClose(a As String, b As String) As Boolean
+        If String.IsNullOrWhiteSpace(a) OrElse String.IsNullOrWhiteSpace(b) Then
+            Return False
+        End If
+
+        Dim aa As String = Regex.Replace(a.ToLowerInvariant(), "\s+", " ").Trim()
+        Dim bb As String = Regex.Replace(b.ToLowerInvariant(), "\s+", " ").Trim()
+        If aa = "" OrElse bb = "" Then
+            Return False
+        End If
+
+        If aa.Equals(bb, StringComparison.Ordinal) Then
+            Return True
+        End If
+        If aa.Contains(bb, StringComparison.Ordinal) OrElse bb.Contains(aa, StringComparison.Ordinal) Then
+            Return True
+        End If
+
+        Dim compactA As String = aa.Replace(" ", "")
+        Dim compactB As String = bb.Replace(" ", "")
+        If compactA = "" OrElse compactB = "" Then
+            Return False
+        End If
+
+        Dim lenA As Integer = compactA.Length
+        Dim lenB As Integer = compactB.Length
+        Dim maxLen As Integer = Math.Max(lenA, lenB)
+        Dim lenDiff As Integer = Math.Abs(lenA - lenB)
+
+        Dim tolerance As Integer
+        If maxLen <= 6 Then
+            tolerance = 1
+        ElseIf maxLen <= 12 Then
+            tolerance = 2
+        Else
+            tolerance = 3
+        End If
+
+        If lenDiff > tolerance Then
+            Return False
+        End If
+
+        Dim distance As Integer = LevenshteinDistance(compactA, compactB)
+        If distance > tolerance Then
+            Return False
+        End If
+
+        Dim similarity As Double = 1.0 - (distance / Math.Max(1.0, CDbl(maxLen)))
+        Return similarity >= 0.72
+    End Function
+
+    Private Shared Function LevenshteinDistance(a As String, b As String) As Integer
+        If String.IsNullOrEmpty(a) Then
+            Return If(b Is Nothing, 0, b.Length)
+        End If
+        If String.IsNullOrEmpty(b) Then
+            Return a.Length
+        End If
+
+        Dim n As Integer = a.Length
+        Dim m As Integer = b.Length
+        Dim d(n, m) As Integer
+
+        For i As Integer = 0 To n
+            d(i, 0) = i
+        Next
+        For j As Integer = 0 To m
+            d(0, j) = j
+        Next
+
+        For i As Integer = 1 To n
+            Dim ca As Char = a(i - 1)
+            For j As Integer = 1 To m
+                Dim cb As Char = b(j - 1)
+                Dim cost As Integer = If(ca = cb, 0, 1)
+                d(i, j) = Math.Min(
+                    Math.Min(d(i - 1, j) + 1, d(i, j - 1) + 1),
+                    d(i - 1, j - 1) + cost)
+            Next
+        Next
+
+        Return d(n, m)
     End Function
 
     Private Shared Function IsAllowedLootName(rawName As String, allowList As List(Of String)) As Boolean
@@ -1605,8 +1849,8 @@ Public Class BotEngine
     Private Shared Function IsDefaultVisionLayout(cfg As BotConfig) As Boolean
         Return SameRegion(cfg.HpBar, New RectRegion(11, 25, 151, 11)) AndAlso
                SameRegion(cfg.MpBar, New RectRegion(3, 40, 161, 11)) AndAlso
-               SameRegion(cfg.MobNameRect, New RectRegion(862, 0, 162, 23)) AndAlso
-               SameRegion(cfg.MobHpRect, New RectRegion(859, 20, 165, 11)) AndAlso
+               SameRegion(cfg.MobNameRect, New RectRegion(860, 711, 162, 23)) AndAlso
+               SameRegion(cfg.MobHpRect, New RectRegion(859, 737, 165, 11)) AndAlso
                SameRegion(cfg.PranaExpRect, New RectRegion(472, 745, 78, 21)) AndAlso
                SameRegion(cfg.PartyInviteScanRect, New RectRegion(349, 318, 328, 124)) AndAlso
                SameRegion(cfg.PartyInviteOkRect, New RectRegion(463, 410, 59, 21))

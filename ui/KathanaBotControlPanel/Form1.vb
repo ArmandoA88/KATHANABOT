@@ -497,8 +497,8 @@ Public Class Form1
         txtWindowTitle.Text = "Kathana - The Coming of the Dark Ages"
         dgvRegions.Rows.Add("hp_bar", "11", "25", "151", "11")
         dgvRegions.Rows.Add("mp_bar", "3", "40", "161", "11")
-        dgvRegions.Rows.Add("mob_name_rect", "862", "0", "162", "23")
-        dgvRegions.Rows.Add("mob_hp_rect", "859", "20", "165", "11")
+        dgvRegions.Rows.Add("mob_name_rect", "860", "711", "162", "23")
+        dgvRegions.Rows.Add("mob_hp_rect", "859", "737", "165", "11")
         dgvRegions.Rows.Add("prana_exp_rect", "472", "745", "78", "21")
         dgvRegions.Rows.Add("party_invite_scan_rect", "349", "318", "328", "124")
         dgvRegions.Rows.Add("party_invite_ok_rect", "463", "410", "59", "21")
@@ -507,10 +507,17 @@ Public Class Form1
 
         Dim keyIndex As Integer = 1
         For Each key In PrimaryKeys
-            Dim enabled As Boolean = (key = "1" OrElse key = "6")
+            Dim enabled As Boolean = (key = "1" OrElse key = "2" OrElse key = "6")
             Dim role As String = If(key = "6", "heal", "attack")
             Dim trigger As Integer = If(key = "6", 80, 40)
-            Dim cooldown As String = If(key = "1", "0.6", "1.0")
+            Dim cooldown As String
+            If key = "1" Then
+                cooldown = "0.6"
+            ElseIf key = "2" Then
+                cooldown = "0.45"
+            Else
+                cooldown = "1.0"
+            End If
             dgvCombat.Rows.Add(enabled, key, cooldown, role, keyIndex * 10, trigger, 1, 1)
             keyIndex += 1
         Next
@@ -542,6 +549,7 @@ Public Class Form1
             AppendLog("Overlay hidden while bot is running.")
         End If
 
+        ResetHpZeroAlarmState("Alarm state reset for bot start.")
         PushLiveConfig()
         _engine.Start()
         UpdateAttackButtonAppearance(True)
@@ -555,6 +563,7 @@ Public Class Form1
         If _engine.IsRunning() Then
             Return
         End If
+        ResetHpZeroAlarmState("Alarm state reset for bot start.")
         PushLiveConfig()
         _engine.Start()
         UpdateAttackButtonAppearance(True)
@@ -568,7 +577,7 @@ Public Class Form1
 
     Private Sub StopClicked(sender As Object, e As EventArgs)
         _engine.Stop()
-        StopHpZeroAlarm()
+        ResetHpZeroAlarmState("Alarm state reset for bot stop.")
         UpdateAttackButtonAppearance(False)
     End Sub
 
@@ -1100,6 +1109,7 @@ Public Class Form1
             _hpPendingCts.Dispose()
             _hpPendingCts = Nothing
         End If
+        _lastHpZeroNotification = DateTime.MinValue
 
         If logCancellation Then
             AppendLog("HP recovered during 60-second grace period. Alarm canceled.")
@@ -1135,7 +1145,29 @@ Public Class Form1
             _hpAlarmCts.Dispose()
             _hpAlarmCts = Nothing
         End If
+        _lastHpZeroNotification = DateTime.MinValue
         AppendLog(reason)
+    End Sub
+
+    Private Sub ResetHpZeroAlarmState(Optional reason As String = "")
+        _hpZeroPending = False
+        If _hpPendingCts IsNot Nothing Then
+            _hpPendingCts.Cancel()
+            _hpPendingCts.Dispose()
+            _hpPendingCts = Nothing
+        End If
+
+        _hpZeroAlarmActive = False
+        If _hpAlarmCts IsNot Nothing Then
+            _hpAlarmCts.Cancel()
+            _hpAlarmCts.Dispose()
+            _hpAlarmCts = Nothing
+        End If
+
+        _lastHpZeroNotification = DateTime.MinValue
+        If reason <> "" Then
+            AppendLog(reason)
+        End If
     End Sub
 
     Private Sub SendHpZeroPhoneAlert()
