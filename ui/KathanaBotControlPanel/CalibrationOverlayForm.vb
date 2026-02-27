@@ -94,6 +94,7 @@ Public Class CalibrationOverlayForm
         DrawRegion(e.Graphics, "mp_bar", _currentConfig.MpBar, Color.FromArgb(170, 70, 130, 240), "MP")
         DrawRegion(e.Graphics, "mob_name_rect", _currentConfig.MobNameRect, Color.FromArgb(170, 250, 230, 80), "Mob Name")
         DrawRegion(e.Graphics, "mob_hp_rect", _currentConfig.MobHpRect, Color.FromArgb(170, 255, 140, 60), "Mob HP")
+        DrawRegion(e.Graphics, "unreachable_text_rect", _currentConfig.UnreachableTextRect, Color.FromArgb(170, 255, 90, 190), "Unreachable Text")
         DrawRegion(e.Graphics, "prana_exp_rect", _currentConfig.PranaExpRect, Color.FromArgb(170, 160, 220, 90), "Prana/EXP")
         DrawRegion(e.Graphics, "party_invite_scan_rect", _currentConfig.PartyInviteScanRect, Color.FromArgb(170, 180, 120, 240), "Party Scan")
         DrawRegion(e.Graphics, "party_invite_ok_rect", _currentConfig.PartyInviteOkRect, Color.FromArgb(170, 120, 220, 160), "Party OK")
@@ -230,7 +231,7 @@ Public Class CalibrationOverlayForm
     End Sub
 
     Private Function HitTestRegion(pt As System.Drawing.Point) As String
-        Dim keys As String() = {"party_invite_ok_rect", "party_invite_scan_rect", "prana_exp_rect", "mob_hp_rect", "mob_name_rect", "mp_bar", "hp_bar"}
+        Dim keys As String() = {"party_invite_ok_rect", "party_invite_scan_rect", "prana_exp_rect", "unreachable_text_rect", "mob_hp_rect", "mob_name_rect", "mp_bar", "hp_bar"}
         For Each key In keys
             Dim rect As System.Drawing.Rectangle = GetRegionRect(key)
             If GetResizeHandleRect(rect).Contains(pt) OrElse rect.Contains(pt) Then
@@ -266,6 +267,8 @@ Public Class CalibrationOverlayForm
                 Return _currentConfig.MobNameRect
             Case "mob_hp_rect"
                 Return _currentConfig.MobHpRect
+            Case "unreachable_text_rect"
+                Return _currentConfig.UnreachableTextRect
             Case "prana_exp_rect"
                 Return _currentConfig.PranaExpRect
             Case "party_invite_scan_rect"
@@ -287,6 +290,8 @@ Public Class CalibrationOverlayForm
                 _currentConfig.MobNameRect = value
             Case "mob_hp_rect"
                 _currentConfig.MobHpRect = value
+            Case "unreachable_text_rect"
+                _currentConfig.UnreachableTextRect = value
             Case "prana_exp_rect"
                 _currentConfig.PranaExpRect = value
             Case "party_invite_scan_rect"
@@ -310,6 +315,7 @@ Public Class CalibrationOverlayForm
         cfg.MpBar = CloneRegion(src.MpBar)
         cfg.MobNameRect = CloneRegion(src.MobNameRect)
         cfg.MobHpRect = CloneRegion(src.MobHpRect)
+        cfg.UnreachableTextRect = CloneRegion(src.UnreachableTextRect)
         cfg.PranaExpRect = CloneRegion(src.PranaExpRect)
         cfg.PartyInviteScanRect = CloneRegion(src.PartyInviteScanRect)
         cfg.PartyInviteOkRect = CloneRegion(src.PartyInviteOkRect)

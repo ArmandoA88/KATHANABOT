@@ -55,6 +55,7 @@ Public Class BotConfig
     Public Property MpBar As RectRegion = New RectRegion(3, 40, 161, 11)
     Public Property MobNameRect As RectRegion = New RectRegion(860, 711, 162, 23)
     Public Property MobHpRect As RectRegion = New RectRegion(859, 737, 165, 11)
+    Public Property UnreachableTextRect As RectRegion = New RectRegion(15, 582, 128, 22)
     Public Property PranaExpRect As RectRegion = New RectRegion(472, 745, 78, 21)
     Public Property PartyInviteScanRect As RectRegion = New RectRegion(349, 318, 328, 124)
     Public Property PartyInviteOkRect As RectRegion = New RectRegion(463, 410, 59, 21)
@@ -208,6 +209,12 @@ Public Class BotEngine
     Private Const ExpRateSampleMs As Integer = 60000
     Private Const ExpOcrMinIntervalMs As Integer = 900
     Private Const PartyInviteOcrMinIntervalMs As Integer = 900
+    Private Const UnreachableOcrMinIntervalMs As Integer = 260
+    Private Const UnreachableConfirmWindowMs As Integer = 900
+    Private Const UnreachableConfirmRequiredCount As Integer = 2
+    Private Const UnreachableRetargetLockMs As Integer = 1200
+    Private Const UnreachableTriggerCooldownMs As Integer = 850
+    Private Const UnreachableClearRequiredCount As Integer = 2
     Private Const BaseClientWidth As Integer = 1024
     Private Const BaseClientHeight As Integer = 768
 
@@ -237,6 +244,15 @@ Public Class BotEngine
     Private _lastPartyInviteAccept As DateTime = DateTime.MinValue
     Private _partyInviteOcrTask As Task(Of String) = Nothing
     Private _lastPartyInviteCandidate As String = ""
+    Private _lastUnreachableScan As DateTime = DateTime.MinValue
+    Private _unreachableOcrTask As Task(Of String) = Nothing
+    Private _lastUnreachableCandidate As String = ""
+    Private _unreachableConfirmCount As Integer = 0
+    Private _unreachableLastMatchAt As DateTime = DateTime.MinValue
+    Private _unreachableLockUntil As DateTime = DateTime.MinValue
+    Private _lastUnreachableTrigger As DateTime = DateTime.MinValue
+    Private _unreachableLatched As Boolean = False
+    Private _unreachableClearCount As Integer = 0
     Private _lastExpPercent As Double = -1
     Private _lastExpOcrAt As DateTime = DateTime.MinValue
     Private _expOcrTask As Task(Of Double) = Nothing
@@ -307,6 +323,15 @@ Public Class BotEngine
             _lastPartyInviteAccept = DateTime.MinValue
             _partyInviteOcrTask = Nothing
             _lastPartyInviteCandidate = ""
+            _lastUnreachableScan = DateTime.MinValue
+            _unreachableOcrTask = Nothing
+            _lastUnreachableCandidate = ""
+            _unreachableConfirmCount = 0
+            _unreachableLastMatchAt = DateTime.MinValue
+            _unreachableLockUntil = DateTime.MinValue
+            _lastUnreachableTrigger = DateTime.MinValue
+            _unreachableLatched = False
+            _unreachableClearCount = 0
             _lastExpPercent = -1
             _lastExpOcrAt = DateTime.MinValue
             _expOcrTask = Nothing
@@ -400,10 +425,11 @@ Public Class BotEngine
             Dim mpRegion As New RectRegion(0, 0, 1, 1)
             Dim mobNameRegion As New RectRegion(0, 0, 1, 1)
             Dim mobHpRegion As New RectRegion(0, 0, 1, 1)
+            Dim unreachableTextRegion As New RectRegion(0, 0, 1, 1)
             Dim pranaExpRegion As New RectRegion(0, 0, 1, 1)
             Dim partyInviteScanRegion As New RectRegion(0, 0, 1, 1)
             Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
-            ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, pranaExpRegion, partyInviteScanRegion, partyInviteOkRegion)
+            ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, partyInviteScanRegion, partyInviteOkRegion)
 
             Dim hpPct As Double = ComputeBarPercent(frame, hpRegion, True)
             Dim mpPct As Double = ComputeBarPercent(frame, mpRegion, False)
@@ -420,7 +446,7 @@ Public Class BotEngine
                         Exit For
                     End If
 
-                    ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, pranaExpRegion, partyInviteScanRegion, partyInviteOkRegion)
+                    ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, partyInviteScanRegion, partyInviteOkRegion)
                     hpPct = ComputeBarPercent(frame, hpRegion, True)
                     mpPct = ComputeBarPercent(frame, mpRegion, False)
                     mobHpPct = ComputeBarPercent(frame, mobHpRegion, True)
@@ -462,6 +488,8 @@ Public Class BotEngine
             Dim targetWindowVisible As Boolean = HasTargetWindowSignal(frame, mobHpRegion, mobName, mobHpPct)
             Dim deniedTarget As Boolean = IsDeniedMob(mobName, cfg.DeniedMobs)
             Dim normMobName As String = NormalizeMobName(mobName)
+            Dim unreachableTriggered As Boolean = TryHandleUnreachableTarget(cfg, hwnd, frame, now, unreachableTextRegion)
+            Dim unreachableLockActive As Boolean = (_unreachableLockUntil <> DateTime.MinValue AndAlso now < _unreachableLockUntil)
 
             If monsterFilterActive AndAlso deniedTarget Then
                 _blacklistLockUntil = now.AddMilliseconds(BlacklistLockWindowMs)
@@ -534,13 +562,18 @@ Public Class BotEngine
                 (Not deniedTarget) AndAlso
                 (Not missingNameBlockedByFilter) AndAlso
                 (Not nameConfirmationBlockedByFilter) AndAlso
-                (Not blacklistLockActive)
+                (Not blacklistLockActive) AndAlso
+                (Not unreachableLockActive)
             TrackMobHpMovement(targetValid, mobHpPct, now)
 
             Dim reason As String = ""
             Dim actionSent As Boolean = TryHandlePartyInvite(cfg, hwnd, frame, now, partyInviteScanRegion, partyInviteOkRegion)
             If actionSent Then
                 reason = "Party invite detected and accepted."
+            End If
+            If unreachableTriggered AndAlso Not actionSent Then
+                actionSent = True
+                reason = "Unable to reach target detected. Forced retarget."
             End If
             Dim forcedRetarget As Boolean = False
 
@@ -599,6 +632,8 @@ Public Class BotEngine
                                     reason = "Monster filter waiting for mob name OCR. Retarget key sent."
                                 ElseIf nameConfirmationBlockedByFilter Then
                                     reason = "Monster filter waiting for 2x name confirmation. Retarget key sent."
+                                ElseIf unreachableLockActive Then
+                                    reason = "Unable-to-reach lock active. Retarget key sent."
                                 ElseIf Not targetWindowVisible Then
                                     reason = "No target window detected. Retarget key sent."
                                 Else
@@ -615,6 +650,8 @@ Public Class BotEngine
                             reason = "Monster filter waiting for mob name OCR. Waiting retarget cooldown."
                         ElseIf nameConfirmationBlockedByFilter Then
                             reason = "Monster filter waiting for 2x name confirmation. Waiting retarget cooldown."
+                        ElseIf unreachableLockActive Then
+                            reason = "Unable-to-reach lock active. Waiting retarget cooldown."
                         ElseIf Not targetWindowVisible Then
                             reason = "No target window detected. Waiting 300ms retarget cooldown."
                         Else
@@ -834,10 +871,11 @@ Public Class BotEngine
             Dim mpRegion As New RectRegion(0, 0, 1, 1)
             Dim mobNameRegion As New RectRegion(0, 0, 1, 1)
             Dim mobHpRegion As New RectRegion(0, 0, 1, 1)
+            Dim unreachableTextRegion As New RectRegion(0, 0, 1, 1)
             Dim pranaExpRegion As New RectRegion(0, 0, 1, 1)
             Dim partyInviteScanRegion As New RectRegion(0, 0, 1, 1)
             Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
-            ResolveVisionRegions(cfg, verifyFrame.Width, verifyFrame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, pranaExpRegion, partyInviteScanRegion, partyInviteOkRegion)
+            ResolveVisionRegions(cfg, verifyFrame.Width, verifyFrame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, partyInviteScanRegion, partyInviteOkRegion)
 
             Dim selectedName As String = ReadMobNameIfNeeded(verifyFrame, mobNameRegion, DateTime.UtcNow, True)
             If IsAllowedLootName(selectedName, cfg.LootAllowedNames) Then
@@ -1010,6 +1048,148 @@ Public Class BotEngine
         End Try
 
         Return False
+    End Function
+
+    Private Function TryHandleUnreachableTarget(cfg As BotConfig, hwnd As IntPtr, frame As Bitmap, now As DateTime, unreachableTextRegion As RectRegion) As Boolean
+        If cfg Is Nothing OrElse hwnd = IntPtr.Zero OrElse frame Is Nothing Then
+            Return False
+        End If
+
+        If _unreachableOcrTask IsNot Nothing AndAlso _unreachableOcrTask.IsCompleted Then
+            Try
+                _lastUnreachableCandidate = If(_unreachableOcrTask.Result, "").Trim()
+            Catch
+                _lastUnreachableCandidate = ""
+            End Try
+            _unreachableOcrTask = Nothing
+
+            Dim matched As Boolean = IsUnreachablePrompt(_lastUnreachableCandidate)
+            If matched Then
+                _unreachableClearCount = 0
+                If Not _unreachableLatched Then
+                    If _unreachableLastMatchAt = DateTime.MinValue OrElse (now - _unreachableLastMatchAt).TotalMilliseconds > UnreachableConfirmWindowMs Then
+                        _unreachableConfirmCount = 1
+                    Else
+                        _unreachableConfirmCount += 1
+                    End If
+                    _unreachableLastMatchAt = now
+                Else
+                    ' Stale unreachable text can stay on screen; ignore retriggers until OCR sees it clear.
+                    _unreachableConfirmCount = 0
+                End If
+            Else
+                _unreachableConfirmCount = 0
+                _unreachableLastMatchAt = DateTime.MinValue
+                _lastUnreachableCandidate = ""
+                If _unreachableLatched Then
+                    _unreachableClearCount += 1
+                    If _unreachableClearCount >= UnreachableClearRequiredCount Then
+                        _unreachableLatched = False
+                        _unreachableClearCount = 0
+                    End If
+                End If
+            End If
+        End If
+
+        If (Not _unreachableLatched) AndAlso _unreachableConfirmCount >= UnreachableConfirmRequiredCount Then
+            Dim triggerReady As Boolean = (_lastUnreachableTrigger = DateTime.MinValue) OrElse ((now - _lastUnreachableTrigger).TotalMilliseconds >= UnreachableTriggerCooldownMs)
+            If triggerReady Then
+                _lastUnreachableTrigger = now
+                _unreachableLockUntil = now.AddMilliseconds(UnreachableRetargetLockMs)
+                _unreachableConfirmCount = 0
+                _unreachableLastMatchAt = DateTime.MinValue
+                _lastUnreachableCandidate = ""
+                _unreachableLatched = True
+                _unreachableClearCount = 0
+                _firstHitPending = False
+                _firstHitTargetSignature = ""
+                _firstHitWindowUntil = DateTime.MinValue
+                _nameConfirmCandidate = ""
+                _nameConfirmCount = 0
+                _nameConfirmConfirmedName = ""
+                _nameConfirmLastSampleAt = DateTime.MinValue
+                _nameConfirmLastReadProcessedAt = DateTime.MinValue
+
+                If SendKey(hwnd, "E", 35) Then
+                    _lastRetarget = now
+                    SetLastAction("E (unreachable target)")
+                    RaiseEvent LogLine("Unreachable target detected by OCR. Forced retarget.")
+                    Return True
+                End If
+            End If
+        End If
+
+        If _unreachableConfirmCount > 0 AndAlso _unreachableLastMatchAt <> DateTime.MinValue AndAlso (now - _unreachableLastMatchAt).TotalMilliseconds > UnreachableConfirmWindowMs Then
+            _unreachableConfirmCount = 0
+            _unreachableLastMatchAt = DateTime.MinValue
+        End If
+
+        If _unreachableOcrTask IsNot Nothing Then
+            Return False
+        End If
+
+        If _lastUnreachableScan <> DateTime.MinValue AndAlso (now - _lastUnreachableScan).TotalMilliseconds < UnreachableOcrMinIntervalMs Then
+            Return False
+        End If
+
+        Dim rect As Rectangle = unreachableTextRegion.Clamp(frame.Width, frame.Height)
+        If rect.Width <= 1 OrElse rect.Height <= 1 Then
+            Return False
+        End If
+
+        Dim crop As New Bitmap(rect.Width, rect.Height, PixelFormat.Format24bppRgb)
+        Try
+            Using g As Graphics = Graphics.FromImage(crop)
+                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
+            End Using
+
+            _lastUnreachableScan = now
+            _unreachableOcrTask = Task.Run(
+                Function()
+                    Try
+                        Return OcrReader.ReadName(crop)
+                    Catch
+                        Return ""
+                    Finally
+                        crop.Dispose()
+                    End Try
+                End Function)
+        Catch
+            crop.Dispose()
+        End Try
+
+        Return False
+    End Function
+
+    Private Shared Function IsUnreachablePrompt(rawText As String) As Boolean
+        If String.IsNullOrWhiteSpace(rawText) Then
+            Return False
+        End If
+
+        Dim norm As String = NormalizeMobName(rawText)
+        If norm = "" Then
+            Return False
+        End If
+
+        Dim compact As String = norm.Replace(" ", "")
+        If compact.Contains("unabletoreachtarget", StringComparison.OrdinalIgnoreCase) OrElse
+           compact.Contains("cannotreachtarget", StringComparison.OrdinalIgnoreCase) OrElse
+           compact.Contains("cantreachtarget", StringComparison.OrdinalIgnoreCase) Then
+            Return True
+        End If
+
+        If AreTextsClose(norm, "unable to reach target") OrElse AreTextsClose(norm, "cannot reach target") Then
+            Return True
+        End If
+
+        Dim hasReach As Boolean = norm.Contains("reach", StringComparison.OrdinalIgnoreCase)
+        Dim hasTarget As Boolean = norm.Contains("target", StringComparison.OrdinalIgnoreCase)
+        Dim hasUnable As Boolean =
+            norm.Contains("unable", StringComparison.OrdinalIgnoreCase) OrElse
+            norm.Contains("cannot", StringComparison.OrdinalIgnoreCase) OrElse
+            norm.Contains("cant", StringComparison.OrdinalIgnoreCase) OrElse
+            norm.Contains("can't", StringComparison.OrdinalIgnoreCase)
+        Return hasReach AndAlso hasTarget AndAlso hasUnable
     End Function
 
     Private Shared Function IsPartyInvitePrompt(rawText As String) As Boolean
@@ -1816,11 +1996,12 @@ Public Class BotEngine
         Return colored / CDbl(total)
     End Function
 
-    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef pranaExpRect As RectRegion, ByRef partyInviteScanRect As RectRegion, ByRef partyInviteOkRect As RectRegion)
+    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef unreachableTextRect As RectRegion, ByRef pranaExpRect As RectRegion, ByRef partyInviteScanRect As RectRegion, ByRef partyInviteOkRect As RectRegion)
         hpBar = CloneRegion(cfg.HpBar)
         mpBar = CloneRegion(cfg.MpBar)
         mobNameRect = CloneRegion(cfg.MobNameRect)
         mobHpRect = CloneRegion(cfg.MobHpRect)
+        unreachableTextRect = CloneRegion(cfg.UnreachableTextRect)
         pranaExpRect = CloneRegion(cfg.PranaExpRect)
         partyInviteScanRect = CloneRegion(cfg.PartyInviteScanRect)
         partyInviteOkRect = CloneRegion(cfg.PartyInviteOkRect)
@@ -1841,6 +2022,7 @@ Public Class BotEngine
         mpBar = ScaleRegionLeftTop(cfg.MpBar, sx, sy)
         mobNameRect = ScaleRegionRightTop(cfg.MobNameRect, sx, sy, frameWidth)
         mobHpRect = ScaleRegionRightTop(cfg.MobHpRect, sx, sy, frameWidth)
+        unreachableTextRect = ScaleRegionLeftTop(cfg.UnreachableTextRect, sx, sy)
         pranaExpRect = ScaleRegionLeftTop(cfg.PranaExpRect, sx, sy)
         partyInviteScanRect = ScaleRegionLeftTop(cfg.PartyInviteScanRect, sx, sy)
         partyInviteOkRect = ScaleRegionLeftTop(cfg.PartyInviteOkRect, sx, sy)
@@ -1851,6 +2033,7 @@ Public Class BotEngine
                SameRegion(cfg.MpBar, New RectRegion(3, 40, 161, 11)) AndAlso
                SameRegion(cfg.MobNameRect, New RectRegion(860, 711, 162, 23)) AndAlso
                SameRegion(cfg.MobHpRect, New RectRegion(859, 737, 165, 11)) AndAlso
+               SameRegion(cfg.UnreachableTextRect, New RectRegion(15, 582, 128, 22)) AndAlso
                SameRegion(cfg.PranaExpRect, New RectRegion(472, 745, 78, 21)) AndAlso
                SameRegion(cfg.PartyInviteScanRect, New RectRegion(349, 318, 328, 124)) AndAlso
                SameRegion(cfg.PartyInviteOkRect, New RectRegion(463, 410, 59, 21))
