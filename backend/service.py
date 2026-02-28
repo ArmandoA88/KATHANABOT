@@ -375,6 +375,10 @@ class BotEngine:
             return (now - last) * 1000.0 >= action.cooldown_ms
 
         for action in ordered:
+            if action.role == "max_health" and hp <= action.trigger_percent and ready(action):
+                return action
+
+        for action in ordered:
             if action.role == "heal" and hp <= action.trigger_percent and ready(action):
                 return action
 

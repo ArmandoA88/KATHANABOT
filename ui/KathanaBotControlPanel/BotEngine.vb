@@ -1432,25 +1432,58 @@ Public Class BotEngine
         Return (now - _lastRetarget).TotalMilliseconds >= retargetCooldownMs
     End Function
 
+    Private Shared Function IsSupportRole(role As String) As Boolean
+        Return role = "heal" OrElse role = "max_health" OrElse role = "mana"
+    End Function
+
+    Private Shared Function IsSupportTriggered(action As ActionRule, hpPercent As Double, mpPercent As Double) As Boolean
+        Select Case action.Role
+            Case "heal", "max_health"
+                Return hpPercent <= action.TriggerPercent
+            Case "mana"
+                Return mpPercent <= action.TriggerPercent
+            Case Else
+                Return False
+        End Select
+    End Function
+
     Private Function TrySendSupportActions(cfg As BotConfig, hwnd As IntPtr, hpPercent As Double, mpPercent As Double) As Boolean
         If hwnd = IntPtr.Zero Then
             Return False
         End If
 
         Dim ordered = cfg.Actions.
-            Where(Function(a) a.Enabled AndAlso (a.Role = "heal" OrElse a.Role = "mana")).
+            Where(Function(a) a.Enabled AndAlso IsSupportRole(a.Role)).
             OrderBy(Function(a) a.Priority).
             ToList()
         If ordered.Count = 0 Then
             Return False
         End If
 
+        ' Prioritize max-health consumables at low HP, but still allow regular heal/mana fallback.
+        Dim maxHealthActions = ordered.
+            Where(Function(a) a.Role = "max_health" AndAlso IsSupportTriggered(a, hpPercent, mpPercent)).
+            ToList()
+
         Dim sentAny As Boolean = False
+        For Each action In maxHealthActions
+            If Not IsReady(action) Then
+                Continue For
+            End If
+            If Not SendKey(hwnd, action.KeyName, 35) Then
+                Continue For
+            End If
+
+            MarkKeyUsed(action.KeyName)
+            SetLastAction($"{action.KeyName} ({action.Role})")
+            sentAny = True
+        Next
+
         For Each action In ordered
-            Dim triggered As Boolean =
-                (action.Role = "heal" AndAlso hpPercent <= action.TriggerPercent) OrElse
-                (action.Role = "mana" AndAlso mpPercent <= action.TriggerPercent)
-            If Not triggered Then
+            If action.Role = "max_health" Then
+                Continue For
+            End If
+            If Not IsSupportTriggered(action, hpPercent, mpPercent) Then
                 Continue For
             End If
             If Not IsReady(action) Then

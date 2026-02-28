@@ -2,8 +2,11 @@ Imports System.Media
 Imports System.Net.Http
 Imports System.Runtime.InteropServices
 Imports System.Text
+Imports System.Text.Json
 Imports System.Threading
 Imports System.Threading.Tasks
+Imports System.Collections.Generic
+Imports System.IO
 
 Public Class Form1
     Private Shared ReadOnly PrimaryKeys As String() = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"}
@@ -70,6 +73,29 @@ Public Class Form1
     Private Const HpZeroAlarmGraceMs As Integer = 60000
     Private Const DefaultNtfyTopicName As String = "Katana12345"
     Private Shared ReadOnly NtfyClient As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(7)}
+    Private Shared ReadOnly PersistDirectoryPath As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel")
+    Private Shared ReadOnly PersistFilePath As String = Path.Combine(PersistDirectoryPath, "user_lists.json")
+    Private ReadOnly _baseBackColors As New Dictionary(Of Control, Color)()
+    Private ReadOnly _gridThemeSnapshots As New Dictionary(Of DataGridView, GridThemeSnapshot)()
+
+    Private Class GridThemeSnapshot
+        Public Property BackgroundColor As Color
+        Public Property HeaderBackColor As Color
+        Public Property HeaderForeColor As Color
+        Public Property DefaultBackColor As Color
+        Public Property DefaultForeColor As Color
+        Public Property SelectionBackColor As Color
+        Public Property SelectionForeColor As Color
+        Public Property GridColor As Color
+    End Class
+
+    Private Class PersistedListState
+        Public Property MonsterFilterEnabled As Boolean = True
+        Public Property LootPickupEnabled As Boolean = False
+        Public Property LootPickupSeconds As Decimal = 4D
+        Public Property MonsterNames As List(Of String) = New List(Of String)()
+        Public Property LootNames As List(Of String) = New List(Of String)()
+    End Class
 
     <DllImport("winmm.dll")>
     Private Shared Function waveOutGetVolume(hwo As IntPtr, ByRef dwVolume As UInteger) As Integer
@@ -83,8 +109,10 @@ Public Class Form1
         InitializeComponent()
         BuildUi()
         SeedDefaults()
+        LoadPersistedListState()
         SetupLiveConfigBindings()
         ApplyDarkTheme(Me)
+        CaptureThemeSnapshot(Me)
 
         AddHandler _engine.StatusUpdated, AddressOf OnEngineStatusUpdated
         AddHandler _engine.LogLine, AddressOf OnEngineLogLine
@@ -112,6 +140,9 @@ Public Class Form1
         AddHandler dgvCombat.CellEndEdit, AddressOf LiveConfigChanged
         AddHandler dgvRegions.CellValueChanged, AddressOf LiveConfigChanged
         AddHandler dgvRegions.CellEndEdit, AddressOf LiveConfigChanged
+        AddHandler chkMonsterFilter.CheckedChanged, AddressOf PersistListSettingsChanged
+        AddHandler chkLootPickup.CheckedChanged, AddressOf PersistListSettingsChanged
+        AddHandler nudLootPickupSeconds.ValueChanged, AddressOf PersistListSettingsChanged
         AddHandler dgvCombat.CurrentCellDirtyStateChanged,
             Sub(_s As Object, _e As EventArgs)
                 If dgvCombat.IsCurrentCellDirty Then
@@ -122,6 +153,10 @@ Public Class Form1
 
     Private Sub LiveConfigChanged(_sender As Object, _e As EventArgs)
         PushLiveConfig()
+    End Sub
+
+    Private Sub PersistListSettingsChanged(_sender As Object, _e As EventArgs)
+        SavePersistedListState(False)
     End Sub
 
     Private Sub PushLiveConfig()
@@ -281,7 +316,7 @@ Public Class Form1
         layout.Controls.Add(txtNtfyTopic, 1, 3)
 
         Dim buttonRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
-        Dim btnApply As New Button() With {.Text = "Apply To Heal/Mana Rows", .Width = 170, .Height = 30, .BackColor = Color.FromArgb(42, 120, 80), .ForeColor = Color.White}
+        Dim btnApply As New Button() With {.Text = "Apply To Heal/Mana/Max-HP Rows", .Width = 220, .Height = 30, .BackColor = Color.FromArgb(42, 120, 80), .ForeColor = Color.White}
         AddHandler btnApply.Click, Sub(_s As Object, _e As EventArgs) ApplyQuickAutoPotThresholds()
         Dim btnTestAlarm As New Button() With {.Text = "Test Alarm + Phone", .Width = 130, .Height = 30, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
         AddHandler btnTestAlarm.Click, AddressOf TestAlarmClicked
@@ -292,7 +327,7 @@ Public Class Form1
         buttonRow.Controls.Add(btnTestPhone)
         layout.Controls.Add(buttonRow, 1, 4)
 
-        Dim note As New Label() With {.Text = "HP alarm triggers only at HP=0. Volume above is loudness only. You can set any ntfy channel above.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        Dim note As New Label() With {.Text = "Use role 'max_health' in Combat Skills and set TriggerPercent for when the max-health potion should fire first. HP alarm triggers only at HP=0.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
         layout.Controls.Add(note, 2, 0)
         layout.SetRowSpan(note, 5)
         group.Controls.Add(layout)
@@ -345,7 +380,7 @@ Public Class Form1
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Key", .ReadOnly = True, .FillWeight = 60.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "CooldownSec", .FillWeight = 90.0F})
         Dim roleColumn As New DataGridViewComboBoxColumn() With {.Name = "Role", .FillWeight = 80.0F}
-        roleColumn.Items.AddRange(New Object() {"attack", "heal", "mana", "special"})
+        roleColumn.Items.AddRange(New Object() {"attack", "heal", "max_health", "mana", "special"})
         dgvCombat.Columns.Add(roleColumn)
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Priority", .FillWeight = 75.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "TriggerPercent", .FillWeight = 85.0F})
@@ -539,6 +574,7 @@ Public Class Form1
 
     Private Sub SaveClicked(sender As Object, e As EventArgs)
         PushLiveConfig()
+        SavePersistedListState(True)
         AppendLog("Settings saved to in-app engine.")
     End Sub
 
@@ -550,6 +586,7 @@ Public Class Form1
             AppendLog("Overlay hidden while bot is running.")
         End If
 
+        SavePersistedListState(False)
         ResetHpZeroAlarmState("Alarm state reset for bot start.")
         PushLiveConfig()
         _engine.Start()
@@ -564,6 +601,7 @@ Public Class Form1
         If _engine.IsRunning() Then
             Return
         End If
+        SavePersistedListState(False)
         ResetHpZeroAlarmState("Alarm state reset for bot start.")
         PushLiveConfig()
         _engine.Start()
@@ -578,6 +616,7 @@ Public Class Form1
 
     Private Sub StopClicked(sender As Object, e As EventArgs)
         _engine.Stop()
+        ApplyHealthUiTint(100.0, False)
         ResetHpZeroAlarmState("Alarm state reset for bot stop.")
         UpdateAttackButtonAppearance(False)
     End Sub
@@ -747,6 +786,7 @@ Public Class Form1
         lblExpRate.Text = $"Prana/EXP: {status.ExpPercent:0.00}% | Rate: {If(status.ExpPerHour < 0, "Calculating (1m)", status.ExpPerHour.ToString("0.00") & "%/hr")}"
         UpdateAttackButtonAppearance(status.Running)
         HandleHpZeroAlarm(status)
+        ApplyHealthUiTint(status.HpPercent, status.Running AndAlso status.WindowFound)
 
         If status.LastAction <> "" AndAlso status.LastAction <> _lastAction Then
             AppendLog("Key action: " & status.LastAction)
@@ -785,6 +825,7 @@ Public Class Form1
             lstMonsterFilter.Items.Add(name)
             AppendLog("Monster filter added: " & name)
             PushLiveConfig()
+            SavePersistedListState(False)
         End If
         txtMonsterName.Text = ""
     End Sub
@@ -797,6 +838,7 @@ Public Class Form1
         lstMonsterFilter.Items.Remove(lstMonsterFilter.SelectedItem)
         AppendLog("Monster filter removed: " & removed)
         PushLiveConfig()
+        SavePersistedListState(False)
     End Sub
 
     Private Function MonsterExists(name As String) As Boolean
@@ -817,6 +859,7 @@ Public Class Form1
             lstLootFilter.Items.Add(name)
             AppendLog("Loot filter added: " & name)
             PushLiveConfig()
+            SavePersistedListState(False)
         End If
         txtLootName.Text = ""
     End Sub
@@ -829,6 +872,7 @@ Public Class Form1
         lstLootFilter.Items.Remove(lstLootFilter.SelectedItem)
         AppendLog("Loot filter removed: " & removed)
         PushLiveConfig()
+        SavePersistedListState(False)
     End Sub
 
     Private Function LootExists(name As String) As Boolean
@@ -843,14 +887,14 @@ Public Class Form1
     Private Sub ApplyQuickAutoPotThresholds(Optional silent As Boolean = False)
         For Each row As DataGridViewRow In dgvCombat.Rows
             Dim role As String = SafeCell(row, "Role", "attack").ToLowerInvariant()
-            If role = "heal" Then
+            If role = "heal" OrElse role = "max_health" Then
                 row.Cells("TriggerPercent").Value = CInt(nudAutoPotHp.Value).ToString()
             ElseIf role = "mana" Then
                 row.Cells("TriggerPercent").Value = CInt(nudAutoPotMp.Value).ToString()
             End If
         Next
         If Not silent Then
-            AppendLog("Applied auto-pot thresholds to heal/mana rows.")
+            AppendLog("Applied auto-pot thresholds to heal/max-health/mana rows.")
         End If
         PushLiveConfig()
     End Sub
@@ -974,6 +1018,95 @@ Public Class Form1
             Return value
         End If
         Return fallback
+    End Function
+
+    Private Sub LoadPersistedListState()
+        Try
+            If Not File.Exists(PersistFilePath) Then
+                Return
+            End If
+
+            Dim raw As String = File.ReadAllText(PersistFilePath, Encoding.UTF8)
+            If String.IsNullOrWhiteSpace(raw) Then
+                Return
+            End If
+
+            Dim state As PersistedListState = JsonSerializer.Deserialize(Of PersistedListState)(raw)
+            If state Is Nothing Then
+                Return
+            End If
+
+            If chkMonsterFilter IsNot Nothing Then
+                chkMonsterFilter.Checked = state.MonsterFilterEnabled
+            End If
+            If chkLootPickup IsNot Nothing Then
+                chkLootPickup.Checked = state.LootPickupEnabled
+            End If
+            If nudLootPickupSeconds IsNot Nothing Then
+                Dim boundedSeconds As Decimal = Math.Max(nudLootPickupSeconds.Minimum, Math.Min(nudLootPickupSeconds.Maximum, state.LootPickupSeconds))
+                nudLootPickupSeconds.Value = boundedSeconds
+            End If
+
+            If state.MonsterNames IsNot Nothing AndAlso lstMonsterFilter IsNot Nothing Then
+                lstMonsterFilter.Items.Clear()
+                For Each entry As String In state.MonsterNames
+                    Dim cleaned As String = If(entry, "").Trim()
+                    If cleaned <> "" AndAlso Not MonsterExists(cleaned) Then
+                        lstMonsterFilter.Items.Add(cleaned)
+                    End If
+                Next
+            End If
+
+            If state.LootNames IsNot Nothing AndAlso lstLootFilter IsNot Nothing Then
+                lstLootFilter.Items.Clear()
+                For Each entry As String In state.LootNames
+                    Dim cleaned As String = If(entry, "").Trim()
+                    If cleaned <> "" AndAlso Not LootExists(cleaned) Then
+                        lstLootFilter.Items.Add(cleaned)
+                    End If
+                Next
+            End If
+        Catch ex As Exception
+            AppendLog("Unable to load saved lists: " & ex.Message)
+        End Try
+    End Sub
+
+    Private Sub SavePersistedListState(Optional logFailure As Boolean = False)
+        Try
+            If Not Directory.Exists(PersistDirectoryPath) Then
+                Directory.CreateDirectory(PersistDirectoryPath)
+            End If
+
+            Dim state As New PersistedListState With {
+                .MonsterFilterEnabled = (chkMonsterFilter IsNot Nothing AndAlso chkMonsterFilter.Checked),
+                .LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked),
+                .LootPickupSeconds = If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value, 4D),
+                .MonsterNames = GetListBoxItems(lstMonsterFilter),
+                .LootNames = GetListBoxItems(lstLootFilter)
+            }
+
+            Dim json As String = JsonSerializer.Serialize(state, New JsonSerializerOptions With {.WriteIndented = True})
+            File.WriteAllText(PersistFilePath, json, Encoding.UTF8)
+        Catch ex As Exception
+            If logFailure Then
+                AppendLog("Unable to save list state: " & ex.Message)
+            End If
+        End Try
+    End Sub
+
+    Private Shared Function GetListBoxItems(listBox As ListBox) As List(Of String)
+        Dim result As New List(Of String)()
+        If listBox Is Nothing Then
+            Return result
+        End If
+
+        For Each item In listBox.Items
+            Dim text As String = If(item, "").ToString().Trim()
+            If text <> "" Then
+                result.Add(text)
+            End If
+        Next
+        Return result
     End Function
 
     Private Sub AppendLog(message As String)
@@ -1246,6 +1379,163 @@ Public Class Form1
         End Try
     End Sub
 
+    Private Sub CaptureThemeSnapshot(control As Control)
+        If control Is Nothing Then
+            Return
+        End If
+
+        If Not _baseBackColors.ContainsKey(control) Then
+            _baseBackColors(control) = control.BackColor
+        End If
+
+        If TypeOf control Is DataGridView Then
+            Dim grid = CType(control, DataGridView)
+            If Not _gridThemeSnapshots.ContainsKey(grid) Then
+                _gridThemeSnapshots(grid) = New GridThemeSnapshot With {
+                    .BackgroundColor = grid.BackgroundColor,
+                    .HeaderBackColor = grid.ColumnHeadersDefaultCellStyle.BackColor,
+                    .HeaderForeColor = grid.ColumnHeadersDefaultCellStyle.ForeColor,
+                    .DefaultBackColor = grid.DefaultCellStyle.BackColor,
+                    .DefaultForeColor = grid.DefaultCellStyle.ForeColor,
+                    .SelectionBackColor = grid.DefaultCellStyle.SelectionBackColor,
+                    .SelectionForeColor = grid.DefaultCellStyle.SelectionForeColor,
+                    .GridColor = grid.GridColor
+                }
+            End If
+        End If
+
+        For Each child As Control In control.Controls
+            CaptureThemeSnapshot(child)
+        Next
+    End Sub
+
+    Private Sub ApplyHealthUiTint(percent As Double, active As Boolean)
+        If _baseBackColors.Count = 0 Then
+            CaptureThemeSnapshot(Me)
+        End If
+
+        If Not active Then
+            RestoreThemeSnapshot(Me)
+            Return
+        End If
+
+        Dim safePercent As Double = If(Double.IsNaN(percent) OrElse Double.IsInfinity(percent), 100.0, percent)
+        Dim bounded As Double = Math.Max(0.0, Math.Min(100.0, safePercent))
+        Dim tint As Color = HpColor(bounded)
+        Dim blendAmount As Double = HealthUiBlendAmount(bounded)
+        ApplyTintRecursive(Me, tint, blendAmount)
+    End Sub
+
+    Private Sub RestoreThemeSnapshot(control As Control)
+        If control Is Nothing Then
+            Return
+        End If
+
+        If _baseBackColors.ContainsKey(control) Then
+            control.BackColor = _baseBackColors(control)
+        End If
+
+        If TypeOf control Is DataGridView Then
+            Dim grid = CType(control, DataGridView)
+            If _gridThemeSnapshots.ContainsKey(grid) Then
+                Dim snapshot As GridThemeSnapshot = _gridThemeSnapshots(grid)
+                grid.BackgroundColor = snapshot.BackgroundColor
+                grid.EnableHeadersVisualStyles = False
+                grid.ColumnHeadersDefaultCellStyle.BackColor = snapshot.HeaderBackColor
+                grid.ColumnHeadersDefaultCellStyle.ForeColor = snapshot.HeaderForeColor
+                grid.DefaultCellStyle.BackColor = snapshot.DefaultBackColor
+                grid.DefaultCellStyle.ForeColor = snapshot.DefaultForeColor
+                grid.DefaultCellStyle.SelectionBackColor = snapshot.SelectionBackColor
+                grid.DefaultCellStyle.SelectionForeColor = snapshot.SelectionForeColor
+                grid.GridColor = snapshot.GridColor
+            End If
+        End If
+
+        For Each child As Control In control.Controls
+            RestoreThemeSnapshot(child)
+        Next
+    End Sub
+
+    Private Sub ApplyTintRecursive(control As Control, tint As Color, blendAmount As Double)
+        If control Is Nothing Then
+            Return
+        End If
+
+        If _baseBackColors.ContainsKey(control) Then
+            Dim adjustedBlend As Double = blendAmount
+            If TypeOf control Is TextBox OrElse TypeOf control Is RichTextBox Then
+                adjustedBlend = Math.Min(0.95, blendAmount + 0.15)
+            ElseIf TypeOf control Is GroupBox Then
+                adjustedBlend = Math.Min(0.95, blendAmount + 0.1)
+            End If
+            control.BackColor = BlendColors(_baseBackColors(control), tint, adjustedBlend)
+        End If
+
+        If TypeOf control Is DataGridView Then
+            Dim grid = CType(control, DataGridView)
+            If _gridThemeSnapshots.ContainsKey(grid) Then
+                Dim snapshot As GridThemeSnapshot = _gridThemeSnapshots(grid)
+                Dim gridBlend As Double = Math.Min(0.96, blendAmount + 0.16)
+                grid.BackgroundColor = BlendColors(snapshot.BackgroundColor, tint, gridBlend)
+                grid.EnableHeadersVisualStyles = False
+                grid.ColumnHeadersDefaultCellStyle.BackColor = BlendColors(snapshot.HeaderBackColor, tint, gridBlend)
+                grid.ColumnHeadersDefaultCellStyle.ForeColor = snapshot.HeaderForeColor
+                grid.DefaultCellStyle.BackColor = BlendColors(snapshot.DefaultBackColor, tint, gridBlend)
+                grid.DefaultCellStyle.ForeColor = snapshot.DefaultForeColor
+                grid.DefaultCellStyle.SelectionBackColor = BlendColors(snapshot.SelectionBackColor, tint, Math.Min(0.98, gridBlend + 0.08))
+                grid.DefaultCellStyle.SelectionForeColor = snapshot.SelectionForeColor
+                grid.GridColor = BlendColors(snapshot.GridColor, tint, Math.Min(0.98, gridBlend + 0.05))
+            End If
+        End If
+
+        For Each child As Control In control.Controls
+            ApplyTintRecursive(child, tint, blendAmount)
+        Next
+    End Sub
+
+    Private Shared Function HealthUiBlendAmount(percent As Double) As Double
+        If percent <= 8.0 Then
+            Return 0.94
+        End If
+        If percent <= 20.0 Then
+            Return 0.90
+        End If
+        If percent <= 35.0 Then
+            Return 0.86
+        End If
+        If percent <= 60.0 Then
+            Return 0.80
+        End If
+        Return 0.74
+    End Function
+
+    Private Shared Function BlendColors(baseColor As Color, tint As Color, amount As Double) As Color
+        Dim t As Double = amount
+        If Double.IsNaN(t) OrElse Double.IsInfinity(t) Then
+            t = 0.0
+        End If
+        t = Math.Max(0.0, Math.Min(1.0, t))
+
+        Dim r As Integer = BlendChannel(baseColor.R, tint.R, t)
+        Dim g As Integer = BlendChannel(baseColor.G, tint.G, t)
+        Dim b As Integer = BlendChannel(baseColor.B, tint.B, t)
+        Return Color.FromArgb(255, r, g, b)
+    End Function
+
+    Private Shared Function BlendChannel(baseValue As Integer, tintValue As Integer, factor As Double) As Integer
+        Dim value As Double = baseValue + (tintValue - baseValue) * factor
+        If Double.IsNaN(value) OrElse Double.IsInfinity(value) Then
+            Return Math.Max(0, Math.Min(255, baseValue))
+        End If
+        If value <= 0.0 Then
+            Return 0
+        End If
+        If value >= 255.0 Then
+            Return 255
+        End If
+        Return CInt(value)
+    End Function
+
     Private Sub ApplyDarkTheme(control As Control)
         control.BackColor = Color.FromArgb(28, 28, 28)
         control.ForeColor = Color.Gainsboro
@@ -1285,6 +1575,7 @@ Public Class Form1
 
     Protected Overrides Sub OnFormClosing(e As FormClosingEventArgs)
         _uiTimer.Stop()
+        SavePersistedListState(False)
         StopHpZeroAlarm()
         If _overlayForm IsNot Nothing AndAlso Not _overlayForm.IsDisposed Then
             _overlayForm.Close()
