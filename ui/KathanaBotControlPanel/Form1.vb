@@ -47,6 +47,7 @@ Public Class Form1
     Private btnPartyAutoAccept As Button
     Private rtbLog As RichTextBox
     Private txtDiagnostics As TextBox
+    Private pnlHealthBanner As Panel
 
     Private nudAutoPotHp As NumericUpDown
     Private nudAutoPotMp As NumericUpDown
@@ -95,6 +96,18 @@ Public Class Form1
         Public Property LootPickupSeconds As Decimal = 4D
         Public Property MonsterNames As List(Of String) = New List(Of String)()
         Public Property LootNames As List(Of String) = New List(Of String)()
+        Public Property CombatActions As List(Of PersistedCombatAction) = New List(Of PersistedCombatAction)()
+    End Class
+
+    Private Class PersistedCombatAction
+        Public Property ActionKey As String = ""
+        Public Property Enabled As Boolean = True
+        Public Property Role As String = "attack"
+        Public Property Priority As Integer = 100
+        Public Property CooldownSec As Double = 1.0
+        Public Property TriggerPercent As Integer = 40
+        Public Property MinHpPercent As Integer = 1
+        Public Property MinMpPercent As Integer = 1
     End Class
 
     <DllImport("winmm.dll")>
@@ -112,7 +125,6 @@ Public Class Form1
         LoadPersistedListState()
         SetupLiveConfigBindings()
         ApplyDarkTheme(Me)
-        CaptureThemeSnapshot(Me)
 
         AddHandler _engine.StatusUpdated, AddressOf OnEngineStatusUpdated
         AddHandler _engine.LogLine, AddressOf OnEngineLogLine
@@ -180,8 +192,19 @@ Public Class Form1
         BackColor = Color.FromArgb(25, 25, 25)
         ForeColor = Color.Gainsboro
 
+        Dim root As New Panel() With {.Dock = DockStyle.Fill}
+        Controls.Add(root)
+
         Dim tabs As New TabControl() With {.Dock = DockStyle.Fill, .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold)}
-        Controls.Add(tabs)
+        root.Controls.Add(tabs)
+
+        pnlHealthBanner = New Panel() With {
+            .Dock = DockStyle.Top,
+            .Height = 12,
+            .BackColor = Color.FromArgb(55, 55, 55)
+        }
+        root.Controls.Add(pnlHealthBanner)
+        pnlHealthBanner.BringToFront()
 
         tabs.TabPages.Add(BuildCombatTab())
         tabs.TabPages.Add(BuildVisionTab())
@@ -1066,6 +1089,10 @@ Public Class Form1
                     End If
                 Next
             End If
+
+            If state.CombatActions IsNot Nothing AndAlso state.CombatActions.Count > 0 Then
+                ApplyPersistedCombatActions(state.CombatActions)
+            End If
         Catch ex As Exception
             AppendLog("Unable to load saved lists: " & ex.Message)
         End Try
@@ -1082,7 +1109,8 @@ Public Class Form1
                 .LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked),
                 .LootPickupSeconds = If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value, 4D),
                 .MonsterNames = GetListBoxItems(lstMonsterFilter),
-                .LootNames = GetListBoxItems(lstLootFilter)
+                .LootNames = GetListBoxItems(lstLootFilter),
+                .CombatActions = GetPersistedCombatActions()
             }
 
             Dim json As String = JsonSerializer.Serialize(state, New JsonSerializerOptions With {.WriteIndented = True})
@@ -1107,6 +1135,101 @@ Public Class Form1
             End If
         Next
         Return result
+    End Function
+
+    Private Function GetPersistedCombatActions() As List(Of PersistedCombatAction)
+        Dim result As New List(Of PersistedCombatAction)()
+        If dgvCombat Is Nothing Then
+            Return result
+        End If
+
+        For Each row As DataGridViewRow In dgvCombat.Rows
+            Dim actionKey As String = SafeCell(row, "Key", "").ToUpperInvariant()
+            If actionKey = "" Then
+                Continue For
+            End If
+
+            Dim enabled As Boolean = False
+            Try
+                enabled = Convert.ToBoolean(row.Cells("Enabled").Value)
+            Catch
+            End Try
+
+            Dim cooldownSec As Double = Math.Max(0.05, ParseDouble(SafeCell(row, "CooldownSec", "1.0"), 1.0))
+            Dim priority As Integer = Math.Max(1, ParseInt(SafeCell(row, "Priority", "100"), 100))
+            Dim triggerPercent As Integer = Math.Min(99, Math.Max(1, ParseInt(SafeCell(row, "TriggerPercent", "40"), 40)))
+            Dim minHpPercent As Integer = Math.Min(100, Math.Max(1, ParseInt(SafeCell(row, "MinHpPercent", "1"), 1)))
+            Dim minMpPercent As Integer = Math.Min(100, Math.Max(1, ParseInt(SafeCell(row, "MinMpPercent", "1"), 1)))
+            Dim role As String = NormalizePersistedRole(SafeCell(row, "Role", "attack").ToLowerInvariant())
+
+            result.Add(New PersistedCombatAction With {
+                .ActionKey = actionKey,
+                .Enabled = enabled,
+                .Role = role,
+                .Priority = priority,
+                .CooldownSec = cooldownSec,
+                .TriggerPercent = triggerPercent,
+                .MinHpPercent = minHpPercent,
+                .MinMpPercent = minMpPercent
+            })
+        Next
+
+        Return result
+    End Function
+
+    Private Sub ApplyPersistedCombatActions(actions As List(Of PersistedCombatAction))
+        If dgvCombat Is Nothing OrElse actions Is Nothing OrElse actions.Count = 0 Then
+            Return
+        End If
+
+        Dim keyed As New Dictionary(Of String, PersistedCombatAction)(StringComparer.OrdinalIgnoreCase)
+        For Each action In actions
+            If action Is Nothing Then
+                Continue For
+            End If
+            Dim actionKey As String = If(action.ActionKey, "").Trim().ToUpperInvariant()
+            If actionKey = "" Then
+                Continue For
+            End If
+            keyed(actionKey) = action
+        Next
+
+        If keyed.Count = 0 Then
+            Return
+        End If
+
+        For Each row As DataGridViewRow In dgvCombat.Rows
+            Dim actionKey As String = SafeCell(row, "Key", "").ToUpperInvariant()
+            If actionKey = "" OrElse Not keyed.ContainsKey(actionKey) Then
+                Continue For
+            End If
+
+            Dim item As PersistedCombatAction = keyed(actionKey)
+            row.Cells("Enabled").Value = item.Enabled
+            row.Cells("Role").Value = NormalizePersistedRole(item.Role)
+            row.Cells("Priority").Value = Math.Max(1, item.Priority).ToString()
+
+            Dim cooldownSec As Double = item.CooldownSec
+            If Double.IsNaN(cooldownSec) OrElse Double.IsInfinity(cooldownSec) Then
+                cooldownSec = 1.0
+            End If
+            cooldownSec = Math.Max(0.05, cooldownSec)
+            row.Cells("CooldownSec").Value = cooldownSec.ToString("0.###")
+
+            row.Cells("TriggerPercent").Value = Math.Min(99, Math.Max(1, item.TriggerPercent)).ToString()
+            row.Cells("MinHpPercent").Value = Math.Min(100, Math.Max(1, item.MinHpPercent)).ToString()
+            row.Cells("MinMpPercent").Value = Math.Min(100, Math.Max(1, item.MinMpPercent)).ToString()
+        Next
+    End Sub
+
+    Private Shared Function NormalizePersistedRole(rawRole As String) As String
+        Dim role As String = If(rawRole, "").Trim().ToLowerInvariant()
+        Select Case role
+            Case "attack", "heal", "max_health", "mana", "special"
+                Return role
+            Case Else
+                Return "attack"
+        End Select
     End Function
 
     Private Sub AppendLog(message As String)
@@ -1410,20 +1533,18 @@ Public Class Form1
     End Sub
 
     Private Sub ApplyHealthUiTint(percent As Double, active As Boolean)
-        If _baseBackColors.Count = 0 Then
-            CaptureThemeSnapshot(Me)
+        If pnlHealthBanner Is Nothing Then
+            Return
         End If
 
         If Not active Then
-            RestoreThemeSnapshot(Me)
+            pnlHealthBanner.BackColor = Color.FromArgb(55, 55, 55)
             Return
         End If
 
         Dim safePercent As Double = If(Double.IsNaN(percent) OrElse Double.IsInfinity(percent), 100.0, percent)
         Dim bounded As Double = Math.Max(0.0, Math.Min(100.0, safePercent))
-        Dim tint As Color = HpColor(bounded)
-        Dim blendAmount As Double = HealthUiBlendAmount(bounded)
-        ApplyTintRecursive(Me, tint, blendAmount)
+        pnlHealthBanner.BackColor = HpColor(bounded)
     End Sub
 
     Private Sub RestoreThemeSnapshot(control As Control)
