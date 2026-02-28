@@ -267,10 +267,12 @@ Public Class BotEngine
     Private _lastGoodMobName As String = ""
     Private _zeroSpikeHoldCount As Integer = 0
     Private _zeroPairConfirmCount As Integer = 0
+    Private Shared ReadOnly MovementStopVks As Integer() = {&H57, &H41, &H53, &H44, &H26, &H28, &H25, &H27}
 
     Private Shared ReadOnly KeyMap As New Dictionary(Of String, Integer)(StringComparer.OrdinalIgnoreCase) From {
         {"0", &H30}, {"1", &H31}, {"2", &H32}, {"3", &H33}, {"4", &H34}, {"5", &H35},
         {"6", &H36}, {"7", &H37}, {"8", &H38}, {"9", &H39}, {"E", &H45}, {"F", &H46}, {"W", &H57}, {"S", &H53},
+        {"ESC", &H1B}, {"ESCAPE", &H1B},
         {"ENTER", &HD}, {"RETURN", &HD},
         {"F1", &H70}, {"F2", &H71}, {"F3", &H72}, {"F4", &H73}, {"F5", &H74},
         {"F6", &H75}, {"F7", &H76}, {"F8", &H77}, {"F9", &H78}, {"F10", &H79}
@@ -836,7 +838,9 @@ Public Class BotEngine
         If hwnd = IntPtr.Zero Then
             Return
         End If
-        If actionSent Then
+        ' Do not fully block looting when combat/support keys fire in the same loop.
+        ' Only skip if an attack/special key was just sent to avoid immediate input collision.
+        If actionSent AndAlso _lastAttackAction <> DateTime.MinValue AndAlso (now - _lastAttackAction).TotalMilliseconds < 180 Then
             Return
         End If
         If cfg.LootAllowedNames Is Nothing OrElse cfg.LootAllowedNames.Count = 0 Then
@@ -884,9 +888,9 @@ Public Class BotEngine
                 Return
             End If
 
-            Dim rejectKey As String = If(_lootRandom.Next(0, 2) = 0, "W", "S")
-            If SendKey(hwnd, rejectKey, 35) Then
-                SetLastAction($"{rejectKey} (loot rejected: {If(String.IsNullOrWhiteSpace(selectedName), "unknown", selectedName)})")
+            Dim rejectedName As String = If(String.IsNullOrWhiteSpace(selectedName), "unknown", selectedName)
+            If Not TrySendStopAction(cfg, hwnd, $"loot rejected: {rejectedName}") Then
+                RaiseEvent LogLine($"Loot rejected ({rejectedName}) and hard-stop macro failed to send.")
             End If
         Catch ex As Exception
             RaiseEvent LogLine("Loot scan error: " & ex.Message)
@@ -1374,6 +1378,12 @@ Public Class BotEngine
             If normName.Contains(normAllowed, StringComparison.OrdinalIgnoreCase) Then
                 Return True
             End If
+            If normAllowed.Contains(normName, StringComparison.OrdinalIgnoreCase) Then
+                Return True
+            End If
+            If AreTextsClose(normName, normAllowed) Then
+                Return True
+            End If
         Next
 
         Return False
@@ -1499,6 +1509,65 @@ Public Class BotEngine
         Next
 
         Return sentAny
+    End Function
+
+    Private Function TrySendStopAction(cfg As BotConfig, hwnd As IntPtr, context As String) As Boolean
+        If hwnd = IntPtr.Zero OrElse cfg Is Nothing OrElse cfg.Actions Is Nothing Then
+            Return False
+        End If
+
+        Dim releasedMovement As Boolean = ReleaseMovementKeys(hwnd)
+        Dim ordered = cfg.Actions.
+            Where(Function(a) a.Enabled AndAlso String.Equals(a.Role, "stop", StringComparison.OrdinalIgnoreCase)).
+            OrderBy(Function(a) a.Priority).
+            ToList()
+
+        If ordered.Count = 0 Then
+            If releasedMovement Then
+                SetLastAction($"movement release (stop fallback: {context})")
+            End If
+            Return releasedMovement
+        End If
+
+        For Each action In ordered
+            If String.IsNullOrWhiteSpace(action.KeyName) Then
+                Continue For
+            End If
+
+            Dim sentCount As Integer = 0
+            For i As Integer = 1 To 3
+                If SendKey(hwnd, action.KeyName, 35) Then
+                    sentCount += 1
+                    MarkKeyUsed(action.KeyName)
+                End If
+                Thread.Sleep(25)
+            Next
+
+            If sentCount > 0 Then
+                SetLastAction($"{action.KeyName} (stop x{sentCount}: {context})")
+                Return True
+            End If
+        Next
+
+        Return releasedMovement
+    End Function
+
+    Public Function HardStopMovement(windowTitle As String, Optional context As String = "manual hard stop") As Boolean
+        Dim title As String = If(windowTitle, "").Trim()
+        If title = "" Then
+            Return False
+        End If
+
+        Dim hwnd As IntPtr = FindGameWindow(title)
+        If hwnd = IntPtr.Zero Then
+            Return False
+        End If
+
+        Dim cfg As BotConfig
+        SyncLock _sync
+            cfg = _config
+        End SyncLock
+        Return TrySendStopAction(cfg, hwnd, context)
     End Function
 
     Public Function ManualRetarget(windowTitle As String) As Boolean
@@ -2146,6 +2215,34 @@ Public Class BotEngine
             Thread.Sleep(Math.Max(5, pressMs))
             NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_KEYUP), New IntPtr(vk), New IntPtr(lparamUp))
             Return True
+        Catch
+            Return False
+        End Try
+    End Function
+
+    Private Shared Function ReleaseMovementKeys(hwnd As IntPtr) As Boolean
+        If hwnd = IntPtr.Zero Then
+            Return False
+        End If
+
+        Dim sentAny As Boolean = False
+        For Each vk As Integer In MovementStopVks
+            If SendVirtualKeyUp(hwnd, vk) Then
+                sentAny = True
+            End If
+        Next
+        Return sentAny
+    End Function
+
+    Private Shared Function SendVirtualKeyUp(hwnd As IntPtr, vk As Integer) As Boolean
+        If hwnd = IntPtr.Zero Then
+            Return False
+        End If
+
+        Dim scan As UInteger = NativeMethods.MapVirtualKey(CUInt(vk), 0UI)
+        Dim lparamUp As Integer = 1 Or (CInt(scan) << 16) Or (1 << 30) Or (1 << 31)
+        Try
+            Return NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_KEYUP), New IntPtr(vk), New IntPtr(lparamUp))
         Catch
             Return False
         End Try

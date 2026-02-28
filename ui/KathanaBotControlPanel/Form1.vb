@@ -14,6 +14,7 @@ Public Class Form1
 
     Private ReadOnly _engine As New BotEngine()
     Private ReadOnly _uiTimer As New System.Windows.Forms.Timer()
+    Private ReadOnly _enterToggleTimer As New System.Windows.Forms.Timer()
 
     Private txtWindowTitle As TextBox
     Private nudLoopMs As NumericUpDown
@@ -71,6 +72,7 @@ Public Class Form1
     Private _hpPendingCts As CancellationTokenSource = Nothing
     Private _hpPendingTask As Task = Nothing
     Private _lastHpZeroNotification As DateTime = DateTime.MinValue
+    Private _enterWasDown As Boolean = False
     Private Const HpZeroAlarmGraceMs As Integer = 60000
     Private Const DefaultNtfyTopicName As String = "Katana12345"
     Private Shared ReadOnly NtfyClient As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(7)}
@@ -118,6 +120,18 @@ Public Class Form1
     Private Shared Function waveOutSetVolume(hwo As IntPtr, dwVolume As UInteger) As Integer
     End Function
 
+    <DllImport("user32.dll")>
+    Private Shared Function GetAsyncKeyState(vKey As Integer) As Short
+    End Function
+
+    <DllImport("user32.dll", CharSet:=CharSet.Auto)>
+    Private Shared Function GetWindowText(hWnd As IntPtr, lpString As StringBuilder, nMaxCount As Integer) As Integer
+    End Function
+
+    <DllImport("user32.dll")>
+    Private Shared Function GetForegroundWindow() As IntPtr
+    End Function
+
     Public Sub New()
         InitializeComponent()
         BuildUi()
@@ -132,6 +146,10 @@ Public Class Form1
         _uiTimer.Interval = 1000
         AddHandler _uiTimer.Tick, AddressOf UiTimerTick
         _uiTimer.Start()
+
+        _enterToggleTimer.Interval = 45
+        AddHandler _enterToggleTimer.Tick, AddressOf EnterToggleTimerTick
+        _enterToggleTimer.Start()
     End Sub
 
     Private Sub SetupLiveConfigBindings()
@@ -403,7 +421,7 @@ Public Class Form1
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Key", .ReadOnly = True, .FillWeight = 60.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "CooldownSec", .FillWeight = 90.0F})
         Dim roleColumn As New DataGridViewComboBoxColumn() With {.Name = "Role", .FillWeight = 80.0F}
-        roleColumn.Items.AddRange(New Object() {"attack", "heal", "max_health", "mana", "special"})
+        roleColumn.Items.AddRange(New Object() {"attack", "heal", "max_health", "mana", "special", "stop"})
         dgvCombat.Columns.Add(roleColumn)
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Priority", .FillWeight = 75.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "TriggerPercent", .FillWeight = 85.0F})
@@ -638,6 +656,12 @@ Public Class Form1
     End Sub
 
     Private Sub StopClicked(sender As Object, e As EventArgs)
+        Dim hardStopSent As Boolean = _engine.HardStopMovement(txtWindowTitle.Text.Trim(), "stop button")
+        If hardStopSent Then
+            AppendLog("Hard stop macro sent (movement key-up + stop key burst).")
+        Else
+            AppendLog("Hard stop macro not sent (window not found or input blocked).")
+        End If
         _engine.Stop()
         ApplyHealthUiTint(100.0, False)
         ResetHpZeroAlarmState("Alarm state reset for bot stop.")
@@ -780,9 +804,52 @@ Public Class Form1
             $"MobHP%: {st.MobHpPercent:0.0}{Environment.NewLine}" &
             $"TargetValid: {st.TargetValid}{Environment.NewLine}" &
             $"LastAction: {st.LastAction}{Environment.NewLine}" &
-            $"NotAttackingReason: {st.NotAttackingReason}{Environment.NewLine}" &
-            $"Error: {st.ErrorMessage}"
+             $"NotAttackingReason: {st.NotAttackingReason}{Environment.NewLine}" &
+             $"Error: {st.ErrorMessage}"
     End Sub
+
+    Private Sub EnterToggleTimerTick(sender As Object, e As EventArgs)
+        Dim isEnterDown As Boolean = (GetAsyncKeyState(CInt(Keys.Enter)) And &H8000S) <> 0
+        If isEnterDown AndAlso Not _enterWasDown Then
+            HandleEnterTogglePress()
+        End If
+        _enterWasDown = isEnterDown
+    End Sub
+
+    Private Sub HandleEnterTogglePress()
+        If Not IsGameWindowForeground() Then
+            Return
+        End If
+
+        If _engine.IsRunning() Then
+            StopClicked(Nothing, EventArgs.Empty)
+            AppendLog("Enter toggle: bot paused.")
+        Else
+            StartClicked(Nothing, EventArgs.Empty)
+            AppendLog("Enter toggle: bot resumed.")
+        End If
+    End Sub
+
+    Private Function IsGameWindowForeground() As Boolean
+        Dim targetTitle As String = If(txtWindowTitle IsNot Nothing, txtWindowTitle.Text, "").Trim()
+        If targetTitle = "" Then
+            Return False
+        End If
+
+        Dim hwnd As IntPtr = GetForegroundWindow()
+        If hwnd = IntPtr.Zero Then
+            Return False
+        End If
+
+        Dim sb As New StringBuilder(512)
+        Dim copied As Integer = GetWindowText(hwnd, sb, sb.Capacity)
+        If copied <= 0 Then
+            Return False
+        End If
+
+        Dim activeTitle As String = sb.ToString()
+        Return activeTitle.IndexOf(targetTitle, StringComparison.OrdinalIgnoreCase) >= 0
+    End Function
 
     Private Sub OnEngineStatusUpdated(status As BotStatus)
         If InvokeRequired Then
@@ -1225,7 +1292,7 @@ Public Class Form1
     Private Shared Function NormalizePersistedRole(rawRole As String) As String
         Dim role As String = If(rawRole, "").Trim().ToLowerInvariant()
         Select Case role
-            Case "attack", "heal", "max_health", "mana", "special"
+            Case "attack", "heal", "max_health", "mana", "special", "stop"
                 Return role
             Case Else
                 Return "attack"
@@ -1696,6 +1763,7 @@ Public Class Form1
 
     Protected Overrides Sub OnFormClosing(e As FormClosingEventArgs)
         _uiTimer.Stop()
+        _enterToggleTimer.Stop()
         SavePersistedListState(False)
         StopHpZeroAlarm()
         If _overlayForm IsNot Nothing AndAlso Not _overlayForm.IsDisposed Then
