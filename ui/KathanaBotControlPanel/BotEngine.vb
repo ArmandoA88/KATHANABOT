@@ -65,7 +65,10 @@ Public Class BotConfig
     Public Property DeniedMobs As List(Of String) = New List(Of String)()
     Public Property LootPickupEnabled As Boolean = False
     Public Property LootPickupIntervalMs As Integer = 4000
-    Public Property LootPickupVerifyDelayMs As Integer = 200
+    Public Property LootPickupVerifyDelayMs As Integer = 80
+    Public Property LootRejectClickEnabled As Boolean = False
+    Public Property LootRejectPointX As Integer = -1
+    Public Property LootRejectPointY As Integer = -1
     Public Property LootAllowedNames As List(Of String) = New List(Of String)()
     Public Property PartyAutoAcceptEnabled As Boolean = True
     Public Property PartyAskEnabled As Boolean = False
@@ -905,8 +908,49 @@ Public Class BotEngine
             End If
 
             Dim rejectedName As String = If(String.IsNullOrWhiteSpace(selectedName), "unknown", selectedName)
-            If Not TrySendStopAction(cfg, hwnd, $"loot rejected: {rejectedName}") Then
-                RaiseEvent LogLine($"Loot rejected ({rejectedName}) and hard-stop macro failed to send.")
+            Dim rejectContext As String = $"loot rejected: {rejectedName}"
+            Dim preStopSent As Boolean = TrySendStopAction(cfg, hwnd, rejectContext & " (pre-stop)", includeMovementFallback:=True)
+            Dim clickSent As Boolean = False
+            Dim rejectHandled As Boolean = False
+
+            If cfg.LootRejectClickEnabled AndAlso cfg.LootRejectPointX >= 0 AndAlso cfg.LootRejectPointY >= 0 Then
+                Dim clickX As Integer = Math.Max(0, Math.Min(verifyFrame.Width - 1, cfg.LootRejectPointX))
+                Dim clickY As Integer = Math.Max(0, Math.Min(verifyFrame.Height - 1, cfg.LootRejectPointY))
+                For i As Integer = 1 To 2
+                    If ClickClientPoint(hwnd, clickX, clickY, 0, 0) Then
+                        clickSent = True
+                    End If
+                    Thread.Sleep(8)
+                Next
+                If clickSent Then
+                    SetLastAction($"Click loot reject ({clickX},{clickY})")
+                End If
+            End If
+
+            rejectHandled = TrySendStopAction(cfg, hwnd, rejectContext, includeMovementFallback:=False)
+
+            If Not rejectHandled Then
+                Dim stopSent As Boolean = False
+                For i As Integer = 1 To 2
+                    If SendKey(hwnd, "S", 50) Then
+                        stopSent = True
+                        MarkKeyUsed("S")
+                    End If
+                    Thread.Sleep(25)
+                Next
+
+                If stopSent Then
+                    SetLastAction($"S (loot reject: {rejectedName})")
+                    rejectHandled = True
+                End If
+            End If
+
+            If Not rejectHandled Then
+                rejectHandled = TrySendStopAction(cfg, hwnd, rejectContext, includeMovementFallback:=True)
+            End If
+
+            If Not (rejectHandled OrElse preStopSent OrElse clickSent) Then
+                RaiseEvent LogLine($"Loot rejected ({rejectedName}) and cancel action failed to send.")
             End If
         Catch ex As Exception
             RaiseEvent LogLine("Loot scan error: " & ex.Message)
@@ -1666,22 +1710,26 @@ Public Class BotEngine
         Return sentAny
     End Function
 
-    Private Function TrySendStopAction(cfg As BotConfig, hwnd As IntPtr, context As String) As Boolean
+    Private Function TrySendStopAction(cfg As BotConfig, hwnd As IntPtr, context As String, Optional includeMovementFallback As Boolean = True) As Boolean
         If hwnd = IntPtr.Zero OrElse cfg Is Nothing OrElse cfg.Actions Is Nothing Then
             Return False
         End If
 
-        Dim releasedMovement As Boolean = ReleaseMovementKeys(hwnd)
+        Dim releasedMovement As Boolean = False
+        If includeMovementFallback Then
+            releasedMovement = ReleaseMovementKeys(hwnd)
+        End If
+
         Dim ordered = cfg.Actions.
             Where(Function(a) a.Enabled AndAlso String.Equals(a.Role, "stop", StringComparison.OrdinalIgnoreCase)).
             OrderBy(Function(a) a.Priority).
             ToList()
 
         If ordered.Count = 0 Then
-            If releasedMovement Then
+            If includeMovementFallback AndAlso releasedMovement Then
                 SetLastAction($"movement release (stop fallback: {context})")
             End If
-            Return releasedMovement
+            Return includeMovementFallback AndAlso releasedMovement
         End If
 
         For Each action In ordered
@@ -1704,7 +1752,7 @@ Public Class BotEngine
             End If
         Next
 
-        Return releasedMovement
+        Return includeMovementFallback AndAlso releasedMovement
     End Function
 
     Public Function HardStopMovement(windowTitle As String, Optional context As String = "manual hard stop") As Boolean
@@ -2418,7 +2466,7 @@ Public Class BotEngine
         Return ClickClientPoint(hwnd, x, y)
     End Function
 
-    Public Shared Function ClickClientPoint(hwnd As IntPtr, x As Integer, y As Integer) As Boolean
+    Public Shared Function ClickClientPoint(hwnd As IntPtr, x As Integer, y As Integer, Optional moveDelayMs As Integer = 10, Optional downUpDelayMs As Integer = 25) As Boolean
         If hwnd = IntPtr.Zero Then
             Return False
         End If
@@ -2426,9 +2474,13 @@ Public Class BotEngine
         Dim lParam As Integer = (x And &HFFFF) Or ((y And &HFFFF) << 16)
         Try
             NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_MOUSEMOVE), IntPtr.Zero, New IntPtr(lParam))
-            Thread.Sleep(10)
+            If moveDelayMs > 0 Then
+                Thread.Sleep(moveDelayMs)
+            End If
             NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_LBUTTONDOWN), New IntPtr(NativeMethods.MK_LBUTTON), New IntPtr(lParam))
-            Thread.Sleep(25)
+            If downUpDelayMs > 0 Then
+                Thread.Sleep(downUpDelayMs)
+            End If
             NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_LBUTTONUP), IntPtr.Zero, New IntPtr(lParam))
             Return True
         Catch

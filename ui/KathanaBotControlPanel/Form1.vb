@@ -26,6 +26,10 @@ Public Class Form1
     Private btnOverlayToggle As Button
     Private dgvRegions As DataGridView
     Private picSnapshot As PictureBox
+    Private pnlWindowFrame As Panel
+    Private btnPickLootRejectPoint As Button
+    Private btnClearLootRejectPoint As Button
+    Private lblLootRejectPoint As Label
 
     Private dgvCombat As DataGridView
     Private chkMonsterFilter As CheckBox
@@ -80,8 +84,21 @@ Public Class Form1
     Private _hpPendingCts As CancellationTokenSource = Nothing
     Private _hpPendingTask As Task = Nothing
     Private _lastHpZeroNotification As DateTime = DateTime.MinValue
+    Private _deadPairConfirmCount As Integer = 0
+    Private _deathNotificationLatched As Boolean = False
     Private _enterWasDown As Boolean = False
+    Private _isPickingLootRejectPoint As Boolean = False
+    Private _lootRejectPointX As Integer = -1
+    Private _lootRejectPointY As Integer = -1
+    Private _themeSnapshotCaptured As Boolean = False
+    Private _lastUiTintActive As Boolean = False
+    Private _lastUiTintColorArgb As Integer = Integer.MinValue
+    Private _lastUiTintBlend As Double = -1.0
     Private Const HpZeroAlarmGraceMs As Integer = 60000
+    Private Const DeadZeroThreshold As Double = 0.1
+    Private Const DeadRecoverThreshold As Double = 2.0
+    Private Const DeadConfirmRequiredCount As Integer = 3
+    Private Const DeathNotificationRetryCount As Integer = 3
     Private Const DefaultNtfyTopicName As String = "Katana12345"
     Private Shared ReadOnly NtfyClient As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(7)}
     Private Shared ReadOnly PersistDirectoryPath As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel")
@@ -130,6 +147,9 @@ Public Class Form1
         Public Property MonsterFilterEnabled As Boolean = True
         Public Property LootPickupEnabled As Boolean = False
         Public Property LootPickupSeconds As Decimal = 4D
+        Public Property LootRejectPointEnabled As Boolean = False
+        Public Property LootRejectPointX As Integer = -1
+        Public Property LootRejectPointY As Integer = -1
         Public Property PromptAutoAcceptEnabled As Boolean = True
         Public Property AskForPartyEnabled As Boolean = False
         Public Property AskForPartySeconds As Decimal = 30D
@@ -180,6 +200,8 @@ Public Class Form1
         LoadPersistedListState()
         SetupLiveConfigBindings()
         ApplyDarkTheme(Me)
+        CaptureThemeSnapshot(Me)
+        _themeSnapshotCaptured = True
 
         AddHandler _engine.StatusUpdated, AddressOf OnEngineStatusUpdated
         AddHandler _engine.LogLine, AddressOf OnEngineLogLine
@@ -257,18 +279,22 @@ Public Class Form1
         BackColor = Color.FromArgb(25, 25, 25)
         ForeColor = Color.Gainsboro
 
-        Dim root As New Panel() With {.Dock = DockStyle.Fill}
-        Controls.Add(root)
+        pnlWindowFrame = New Panel() With {
+            .Dock = DockStyle.Fill,
+            .Padding = New Padding(9),
+            .BackColor = Color.FromArgb(55, 55, 55)
+        }
+        Controls.Add(pnlWindowFrame)
 
         Dim tabs As New TabControl() With {.Dock = DockStyle.Fill, .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold)}
-        root.Controls.Add(tabs)
+        pnlWindowFrame.Controls.Add(tabs)
 
         pnlHealthBanner = New Panel() With {
             .Dock = DockStyle.Top,
             .Height = 12,
             .BackColor = Color.FromArgb(55, 55, 55)
         }
-        root.Controls.Add(pnlHealthBanner)
+        pnlWindowFrame.Controls.Add(pnlHealthBanner)
         pnlHealthBanner.BringToFront()
 
         tabs.TabPages.Add(BuildCombatTab())
@@ -366,8 +392,27 @@ Public Class Form1
         right.Controls.Add(BuildProcessListGroup(), 0, 0)
 
         Dim snapshotGroup As New GroupBox() With {.Text = "Snapshot", .Dock = DockStyle.Fill}
+        Dim snapshotLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3, .Padding = New Padding(6)}
+        snapshotLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        snapshotLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
+        snapshotLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 22.0F))
+
         picSnapshot = New PictureBox() With {.Dock = DockStyle.Fill, .SizeMode = PictureBoxSizeMode.Zoom, .BackColor = Color.Black}
-        snapshotGroup.Controls.Add(picSnapshot)
+        AddHandler picSnapshot.MouseClick, AddressOf SnapshotMouseClick
+        snapshotLayout.Controls.Add(picSnapshot, 0, 0)
+
+        Dim pointRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
+        btnPickLootRejectPoint = New Button() With {.Text = "Pick Loot Reject Point", .Width = 170, .Height = 28, .BackColor = Color.FromArgb(45, 95, 140), .ForeColor = Color.White}
+        AddHandler btnPickLootRejectPoint.Click, AddressOf PickLootRejectPointClicked
+        btnClearLootRejectPoint = New Button() With {.Text = "Clear Point", .Width = 95, .Height = 28, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
+        AddHandler btnClearLootRejectPoint.Click, AddressOf ClearLootRejectPointClicked
+        pointRow.Controls.Add(btnPickLootRejectPoint)
+        pointRow.Controls.Add(btnClearLootRejectPoint)
+        snapshotLayout.Controls.Add(pointRow, 0, 1)
+
+        lblLootRejectPoint = New Label() With {.Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.LightSteelBlue}
+        snapshotLayout.Controls.Add(lblLootRejectPoint, 0, 2)
+        snapshotGroup.Controls.Add(snapshotLayout)
         right.Controls.Add(snapshotGroup, 0, 1)
 
         root.Controls.Add(right, 1, 0)
@@ -782,6 +827,7 @@ Public Class Form1
         UpdateAttackButtonAppearance(False)
         UpdatePromptAutoAcceptButton()
         UpdatePartyAskButton()
+        UpdateLootRejectPointUi()
         RefreshKeyActionSummary()
         AppendLog("UI loaded. No API required.")
     End Sub
@@ -856,6 +902,105 @@ Public Class Form1
             oldImage.Dispose()
         End If
         AppendLog("Snapshot captured.")
+    End Sub
+
+    Private Sub PickLootRejectPointClicked(sender As Object, e As EventArgs)
+        _isPickingLootRejectPoint = True
+        UpdateLootRejectPointUi()
+        If picSnapshot Is Nothing OrElse picSnapshot.Image Is Nothing Then
+            AppendLog("Pick mode enabled. Capture Snapshot first, then click the reject button point.")
+            Return
+        End If
+        AppendLog("Pick mode enabled. Click the reject button point on Snapshot.")
+    End Sub
+
+    Private Sub ClearLootRejectPointClicked(sender As Object, e As EventArgs)
+        _isPickingLootRejectPoint = False
+        _lootRejectPointX = -1
+        _lootRejectPointY = -1
+        UpdateLootRejectPointUi()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        AppendLog("Loot reject click point cleared.")
+    End Sub
+
+    Private Sub SnapshotMouseClick(sender As Object, e As MouseEventArgs)
+        If Not _isPickingLootRejectPoint Then
+            Return
+        End If
+        If picSnapshot Is Nothing OrElse picSnapshot.Image Is Nothing Then
+            AppendLog("Pick failed: capture a snapshot first.")
+            Return
+        End If
+
+        Dim mapped As System.Drawing.Point
+        If Not TryMapPictureBoxPointToImage(picSnapshot, e.Location, mapped) Then
+            AppendLog("Pick failed: click inside the snapshot image area.")
+            Return
+        End If
+
+        _lootRejectPointX = mapped.X
+        _lootRejectPointY = mapped.Y
+        _isPickingLootRejectPoint = False
+        UpdateLootRejectPointUi()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        AppendLog($"Loot reject point set: x={_lootRejectPointX}, y={_lootRejectPointY}.")
+    End Sub
+
+    Private Shared Function TryMapPictureBoxPointToImage(picture As PictureBox, clientPoint As System.Drawing.Point, ByRef imagePoint As System.Drawing.Point) As Boolean
+        imagePoint = New System.Drawing.Point(0, 0)
+        If picture Is Nothing OrElse picture.Image Is Nothing Then
+            Return False
+        End If
+
+        Dim imageWidth As Integer = picture.Image.Width
+        Dim imageHeight As Integer = picture.Image.Height
+        Dim boxWidth As Integer = Math.Max(1, picture.ClientSize.Width)
+        Dim boxHeight As Integer = Math.Max(1, picture.ClientSize.Height)
+        Dim scale As Double = Math.Min(boxWidth / CDbl(imageWidth), boxHeight / CDbl(imageHeight))
+        If scale <= 0 Then
+            Return False
+        End If
+
+        Dim drawWidth As Integer = CInt(Math.Round(imageWidth * scale))
+        Dim drawHeight As Integer = CInt(Math.Round(imageHeight * scale))
+        Dim offsetX As Integer = (boxWidth - drawWidth) \ 2
+        Dim offsetY As Integer = (boxHeight - drawHeight) \ 2
+        Dim drawRect As New System.Drawing.Rectangle(offsetX, offsetY, drawWidth, drawHeight)
+        If Not drawRect.Contains(clientPoint) Then
+            Return False
+        End If
+
+        Dim px As Integer = CInt(Math.Floor((clientPoint.X - offsetX) / scale))
+        Dim py As Integer = CInt(Math.Floor((clientPoint.Y - offsetY) / scale))
+        px = Math.Max(0, Math.Min(imageWidth - 1, px))
+        py = Math.Max(0, Math.Min(imageHeight - 1, py))
+        imagePoint = New System.Drawing.Point(px, py)
+        Return True
+    End Function
+
+    Private Sub UpdateLootRejectPointUi()
+        If lblLootRejectPoint IsNot Nothing Then
+            If _lootRejectPointX >= 0 AndAlso _lootRejectPointY >= 0 Then
+                lblLootRejectPoint.Text = $"Loot Reject Point: {_lootRejectPointX}, {_lootRejectPointY}"
+            Else
+                lblLootRejectPoint.Text = "Loot Reject Point: (not set)"
+            End If
+        End If
+
+        If btnPickLootRejectPoint IsNot Nothing Then
+            btnPickLootRejectPoint.Text = If(_isPickingLootRejectPoint, "Click Snapshot...", "Pick Loot Reject Point")
+            btnPickLootRejectPoint.BackColor = If(_isPickingLootRejectPoint, Color.FromArgb(175, 110, 30), Color.FromArgb(45, 95, 140))
+        End If
+
+        If btnClearLootRejectPoint IsNot Nothing Then
+            btnClearLootRejectPoint.Enabled = (_lootRejectPointX >= 0 AndAlso _lootRejectPointY >= 0)
+        End If
+
+        If picSnapshot IsNot Nothing Then
+            picSnapshot.Cursor = If(_isPickingLootRejectPoint, Cursors.Cross, Cursors.Default)
+        End If
     End Sub
 
     Private Sub RefreshProcessListClicked(sender As Object, e As EventArgs)
@@ -1114,6 +1259,7 @@ Public Class Form1
             $"NtfyTopic: {GetNtfyTopicName()}{Environment.NewLine}" &
             $"LootPickupEnabled: {If(chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked, "True", "False")}{Environment.NewLine}" &
             $"LootPickupIntervalSec: {If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value.ToString(), "4")}{Environment.NewLine}" &
+            $"LootRejectPoint: {If(_lootRejectPointX >= 0 AndAlso _lootRejectPointY >= 0, _lootRejectPointX.ToString() & "," & _lootRejectPointY.ToString(), "not set")}{Environment.NewLine}" &
             $"AlarmVolume%: {_alarmVolumePercent}{Environment.NewLine}" &
             $"HpZeroAlarm: {_hpZeroAlarmActive}{Environment.NewLine}" &
             $"HpZeroPending: {_hpZeroPending}{Environment.NewLine}" &
@@ -1353,7 +1499,10 @@ Public Class Form1
         cfg.PartyInviteOkRect = BuildRect("party_invite_ok_rect")
         cfg.LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked)
         cfg.LootPickupIntervalMs = CInt(Math.Round(CDbl(If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value, 4D)) * 1000.0))
-        cfg.LootPickupVerifyDelayMs = 200
+        cfg.LootPickupVerifyDelayMs = 80
+        cfg.LootRejectClickEnabled = (_lootRejectPointX >= 0 AndAlso _lootRejectPointY >= 0)
+        cfg.LootRejectPointX = _lootRejectPointX
+        cfg.LootRejectPointY = _lootRejectPointY
 
         cfg.DeniedMobs.Clear()
         cfg.LootAllowedNames.Clear()
@@ -1463,6 +1612,15 @@ Public Class Form1
                 Dim boundedSeconds As Decimal = Math.Max(nudLootPickupSeconds.Minimum, Math.Min(nudLootPickupSeconds.Maximum, state.LootPickupSeconds))
                 nudLootPickupSeconds.Value = boundedSeconds
             End If
+            If state.LootRejectPointEnabled Then
+                _lootRejectPointX = Math.Max(0, state.LootRejectPointX)
+                _lootRejectPointY = Math.Max(0, state.LootRejectPointY)
+            Else
+                _lootRejectPointX = -1
+                _lootRejectPointY = -1
+            End If
+            _isPickingLootRejectPoint = False
+            UpdateLootRejectPointUi()
             _partyAutoAccept = state.PromptAutoAcceptEnabled
             UpdatePromptAutoAcceptButton()
             _partyAskEnabled = state.AskForPartyEnabled
@@ -1510,6 +1668,9 @@ Public Class Form1
                 .MonsterFilterEnabled = (chkMonsterFilter IsNot Nothing AndAlso chkMonsterFilter.Checked),
                 .LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked),
                 .LootPickupSeconds = If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value, 4D),
+                .LootRejectPointEnabled = (_lootRejectPointX >= 0 AndAlso _lootRejectPointY >= 0),
+                .LootRejectPointX = _lootRejectPointX,
+                .LootRejectPointY = _lootRejectPointY,
                 .PromptAutoAcceptEnabled = _partyAutoAccept,
                 .AskForPartyEnabled = _partyAskEnabled,
                 .AskForPartySeconds = If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D),
@@ -1829,16 +1990,39 @@ Public Class Form1
     End Function
 
     Private Sub HandleHpZeroAlarm(status As BotStatus)
-        Dim shouldAlarm As Boolean =
-            status IsNot Nothing AndAlso
+        If status Is Nothing Then
+            Return
+        End If
+
+        Dim isDeadPair As Boolean =
             status.Running AndAlso
             status.WindowFound AndAlso
             status.ErrorMessage = "" AndAlso
-            status.HpPercent <= 0.1
+            status.HpPercent <= DeadZeroThreshold AndAlso
+            status.MpPercent <= DeadZeroThreshold
 
-        If shouldAlarm Then
-            If Not _hpZeroAlarmActive AndAlso Not _hpZeroPending Then
-                StartHpZeroPendingCountdown()
+        If isDeadPair Then
+            _deadPairConfirmCount += 1
+        Else
+            _deadPairConfirmCount = 0
+        End If
+
+        Dim recovered As Boolean =
+            (status.HpPercent >= DeadRecoverThreshold) OrElse
+            (status.MpPercent >= DeadRecoverThreshold)
+        If recovered Then
+            _deathNotificationLatched = False
+        End If
+
+        If _deadPairConfirmCount >= DeadConfirmRequiredCount Then
+            If Not _deathNotificationLatched Then
+                _deathNotificationLatched = True
+                If _hpZeroPending Then
+                    CancelHpZeroPendingCountdown(False)
+                End If
+                If Not _hpZeroAlarmActive Then
+                    StartHpZeroAlarm()
+                End If
             End If
             Return
         End If
@@ -1846,7 +2030,7 @@ Public Class Form1
         If _hpZeroPending Then
             CancelHpZeroPendingCountdown(True)
         End If
-        If _hpZeroAlarmActive Then
+        If _hpZeroAlarmActive AndAlso (Not isDeadPair) Then
             StopHpZeroAlarm()
         End If
     End Sub
@@ -1915,7 +2099,7 @@ Public Class Form1
 
     Private Sub StartHpZeroAlarm()
         _hpZeroAlarmActive = True
-        AppendLog($"HP is zero. Alarm started at volume {_alarmVolumePercent}%.")
+        AppendLog($"HP and MP are zero. Death alert started at volume {_alarmVolumePercent}%.")
         SendHpZeroPhoneAlert()
         Task.Run(Sub() PlayAlarmPulse(_alarmVolumePercent))
         StopBotAfterDeathAlert()
@@ -1942,6 +2126,7 @@ Public Class Form1
             _hpAlarmCts.Dispose()
             _hpAlarmCts = Nothing
         End If
+        _deadPairConfirmCount = 0
         _lastHpZeroNotification = DateTime.MinValue
         AppendLog(reason)
     End Sub
@@ -1961,6 +2146,7 @@ Public Class Form1
             _hpAlarmCts = Nothing
         End If
 
+        _deadPairConfirmCount = 0
         _lastHpZeroNotification = DateTime.MinValue
         If reason <> "" Then
             AppendLog(reason)
@@ -1969,14 +2155,17 @@ Public Class Form1
 
     Private Sub SendHpZeroPhoneAlert()
         Dim now As DateTime = DateTime.UtcNow
-        If _lastHpZeroNotification <> DateTime.MinValue AndAlso (now - _lastHpZeroNotification).TotalSeconds < 20 Then
+        If _lastHpZeroNotification <> DateTime.MinValue AndAlso (now - _lastHpZeroNotification).TotalSeconds < 5 Then
             Return
         End If
 
         _lastHpZeroNotification = now
         Task.Run(
             Async Function()
-                Await SendPhoneNotificationAsync("KathanaBot HP Alert", "HP reached zero. Check your character.")
+                Dim sent As Boolean = Await SendPhoneNotificationAsync("KathanaBot HP Alert", "HP and MP reached zero. Character is dead.", DeathNotificationRetryCount)
+                If Not sent Then
+                    AppendLogSafe("Phone alert failed after retries. Check ntfy topic/network.")
+                End If
             End Function)
     End Sub
 
@@ -1996,26 +2185,37 @@ Public Class Form1
         Return cleaned
     End Function
 
-    Private Async Function SendPhoneNotificationAsync(title As String, body As String) As Task
-        Try
-            Dim topic As String = GetNtfyTopicName()
-            Dim url As String = $"https://ntfy.sh/{Uri.EscapeDataString(topic)}"
-            Using request As New HttpRequestMessage(HttpMethod.Post, url)
-                request.Content = New StringContent(body, Encoding.UTF8, "text/plain")
-                request.Headers.Add("Title", title)
-                request.Headers.Add("Priority", "urgent")
-                request.Headers.Add("Tags", "warning,gamepad")
+    Private Async Function SendPhoneNotificationAsync(title As String, body As String, Optional maxAttempts As Integer = 1) As Task(Of Boolean)
+        Dim attempts As Integer = Math.Max(1, maxAttempts)
+        Dim topic As String = GetNtfyTopicName()
+        Dim url As String = $"https://ntfy.sh/{Uri.EscapeDataString(topic)}"
 
-                Dim response As HttpResponseMessage = Await NtfyClient.SendAsync(request)
-                If response.IsSuccessStatusCode Then
-                    AppendLogSafe($"Phone alert sent to ntfy topic '{topic}'.")
-                Else
-                    AppendLogSafe($"Phone alert failed ({CInt(response.StatusCode)}) for topic '{topic}'.")
-                End If
-            End Using
-        Catch ex As Exception
-            AppendLogSafe("Phone alert failed: " & ex.Message)
-        End Try
+        For attempt As Integer = 1 To attempts
+            Try
+                Using request As New HttpRequestMessage(HttpMethod.Post, url)
+                    request.Content = New StringContent(body, Encoding.UTF8, "text/plain")
+                    request.Headers.Add("Title", title)
+                    request.Headers.Add("Priority", "urgent")
+                    request.Headers.Add("Tags", "warning,gamepad")
+
+                    Dim response As HttpResponseMessage = Await NtfyClient.SendAsync(request)
+                    If response.IsSuccessStatusCode Then
+                        AppendLogSafe($"Phone alert sent to ntfy topic '{topic}'.")
+                        Return True
+                    End If
+
+                    AppendLogSafe($"Phone alert failed ({CInt(response.StatusCode)}) for topic '{topic}' (attempt {attempt}/{attempts}).")
+                End Using
+            Catch ex As Exception
+                AppendLogSafe($"Phone alert failed (attempt {attempt}/{attempts}): {ex.Message}")
+            End Try
+
+            If attempt < attempts Then
+                Await Task.Delay(1500)
+            End If
+        Next
+
+        Return False
     End Function
 
     Private Sub PlayAlarmPulse(volumePercent As Integer)
@@ -2072,18 +2272,25 @@ Public Class Form1
     End Sub
 
     Private Sub ApplyHealthUiTint(percent As Double, active As Boolean)
-        If pnlHealthBanner Is Nothing Then
+        If pnlWindowFrame Is Nothing Then
             Return
         End If
 
         If Not active Then
-            pnlHealthBanner.BackColor = Color.FromArgb(55, 55, 55)
+            pnlWindowFrame.BackColor = Color.FromArgb(55, 55, 55)
+            If pnlHealthBanner IsNot Nothing Then
+                pnlHealthBanner.BackColor = Color.FromArgb(55, 55, 55)
+            End If
             Return
         End If
 
         Dim safePercent As Double = If(Double.IsNaN(percent) OrElse Double.IsInfinity(percent), 100.0, percent)
         Dim bounded As Double = Math.Max(0.0, Math.Min(100.0, safePercent))
-        pnlHealthBanner.BackColor = HpColor(bounded)
+        Dim tint As Color = HpColor(bounded)
+        pnlWindowFrame.BackColor = tint
+        If pnlHealthBanner IsNot Nothing Then
+            pnlHealthBanner.BackColor = tint
+        End If
     End Sub
 
     Private Sub RestoreThemeSnapshot(control As Control)
