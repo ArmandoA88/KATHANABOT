@@ -569,9 +569,9 @@ Public Class BotEngine
             TrackMobHpMovement(targetValid, mobHpPct, now)
 
             Dim reason As String = ""
-            Dim actionSent As Boolean = TryHandlePartyInvite(cfg, hwnd, frame, now, partyInviteScanRegion, partyInviteOkRegion)
+            Dim actionSent As Boolean = TryHandleAutoAcceptPrompts(cfg, hwnd, frame, now, partyInviteScanRegion, partyInviteOkRegion)
             If actionSent Then
-                reason = "Party invite detected and accepted."
+                reason = "Auto-accept prompt detected and accepted."
             End If
             If unreachableTriggered AndAlso Not actionSent Then
                 actionSent = True
@@ -986,7 +986,7 @@ Public Class BotEngine
         Return _lastExpPerHour
     End Function
 
-    Private Function TryHandlePartyInvite(cfg As BotConfig, hwnd As IntPtr, frame As Bitmap, now As DateTime, partyInviteScanRegion As RectRegion, partyInviteOkRegion As RectRegion) As Boolean
+    Private Function TryHandleAutoAcceptPrompts(cfg As BotConfig, hwnd As IntPtr, frame As Bitmap, now As DateTime, partyInviteScanRegion As RectRegion, partyInviteOkRegion As RectRegion) As Boolean
         If cfg Is Nothing OrElse (Not cfg.PartyAutoAcceptEnabled) Then
             _lastPartyInviteCandidate = ""
             Return False
@@ -1007,11 +1007,13 @@ Public Class BotEngine
             _partyInviteOcrTask = Nothing
         End If
 
-        If IsPartyInvitePrompt(_lastPartyInviteCandidate) Then
+        Dim promptKind As String = DetectAutoAcceptPromptKind(_lastPartyInviteCandidate)
+        If promptKind <> "" Then
             If ClickClientRegionCenter(hwnd, partyInviteOkRegion, frame.Width, frame.Height) Then
                 _lastPartyInviteAccept = now
-                SetLastAction($"Click OK (party invite accepted: {If(String.IsNullOrWhiteSpace(_lastPartyInviteCandidate), "detected", _lastPartyInviteCandidate)})")
-                RaiseEvent LogLine("Party invite detected and auto-accepted.")
+                Dim promptLabel As String = If(promptKind = "ress", "resurrection prompt", "party invite")
+                SetLastAction($"Click OK ({promptLabel} accepted: {If(String.IsNullOrWhiteSpace(_lastPartyInviteCandidate), "detected", _lastPartyInviteCandidate)})")
+                RaiseEvent LogLine($"{promptLabel} detected and auto-accepted.")
                 _lastPartyInviteCandidate = ""
                 Return True
             End If
@@ -1196,6 +1198,16 @@ Public Class BotEngine
         Return hasReach AndAlso hasTarget AndAlso hasUnable
     End Function
 
+    Private Shared Function DetectAutoAcceptPromptKind(rawText As String) As String
+        If IsPartyInvitePrompt(rawText) Then
+            Return "party"
+        End If
+        If IsRessPrompt(rawText) Then
+            Return "ress"
+        End If
+        Return ""
+    End Function
+
     Private Shared Function IsPartyInvitePrompt(rawText As String) As Boolean
         If String.IsNullOrWhiteSpace(rawText) Then
             Return False
@@ -1215,6 +1227,39 @@ Public Class BotEngine
         Dim hasInvite As Boolean = norm.Contains("invited", StringComparison.OrdinalIgnoreCase) OrElse norm.Contains("invite", StringComparison.OrdinalIgnoreCase)
         Dim hasJoin As Boolean = norm.Contains("join", StringComparison.OrdinalIgnoreCase)
         Return hasParty AndAlso (hasInvite OrElse hasJoin)
+    End Function
+
+    Private Shared Function IsRessPrompt(rawText As String) As Boolean
+        If String.IsNullOrWhiteSpace(rawText) Then
+            Return False
+        End If
+
+        Dim norm As String = NormalizeMobName(rawText)
+        If norm = "" Then
+            Return False
+        End If
+
+        Dim compact As String = norm.Replace(" ", "")
+        If compact.Contains("resurrect", StringComparison.OrdinalIgnoreCase) OrElse
+           compact.Contains("resurrection", StringComparison.OrdinalIgnoreCase) OrElse
+           compact.Contains("resurect", StringComparison.OrdinalIgnoreCase) OrElse
+           compact.Contains("ressurect", StringComparison.OrdinalIgnoreCase) OrElse
+           compact.Contains("revive", StringComparison.OrdinalIgnoreCase) OrElse
+           compact.Contains("revival", StringComparison.OrdinalIgnoreCase) Then
+            Return True
+        End If
+
+        Dim hasRes As Boolean =
+            norm.Contains("resur", StringComparison.OrdinalIgnoreCase) OrElse
+            norm.Contains("revive", StringComparison.OrdinalIgnoreCase) OrElse
+            norm.Contains("revival", StringComparison.OrdinalIgnoreCase)
+        Dim hasPrompt As Boolean =
+            norm.Contains("accept", StringComparison.OrdinalIgnoreCase) OrElse
+            norm.Contains("request", StringComparison.OrdinalIgnoreCase) OrElse
+            norm.Contains("yes", StringComparison.OrdinalIgnoreCase) OrElse
+            norm.Contains("ok", StringComparison.OrdinalIgnoreCase) OrElse
+            norm.Contains("want", StringComparison.OrdinalIgnoreCase)
+        Return hasRes AndAlso hasPrompt
     End Function
 
     Private Shared Function IsDeniedMob(mobName As String, denied As List(Of String)) As Boolean

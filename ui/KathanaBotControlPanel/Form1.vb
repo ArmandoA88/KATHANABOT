@@ -47,6 +47,8 @@ Public Class Form1
     Private btnRetargetNow As Button
     Private btnPartyAutoAccept As Button
     Private rtbLog As RichTextBox
+    Private dgvKeySummary As DataGridView
+    Private lblKeySummaryInfo As Label
     Private txtDiagnostics As TextBox
     Private pnlHealthBanner As Panel
 
@@ -80,6 +82,7 @@ Public Class Form1
     Private Shared ReadOnly PersistFilePath As String = Path.Combine(PersistDirectoryPath, "user_lists.json")
     Private ReadOnly _baseBackColors As New Dictionary(Of Control, Color)()
     Private ReadOnly _gridThemeSnapshots As New Dictionary(Of DataGridView, GridThemeSnapshot)()
+    Private ReadOnly _keyActionEvents As New List(Of KeyActionEvent)()
 
     Private Class GridThemeSnapshot
         Public Property BackgroundColor As Color
@@ -92,10 +95,25 @@ Public Class Form1
         Public Property GridColor As Color
     End Class
 
+    Private Class KeyActionEvent
+        Public Property TimestampUtc As DateTime
+        Public Property KeyName As String = ""
+        Public Property ActionText As String = ""
+    End Class
+
+    Private Class KeyActionSummaryRow
+        Public Property KeyName As String = ""
+        Public Property Last10Min As Integer
+        Public Property Last30Min As Integer
+        Public Property Last60Min As Integer
+        Public Property LastActionText As String = ""
+    End Class
+
     Private Class PersistedListState
         Public Property MonsterFilterEnabled As Boolean = True
         Public Property LootPickupEnabled As Boolean = False
         Public Property LootPickupSeconds As Decimal = 4D
+        Public Property PromptAutoAcceptEnabled As Boolean = True
         Public Property MonsterNames As List(Of String) = New List(Of String)()
         Public Property LootNames As List(Of String) = New List(Of String)()
         Public Property CombatActions As List(Of PersistedCombatAction) = New List(Of PersistedCombatAction)()
@@ -524,7 +542,7 @@ Public Class Form1
         }
         btnRetargetNow = New Button() With {.Text = "Retarget Now (E)", .Top = 404, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
         btnPartyAutoAccept = New Button() With {
-            .Text = If(_partyAutoAccept, "Auto Accept Party Invite: ON", "Auto Accept Party Invite: OFF"),
+            .Text = If(_partyAutoAccept, "Auto Accept Party/Ress: ON", "Auto Accept Party/Ress: OFF"),
             .Top = 454,
             .Left = 8,
             .Width = 210,
@@ -557,16 +575,78 @@ Public Class Form1
 
     Private Function BuildLogPanel() As GroupBox
         Dim group As New GroupBox() With {.Text = "Bot Debug Log - Real-time", .Dock = DockStyle.Fill}
-        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 1}
         layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
+
+        Dim tabs As New TabControl() With {.Dock = DockStyle.Fill, .Font = New Font("Segoe UI", 9.0F, FontStyle.Bold)}
+
+        Dim realtimeTab As New TabPage("Real-time")
+        Dim realtimeLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
+        realtimeLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        realtimeLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
         rtbLog = New RichTextBox() With {.Dock = DockStyle.Fill, .ReadOnly = True, .BackColor = Color.Black, .ForeColor = Color.FromArgb(70, 255, 160), .Font = New Font("Consolas", 9.0F, FontStyle.Regular), .ScrollBars = RichTextBoxScrollBars.Vertical}
-        layout.Controls.Add(rtbLog, 0, 0)
+        realtimeLayout.Controls.Add(rtbLog, 0, 0)
         Dim btnClearLog As New Button() With {.Text = "Clear Log", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(130, 25, 25), .ForeColor = Color.White}
         AddHandler btnClearLog.Click, Sub(_s As Object, _e As EventArgs) rtbLog.Clear()
-        layout.Controls.Add(btnClearLog, 0, 1)
+        realtimeLayout.Controls.Add(btnClearLog, 0, 1)
+        realtimeTab.Controls.Add(realtimeLayout)
+
+        Dim summaryTab As New TabPage("Key Summary")
+        summaryTab.Controls.Add(BuildKeySummaryPanel())
+
+        tabs.TabPages.Add(realtimeTab)
+        tabs.TabPages.Add(summaryTab)
+        layout.Controls.Add(tabs, 0, 0)
         group.Controls.Add(layout)
         Return group
+    End Function
+
+    Private Function BuildKeySummaryPanel() As Control
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3, .Padding = New Padding(6)}
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 28.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+
+        lblKeySummaryInfo = New Label() With {
+            .Dock = DockStyle.Fill,
+            .TextAlign = ContentAlignment.MiddleLeft,
+            .ForeColor = Color.LightSteelBlue,
+            .Text = "Key press summary in rolling windows: 10m / 30m / 60m."
+        }
+        layout.Controls.Add(lblKeySummaryInfo, 0, 0)
+
+        dgvKeySummary = New DataGridView() With {
+            .Dock = DockStyle.Fill,
+            .ReadOnly = True,
+            .AllowUserToAddRows = False,
+            .AllowUserToDeleteRows = False,
+            .AllowUserToResizeRows = False,
+            .MultiSelect = False,
+            .SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            .RowHeadersVisible = False,
+            .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
+        }
+        dgvKeySummary.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Key", .HeaderText = "Key"})
+        dgvKeySummary.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Last10Min", .HeaderText = "Last 10m"})
+        dgvKeySummary.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Last30Min", .HeaderText = "Last 30m"})
+        dgvKeySummary.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Last60Min", .HeaderText = "Last 60m"})
+        dgvKeySummary.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "LastAction", .HeaderText = "Latest Action"})
+        layout.Controls.Add(dgvKeySummary, 0, 1)
+
+        Dim btnResetSummary As New Button() With {
+            .Text = "Reset Key Summary",
+            .Dock = DockStyle.Fill,
+            .BackColor = Color.FromArgb(130, 70, 25),
+            .ForeColor = Color.White
+        }
+        AddHandler btnResetSummary.Click,
+            Sub(_s As Object, _e As EventArgs)
+                _keyActionEvents.Clear()
+                RefreshKeyActionSummary()
+            End Sub
+        layout.Controls.Add(btnResetSummary, 0, 2)
+
+        Return layout
     End Function
 
     Private Sub SeedDefaults()
@@ -610,6 +690,7 @@ Public Class Form1
         End If
         _alarmVolumePercent = CInt(nudAlarmVolume.Value)
         UpdateAttackButtonAppearance(False)
+        RefreshKeyActionSummary()
         AppendLog("UI loaded. No API required.")
     End Sub
 
@@ -702,10 +783,17 @@ Public Class Form1
 
     Private Sub TogglePartyAutoAcceptClicked(sender As Object, e As EventArgs)
         _partyAutoAccept = Not _partyAutoAccept
-        btnPartyAutoAccept.Text = If(_partyAutoAccept, "Auto Accept Party Invite: ON", "Auto Accept Party Invite: OFF")
-        btnPartyAutoAccept.BackColor = If(_partyAutoAccept, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+        UpdatePromptAutoAcceptButton()
         PushLiveConfig()
-        AppendLog(If(_partyAutoAccept, "Party invite auto-accept enabled.", "Party invite auto-accept disabled."))
+        AppendLog(If(_partyAutoAccept, "Party/resurrection auto-accept enabled.", "Party/resurrection auto-accept disabled."))
+    End Sub
+
+    Private Sub UpdatePromptAutoAcceptButton()
+        If btnPartyAutoAccept Is Nothing Then
+            Return
+        End If
+        btnPartyAutoAccept.Text = If(_partyAutoAccept, "Auto Accept Party/Ress: ON", "Auto Accept Party/Ress: OFF")
+        btnPartyAutoAccept.BackColor = If(_partyAutoAccept, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
     End Sub
 
     Private Sub ManualRetargetClicked(sender As Object, e As EventArgs)
@@ -787,7 +875,7 @@ Public Class Form1
             $"Running: {st.Running}{Environment.NewLine}" &
             $"BypassHpMpLimits: {_bypassHpMpLimits}{Environment.NewLine}" &
             $"BypassStuckTarget: {_bypassStuckTarget}{Environment.NewLine}" &
-            $"PartyAutoAccept: {_partyAutoAccept}{Environment.NewLine}" &
+            $"PromptAutoAccept (Party/Ress): {_partyAutoAccept}{Environment.NewLine}" &
             $"NtfyTopic: {GetNtfyTopicName()}{Environment.NewLine}" &
             $"LootPickupEnabled: {If(chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked, "True", "False")}{Environment.NewLine}" &
             $"LootPickupIntervalSec: {If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value.ToString(), "4")}{Environment.NewLine}" &
@@ -806,6 +894,7 @@ Public Class Form1
             $"LastAction: {st.LastAction}{Environment.NewLine}" &
              $"NotAttackingReason: {st.NotAttackingReason}{Environment.NewLine}" &
              $"Error: {st.ErrorMessage}"
+        RefreshKeyActionSummary()
     End Sub
 
     Private Sub EnterToggleTimerTick(sender As Object, e As EventArgs)
@@ -903,6 +992,7 @@ Public Class Form1
             BeginInvoke(New Action(Of String)(AddressOf OnEngineLogLine), line)
             Return
         End If
+        TrackKeyActionFromEngineLog(line)
         AppendLog(line)
     End Sub
 
@@ -1136,6 +1226,8 @@ Public Class Form1
                 Dim boundedSeconds As Decimal = Math.Max(nudLootPickupSeconds.Minimum, Math.Min(nudLootPickupSeconds.Maximum, state.LootPickupSeconds))
                 nudLootPickupSeconds.Value = boundedSeconds
             End If
+            _partyAutoAccept = state.PromptAutoAcceptEnabled
+            UpdatePromptAutoAcceptButton()
 
             If state.MonsterNames IsNot Nothing AndAlso lstMonsterFilter IsNot Nothing Then
                 lstMonsterFilter.Items.Clear()
@@ -1175,6 +1267,7 @@ Public Class Form1
                 .MonsterFilterEnabled = (chkMonsterFilter IsNot Nothing AndAlso chkMonsterFilter.Checked),
                 .LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked),
                 .LootPickupSeconds = If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value, 4D),
+                .PromptAutoAcceptEnabled = _partyAutoAccept,
                 .MonsterNames = GetListBoxItems(lstMonsterFilter),
                 .LootNames = GetListBoxItems(lstLootFilter),
                 .CombatActions = GetPersistedCombatActions()
@@ -1312,6 +1405,140 @@ Public Class Form1
             Return
         End If
         AppendLog(message)
+    End Sub
+
+    Private Sub TrackKeyActionFromEngineLog(line As String)
+        Dim trimmedLine As String = If(line, "").Trim()
+        Const prefix As String = "Key action:"
+        If Not trimmedLine.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) Then
+            Return
+        End If
+
+        Dim actionText As String = trimmedLine.Substring(prefix.Length).Trim()
+        If actionText = "" Then
+            Return
+        End If
+
+        Dim keyName As String = ExtractKeyNameFromAction(actionText)
+        If keyName = "" Then
+            Return
+        End If
+
+        _keyActionEvents.Add(New KeyActionEvent With {
+            .TimestampUtc = DateTime.UtcNow,
+            .KeyName = keyName,
+            .ActionText = actionText
+        })
+        PruneKeyActionEvents(DateTime.UtcNow)
+        RefreshKeyActionSummary()
+    End Sub
+
+    Private Shared Function ExtractKeyNameFromAction(actionText As String) As String
+        Dim raw As String = If(actionText, "").Trim()
+        If raw = "" Then
+            Return ""
+        End If
+
+        Dim splitAt As Integer = raw.IndexOfAny(New Char() {" "c, "("c})
+        Dim token As String = If(splitAt >= 0, raw.Substring(0, splitAt), raw).Trim().Trim(":"c).ToUpperInvariant()
+        If IsLikelyKeyToken(token) Then
+            Return token
+        End If
+        Return ""
+    End Function
+
+    Private Shared Function IsLikelyKeyToken(token As String) As Boolean
+        If String.IsNullOrWhiteSpace(token) Then
+            Return False
+        End If
+
+        If token.Length = 1 Then
+            Dim ch As Char = token(0)
+            If Char.IsDigit(ch) Then
+                Return True
+            End If
+            Return ch >= "A"c AndAlso ch <= "Z"c
+        End If
+
+        If token.StartsWith("F", StringComparison.Ordinal) Then
+            Dim fnNumber As Integer
+            If Integer.TryParse(token.Substring(1), fnNumber) AndAlso fnNumber >= 1 AndAlso fnNumber <= 24 Then
+                Return True
+            End If
+        End If
+
+        Select Case token
+            Case "ENTER", "TAB", "SPACE", "ESC", "ESCAPE", "SHIFT", "CTRL", "ALT"
+                Return True
+        End Select
+        Return False
+    End Function
+
+    Private Sub RefreshKeyActionSummary()
+        If dgvKeySummary Is Nothing OrElse dgvKeySummary.IsDisposed Then
+            Return
+        End If
+
+        Dim nowUtc As DateTime = DateTime.UtcNow
+        PruneKeyActionEvents(nowUtc)
+        Dim cutoff10 As DateTime = nowUtc.AddMinutes(-10)
+        Dim cutoff30 As DateTime = nowUtc.AddMinutes(-30)
+        Dim cutoff60 As DateTime = nowUtc.AddHours(-1)
+
+        Dim summaries As New Dictionary(Of String, KeyActionSummaryRow)(StringComparer.OrdinalIgnoreCase)
+        For Each entry As KeyActionEvent In _keyActionEvents
+            Dim row As KeyActionSummaryRow = Nothing
+            If Not summaries.TryGetValue(entry.KeyName, row) Then
+                row = New KeyActionSummaryRow With {.KeyName = entry.KeyName}
+                summaries(entry.KeyName) = row
+            End If
+
+            If entry.TimestampUtc >= cutoff10 Then
+                row.Last10Min += 1
+            End If
+            If entry.TimestampUtc >= cutoff30 Then
+                row.Last30Min += 1
+            End If
+            If entry.TimestampUtc >= cutoff60 Then
+                row.Last60Min += 1
+            End If
+            row.LastActionText = entry.ActionText
+        Next
+
+        Dim ordered As New List(Of KeyActionSummaryRow)(summaries.Values)
+        ordered.Sort(
+            Function(a As KeyActionSummaryRow, b As KeyActionSummaryRow) As Integer
+                Dim byHourly As Integer = b.Last60Min.CompareTo(a.Last60Min)
+                If byHourly <> 0 Then
+                    Return byHourly
+                End If
+                Return StringComparer.OrdinalIgnoreCase.Compare(a.KeyName, b.KeyName)
+            End Function)
+
+        dgvKeySummary.SuspendLayout()
+        Try
+            dgvKeySummary.Rows.Clear()
+            For Each row As KeyActionSummaryRow In ordered
+                dgvKeySummary.Rows.Add(row.KeyName, row.Last10Min, row.Last30Min, row.Last60Min, row.LastActionText)
+            Next
+        Finally
+            dgvKeySummary.ResumeLayout()
+        End Try
+
+        If lblKeySummaryInfo Is Nothing OrElse lblKeySummaryInfo.IsDisposed Then
+            Return
+        End If
+
+        If ordered.Count = 0 Then
+            lblKeySummaryInfo.Text = "No key presses tracked in the last 60 minutes."
+        Else
+            lblKeySummaryInfo.Text = $"Tracked keys: {ordered.Count} | Total presses (60m): {_keyActionEvents.Count} | Updated: {DateTime.Now:HH:mm:ss}"
+        End If
+    End Sub
+
+    Private Sub PruneKeyActionEvents(nowUtc As DateTime)
+        Dim cutoff As DateTime = nowUtc.AddHours(-1)
+        _keyActionEvents.RemoveAll(Function(x As KeyActionEvent) x.TimestampUtc < cutoff)
     End Sub
 
     Private Sub UpdateAttackButtonAppearance(isRunning As Boolean)
