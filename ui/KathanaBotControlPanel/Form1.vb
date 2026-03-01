@@ -7,6 +7,7 @@ Imports System.Threading
 Imports System.Threading.Tasks
 Imports System.Collections.Generic
 Imports System.IO
+Imports System.Diagnostics
 
 Public Class Form1
     Private Shared ReadOnly PrimaryKeys As String() = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"}
@@ -20,6 +21,8 @@ Public Class Form1
     Private nudLoopMs As NumericUpDown
     Private nudRetargetMs As NumericUpDown
     Private nudMobHpThreshold As NumericUpDown
+    Private lstProcessWindows As ListBox
+    Private txtProcessRename As TextBox
     Private btnOverlayToggle As Button
     Private dgvRegions As DataGridView
     Private picSnapshot As PictureBox
@@ -109,6 +112,17 @@ Public Class Form1
         Public Property LastActionText As String = ""
     End Class
 
+    Private Class ProcessWindowEntry
+        Public Property ProcessId As Integer
+        Public Property ProcessName As String = ""
+        Public Property WindowTitle As String = ""
+        Public Property MainWindowHandle As IntPtr = IntPtr.Zero
+
+        Public Overrides Function ToString() As String
+            Return $"{WindowTitle} - {ProcessName} ({ProcessId})"
+        End Function
+    End Class
+
     Private Class PersistedListState
         Public Property MonsterFilterEnabled As Boolean = True
         Public Property LootPickupEnabled As Boolean = False
@@ -144,6 +158,10 @@ Public Class Form1
 
     <DllImport("user32.dll", CharSet:=CharSet.Auto)>
     Private Shared Function GetWindowText(hWnd As IntPtr, lpString As StringBuilder, nMaxCount As Integer) As Integer
+    End Function
+
+    <DllImport("user32.dll", SetLastError:=True, CharSet:=CharSet.Unicode)>
+    Private Shared Function SetWindowText(hWnd As IntPtr, lpString As String) As Boolean
     End Function
 
     <DllImport("user32.dll")>
@@ -331,12 +349,55 @@ Public Class Form1
 
         root.Controls.Add(left, 0, 0)
 
+        Dim right As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
+        right.RowStyles.Add(New RowStyle(SizeType.Absolute, 260.0F))
+        right.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        right.Controls.Add(BuildProcessListGroup(), 0, 0)
+
         Dim snapshotGroup As New GroupBox() With {.Text = "Snapshot", .Dock = DockStyle.Fill}
         picSnapshot = New PictureBox() With {.Dock = DockStyle.Fill, .SizeMode = PictureBoxSizeMode.Zoom, .BackColor = Color.Black}
         snapshotGroup.Controls.Add(picSnapshot)
-        root.Controls.Add(snapshotGroup, 1, 0)
+        right.Controls.Add(snapshotGroup, 0, 1)
+
+        root.Controls.Add(right, 1, 0)
 
         Return tab
+    End Function
+
+    Private Function BuildProcessListGroup() As GroupBox
+        Dim group As New GroupBox() With {.Text = "Process List", .Dock = DockStyle.Fill}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 6, .Padding = New Padding(6)}
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 24.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 24.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 32.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
+        group.Controls.Add(layout)
+
+        Dim lblProcess As New Label() With {.Text = "Process List", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        layout.Controls.Add(lblProcess, 0, 0)
+
+        lstProcessWindows = New ListBox() With {.Dock = DockStyle.Fill, .IntegralHeight = False}
+        AddHandler lstProcessWindows.SelectedIndexChanged, AddressOf ProcessSelectionChanged
+        layout.Controls.Add(lstProcessWindows, 0, 1)
+
+        Dim btnRefresh As New Button() With {.Text = "Update", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(55, 55, 55), .ForeColor = Color.White}
+        AddHandler btnRefresh.Click, AddressOf RefreshProcessListClicked
+        layout.Controls.Add(btnRefresh, 0, 2)
+
+        Dim lblRename As New Label() With {.Text = "Rename Process", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        layout.Controls.Add(lblRename, 0, 3)
+
+        txtProcessRename = New TextBox() With {.Dock = DockStyle.Fill}
+        layout.Controls.Add(txtProcessRename, 0, 4)
+
+        Dim btnApply As New Button() With {.Text = "Apply", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(45, 95, 140), .ForeColor = Color.White}
+        AddHandler btnApply.Click, AddressOf ApplyProcessRenameClicked
+        layout.Controls.Add(btnApply, 0, 5)
+
+        RefreshProcessWindowList(False, IntPtr.Zero)
+        Return group
     End Function
 
     Private Function BuildAutoPotTab() As TabPage
@@ -733,6 +794,7 @@ Public Class Form1
 
     Protected Overrides Sub OnShown(e As EventArgs)
         MyBase.OnShown(e)
+        RefreshProcessWindowList(False, IntPtr.Zero)
         AutoStartOnLaunch()
     End Sub
 
@@ -763,6 +825,129 @@ Public Class Form1
             oldImage.Dispose()
         End If
         AppendLog("Snapshot captured.")
+    End Sub
+
+    Private Sub RefreshProcessListClicked(sender As Object, e As EventArgs)
+        RefreshProcessWindowList(True, IntPtr.Zero)
+    End Sub
+
+    Private Sub ProcessSelectionChanged(sender As Object, e As EventArgs)
+        Dim selected As ProcessWindowEntry = TryCast(lstProcessWindows.SelectedItem, ProcessWindowEntry)
+        If selected Is Nothing Then
+            Return
+        End If
+
+        If txtProcessRename IsNot Nothing AndAlso Not txtProcessRename.IsDisposed Then
+            txtProcessRename.Text = selected.WindowTitle
+        End If
+    End Sub
+
+    Private Sub ApplyProcessRenameClicked(sender As Object, e As EventArgs)
+        If lstProcessWindows Is Nothing OrElse lstProcessWindows.IsDisposed Then
+            Return
+        End If
+
+        Dim selected As ProcessWindowEntry = TryCast(lstProcessWindows.SelectedItem, ProcessWindowEntry)
+        If selected Is Nothing Then
+            AppendLog("Rename failed: select a process window first.")
+            Return
+        End If
+
+        Dim newTitle As String = If(txtProcessRename IsNot Nothing, txtProcessRename.Text, "").Trim()
+        If newTitle = "" Then
+            AppendLog("Rename failed: title cannot be empty.")
+            Return
+        End If
+
+        If SetWindowText(selected.MainWindowHandle, newTitle) Then
+            AppendLog($"Window renamed for PID {selected.ProcessId}: '{newTitle}'.")
+            txtWindowTitle.Text = newTitle
+            RefreshProcessWindowList(False, selected.MainWindowHandle)
+            Return
+        End If
+
+        Dim errorCode As Integer = Marshal.GetLastWin32Error()
+        AppendLog($"Rename failed for PID {selected.ProcessId}. Win32 error {errorCode}.")
+    End Sub
+
+    Private Sub RefreshProcessWindowList(logResult As Boolean, preferredHandle As IntPtr)
+        If lstProcessWindows Is Nothing OrElse lstProcessWindows.IsDisposed Then
+            Return
+        End If
+
+        Dim rememberedHandle As IntPtr = preferredHandle
+        If rememberedHandle = IntPtr.Zero Then
+            Dim existing As ProcessWindowEntry = TryCast(lstProcessWindows.SelectedItem, ProcessWindowEntry)
+            If existing IsNot Nothing Then
+                rememberedHandle = existing.MainWindowHandle
+            End If
+        End If
+
+        Dim entries As New List(Of ProcessWindowEntry)()
+        Dim processes As Process() = Process.GetProcesses()
+        For Each proc As Process In processes
+            Try
+                Dim hwnd As IntPtr = proc.MainWindowHandle
+                Dim title As String = If(proc.MainWindowTitle, "").Trim()
+                If hwnd = IntPtr.Zero OrElse title = "" Then
+                    Continue For
+                End If
+
+                entries.Add(New ProcessWindowEntry With {
+                    .ProcessId = proc.Id,
+                    .ProcessName = proc.ProcessName,
+                    .WindowTitle = title,
+                    .MainWindowHandle = hwnd
+                })
+            Catch
+            Finally
+                proc.Dispose()
+            End Try
+        Next
+
+        entries.Sort(
+            Function(a As ProcessWindowEntry, b As ProcessWindowEntry) As Integer
+                Dim byTitle As Integer = StringComparer.OrdinalIgnoreCase.Compare(a.WindowTitle, b.WindowTitle)
+                If byTitle <> 0 Then
+                    Return byTitle
+                End If
+                Dim byProcess As Integer = StringComparer.OrdinalIgnoreCase.Compare(a.ProcessName, b.ProcessName)
+                If byProcess <> 0 Then
+                    Return byProcess
+                End If
+                Return a.ProcessId.CompareTo(b.ProcessId)
+            End Function)
+
+        lstProcessWindows.BeginUpdate()
+        Try
+            lstProcessWindows.Items.Clear()
+            For Each entry As ProcessWindowEntry In entries
+                lstProcessWindows.Items.Add(entry)
+            Next
+
+            If entries.Count > 0 Then
+                Dim targetIndex As Integer = -1
+                If rememberedHandle <> IntPtr.Zero Then
+                    For i As Integer = 0 To entries.Count - 1
+                        If entries(i).MainWindowHandle = rememberedHandle Then
+                            targetIndex = i
+                            Exit For
+                        End If
+                    Next
+                End If
+
+                If targetIndex < 0 Then
+                    targetIndex = 0
+                End If
+                lstProcessWindows.SelectedIndex = targetIndex
+            End If
+        Finally
+            lstProcessWindows.EndUpdate()
+        End Try
+
+        If logResult Then
+            AppendLog($"Process list updated. Found {entries.Count} windows.")
+        End If
     End Sub
 
     Private Sub ToggleBypassLimitsClicked(sender As Object, e As EventArgs)
