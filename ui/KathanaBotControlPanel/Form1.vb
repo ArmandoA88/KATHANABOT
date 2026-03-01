@@ -49,6 +49,8 @@ Public Class Form1
     Private btnBypassStuck As Button
     Private btnRetargetNow As Button
     Private btnPartyAutoAccept As Button
+    Private btnPartyAsk As Button
+    Private nudPartyAskSeconds As NumericUpDown
     Private rtbLog As RichTextBox
     Private dgvKeySummary As DataGridView
     Private lblKeySummaryInfo As Label
@@ -67,6 +69,7 @@ Public Class Form1
     Private _bypassHpMpLimits As Boolean = False
     Private _bypassStuckTarget As Boolean = True
     Private _partyAutoAccept As Boolean = True
+    Private _partyAskEnabled As Boolean = False
     Private _overlayForm As CalibrationOverlayForm
     Private _autoStarted As Boolean = False
     Private _alarmVolumePercent As Integer = 85
@@ -128,6 +131,8 @@ Public Class Form1
         Public Property LootPickupEnabled As Boolean = False
         Public Property LootPickupSeconds As Decimal = 4D
         Public Property PromptAutoAcceptEnabled As Boolean = True
+        Public Property AskForPartyEnabled As Boolean = False
+        Public Property AskForPartySeconds As Decimal = 30D
         Public Property MonsterNames As List(Of String) = New List(Of String)()
         Public Property LootNames As List(Of String) = New List(Of String)()
         Public Property CombatActions As List(Of PersistedCombatAction) = New List(Of PersistedCombatAction)()
@@ -202,6 +207,9 @@ Public Class Form1
         AddHandler chkMonsterFilter.CheckedChanged, AddressOf LiveConfigChanged
         AddHandler chkLootPickup.CheckedChanged, AddressOf LiveConfigChanged
         AddHandler nudLootPickupSeconds.ValueChanged, AddressOf LiveConfigChanged
+        If nudPartyAskSeconds IsNot Nothing Then
+            AddHandler nudPartyAskSeconds.ValueChanged, AddressOf LiveConfigChanged
+        End If
         AddHandler dgvCombat.CellValueChanged, AddressOf LiveConfigChanged
         AddHandler dgvCombat.CellEndEdit, AddressOf LiveConfigChanged
         AddHandler dgvRegions.CellValueChanged, AddressOf LiveConfigChanged
@@ -209,6 +217,9 @@ Public Class Form1
         AddHandler chkMonsterFilter.CheckedChanged, AddressOf PersistListSettingsChanged
         AddHandler chkLootPickup.CheckedChanged, AddressOf PersistListSettingsChanged
         AddHandler nudLootPickupSeconds.ValueChanged, AddressOf PersistListSettingsChanged
+        If nudPartyAskSeconds IsNot Nothing Then
+            AddHandler nudPartyAskSeconds.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
         AddHandler dgvCombat.CurrentCellDirtyStateChanged,
             Sub(_s As Object, _e As EventArgs)
                 If dgvCombat.IsCurrentCellDirty Then
@@ -611,6 +622,17 @@ Public Class Form1
             .BackColor = If(_partyAutoAccept, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
             .ForeColor = Color.White
         }
+        Dim lblPartyAskEvery As New Label() With {.Text = "Ask Party Every (sec)", .Top = 500, .Left = 8, .Width = 210, .Height = 22}
+        nudPartyAskSeconds = New NumericUpDown() With {.Top = 522, .Left = 8, .Width = 210, .Height = 28, .Minimum = 5, .Maximum = 600, .Value = 30}
+        btnPartyAsk = New Button() With {
+            .Text = If(_partyAskEnabled, "Auto Ask Party (add): ON", "Auto Ask Party (add): OFF"),
+            .Top = 556,
+            .Left = 8,
+            .Width = 210,
+            .Height = 38,
+            .BackColor = If(_partyAskEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
+            .ForeColor = Color.White
+        }
         AddHandler btnAttack.Click, AddressOf StartClicked
         AddHandler btnSaveSettings.Click, AddressOf SaveClicked
         AddHandler btnStopBot.Click, AddressOf StopClicked
@@ -618,6 +640,7 @@ Public Class Form1
         AddHandler btnBypassStuck.Click, AddressOf ToggleStuckTargetBypassClicked
         AddHandler btnRetargetNow.Click, AddressOf ManualRetargetClicked
         AddHandler btnPartyAutoAccept.Click, AddressOf TogglePartyAutoAcceptClicked
+        AddHandler btnPartyAsk.Click, AddressOf TogglePartyAskClicked
         panel.Controls.Add(lblState)
         panel.Controls.Add(lblSystem)
         panel.Controls.Add(lblHp)
@@ -631,6 +654,9 @@ Public Class Form1
         panel.Controls.Add(btnBypassStuck)
         panel.Controls.Add(btnRetargetNow)
         panel.Controls.Add(btnPartyAutoAccept)
+        panel.Controls.Add(lblPartyAskEvery)
+        panel.Controls.Add(nudPartyAskSeconds)
+        panel.Controls.Add(btnPartyAsk)
         Return panel
     End Function
 
@@ -749,8 +775,13 @@ Public Class Form1
         If txtNtfyTopic IsNot Nothing Then
             txtNtfyTopic.Text = DefaultNtfyTopicName
         End If
+        If nudPartyAskSeconds IsNot Nothing Then
+            nudPartyAskSeconds.Value = 30
+        End If
         _alarmVolumePercent = CInt(nudAlarmVolume.Value)
         UpdateAttackButtonAppearance(False)
+        UpdatePromptAutoAcceptButton()
+        UpdatePartyAskButton()
         RefreshKeyActionSummary()
         AppendLog("UI loaded. No API required.")
     End Sub
@@ -970,6 +1001,7 @@ Public Class Form1
         _partyAutoAccept = Not _partyAutoAccept
         UpdatePromptAutoAcceptButton()
         PushLiveConfig()
+        SavePersistedListState(False)
         AppendLog(If(_partyAutoAccept, "Party/resurrection auto-accept enabled.", "Party/resurrection auto-accept disabled."))
     End Sub
 
@@ -979,6 +1011,22 @@ Public Class Form1
         End If
         btnPartyAutoAccept.Text = If(_partyAutoAccept, "Auto Accept Party/Ress: ON", "Auto Accept Party/Ress: OFF")
         btnPartyAutoAccept.BackColor = If(_partyAutoAccept, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+    End Sub
+
+    Private Sub TogglePartyAskClicked(sender As Object, e As EventArgs)
+        _partyAskEnabled = Not _partyAskEnabled
+        UpdatePartyAskButton()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        AppendLog(If(_partyAskEnabled, "Auto ask party command enabled.", "Auto ask party command disabled."))
+    End Sub
+
+    Private Sub UpdatePartyAskButton()
+        If btnPartyAsk Is Nothing Then
+            Return
+        End If
+        btnPartyAsk.Text = If(_partyAskEnabled, "Auto Ask Party (add): ON", "Auto Ask Party (add): OFF")
+        btnPartyAsk.BackColor = If(_partyAskEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
     End Sub
 
     Private Sub ManualRetargetClicked(sender As Object, e As EventArgs)
@@ -1061,6 +1109,8 @@ Public Class Form1
             $"BypassHpMpLimits: {_bypassHpMpLimits}{Environment.NewLine}" &
             $"BypassStuckTarget: {_bypassStuckTarget}{Environment.NewLine}" &
             $"PromptAutoAccept (Party/Ress): {_partyAutoAccept}{Environment.NewLine}" &
+            $"AutoAskPartyEnabled: {_partyAskEnabled}{Environment.NewLine}" &
+            $"AutoAskPartyIntervalSec: {If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value.ToString(), "30")}{Environment.NewLine}" &
             $"NtfyTopic: {GetNtfyTopicName()}{Environment.NewLine}" &
             $"LootPickupEnabled: {If(chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked, "True", "False")}{Environment.NewLine}" &
             $"LootPickupIntervalSec: {If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value.ToString(), "4")}{Environment.NewLine}" &
@@ -1291,6 +1341,8 @@ Public Class Form1
         cfg.BypassHpMpLimits = _bypassHpMpLimits
         cfg.BypassStuckTarget = _bypassStuckTarget
         cfg.PartyAutoAcceptEnabled = _partyAutoAccept
+        cfg.PartyAskEnabled = _partyAskEnabled
+        cfg.PartyAskIntervalMs = CInt(Math.Round(CDbl(If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D)) * 1000.0))
         cfg.HpBar = BuildRect("hp_bar")
         cfg.MpBar = BuildRect("mp_bar")
         cfg.MobNameRect = BuildRect("mob_name_rect")
@@ -1413,6 +1465,12 @@ Public Class Form1
             End If
             _partyAutoAccept = state.PromptAutoAcceptEnabled
             UpdatePromptAutoAcceptButton()
+            _partyAskEnabled = state.AskForPartyEnabled
+            UpdatePartyAskButton()
+            If nudPartyAskSeconds IsNot Nothing Then
+                Dim boundedAskSeconds As Decimal = Math.Max(nudPartyAskSeconds.Minimum, Math.Min(nudPartyAskSeconds.Maximum, state.AskForPartySeconds))
+                nudPartyAskSeconds.Value = boundedAskSeconds
+            End If
 
             If state.MonsterNames IsNot Nothing AndAlso lstMonsterFilter IsNot Nothing Then
                 lstMonsterFilter.Items.Clear()
@@ -1453,6 +1511,8 @@ Public Class Form1
                 .LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked),
                 .LootPickupSeconds = If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value, 4D),
                 .PromptAutoAcceptEnabled = _partyAutoAccept,
+                .AskForPartyEnabled = _partyAskEnabled,
+                .AskForPartySeconds = If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D),
                 .MonsterNames = GetListBoxItems(lstMonsterFilter),
                 .LootNames = GetListBoxItems(lstLootFilter),
                 .CombatActions = GetPersistedCombatActions()

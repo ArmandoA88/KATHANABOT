@@ -68,6 +68,8 @@ Public Class BotConfig
     Public Property LootPickupVerifyDelayMs As Integer = 200
     Public Property LootAllowedNames As List(Of String) = New List(Of String)()
     Public Property PartyAutoAcceptEnabled As Boolean = True
+    Public Property PartyAskEnabled As Boolean = False
+    Public Property PartyAskIntervalMs As Integer = 30000
     Public Property Actions As List(Of ActionRule) = New List(Of ActionRule)()
 
     Public Shared Function CreateDefault() As BotConfig
@@ -244,6 +246,7 @@ Public Class BotEngine
     Private _lastPartyInviteAccept As DateTime = DateTime.MinValue
     Private _partyInviteOcrTask As Task(Of String) = Nothing
     Private _lastPartyInviteCandidate As String = ""
+    Private _lastPartyAskAt As DateTime = DateTime.MinValue
     Private _lastUnreachableScan As DateTime = DateTime.MinValue
     Private _unreachableOcrTask As Task(Of String) = Nothing
     Private _lastUnreachableCandidate As String = ""
@@ -271,7 +274,7 @@ Public Class BotEngine
 
     Private Shared ReadOnly KeyMap As New Dictionary(Of String, Integer)(StringComparer.OrdinalIgnoreCase) From {
         {"0", &H30}, {"1", &H31}, {"2", &H32}, {"3", &H33}, {"4", &H34}, {"5", &H35},
-        {"6", &H36}, {"7", &H37}, {"8", &H38}, {"9", &H39}, {"E", &H45}, {"F", &H46}, {"W", &H57}, {"S", &H53},
+        {"6", &H36}, {"7", &H37}, {"8", &H38}, {"9", &H39}, {"A", &H41}, {"D", &H44}, {"E", &H45}, {"F", &H46}, {"W", &H57}, {"S", &H53},
         {"ESC", &H1B}, {"ESCAPE", &H1B},
         {"ENTER", &HD}, {"RETURN", &HD},
         {"F1", &H70}, {"F2", &H71}, {"F3", &H72}, {"F4", &H73}, {"F5", &H74},
@@ -325,6 +328,7 @@ Public Class BotEngine
             _lastPartyInviteAccept = DateTime.MinValue
             _partyInviteOcrTask = Nothing
             _lastPartyInviteCandidate = ""
+            _lastPartyAskAt = DateTime.MinValue
             _lastUnreachableScan = DateTime.MinValue
             _unreachableOcrTask = Nothing
             _lastUnreachableCandidate = ""
@@ -572,6 +576,12 @@ Public Class BotEngine
             Dim actionSent As Boolean = TryHandleAutoAcceptPrompts(cfg, hwnd, frame, now, partyInviteScanRegion, partyInviteOkRegion)
             If actionSent Then
                 reason = "Auto-accept prompt detected and accepted."
+            End If
+            If Not actionSent Then
+                actionSent = TryHandlePartyAsk(cfg, hwnd, now)
+                If actionSent Then
+                    reason = "Party ask command sent."
+                End If
             End If
             If unreachableTriggered AndAlso Not actionSent Then
                 actionSent = True
@@ -1053,6 +1063,45 @@ Public Class BotEngine
             crop.Dispose()
         End Try
 
+        Return False
+    End Function
+
+    Private Function TryHandlePartyAsk(cfg As BotConfig, hwnd As IntPtr, now As DateTime) As Boolean
+        If cfg Is Nothing OrElse hwnd = IntPtr.Zero OrElse (Not cfg.PartyAskEnabled) Then
+            Return False
+        End If
+
+        Dim intervalMs As Integer = Math.Max(5000, cfg.PartyAskIntervalMs)
+        If _lastPartyAskAt <> DateTime.MinValue AndAlso (now - _lastPartyAskAt).TotalMilliseconds < intervalMs Then
+            Return False
+        End If
+
+        If Not SendKey(hwnd, "ENTER", 35) Then
+            Return False
+        End If
+        Thread.Sleep(60)
+
+        Dim typedOk As Boolean = SendKey(hwnd, "A", 20)
+        Thread.Sleep(20)
+        typedOk = SendKey(hwnd, "D", 20) AndAlso typedOk
+        Thread.Sleep(20)
+        typedOk = SendKey(hwnd, "D", 20) AndAlso typedOk
+        Thread.Sleep(55)
+
+        Dim sentFinalEnter As Boolean = SendKey(hwnd, "ENTER", 35)
+        If sentFinalEnter Then
+            _lastPartyAskAt = now
+            SetLastAction("ENTER add ENTER (party ask)")
+            RaiseEvent LogLine("Party ask command sent: add")
+            Return True
+        End If
+
+        If typedOk Then
+            SetLastAction("ENTER add (party ask partial)")
+            RaiseEvent LogLine("Party ask command partially sent.")
+            _lastPartyAskAt = now
+            Return True
+        End If
         Return False
     End Function
 
