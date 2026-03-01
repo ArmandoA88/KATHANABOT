@@ -247,6 +247,9 @@ Public Class BotEngine
     Private _partyInviteOcrTask As Task(Of String) = Nothing
     Private _lastPartyInviteCandidate As String = ""
     Private _lastPartyAskAt As DateTime = DateTime.MinValue
+    Private _partyAskSuppressedInParty As Boolean = False
+    Private _partyAskWasEnabled As Boolean = False
+    Private _partyAskPauseLogged As Boolean = False
     Private _lastUnreachableScan As DateTime = DateTime.MinValue
     Private _unreachableOcrTask As Task(Of String) = Nothing
     Private _lastUnreachableCandidate As String = ""
@@ -329,6 +332,9 @@ Public Class BotEngine
             _partyInviteOcrTask = Nothing
             _lastPartyInviteCandidate = ""
             _lastPartyAskAt = DateTime.MinValue
+            _partyAskSuppressedInParty = False
+            _partyAskWasEnabled = False
+            _partyAskPauseLogged = False
             _lastUnreachableScan = DateTime.MinValue
             _unreachableOcrTask = Nothing
             _lastUnreachableCandidate = ""
@@ -1017,6 +1023,11 @@ Public Class BotEngine
             _partyInviteOcrTask = Nothing
         End If
 
+        If IsAlreadyInPartyPrompt(_lastPartyInviteCandidate) Then
+            _partyAskSuppressedInParty = True
+            _partyAskPauseLogged = False
+        End If
+
         Dim promptKind As String = DetectAutoAcceptPromptKind(_lastPartyInviteCandidate)
         If promptKind <> "" Then
             If ClickClientRegionCenter(hwnd, partyInviteOkRegion, frame.Width, frame.Height) Then
@@ -1024,6 +1035,11 @@ Public Class BotEngine
                 Dim promptLabel As String = If(promptKind = "ress", "resurrection prompt", "party invite")
                 SetLastAction($"Click OK ({promptLabel} accepted: {If(String.IsNullOrWhiteSpace(_lastPartyInviteCandidate), "detected", _lastPartyInviteCandidate)})")
                 RaiseEvent LogLine($"{promptLabel} detected and auto-accepted.")
+                If promptKind = "party" Then
+                    _partyAskSuppressedInParty = True
+                    _partyAskPauseLogged = False
+                    RaiseEvent LogLine("Party detected. Auto party asking paused.")
+                End If
                 _lastPartyInviteCandidate = ""
                 Return True
             End If
@@ -1067,7 +1083,28 @@ Public Class BotEngine
     End Function
 
     Private Function TryHandlePartyAsk(cfg As BotConfig, hwnd As IntPtr, now As DateTime) As Boolean
-        If cfg Is Nothing OrElse hwnd = IntPtr.Zero OrElse (Not cfg.PartyAskEnabled) Then
+        If cfg Is Nothing OrElse hwnd = IntPtr.Zero Then
+            Return False
+        End If
+
+        If Not cfg.PartyAskEnabled Then
+            _partyAskWasEnabled = False
+            _partyAskPauseLogged = False
+            Return False
+        End If
+
+        If Not _partyAskWasEnabled Then
+            _partyAskWasEnabled = True
+            _partyAskSuppressedInParty = False
+            _partyAskPauseLogged = False
+            _lastPartyAskAt = DateTime.MinValue
+        End If
+
+        If _partyAskSuppressedInParty Then
+            If Not _partyAskPauseLogged Then
+                RaiseEvent LogLine("Party ask skipped: already in a party.")
+                _partyAskPauseLogged = True
+            End If
             Return False
         End If
 
@@ -1091,6 +1128,7 @@ Public Class BotEngine
         Dim sentFinalEnter As Boolean = SendKey(hwnd, "ENTER", 35)
         If sentFinalEnter Then
             _lastPartyAskAt = now
+            _partyAskPauseLogged = False
             SetLastAction("ENTER add ENTER (party ask)")
             RaiseEvent LogLine("Party ask command sent: add")
             Return True
@@ -1100,6 +1138,7 @@ Public Class BotEngine
             SetLastAction("ENTER add (party ask partial)")
             RaiseEvent LogLine("Party ask command partially sent.")
             _lastPartyAskAt = now
+            _partyAskPauseLogged = False
             Return True
         End If
         Return False
@@ -1276,6 +1315,28 @@ Public Class BotEngine
         Dim hasInvite As Boolean = norm.Contains("invited", StringComparison.OrdinalIgnoreCase) OrElse norm.Contains("invite", StringComparison.OrdinalIgnoreCase)
         Dim hasJoin As Boolean = norm.Contains("join", StringComparison.OrdinalIgnoreCase)
         Return hasParty AndAlso (hasInvite OrElse hasJoin)
+    End Function
+
+    Private Shared Function IsAlreadyInPartyPrompt(rawText As String) As Boolean
+        If String.IsNullOrWhiteSpace(rawText) Then
+            Return False
+        End If
+
+        Dim norm As String = NormalizeMobName(rawText)
+        If norm = "" Then
+            Return False
+        End If
+
+        Dim compact As String = norm.Replace(" ", "")
+        If compact.Contains("alreadyinparty", StringComparison.OrdinalIgnoreCase) OrElse
+           compact.Contains("alreadyinaparty", StringComparison.OrdinalIgnoreCase) OrElse
+           compact.Contains("youarealreadyinparty", StringComparison.OrdinalIgnoreCase) Then
+            Return True
+        End If
+
+        Dim hasAlready As Boolean = norm.Contains("already", StringComparison.OrdinalIgnoreCase)
+        Dim hasParty As Boolean = norm.Contains("party", StringComparison.OrdinalIgnoreCase) OrElse norm.Contains("parly", StringComparison.OrdinalIgnoreCase)
+        Return hasAlready AndAlso hasParty
     End Function
 
     Private Shared Function IsRessPrompt(rawText As String) As Boolean
