@@ -73,6 +73,7 @@ Public Class BotConfig
     Public Property PartyAutoAcceptEnabled As Boolean = True
     Public Property PartyAskEnabled As Boolean = False
     Public Property PartyAskIntervalMs As Integer = 30000
+    Public Property PartyAskText As String = "add"
     Public Property Actions As List(Of ActionRule) = New List(Of ActionRule)()
 
     Public Shared Function CreateDefault() As BotConfig
@@ -280,7 +281,19 @@ Public Class BotEngine
 
     Private Shared ReadOnly KeyMap As New Dictionary(Of String, Integer)(StringComparer.OrdinalIgnoreCase) From {
         {"0", &H30}, {"1", &H31}, {"2", &H32}, {"3", &H33}, {"4", &H34}, {"5", &H35},
-        {"6", &H36}, {"7", &H37}, {"8", &H38}, {"9", &H39}, {"A", &H41}, {"D", &H44}, {"E", &H45}, {"F", &H46}, {"W", &H57}, {"S", &H53},
+        {"6", &H36}, {"7", &H37}, {"8", &H38}, {"9", &H39},
+        {"A", &H41}, {"B", &H42}, {"C", &H43}, {"D", &H44}, {"E", &H45}, {"F", &H46}, {"G", &H47},
+        {"H", &H48}, {"I", &H49}, {"J", &H4A}, {"K", &H4B}, {"L", &H4C}, {"M", &H4D}, {"N", &H4E},
+        {"O", &H4F}, {"P", &H50}, {"Q", &H51}, {"R", &H52}, {"S", &H53}, {"T", &H54}, {"U", &H55},
+        {"V", &H56}, {"W", &H57}, {"X", &H58}, {"Y", &H59}, {"Z", &H5A},
+        {"SPACE", &H20}, {" ", &H20},
+        {"COMMA", &HBC}, {",", &HBC},
+        {"MINUS", &HBD}, {"-", &HBD},
+        {"PERIOD", &HBE}, {".", &HBE},
+        {"SLASH", &HBF}, {"/", &HBF},
+        {"SEMICOLON", &HBA}, {";", &HBA},
+        {"APOSTROPHE", &HDE}, {"'", &HDE},
+        {"EQUALS", &HBB}, {"=", &HBB},
         {"ESC", &H1B}, {"ESCAPE", &H1B},
         {"ENTER", &HD}, {"RETURN", &HD},
         {"F1", &H70}, {"F2", &H71}, {"F3", &H72}, {"F4", &H73}, {"F5", &H74},
@@ -1157,35 +1170,82 @@ Public Class BotEngine
             Return False
         End If
 
+        Dim commandText As String = NormalizePartyAskCommand(cfg.PartyAskText)
         If Not SendKey(hwnd, "ENTER", 35) Then
             Return False
         End If
         Thread.Sleep(60)
 
-        Dim typedOk As Boolean = SendKey(hwnd, "A", 20)
-        Thread.Sleep(20)
-        typedOk = SendKey(hwnd, "D", 20) AndAlso typedOk
-        Thread.Sleep(20)
-        typedOk = SendKey(hwnd, "D", 20) AndAlso typedOk
+        Dim typedOk As Boolean = SendPartyAskCommand(hwnd, commandText)
         Thread.Sleep(55)
 
         Dim sentFinalEnter As Boolean = SendKey(hwnd, "ENTER", 35)
         If sentFinalEnter Then
             _lastPartyAskAt = now
             _partyAskPauseLogged = False
-            SetLastAction("ENTER add ENTER (party ask)")
-            RaiseEvent LogLine("Party ask command sent: add")
+            SetLastAction($"ENTER {commandText} ENTER (party ask)")
+            RaiseEvent LogLine($"Party ask command sent: {commandText}")
             Return True
         End If
 
         If typedOk Then
-            SetLastAction("ENTER add (party ask partial)")
-            RaiseEvent LogLine("Party ask command partially sent.")
+            SetLastAction($"ENTER {commandText} (party ask partial)")
+            RaiseEvent LogLine($"Party ask command partially sent: {commandText}")
             _lastPartyAskAt = now
             _partyAskPauseLogged = False
             Return True
         End If
         Return False
+    End Function
+
+    Private Shared Function NormalizePartyAskCommand(rawText As String) As String
+        Dim cleaned As String = If(rawText, "").Replace(vbCr, " ").Replace(vbLf, " ").Trim()
+        If cleaned = "" Then
+            Return "add"
+        End If
+        Return cleaned
+    End Function
+
+    Private Shared Function SendPartyAskCommand(hwnd As IntPtr, rawText As String) As Boolean
+        Dim commandText As String = NormalizePartyAskCommand(rawText)
+        Dim typedAny As Boolean = False
+        For Each ch As Char In commandText
+            Dim keyName As String = PartyAskCharToKeyName(ch)
+            If keyName = "" Then
+                Continue For
+            End If
+            If Not SendKey(hwnd, keyName, 20) Then
+                Return typedAny
+            End If
+            typedAny = True
+            Thread.Sleep(20)
+        Next
+        Return typedAny
+    End Function
+
+    Private Shared Function PartyAskCharToKeyName(ch As Char) As String
+        Select Case ch
+            Case " "c
+                Return "SPACE"
+            Case "/"c
+                Return "SLASH"
+            Case "."c
+                Return "PERIOD"
+            Case ","c
+                Return "COMMA"
+            Case "-"c
+                Return "MINUS"
+            Case ";"c
+                Return "SEMICOLON"
+            Case "'"c
+                Return "APOSTROPHE"
+            Case "="c
+                Return "EQUALS"
+        End Select
+        If Char.IsLetterOrDigit(ch) Then
+            Return Char.ToUpperInvariant(ch).ToString()
+        End If
+        Return ""
     End Function
 
     Private Function TryHandleUnreachableTarget(cfg As BotConfig, hwnd As IntPtr, frame As Bitmap, now As DateTime, unreachableTextRegion As RectRegion) As Boolean

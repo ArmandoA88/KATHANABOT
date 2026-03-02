@@ -56,6 +56,7 @@ Public Class Form1
     Private btnPartyAsk As Button
     Private btnHelp As Button
     Private nudPartyAskSeconds As NumericUpDown
+    Private txtPartyAskText As TextBox
     Private rtbLog As RichTextBox
     Private dgvKeySummary As DataGridView
     Private lblKeySummaryInfo As Label
@@ -103,6 +104,7 @@ Public Class Form1
     Private Const DeadConfirmRequiredCount As Integer = 5
     Private Const DeathNotificationRetryCount As Integer = 3
     Private Const DefaultNtfyTopicName As String = "Katana12345"
+    Private Const DefaultPartyAskCommand As String = "add"
     Private Shared ReadOnly NtfyClient As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(7)}
     Private Shared ReadOnly PersistDirectoryPath As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel")
     Private Shared ReadOnly PersistFilePath As String = Path.Combine(PersistDirectoryPath, "user_lists.json")
@@ -156,6 +158,7 @@ Public Class Form1
         Public Property PromptAutoAcceptEnabled As Boolean = True
         Public Property AskForPartyEnabled As Boolean = False
         Public Property AskForPartySeconds As Decimal = 30D
+        Public Property AskForPartyText As String = "add"
         Public Property MonsterNames As List(Of String) = New List(Of String)()
         Public Property LootNames As List(Of String) = New List(Of String)()
         Public Property CombatActions As List(Of PersistedCombatAction) = New List(Of PersistedCombatAction)()
@@ -235,6 +238,9 @@ Public Class Form1
         If nudPartyAskSeconds IsNot Nothing Then
             AddHandler nudPartyAskSeconds.ValueChanged, AddressOf LiveConfigChanged
         End If
+        If txtPartyAskText IsNot Nothing Then
+            AddHandler txtPartyAskText.TextChanged, AddressOf LiveConfigChanged
+        End If
         AddHandler dgvCombat.CellValueChanged, AddressOf LiveConfigChanged
         AddHandler dgvCombat.CellEndEdit, AddressOf LiveConfigChanged
         AddHandler dgvRegions.CellValueChanged, AddressOf LiveConfigChanged
@@ -244,6 +250,9 @@ Public Class Form1
         AddHandler nudLootPickupSeconds.ValueChanged, AddressOf PersistListSettingsChanged
         If nudPartyAskSeconds IsNot Nothing Then
             AddHandler nudPartyAskSeconds.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If txtPartyAskText IsNot Nothing Then
+            AddHandler txtPartyAskText.TextChanged, AddressOf PersistListSettingsChanged
         End If
         AddHandler dgvCombat.CurrentCellDirtyStateChanged,
             Sub(_s As Object, _e As EventArgs)
@@ -672,9 +681,11 @@ Public Class Form1
         }
         Dim lblPartyAskEvery As New Label() With {.Text = "Ask Party Every (sec)", .Top = 500, .Left = 8, .Width = 210, .Height = 22}
         nudPartyAskSeconds = New NumericUpDown() With {.Top = 522, .Left = 8, .Width = 210, .Height = 28, .Minimum = 5, .Maximum = 600, .Value = 30}
+        Dim lblPartyAskText As New Label() With {.Text = "Auto Ask Party Text", .Top = 556, .Left = 8, .Width = 210, .Height = 22}
+        txtPartyAskText = New TextBox() With {.Top = 578, .Left = 8, .Width = 210, .Height = 28, .Text = DefaultPartyAskCommand}
         btnPartyAsk = New Button() With {
             .Text = If(_partyAskEnabled, "Auto Ask Party (add): ON", "Auto Ask Party (add): OFF"),
-            .Top = 556,
+            .Top = 612,
             .Left = 8,
             .Width = 210,
             .Height = 38,
@@ -683,7 +694,7 @@ Public Class Form1
         }
         btnHelp = New Button() With {
             .Text = "Help (EN/ES/FIL)",
-            .Top = 606,
+            .Top = 662,
             .Left = 8,
             .Width = 210,
             .Height = 38,
@@ -698,6 +709,7 @@ Public Class Form1
         AddHandler btnRetargetNow.Click, AddressOf ManualRetargetClicked
         AddHandler btnPartyAutoAccept.Click, AddressOf TogglePartyAutoAcceptClicked
         AddHandler btnPartyAsk.Click, AddressOf TogglePartyAskClicked
+        AddHandler txtPartyAskText.TextChanged, AddressOf PartyAskTextChanged
         AddHandler btnHelp.Click, AddressOf HelpClicked
         panel.Controls.Add(lblState)
         panel.Controls.Add(lblSystem)
@@ -714,6 +726,8 @@ Public Class Form1
         panel.Controls.Add(btnPartyAutoAccept)
         panel.Controls.Add(lblPartyAskEvery)
         panel.Controls.Add(nudPartyAskSeconds)
+        panel.Controls.Add(lblPartyAskText)
+        panel.Controls.Add(txtPartyAskText)
         panel.Controls.Add(btnPartyAsk)
         panel.Controls.Add(btnHelp)
         Return panel
@@ -836,6 +850,9 @@ Public Class Form1
         End If
         If nudPartyAskSeconds IsNot Nothing Then
             nudPartyAskSeconds.Value = 30
+        End If
+        If txtPartyAskText IsNot Nothing Then
+            txtPartyAskText.Text = DefaultPartyAskCommand
         End If
         _alarmVolumePercent = CInt(nudAlarmVolume.Value)
         UpdateAttackButtonAppearance(False)
@@ -1177,16 +1194,33 @@ Public Class Form1
         UpdatePartyAskButton()
         PushLiveConfig()
         SavePersistedListState(False)
-        AppendLog(If(_partyAskEnabled, "Auto ask party command enabled.", "Auto ask party command disabled."))
+        AppendLog(If(_partyAskEnabled, $"Auto ask party command enabled: '{GetPartyAskCommandText()}'.", "Auto ask party command disabled."))
     End Sub
 
     Private Sub UpdatePartyAskButton()
         If btnPartyAsk Is Nothing Then
             Return
         End If
-        btnPartyAsk.Text = If(_partyAskEnabled, "Auto Ask Party (add): ON", "Auto Ask Party (add): OFF")
+        Dim commandLabel As String = GetPartyAskCommandText()
+        If commandLabel.Length > 14 Then
+            commandLabel = commandLabel.Substring(0, 11) & "..."
+        End If
+        btnPartyAsk.Text = If(_partyAskEnabled, $"Auto Ask Party ({commandLabel}): ON", $"Auto Ask Party ({commandLabel}): OFF")
         btnPartyAsk.BackColor = If(_partyAskEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
     End Sub
+
+    Private Sub PartyAskTextChanged(_sender As Object, _e As EventArgs)
+        UpdatePartyAskButton()
+    End Sub
+
+    Private Function GetPartyAskCommandText() As String
+        Dim rawText As String = If(txtPartyAskText IsNot Nothing, txtPartyAskText.Text, DefaultPartyAskCommand)
+        rawText = rawText.Replace(vbCr, " ").Replace(vbLf, " ").Trim()
+        If rawText = "" Then
+            Return DefaultPartyAskCommand
+        End If
+        Return rawText
+    End Function
 
     Private Sub HelpClicked(sender As Object, e As EventArgs)
         Dim helpForm As New Form() With {
@@ -1265,7 +1299,7 @@ Public Class Form1
             "- Auto Retarget If Stuck: allows stuck-target bypass logic.",
             "- Retarget Now (E): manual retarget key.",
             "- Auto Accept Party/Ress: toggle OCR prompt auto accept.",
-            "- Ask Party Every (sec) + Auto Ask Party (add): periodic add command.",
+            "- Ask Party Every (sec) + Auto Ask Party Text + Auto Ask Party: periodic custom command.",
             "- Help (EN/ES/FIL): opens this multilingual guide.",
             "",
             "6) VISION TAB - VISION + WINDOW SETUP",
@@ -1386,7 +1420,7 @@ Public Class Form1
             "- Auto Retarget If Stuck: recuperacion por objetivo atascado.",
             "- Retarget Now (E): retarget manual.",
             "- Auto Accept Party/Ress: aceptar prompts por OCR.",
-            "- Ask Party Every (sec) + Auto Ask Party (add): comando add periodico.",
+            "- Ask Party Every (sec) + Auto Ask Party Text + Auto Ask Party: comando periodico personalizable.",
             "- Help (EN/ES/FIL): abre esta guia.",
             "",
             "6) PESTANA VISION",
@@ -1498,7 +1532,7 @@ Public Class Form1
             "- Auto Retarget If Stuck: auto recover kapag stuck ang target.",
             "- Retarget Now (E): manual retarget.",
             "- Auto Accept Party/Ress: auto accept prompts gamit OCR.",
-            "- Ask Party Every (sec) + Auto Ask Party (add): periodic add command.",
+            "- Ask Party Every (sec) + Auto Ask Party Text + Auto Ask Party: periodic custom command.",
             "- Help (EN/ES/FIL): bubuksan ang multilingual guide.",
             "",
             "6) VISION TAB",
@@ -1656,6 +1690,7 @@ Public Class Form1
             $"PromptAutoAccept (Party/Ress): {_partyAutoAccept}{Environment.NewLine}" &
             $"AutoAskPartyEnabled: {_partyAskEnabled}{Environment.NewLine}" &
             $"AutoAskPartyIntervalSec: {If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value.ToString(), "30")}{Environment.NewLine}" &
+            $"AutoAskPartyText: {GetPartyAskCommandText()}{Environment.NewLine}" &
             $"NtfyTopic: {GetNtfyTopicName()}{Environment.NewLine}" &
             $"LootPickupEnabled: {If(chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked, "True", "False")}{Environment.NewLine}" &
             $"LootPickupIntervalSec: {If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value.ToString(), "4")}{Environment.NewLine}" &
@@ -1912,6 +1947,7 @@ Public Class Form1
         cfg.PartyAutoAcceptEnabled = _partyAutoAccept
         cfg.PartyAskEnabled = _partyAskEnabled
         cfg.PartyAskIntervalMs = CInt(Math.Round(CDbl(If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D)) * 1000.0))
+        cfg.PartyAskText = GetPartyAskCommandText()
         cfg.HpBar = BuildRect("hp_bar")
         cfg.MpBar = BuildRect("mp_bar")
         cfg.MobNameRect = BuildRect("mob_name_rect")
@@ -2047,11 +2083,14 @@ Public Class Form1
             _partyAutoAccept = state.PromptAutoAcceptEnabled
             UpdatePromptAutoAcceptButton()
             _partyAskEnabled = state.AskForPartyEnabled
-            UpdatePartyAskButton()
             If nudPartyAskSeconds IsNot Nothing Then
                 Dim boundedAskSeconds As Decimal = Math.Max(nudPartyAskSeconds.Minimum, Math.Min(nudPartyAskSeconds.Maximum, state.AskForPartySeconds))
                 nudPartyAskSeconds.Value = boundedAskSeconds
             End If
+            If txtPartyAskText IsNot Nothing Then
+                txtPartyAskText.Text = If(String.IsNullOrWhiteSpace(state.AskForPartyText), DefaultPartyAskCommand, state.AskForPartyText.Trim())
+            End If
+            UpdatePartyAskButton()
 
             If state.MonsterNames IsNot Nothing AndAlso lstMonsterFilter IsNot Nothing Then
                 lstMonsterFilter.Items.Clear()
@@ -2097,6 +2136,7 @@ Public Class Form1
                 .PromptAutoAcceptEnabled = _partyAutoAccept,
                 .AskForPartyEnabled = _partyAskEnabled,
                 .AskForPartySeconds = If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D),
+                .AskForPartyText = GetPartyAskCommandText(),
                 .MonsterNames = GetListBoxItems(lstMonsterFilter),
                 .LootNames = GetListBoxItems(lstLootFilter),
                 .CombatActions = GetPersistedCombatActions()
