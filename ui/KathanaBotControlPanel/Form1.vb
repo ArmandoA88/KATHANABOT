@@ -84,8 +84,10 @@ Public Class Form1
     Private _hpPendingCts As CancellationTokenSource = Nothing
     Private _hpPendingTask As Task = Nothing
     Private _lastHpZeroNotification As DateTime = DateTime.MinValue
-    Private _deadPairConfirmCount As Integer = 0
+    Private _lastWindowMissingNotification As DateTime = DateTime.MinValue
+    Private _deadHpConfirmCount As Integer = 0
     Private _deathNotificationLatched As Boolean = False
+    Private _windowMissingNotificationLatched As Boolean = False
     Private _enterWasDown As Boolean = False
     Private _isPickingLootRejectPoint As Boolean = False
     Private _lootRejectPointX As Integer = -1
@@ -97,7 +99,7 @@ Public Class Form1
     Private Const HpZeroAlarmGraceMs As Integer = 60000
     Private Const DeadZeroThreshold As Double = 0.1
     Private Const DeadRecoverThreshold As Double = 2.0
-    Private Const DeadConfirmRequiredCount As Integer = 3
+    Private Const DeadConfirmRequiredCount As Integer = 5
     Private Const DeathNotificationRetryCount As Integer = 3
     Private Const DefaultNtfyTopicName As String = "Katana12345"
     Private Shared ReadOnly NtfyClient As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(7)}
@@ -1346,6 +1348,7 @@ Public Class Form1
         lblExpRate.Text = $"Prana/EXP: {status.ExpPercent:0.00}% | Rate: {If(status.ExpPerHour < 0, "Calculating (1m)", status.ExpPerHour.ToString("0.00") & "%/hr")}"
         UpdateAttackButtonAppearance(status.Running)
         HandleHpZeroAlarm(status)
+        HandleWindowMissingAlarm(status)
         ApplyHealthUiTint(status.HpPercent, status.Running AndAlso status.WindowFound)
 
         If status.LastAction <> "" AndAlso status.LastAction <> _lastAction Then
@@ -1365,6 +1368,28 @@ Public Class Form1
             _lastNoAttackReason = status.NotAttackingReason
         ElseIf status.NotAttackingReason = "" Then
             _lastNoAttackReason = ""
+        End If
+    End Sub
+
+    Private Sub HandleWindowMissingAlarm(status As BotStatus)
+        If status Is Nothing Then
+            Return
+        End If
+
+        Dim missingWindow As Boolean =
+            status.Running AndAlso
+            ((Not status.WindowFound) OrElse status.ErrorMessage.IndexOf("window not found", StringComparison.OrdinalIgnoreCase) >= 0)
+
+        If missingWindow Then
+            If Not _windowMissingNotificationLatched Then
+                _windowMissingNotificationLatched = True
+                SendWindowMissingPhoneAlert()
+            End If
+            Return
+        End If
+
+        If status.WindowFound OrElse (Not status.Running) Then
+            _windowMissingNotificationLatched = False
         End If
     End Sub
 
@@ -1994,27 +2019,28 @@ Public Class Form1
             Return
         End If
 
-        Dim isDeadPair As Boolean =
+        ' Only count usable (non-black / non-failed) frames toward death confirmation.
+        Dim isUsableFrame As Boolean =
             status.Running AndAlso
             status.WindowFound AndAlso
-            status.ErrorMessage = "" AndAlso
-            status.HpPercent <= DeadZeroThreshold AndAlso
-            status.MpPercent <= DeadZeroThreshold
+            status.ErrorMessage = ""
 
-        If isDeadPair Then
-            _deadPairConfirmCount += 1
+        Dim isDeadHp As Boolean =
+            isUsableFrame AndAlso
+            status.HpPercent <= DeadZeroThreshold
+
+        If isDeadHp Then
+            _deadHpConfirmCount += 1
         Else
-            _deadPairConfirmCount = 0
+            _deadHpConfirmCount = 0
         End If
 
-        Dim recovered As Boolean =
-            (status.HpPercent >= DeadRecoverThreshold) OrElse
-            (status.MpPercent >= DeadRecoverThreshold)
+        Dim recovered As Boolean = status.HpPercent >= DeadRecoverThreshold
         If recovered Then
             _deathNotificationLatched = False
         End If
 
-        If _deadPairConfirmCount >= DeadConfirmRequiredCount Then
+        If _deadHpConfirmCount >= DeadConfirmRequiredCount Then
             If Not _deathNotificationLatched Then
                 _deathNotificationLatched = True
                 If _hpZeroPending Then
@@ -2030,7 +2056,7 @@ Public Class Form1
         If _hpZeroPending Then
             CancelHpZeroPendingCountdown(True)
         End If
-        If _hpZeroAlarmActive AndAlso (Not isDeadPair) Then
+        If _hpZeroAlarmActive AndAlso isUsableFrame AndAlso (Not isDeadHp) Then
             StopHpZeroAlarm()
         End If
     End Sub
@@ -2099,7 +2125,7 @@ Public Class Form1
 
     Private Sub StartHpZeroAlarm()
         _hpZeroAlarmActive = True
-        AppendLog($"HP and MP are zero. Death alert started at volume {_alarmVolumePercent}%.")
+        AppendLog($"HP is zero. Death alert started at volume {_alarmVolumePercent}%.")
         SendHpZeroPhoneAlert()
         Task.Run(Sub() PlayAlarmPulse(_alarmVolumePercent))
         StopBotAfterDeathAlert()
@@ -2110,7 +2136,7 @@ Public Class Form1
             _engine.Stop()
         End If
         UpdateAttackButtonAppearance(False)
-        StopHpZeroAlarm("Death confirmed by HP=0 alert. Bot stopped to prevent repeated alarms.")
+        StopHpZeroAlarm("Death confirmed by HP=0 on consecutive frames. Bot stopped to prevent repeated alarms.")
     End Sub
 
     Private Sub StopHpZeroAlarm(Optional reason As String = "HP recovered. Alarm stopped.")
@@ -2126,8 +2152,10 @@ Public Class Form1
             _hpAlarmCts.Dispose()
             _hpAlarmCts = Nothing
         End If
-        _deadPairConfirmCount = 0
+        _deadHpConfirmCount = 0
         _lastHpZeroNotification = DateTime.MinValue
+        _lastWindowMissingNotification = DateTime.MinValue
+        _windowMissingNotificationLatched = False
         AppendLog(reason)
     End Sub
 
@@ -2146,8 +2174,10 @@ Public Class Form1
             _hpAlarmCts = Nothing
         End If
 
-        _deadPairConfirmCount = 0
+        _deadHpConfirmCount = 0
         _lastHpZeroNotification = DateTime.MinValue
+        _lastWindowMissingNotification = DateTime.MinValue
+        _windowMissingNotificationLatched = False
         If reason <> "" Then
             AppendLog(reason)
         End If
@@ -2162,9 +2192,25 @@ Public Class Form1
         _lastHpZeroNotification = now
         Task.Run(
             Async Function()
-                Dim sent As Boolean = Await SendPhoneNotificationAsync("KathanaBot HP Alert", "HP and MP reached zero. Character is dead.", DeathNotificationRetryCount)
+                Dim sent As Boolean = Await SendPhoneNotificationAsync("KathanaBot HP Alert", "HP reached zero on 5 consecutive valid frames. Character is dead.", DeathNotificationRetryCount)
                 If Not sent Then
                     AppendLogSafe("Phone alert failed after retries. Check ntfy topic/network.")
+                End If
+            End Function)
+    End Sub
+
+    Private Sub SendWindowMissingPhoneAlert()
+        Dim now As DateTime = DateTime.UtcNow
+        If _lastWindowMissingNotification <> DateTime.MinValue AndAlso (now - _lastWindowMissingNotification).TotalSeconds < 5 Then
+            Return
+        End If
+
+        _lastWindowMissingNotification = now
+        Task.Run(
+            Async Function()
+                Dim sent As Boolean = Await SendPhoneNotificationAsync("KathanaBot Game Alert", "Game window not found. The game may have crashed or been closed.", DeathNotificationRetryCount)
+                If Not sent Then
+                    AppendLogSafe("Game-window alert failed after retries. Check ntfy topic/network.")
                 End If
             End Function)
     End Sub
