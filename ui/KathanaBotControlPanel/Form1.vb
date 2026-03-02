@@ -54,6 +54,7 @@ Public Class Form1
     Private btnRetargetNow As Button
     Private btnPartyAutoAccept As Button
     Private btnPartyAsk As Button
+    Private btnHelp As Button
     Private nudPartyAskSeconds As NumericUpDown
     Private rtbLog As RichTextBox
     Private dgvKeySummary As DataGridView
@@ -639,7 +640,7 @@ Public Class Form1
     End Function
 
     Private Function BuildCenterControlPanel() As Panel
-        Dim panel As New Panel() With {.Dock = DockStyle.Fill, .Padding = New Padding(12)}
+        Dim panel As New Panel() With {.Dock = DockStyle.Fill, .Padding = New Padding(12), .AutoScroll = True}
         lblState = New Label() With {.Text = "Status: Searching for target...", .Top = 16, .Left = 8, .Width = 260, .Height = 22}
         lblSystem = New Label() With {.Text = "System Active: False", .Top = 44, .Left = 8, .Width = 260, .Height = 22, .ForeColor = Color.LightGreen}
         lblHp = New Label() With {.Text = "HP%: 0", .Top = 72, .Left = 8, .Width = 120, .Height = 22, .ForeColor = Color.LimeGreen}
@@ -680,6 +681,15 @@ Public Class Form1
             .BackColor = If(_partyAskEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
             .ForeColor = Color.White
         }
+        btnHelp = New Button() With {
+            .Text = "Help (EN/ES/FIL)",
+            .Top = 606,
+            .Left = 8,
+            .Width = 210,
+            .Height = 38,
+            .BackColor = Color.FromArgb(70, 70, 70),
+            .ForeColor = Color.White
+        }
         AddHandler btnAttack.Click, AddressOf StartClicked
         AddHandler btnSaveSettings.Click, AddressOf SaveClicked
         AddHandler btnStopBot.Click, AddressOf StopClicked
@@ -688,6 +698,7 @@ Public Class Form1
         AddHandler btnRetargetNow.Click, AddressOf ManualRetargetClicked
         AddHandler btnPartyAutoAccept.Click, AddressOf TogglePartyAutoAcceptClicked
         AddHandler btnPartyAsk.Click, AddressOf TogglePartyAskClicked
+        AddHandler btnHelp.Click, AddressOf HelpClicked
         panel.Controls.Add(lblState)
         panel.Controls.Add(lblSystem)
         panel.Controls.Add(lblHp)
@@ -704,6 +715,7 @@ Public Class Form1
         panel.Controls.Add(lblPartyAskEvery)
         panel.Controls.Add(nudPartyAskSeconds)
         panel.Controls.Add(btnPartyAsk)
+        panel.Controls.Add(btnHelp)
         Return panel
     End Function
 
@@ -1175,6 +1187,392 @@ Public Class Form1
         btnPartyAsk.Text = If(_partyAskEnabled, "Auto Ask Party (add): ON", "Auto Ask Party (add): OFF")
         btnPartyAsk.BackColor = If(_partyAskEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
     End Sub
+
+    Private Sub HelpClicked(sender As Object, e As EventArgs)
+        Dim helpForm As New Form() With {
+            .Text = "KathanaBot Help",
+            .StartPosition = FormStartPosition.CenterParent,
+            .Width = 980,
+            .Height = 760,
+            .MinimizeBox = False,
+            .MaximizeBox = True,
+            .BackColor = Color.FromArgb(20, 20, 20),
+            .ForeColor = Color.Gainsboro
+        }
+
+        Dim tabs As New TabControl() With {.Dock = DockStyle.Fill, .Font = New Font("Segoe UI", 9.0F, FontStyle.Bold)}
+        tabs.TabPages.Add(CreateHelpTabPage("English", BuildHelpTextEnglish()))
+        tabs.TabPages.Add(CreateHelpTabPage("Espanol", BuildHelpTextSpanish()))
+        tabs.TabPages.Add(CreateHelpTabPage("Filipino", BuildHelpTextFilipino()))
+        helpForm.Controls.Add(tabs)
+
+        helpForm.ShowDialog(Me)
+    End Sub
+
+    Private Function CreateHelpTabPage(title As String, body As String) As TabPage
+        Dim tab As New TabPage(title) With {.BackColor = Color.FromArgb(20, 20, 20)}
+        Dim text As New TextBox() With {
+            .Dock = DockStyle.Fill,
+            .Multiline = True,
+            .ReadOnly = True,
+            .ScrollBars = ScrollBars.Both,
+            .WordWrap = False,
+            .Font = New Font("Consolas", 9.5F, FontStyle.Regular),
+            .BackColor = Color.FromArgb(10, 10, 10),
+            .ForeColor = Color.Gainsboro,
+            .Text = body
+        }
+        tab.Controls.Add(text)
+        Return tab
+    End Function
+
+    Private Shared Function BuildHelpTextEnglish() As String
+        Return String.Join(Environment.NewLine, New String() {
+            "KATHANABOT - COMPLETE FEATURE GUIDE (ENGLISH)",
+            "============================================================",
+            "",
+            "1) QUICK START",
+            "- Open game in windowed mode.",
+            "- Verify Window Title in Vision tab.",
+            "- Press Attack to start bot loop.",
+            "- Press Stop Bot to hard stop movement and stop loop.",
+            "- You can also toggle start/stop with Enter when game window is foreground.",
+            "",
+            "2) COMBAT TAB - COMBAT SKILLS GRID",
+            "- Enabled: if checked, action is available.",
+            "- Key: keyboard key sent to game (1-0, F1-F10).",
+            "- CooldownSec: minimum seconds between sends of this key.",
+            "- Role: attack, heal, max_health, mana, special, stop.",
+            "- Priority: lower values act first inside same category checks.",
+            "- TriggerPercent: role threshold (heal/mana/max_health use this heavily).",
+            "- MinHpPercent / MinMpPercent: minimum self HP/MP to allow this action.",
+            "",
+            "3) COMBAT TAB - MONSTER FILTER",
+            "- Enable Monster Filter (blacklist): active deny list for mob names.",
+            "- Add / Remove: manage blocked mob names.",
+            "- OCR + confirmation logic avoids stale or wrong-name attacks.",
+            "",
+            "4) COMBAT TAB - LOOT FILTER",
+            "- Loot pickup toggle and interval seconds.",
+            "- Add / Remove loot names to allow-list.",
+            "- Loot reject point can be picked from snapshot to click reject button.",
+            "",
+            "5) CENTER CONTROL PANEL",
+            "- Attack: starts engine.",
+            "- Save Settings: pushes live config and persists list settings.",
+            "- Stop Bot: sends hard stop macro then stops engine.",
+            "- Ignore Skill Min HP/MP: bypasses min HP/MP row checks.",
+            "- Auto Retarget If Stuck: allows stuck-target bypass logic.",
+            "- Retarget Now (E): manual retarget key.",
+            "- Auto Accept Party/Ress: toggle OCR prompt auto accept.",
+            "- Ask Party Every (sec) + Auto Ask Party (add): periodic add command.",
+            "- Help (EN/ES/FIL): opens this multilingual guide.",
+            "",
+            "6) VISION TAB - VISION + WINDOW SETUP",
+            "- Window Title: used to find game window.",
+            "- Loop (ms): bot loop delay.",
+            "- Retarget (ms): baseline retarget interval.",
+            "- Mob HP Presence %: threshold for valid target HP bar signal.",
+            "- Show Overlay: live region calibration overlay.",
+            "- Capture Snapshot: captures current client image.",
+            "",
+            "7) VISION TAB - CALIBRATION REGIONS",
+            "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, unreachable_text_rect,",
+            "  prana_exp_rect, party_invite_scan_rect, party_invite_ok_rect.",
+            "- You can edit coordinates directly in grid or through overlay.",
+            "",
+            "8) VISION TAB - PROCESS LIST",
+            "- Update: refreshes window/process list.",
+            "- Selecting process fills Rename Process input.",
+            "- Apply: attempts SetWindowText rename for selected process.",
+            "",
+            "9) SNAPSHOT PANEL",
+            "- Displays latest captured frame.",
+            "- Pick Loot Reject Point: click image to map x,y inside game client.",
+            "- Clear Point: clears reject point.",
+            "",
+            "10) AUTO-POT TAB",
+            "- Heal Trigger %, Mana Trigger % quick sliders.",
+            "- HP=0 Alarm Volume % sets system alarm pulse volume for death alert.",
+            "- ntfy Channel is used for phone notifications (ntfy.sh topic).",
+            "- Apply To Heal/Mana/Max-HP Rows applies quick thresholds to matching roles.",
+            "- Test Alarm + Phone tests sound and ntfy message.",
+            "- Test Phone Alert sends only ntfy test.",
+            "",
+            "11) UNSTUCK TAB",
+            "- Secondary retarget interval controls.",
+            "- Use This Interval syncs retarget setting to main config.",
+            "",
+            "12) DIAGNOSTICS TAB",
+            "- Live internal state: running flags, hp/mp, target state, OCR error,",
+            "  alerts state, recent action and error fields.",
+            "",
+            "13) LOG PANEL - REAL-TIME",
+            "- Real-time event log from engine and UI.",
+            "- Clear Log button resets visible log output only.",
+            "",
+            "14) LOG PANEL - KEY SUMMARY",
+            "- Rolling counts for key actions: 10m / 30m / 60m.",
+            "- Latest action text per key.",
+            "- Reset Key Summary clears tracked key events.",
+            "",
+            "15) ALERTS AND SAFETY",
+            "- HP zero death detection: requires stable confirmation before death alarm.",
+            "- Death alert: plays sound, sends ntfy alert, then stops bot to avoid repeats.",
+            "- Window missing/crash alert: sends separate ntfy message when game window",
+            "  is not found while running (one-shot latch until recovery).",
+            "",
+            "16) ENGINE AUTOMATION BEHAVIORS",
+            "- Auto retarget when no valid target.",
+            "- First-hit window logic to avoid premature retarget on fresh target.",
+            "- Vision stability filter to reduce capture glitch spikes.",
+            "- OCR based target name reading with confirmation.",
+            "- OCR based unreachable target detection and forced retarget.",
+            "- Party invite / resurrection prompt OCR and auto accept click.",
+            "- Party ask command automation with cooldown and in-party suppression.",
+            "- Loot scan, allow-list check, reject handling by click point or fallback key.",
+            "- Periodic snapshot save every ~15 minutes to Pictures/KathanaBot.",
+            "- Prana/EXP OCR reading and hourly rate calculation.",
+            "",
+            "17) PERSISTENCE",
+            "- User list state saved to AppData/KathanaBotControlPanel/user_lists.json.",
+            "- Includes filter toggles, lists, loot reject point, party settings, combat rows.",
+            "",
+            "18) HOTKEY BEHAVIOR",
+            "- Enter key toggles start/stop only if game window is active foreground.",
+            "",
+            "19) TROUBLESHOOTING",
+            "- If no actions happen: verify window title and capture snapshot first.",
+            "- If wrong targets: recalibrate regions and review monster filter list.",
+            "- If no phone alerts: verify ntfy channel text and internet access.",
+            "- If process rename fails: target app may reject window title changes."
+        })
+    End Function
+
+    Private Shared Function BuildHelpTextSpanish() As String
+        Return String.Join(Environment.NewLine, New String() {
+            "KATHANABOT - GUIA COMPLETA DE FUNCIONES (ESPANOL)",
+            "============================================================",
+            "",
+            "1) INICIO RAPIDO",
+            "- Abre el juego en modo ventana.",
+            "- Verifica Window Title en la pestana Vision.",
+            "- Presiona Attack para iniciar el bot.",
+            "- Presiona Stop Bot para detener movimiento y loop.",
+            "- Tambien puedes usar Enter para iniciar/parar si la ventana del juego esta al frente.",
+            "",
+            "2) PESTANA COMBAT - TABLA COMBAT SKILLS",
+            "- Enabled: activa/desactiva la accion.",
+            "- Key: tecla enviada al juego.",
+            "- CooldownSec: tiempo minimo entre envios de la tecla.",
+            "- Role: attack, heal, max_health, mana, special, stop.",
+            "- Priority: orden de prioridad.",
+            "- TriggerPercent: umbral principal para roles de soporte.",
+            "- MinHpPercent / MinMpPercent: minimos para permitir la accion.",
+            "",
+            "3) FILTRO DE MONSTRUOS",
+            "- Enable Monster Filter (blacklist): lista negra de mobs.",
+            "- Add / Remove: agrega o elimina nombres.",
+            "- El OCR y confirmacion reducen ataques por nombre incorrecto.",
+            "",
+            "4) FILTRO DE LOOT",
+            "- Activar loot y definir intervalo en segundos.",
+            "- Lista de nombres permitidos para recoger.",
+            "- Punto de rechazo de loot configurable desde snapshot.",
+            "",
+            "5) PANEL CENTRAL",
+            "- Attack, Save Settings, Stop Bot.",
+            "- Ignore Skill Min HP/MP: ignora minimos de filas de skills.",
+            "- Auto Retarget If Stuck: recuperacion por objetivo atascado.",
+            "- Retarget Now (E): retarget manual.",
+            "- Auto Accept Party/Ress: aceptar prompts por OCR.",
+            "- Ask Party Every (sec) + Auto Ask Party (add): comando add periodico.",
+            "- Help (EN/ES/FIL): abre esta guia.",
+            "",
+            "6) PESTANA VISION",
+            "- Window Title, Loop(ms), Retarget(ms), Mob HP Presence%.",
+            "- Show Overlay para calibracion visual.",
+            "- Capture Snapshot para capturar imagen del cliente.",
+            "",
+            "7) REGIONES DE CALIBRACION",
+            "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, unreachable_text_rect,",
+            "  prana_exp_rect, party_invite_scan_rect, party_invite_ok_rect.",
+            "- Puedes editar coordenadas en tabla o con overlay.",
+            "",
+            "8) PROCESS LIST",
+            "- Update refresca ventanas/procesos.",
+            "- Rename Process + Apply intenta renombrar la ventana seleccionada.",
+            "",
+            "9) SNAPSHOT",
+            "- Muestra la ultima captura.",
+            "- Pick Loot Reject Point selecciona coordenada de rechazo.",
+            "- Clear Point limpia la coordenada.",
+            "",
+            "10) PESTANA AUTO-POT",
+            "- Heal Trigger %, Mana Trigger %. ",
+            "- HP=0 Alarm Volume % para volumen de alarma.",
+            "- ntfy Channel para notificaciones al telefono.",
+            "- Apply To Heal/Mana/Max-HP Rows aplica umbrales rapidos.",
+            "- Test Alarm + Phone y Test Phone Alert para pruebas.",
+            "",
+            "11) PESTANA UNSTUCK",
+            "- Controla intervalo de retarget.",
+            "- Use This Interval sincroniza valor al config principal.",
+            "",
+            "12) PESTANA DIAGNOSTICS",
+            "- Muestra estado interno completo en tiempo real.",
+            "",
+            "13) PANEL LOG - REAL-TIME",
+            "- Eventos de motor y UI en vivo.",
+            "- Clear Log limpia solo la vista del log.",
+            "",
+            "14) PANEL LOG - KEY SUMMARY",
+            "- Conteo por tecla en ventanas 10m/30m/60m.",
+            "- Reset Key Summary reinicia estadisticas.",
+            "",
+            "15) ALERTAS",
+            "- Alerta de muerte por HP=0 con confirmacion estable.",
+            "- Reproduce alarma, envia ntfy y detiene bot para evitar repeticion.",
+            "- Alerta separada cuando no se encuentra ventana del juego (posible crash).",
+            "",
+            "16) AUTOMATIZACION DEL MOTOR",
+            "- Retarget automatico sin objetivo valido.",
+            "- Logica de primera accion para evitar retarget prematuro.",
+            "- Filtro de estabilidad de vision contra capturas defectuosas.",
+            "- OCR para nombre de mob y confirmacion.",
+            "- OCR para objetivo inalcanzable y retarget forzado.",
+            "- OCR para party/ress y click de auto-aceptar.",
+            "- Auto comando add con cooldown y pausa si ya esta en party.",
+            "- Escaneo de loot, validacion de lista, rechazo por click o tecla.",
+            "- Snapshot periodico cada ~15 minutos.",
+            "- Lectura OCR de Prana/EXP y calculo de tasa por hora.",
+            "",
+            "17) PERSISTENCIA",
+            "- Guarda estado en AppData/KathanaBotControlPanel/user_lists.json.",
+            "",
+            "18) ATAJO ENTER",
+            "- Enter solo alterna start/stop si la ventana del juego esta activa.",
+            "",
+            "19) SOLUCION DE PROBLEMAS",
+            "- Sin acciones: valida Window Title y prueba Capture Snapshot.",
+            "- Objetivos incorrectos: recalibra regiones y revisa filtro de monstruos.",
+            "- Sin alertas al telefono: revisa canal ntfy e internet.",
+            "- Error al renombrar proceso: algunas apps bloquean SetWindowText."
+        })
+    End Function
+
+    Private Shared Function BuildHelpTextFilipino() As String
+        Return String.Join(Environment.NewLine, New String() {
+            "KATHANABOT - KUMPLETONG GABAY SA MGA FUNCTION (FILIPINO)",
+            "============================================================",
+            "",
+            "1) MABILIS NA SETUP",
+            "- Buksan ang game sa windowed mode.",
+            "- I-check ang Window Title sa Vision tab.",
+            "- Pindutin ang Attack para simulan ang bot.",
+            "- Pindutin ang Stop Bot para ihinto ang movement at loop.",
+            "- Puwede ring Enter para start/stop kung active ang game window.",
+            "",
+            "2) COMBAT TAB - COMBAT SKILLS TABLE",
+            "- Enabled: naka-on o naka-off ang action.",
+            "- Key: key na ipapadala sa game.",
+            "- CooldownSec: minimum na pagitan bago ulitin ang key.",
+            "- Role: attack, heal, max_health, mana, special, stop.",
+            "- Priority: pagkakasunod ng aksyon.",
+            "- TriggerPercent: pangunahing threshold ng support actions.",
+            "- MinHpPercent / MinMpPercent: minimum HP/MP para payagan ang action.",
+            "",
+            "3) MONSTER FILTER",
+            "- Enable Monster Filter (blacklist): listahan ng bawal at i-skip na mobs.",
+            "- Add / Remove: dagdag o tanggal ng pangalan.",
+            "- May OCR confirm para iwas maling target dahil sa stale text.",
+            "",
+            "4) LOOT FILTER",
+            "- Toggle ng loot pickup at interval in seconds.",
+            "- Allowed loot names list.",
+            "- Loot reject point na puwedeng piliin mula sa snapshot image.",
+            "",
+            "5) CENTER CONTROL PANEL",
+            "- Attack, Save Settings, Stop Bot.",
+            "- Ignore Skill Min HP/MP: i-bypass ang minimum requirements ng skills.",
+            "- Auto Retarget If Stuck: auto recover kapag stuck ang target.",
+            "- Retarget Now (E): manual retarget.",
+            "- Auto Accept Party/Ress: auto accept prompts gamit OCR.",
+            "- Ask Party Every (sec) + Auto Ask Party (add): periodic add command.",
+            "- Help (EN/ES/FIL): bubuksan ang multilingual guide.",
+            "",
+            "6) VISION TAB",
+            "- Window Title, Loop(ms), Retarget(ms), Mob HP Presence%.",
+            "- Show Overlay para madaling calibration ng regions.",
+            "- Capture Snapshot para kumuha ng current game image.",
+            "",
+            "7) CALIBRATION REGIONS",
+            "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, unreachable_text_rect,",
+            "  prana_exp_rect, party_invite_scan_rect, party_invite_ok_rect.",
+            "- Puwedeng i-edit sa grid o sa overlay.",
+            "",
+            "8) PROCESS LIST",
+            "- Update: refresh process/window list.",
+            "- Rename Process + Apply: tangkang palitan ang window title ng selected app.",
+            "",
+            "9) SNAPSHOT PANEL",
+            "- Ipinapakita ang latest capture.",
+            "- Pick Loot Reject Point: click sa image para makuha ang exact x,y.",
+            "- Clear Point: alisin ang naka-save na reject point.",
+            "",
+            "10) AUTO-POT TAB",
+            "- Heal Trigger %, Mana Trigger % quick controls.",
+            "- HP=0 Alarm Volume % para sa death alarm volume.",
+            "- ntfy Channel para sa phone notifications.",
+            "- Apply To Heal/Mana/Max-HP Rows para sa mabilis na threshold apply.",
+            "- Test Alarm + Phone at Test Phone Alert para sa testing.",
+            "",
+            "11) UNSTUCK TAB",
+            "- Extra controls para retarget interval.",
+            "- Use This Interval para i-sync sa main config.",
+            "",
+            "12) DIAGNOSTICS TAB",
+            "- Real-time internal status: running flags, hp/mp, target info, OCR error,",
+            "  action/error fields at alert states.",
+            "",
+            "13) LOG PANEL - REAL-TIME",
+            "- Live logs mula engine at UI.",
+            "- Clear Log para linisin ang visible log.",
+            "",
+            "14) LOG PANEL - KEY SUMMARY",
+            "- Rolling stats ng key usage sa 10m / 30m / 60m.",
+            "- Reset Key Summary para i-reset ang counters.",
+            "",
+            "15) ALERTS",
+            "- Death alert kapag HP=0 na confirmed.",
+            "- Magpapatunog, magpapadala ng ntfy, at hihinto ang bot para iwas repeat.",
+            "- Hiwalay na crash/window-missing alert kapag hindi makita ang game window.",
+            "",
+            "16) ENGINE AUTOMATION",
+            "- Auto retarget kapag invalid o walang target.",
+            "- First-hit window para hindi agad mali ang retarget timing.",
+            "- Vision stability filter laban sa capture glitches.",
+            "- OCR para sa mob name + confirmation logic.",
+            "- OCR para sa unreachable text at forced retarget.",
+            "- OCR party/ress detection at auto accept click.",
+            "- Auto add party command na may cooldown at suppression kapag nasa party na.",
+            "- Loot scan, allow-list check, reject handling (click point/fallback key).",
+            "- Periodic snapshot save bawat ~15 minuto.",
+            "- Prana/EXP OCR at hourly rate calculation.",
+            "",
+            "17) SAVE/PERSISTENCE",
+            "- Naka-save ang list/config state sa AppData/KathanaBotControlPanel/user_lists.json.",
+            "",
+            "18) ENTER HOTKEY",
+            "- Enter start/stop toggle gumagana lang kapag active foreground ang game window.",
+            "",
+            "19) TROUBLESHOOTING",
+            "- Walang action: i-check Window Title at subukan ang Capture Snapshot.",
+            "- Maling target: i-recalibrate regions at ayusin monster filter.",
+            "- Walang phone alert: i-check ntfy channel at internet.",
+            "- Rename fail: may apps na hindi pumapayag sa window title change."
+        })
+    End Function
 
     Private Sub ManualRetargetClicked(sender As Object, e As EventArgs)
         Dim title As String = txtWindowTitle.Text.Trim()
