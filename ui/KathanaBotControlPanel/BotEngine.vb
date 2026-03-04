@@ -1548,7 +1548,15 @@ Public Class BotEngine
             Return True
         End If
         If aa.Contains(bb, StringComparison.Ordinal) OrElse bb.Contains(aa, StringComparison.Ordinal) Then
-            Return True
+            Dim compactContainsA As String = aa.Replace(" ", "")
+            Dim compactContainsB As String = bb.Replace(" ", "")
+            Dim shortLen As Integer = Math.Min(compactContainsA.Length, compactContainsB.Length)
+            Dim longLen As Integer = Math.Max(compactContainsA.Length, compactContainsB.Length)
+            Dim coverage As Double = shortLen / Math.Max(1.0, CDbl(longLen))
+            ' Avoid token-level partial matches (e.g., "tara" vs "kaulitara").
+            If coverage >= 0.78 Then
+                Return True
+            End If
         End If
 
         Dim compactA As String = aa.Replace(" ", "")
