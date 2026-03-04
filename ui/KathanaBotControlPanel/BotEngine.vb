@@ -221,6 +221,7 @@ Public Class BotEngine
     Private Const UnreachableRetargetLockMs As Integer = 1200
     Private Const UnreachableTriggerCooldownMs As Integer = 850
     Private Const UnreachableClearRequiredCount As Integer = 2
+    Private Const MinStuckRetargetMs As Integer = 3000
     Private Const BaseClientWidth As Integer = 1024
     Private Const BaseClientHeight As Integer = 768
 
@@ -1679,9 +1680,16 @@ Public Class BotEngine
             Return
         End If
 
-        If Math.Abs(mobHpPct - _lastMobHpSample) >= 0.8 Then
+        Dim hpDrop As Double = _lastMobHpSample - mobHpPct
+        If hpDrop >= 0.8 Then
             _lastMobHpSample = mobHpPct
             _lastMobHpMovement = now
+            Return
+        End If
+
+        ' Ignore small OCR jitter, but re-baseline large upward jumps.
+        If mobHpPct >= (_lastMobHpSample + 1.8) Then
+            _lastMobHpSample = mobHpPct
         End If
     End Sub
 
@@ -1696,13 +1704,14 @@ Public Class BotEngine
             Return False
         End If
 
+        Dim stuckMs As Integer = Math.Max(MinStuckRetargetMs, cfg.StuckTargetMs)
         Dim sinceAttackMs As Double = (now - _lastAttackAction).TotalMilliseconds
-        If sinceAttackMs > Math.Max(6000, cfg.StuckTargetMs * 3) Then
+        If sinceAttackMs > Math.Max(15000, stuckMs * 5) Then
             Return False
         End If
 
         Dim sinceHpMoveMs As Double = (now - _lastMobHpMovement).TotalMilliseconds
-        If sinceHpMoveMs < cfg.StuckTargetMs Then
+        If sinceHpMoveMs < stuckMs Then
             Return False
         End If
 
