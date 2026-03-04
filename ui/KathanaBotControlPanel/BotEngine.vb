@@ -625,19 +625,20 @@ Public Class BotEngine
                 If supportSent Then
                     actionSent = True
                     reason = ""
-                Else
-                    Dim allowBlindAttack As Boolean = AllowBlindAttackWhenTargetMissing AndAlso (Not deniedTarget)
-                    Dim chosen As ActionRule = ChooseAction(cfg, hpPct, mpPct, targetValid, allowBlindAttack, reason)
-                    If chosen IsNot Nothing AndAlso SendKey(hwnd, chosen.KeyName, 35) Then
-                        MarkKeyUsed(chosen.KeyName)
-                        SetLastAction($"{chosen.KeyName} ({chosen.Role})")
-                        actionSent = True
-                        reason = ""
-                        If chosen.Role = "attack" OrElse chosen.Role = "special" Then
-                            _lastAttackAction = now
-                            _firstHitPending = False
-                            _firstHitWindowUntil = DateTime.MinValue
-                        End If
+                End If
+
+                ' Support keys can fire without blocking attack/special in the same loop.
+                Dim allowBlindAttack As Boolean = AllowBlindAttackWhenTargetMissing AndAlso (Not deniedTarget)
+                Dim chosen As ActionRule = ChooseAction(cfg, hpPct, mpPct, targetValid, allowBlindAttack, reason)
+                If chosen IsNot Nothing AndAlso SendKey(hwnd, chosen.KeyName, 35) Then
+                    MarkKeyUsed(chosen.KeyName)
+                    SetLastAction($"{chosen.KeyName} ({chosen.Role})")
+                    actionSent = True
+                    reason = ""
+                    If chosen.Role = "attack" OrElse chosen.Role = "special" Then
+                        _lastAttackAction = now
+                        _firstHitPending = False
+                        _firstHitWindowUntil = DateTime.MinValue
                     End If
                 End If
             End If
