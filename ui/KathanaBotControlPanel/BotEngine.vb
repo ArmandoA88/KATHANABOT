@@ -1,4 +1,4 @@
-Imports System.Collections.Generic
+﻿Imports System.Collections.Generic
 Imports System.Diagnostics
 Imports System.Drawing
 Imports System.Drawing.Imaging
@@ -74,6 +74,8 @@ Public Class BotConfig
     Public Property PartyAskEnabled As Boolean = False
     Public Property PartyAskIntervalMs As Integer = 30000
     Public Property PartyAskText As String = "add"
+    Public Property LootScannerEnabled As Boolean = True
+    Public Property ItemNtfyTopic As String = ""
     Public Property Actions As List(Of ActionRule) = New List(Of ActionRule)()
 
     Public Shared Function CreateDefault() As BotConfig
@@ -156,19 +158,29 @@ Friend Module NativeMethods
         Public Bottom As Integer
     End Structure
 
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function GetForegroundWindow() As IntPtr
+    End Function
+
     Friend Delegate Function EnumWindowsProc(hWnd As IntPtr, lParam As IntPtr) As Boolean
 
     <DllImport("user32.dll", SetLastError:=True, CharSet:=CharSet.Auto)>
     Friend Function FindWindow(lpClassName As String, lpWindowName As String) As IntPtr
     End Function
 
+
+
     <DllImport("user32.dll", SetLastError:=True)>
     Friend Function EnumWindows(lpEnumFunc As EnumWindowsProc, lParam As IntPtr) As Boolean
     End Function
 
+
+
     <DllImport("user32.dll", SetLastError:=True)>
     Friend Function IsWindowVisible(hWnd As IntPtr) As Boolean
     End Function
+
+
 
     <DllImport("user32.dll", SetLastError:=True)>
     Friend Function IsIconic(hWnd As IntPtr) As Boolean
@@ -178,25 +190,37 @@ Friend Module NativeMethods
     Friend Function GetWindowText(hWnd As IntPtr, lpString As StringBuilder, nMaxCount As Integer) As Integer
     End Function
 
+
+
     <DllImport("user32.dll", SetLastError:=True)>
     Friend Function GetClientRect(hWnd As IntPtr, ByRef lpRect As RECT) As Boolean
     End Function
+
+
 
     <DllImport("user32.dll", SetLastError:=True)>
     Friend Function ClientToScreen(hWnd As IntPtr, ByRef lpPoint As POINT) As Boolean
     End Function
 
+
+
     <DllImport("user32.dll", SetLastError:=True)>
     Friend Function PostMessage(hWnd As IntPtr, msg As UInteger, wParam As IntPtr, lParam As IntPtr) As Boolean
     End Function
+
+
 
     <DllImport("user32.dll", SetLastError:=True)>
     Friend Function MapVirtualKey(uCode As UInteger, uMapType As UInteger) As UInteger
     End Function
 
+
+
     <DllImport("user32.dll", SetLastError:=True)>
     Friend Function PrintWindow(hwnd As IntPtr, hdcBlt As IntPtr, nFlags As UInteger) As Boolean
     End Function
+
+
 
     <DllImport("user32.dll", SetLastError:=True)>
     Friend Function GetWindowThreadProcessId(hWnd As IntPtr, ByRef lpdwProcessId As UInteger) As UInteger
@@ -278,6 +302,7 @@ Public Class BotEngine
     Private _lastGoodMobName As String = ""
     Private _zeroSpikeHoldCount As Integer = 0
     Private _zeroPairConfirmCount As Integer = 0
+    Private _lastRightAltAt As DateTime = DateTime.MinValue
     Private Shared ReadOnly MovementStopVks As Integer() = {&H57, &H41, &H53, &H44, &H26, &H28, &H25, &H27}
 
     Private Shared ReadOnly KeyMap As New Dictionary(Of String, Integer)(StringComparer.OrdinalIgnoreCase) From {
@@ -287,6 +312,7 @@ Public Class BotEngine
         {"H", &H48}, {"I", &H49}, {"J", &H4A}, {"K", &H4B}, {"L", &H4C}, {"M", &H4D}, {"N", &H4E},
         {"O", &H4F}, {"P", &H50}, {"Q", &H51}, {"R", &H52}, {"S", &H53}, {"T", &H54}, {"U", &H55},
         {"V", &H56}, {"W", &H57}, {"X", &H58}, {"Y", &H59}, {"Z", &H5A},
+        {"RMENU", &HA5}, {"RALT", &HA5},
         {"SPACE", &H20}, {" ", &H20},
         {"COMMA", &HBC}, {",", &HBC},
         {"MINUS", &HBD}, {"-", &HBD},
@@ -373,6 +399,7 @@ Public Class BotEngine
             _lastGoodMobName = ""
             _zeroSpikeHoldCount = 0
             _zeroPairConfirmCount = 0
+            _lastRightAltAt = DateTime.MinValue
             _task = Task.Run(Sub() LoopAsync(_cts.Token).GetAwaiter().GetResult())
         End SyncLock
         RaiseEvent LogLine("Bot loop started.")
@@ -498,6 +525,70 @@ Public Class BotEngine
             End If
 
             Dim now As DateTime = DateTime.UtcNow
+            Dim activeHwnd As IntPtr = NativeMethods.GetForegroundWindow()
+            If cfg.LootScannerEnabled AndAlso activeHwnd = hwnd AndAlso (now - _lastRightAltAt).TotalMilliseconds >= 10000 Then
+                _lastRightAltAt = now
+                Dim scan As Byte = CByte(NativeMethods.MapVirtualKey(CUInt(&H12), 0UI))
+                Dim KEYEVENTF_EXTENDEDKEY As UInteger = &H1
+                Dim KEYEVENTF_KEYUP As UInteger = &H2
+                
+                Try
+                    keybd_event(&HA5, scan, KEYEVENTF_EXTENDEDKEY, UIntPtr.Zero)
+                    Thread.Sleep(150)
+                    
+                    Dim altFrame As Bitmap = CaptureClient(hwnd)
+                    
+                    Thread.Sleep(250)
+                    keybd_event(&HA5, scan, KEYEVENTF_EXTENDEDKEY Or KEYEVENTF_KEYUP, UIntPtr.Zero)
+                    
+                    SetLastAction("RMENU (scan items)")
+                    RaiseEvent LogLine("Auto right-alt scan (400ms).")
+                    
+                    If altFrame IsNot Nothing Then
+                        Dim allowedNames As List(Of String) = cfg.LootAllowedNames
+                        Task.Run(Sub()
+                            Try
+                                Dim ocrText As String = OcrReader.ReadScreenText(altFrame)
+                                altFrame.Dispose()
+                                
+                                If Not String.IsNullOrWhiteSpace(ocrText) AndAlso allowedNames IsNot Nothing Then
+                                    Dim normOcr As String = ocrText.ToLowerInvariant()
+                                    For Each item As String In allowedNames
+                                        Dim normItem As String = item.ToLowerInvariant().Trim()
+                                        If normItem <> "" AndAlso normOcr.Contains(normItem) Then
+                                            System.Media.SystemSounds.Exclamation.Play()
+                                            Console.Beep(800, 1000)
+                                            Console.Beep(800, 1000)
+                                            RaiseEvent LogLine("LOOT ALARM: Found " & item)
+                                            
+                                            Dim topic As String = cfg.ItemNtfyTopic
+                                            If Not String.IsNullOrWhiteSpace(topic) Then
+                                                Task.Run(Async Function()
+                                                    Try
+                                                        Using client As New System.Net.Http.HttpClient()
+                                                            Dim request As New System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, "https://ntfy.sh/" & Uri.EscapeDataString(topic))
+                                                            request.Content = New System.Net.Http.StringContent("Found important item: " & item)
+                                                            request.Headers.Add("Title", "KathanaBot Loot Finder")
+                                                            Await client.SendAsync(request)
+                                                        End Using
+                                                    Catch ex As Exception
+                                                        RaiseEvent LogLine("Item Ntfy send failed: " & ex.Message)
+                                                    End Try
+                                                End Function)
+                                            End If
+                                            
+                                            Exit For
+                                        End If
+                                    Next
+                                End If
+                            Catch ex As Exception
+                            End Try
+                        End Sub)
+                    End If
+                Catch
+                End Try
+            End If
+
             SavePeriodicSnapshot(frame, now)
             Dim monsterFilterActive As Boolean = (cfg.DeniedMobs IsNot Nothing AndAlso cfg.DeniedMobs.Count > 0)
             Dim targetWindowSignalNoName As Boolean = HasTargetWindowSignal(frame, mobHpRegion, "", mobHpPct)
@@ -2477,6 +2568,12 @@ Public Class BotEngine
         Return blueHue AndAlso blueDominant
     End Function
 
+
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Shared Sub keybd_event(bVk As Byte, bScan As Byte, dwFlags As UInteger, dwExtraInfo As UIntPtr)
+    End Sub
+
     Public Shared Function SendKey(hwnd As IntPtr, keyName As String, pressMs As Integer) As Boolean
         If hwnd = IntPtr.Zero Then
             Return False
@@ -2487,14 +2584,37 @@ Public Class BotEngine
             Return False
         End If
 
-        Dim scan As UInteger = NativeMethods.MapVirtualKey(CUInt(vk), 0UI)
-        Dim lparamDown As Integer = 1 Or (CInt(scan) << 16)
+        ' Use keybd_event for ALT keys as games often use GetAsyncKeyState which ignores PostMessage
+        If vk = &HA4 OrElse vk = &HA5 OrElse vk = &H12 Then
+            Dim scan As Byte = CByte(NativeMethods.MapVirtualKey(CUInt(&H12), 0UI))
+            Dim KEYEVENTF_EXTENDEDKEY As UInteger = &H1
+            Dim KEYEVENTF_KEYUP As UInteger = &H2
+            
+            Dim flagsDown As UInteger = 0
+            Dim flagsUp As UInteger = KEYEVENTF_KEYUP
+            If vk = &HA5 Then ' RMENU
+                flagsDown = flagsDown Or KEYEVENTF_EXTENDEDKEY
+                flagsUp = flagsUp Or KEYEVENTF_EXTENDEDKEY
+            End If
+
+            Try
+                keybd_event(CByte(vk), scan, flagsDown, UIntPtr.Zero)
+                Thread.Sleep(Math.Max(5, pressMs))
+                keybd_event(CByte(vk), scan, flagsUp, UIntPtr.Zero)
+                Return True
+            Catch
+                Return False
+            End Try
+        End If
+
+        Dim scanPost As UInteger = NativeMethods.MapVirtualKey(CUInt(vk), 0UI)
+        Dim lparamDown As Integer = 1 Or (CInt(scanPost) << 16)
         Dim lparamUp As Integer = lparamDown Or (1 << 30) Or (1 << 31)
 
         Try
-            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_KEYDOWN), New IntPtr(vk), New IntPtr(lparamDown))
+            NativeMethods.PostMessage(hwnd, CUInt(&H100), New IntPtr(vk), New IntPtr(lparamDown))
             Thread.Sleep(Math.Max(5, pressMs))
-            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_KEYUP), New IntPtr(vk), New IntPtr(lparamUp))
+            NativeMethods.PostMessage(hwnd, CUInt(&H101), New IntPtr(vk), New IntPtr(lparamUp))
             Return True
         Catch
             Return False
