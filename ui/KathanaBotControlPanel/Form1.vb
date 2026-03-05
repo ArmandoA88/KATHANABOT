@@ -1,4 +1,4 @@
-Imports System.Media
+﻿Imports System.Media
 Imports System.Net.Http
 Imports System.Runtime.InteropServices
 Imports System.Text
@@ -53,7 +53,9 @@ Public Class Form1
     Private btnBypassStuck As Button
     Private btnRetargetNow As Button
     Private btnPartyAutoAccept As Button
-    Private btnPartyAsk As Button
+        Private btnPartyAsk As Button
+    Private btnLootScanner As Button
+    Private txtItemNtfyTopic As TextBox
     Private btnHelp As Button
     Private nudPartyAskSeconds As NumericUpDown
     Private txtPartyAskText As TextBox
@@ -75,7 +77,8 @@ Public Class Form1
     Private _bypassHpMpLimits As Boolean = False
     Private _bypassStuckTarget As Boolean = True
     Private _partyAutoAccept As Boolean = True
-    Private _partyAskEnabled As Boolean = False
+        Private _partyAskEnabled As Boolean = False
+    Private _lootScannerEnabled As Boolean = True
     Private _overlayForm As CalibrationOverlayForm
     Private _autoStarted As Boolean = False
     Private _alarmVolumePercent As Integer = 85
@@ -158,7 +161,9 @@ Public Class Form1
         Public Property PromptAutoAcceptEnabled As Boolean = True
         Public Property AskForPartyEnabled As Boolean = False
         Public Property AskForPartySeconds As Decimal = 30D
-        Public Property AskForPartyText As String = "add"
+            Public Property AskForPartyText As String
+    Public Property LootScannerEnabled As Boolean = True
+    Public Property ItemNtfyTopic As String = "add"
         Public Property MonsterNames As List(Of String) = New List(Of String)()
         Public Property LootNames As List(Of String) = New List(Of String)()
         Public Property CombatActions As List(Of PersistedCombatAction) = New List(Of PersistedCombatAction)()
@@ -499,9 +504,13 @@ Public Class Form1
             End Sub
         layout.Controls.Add(nudAlarmVolume, 1, 2)
 
-        layout.Controls.Add(New Label() With {.Text = "ntfy Channel", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 3)
+        layout.Controls.Add(New Label() With {.Text = "ntfy Channel (Global)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 3)
         txtNtfyTopic = New TextBox() With {.Dock = DockStyle.Fill, .Text = DefaultNtfyTopicName}
         layout.Controls.Add(txtNtfyTopic, 1, 3)
+
+        layout.Controls.Add(New Label() With {.Text = "ntfy Channel (Items)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 4)
+        txtItemNtfyTopic = New TextBox() With {.Dock = DockStyle.Fill, .Text = ""}
+        layout.Controls.Add(txtItemNtfyTopic, 1, 4)
 
         Dim buttonRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
         Dim btnApply As New Button() With {.Text = "Apply To Heal/Mana/Max-HP Rows", .Width = 220, .Height = 30, .BackColor = Color.FromArgb(42, 120, 80), .ForeColor = Color.White}
@@ -513,11 +522,11 @@ Public Class Form1
         buttonRow.Controls.Add(btnApply)
         buttonRow.Controls.Add(btnTestAlarm)
         buttonRow.Controls.Add(btnTestPhone)
-        layout.Controls.Add(buttonRow, 1, 4)
+        layout.Controls.Add(buttonRow, 1, 5)
 
         Dim note As New Label() With {.Text = "Use role 'max_health' in Combat Skills and set TriggerPercent for when the max-health potion should fire first. HP alarm triggers only at HP=0.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
         layout.Controls.Add(note, 2, 0)
-        layout.SetRowSpan(note, 5)
+        layout.SetRowSpan(note, 6)
         group.Controls.Add(layout)
         tab.Controls.Add(group)
         Return tab
@@ -692,9 +701,18 @@ Public Class Form1
             .BackColor = If(_partyAskEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
             .ForeColor = Color.White
         }
+        btnLootScanner = New Button() With {
+            .Text = If(_lootScannerEnabled, "Loot Scanner (Alt): ON", "Loot Scanner (Alt): OFF"),
+            .Top = 662,
+            .Left = 8,
+            .Width = 210,
+            .Height = 38,
+            .BackColor = If(_lootScannerEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
+            .ForeColor = Color.White
+        }
         btnHelp = New Button() With {
             .Text = "Help (EN/ES/FIL)",
-            .Top = 662,
+            .Top = 712,
             .Left = 8,
             .Width = 210,
             .Height = 38,
@@ -708,7 +726,8 @@ Public Class Form1
         AddHandler btnBypassStuck.Click, AddressOf ToggleStuckTargetBypassClicked
         AddHandler btnRetargetNow.Click, AddressOf ManualRetargetClicked
         AddHandler btnPartyAutoAccept.Click, AddressOf TogglePartyAutoAcceptClicked
-        AddHandler btnPartyAsk.Click, AddressOf TogglePartyAskClicked
+                AddHandler btnPartyAsk.Click, AddressOf TogglePartyAskClicked
+        AddHandler btnLootScanner.Click, AddressOf ToggleLootScannerClicked
         AddHandler txtPartyAskText.TextChanged, AddressOf PartyAskTextChanged
         AddHandler btnHelp.Click, AddressOf HelpClicked
         panel.Controls.Add(lblState)
@@ -728,7 +747,8 @@ Public Class Form1
         panel.Controls.Add(nudPartyAskSeconds)
         panel.Controls.Add(lblPartyAskText)
         panel.Controls.Add(txtPartyAskText)
-        panel.Controls.Add(btnPartyAsk)
+                panel.Controls.Add(btnPartyAsk)
+        panel.Controls.Add(btnLootScanner)
         panel.Controls.Add(btnHelp)
         Return panel
     End Function
@@ -1191,10 +1211,18 @@ Public Class Form1
 
     Private Sub TogglePartyAskClicked(sender As Object, e As EventArgs)
         _partyAskEnabled = Not _partyAskEnabled
-        UpdatePartyAskButton()
+        btnPartyAsk.Text = If(_partyAskEnabled, "Auto Ask Party (add): ON", "Auto Ask Party (add): OFF")
+        btnPartyAsk.BackColor = If(_partyAskEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
         PushLiveConfig()
         SavePersistedListState(False)
-        AppendLog(If(_partyAskEnabled, $"Auto ask party command enabled: '{GetPartyAskCommandText()}'.", "Auto ask party command disabled."))
+    End Sub
+
+    Private Sub ToggleLootScannerClicked(sender As Object, e As EventArgs)
+        _lootScannerEnabled = Not _lootScannerEnabled
+        btnLootScanner.Text = If(_lootScannerEnabled, "Loot Scanner (Alt): ON", "Loot Scanner (Alt): OFF")
+        btnLootScanner.BackColor = If(_lootScannerEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+        PushLiveConfig()
+        SavePersistedListState(False)
     End Sub
 
     Private Sub UpdatePartyAskButton()
@@ -1947,7 +1975,9 @@ Public Class Form1
         cfg.PartyAutoAcceptEnabled = _partyAutoAccept
         cfg.PartyAskEnabled = _partyAskEnabled
         cfg.PartyAskIntervalMs = CInt(Math.Round(CDbl(If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D)) * 1000.0))
-        cfg.PartyAskText = GetPartyAskCommandText()
+                cfg.PartyAskText = GetPartyAskCommandText()
+        cfg.LootScannerEnabled = _lootScannerEnabled
+        cfg.ItemNtfyTopic = If(txtItemNtfyTopic IsNot Nothing, txtItemNtfyTopic.Text.Trim(), "")
         cfg.HpBar = BuildRect("hp_bar")
         cfg.MpBar = BuildRect("mp_bar")
         cfg.MobNameRect = BuildRect("mob_name_rect")
@@ -2092,6 +2122,15 @@ Public Class Form1
             End If
             UpdatePartyAskButton()
 
+            _lootScannerEnabled = state.LootScannerEnabled
+            If btnLootScanner IsNot Nothing Then
+                btnLootScanner.Text = If(_lootScannerEnabled, "Loot Scanner (Alt): ON", "Loot Scanner (Alt): OFF")
+                btnLootScanner.BackColor = If(_lootScannerEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+            End If
+            If txtItemNtfyTopic IsNot Nothing Then
+                txtItemNtfyTopic.Text = If(state.ItemNtfyTopic, "").Trim()
+            End If
+
             If state.MonsterNames IsNot Nothing AndAlso lstMonsterFilter IsNot Nothing Then
                 lstMonsterFilter.Items.Clear()
                 For Each entry As String In state.MonsterNames
@@ -2136,7 +2175,9 @@ Public Class Form1
                 .PromptAutoAcceptEnabled = _partyAutoAccept,
                 .AskForPartyEnabled = _partyAskEnabled,
                 .AskForPartySeconds = If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D),
-                .AskForPartyText = GetPartyAskCommandText(),
+                                .AskForPartyText = GetPartyAskCommandText(),
+                .LootScannerEnabled = _lootScannerEnabled,
+                .ItemNtfyTopic = If(txtItemNtfyTopic IsNot Nothing, txtItemNtfyTopic.Text.Trim(), ""),
                 .MonsterNames = GetListBoxItems(lstMonsterFilter),
                 .LootNames = GetListBoxItems(lstLootFilter),
                 .CombatActions = GetPersistedCombatActions()
