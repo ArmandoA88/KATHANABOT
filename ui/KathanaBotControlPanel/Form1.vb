@@ -67,6 +67,7 @@ Public Class Form1
 
     Private nudAutoPotHp As NumericUpDown
     Private nudAutoPotMp As NumericUpDown
+    Private nudLootNameMatchThreshold As NumericUpDown
     Private nudAlarmVolume As NumericUpDown
     Private txtNtfyTopic As TextBox
 
@@ -108,6 +109,7 @@ Public Class Form1
     Private Const DeathNotificationRetryCount As Integer = 3
     Private Const DefaultNtfyTopicName As String = "Katana12345"
     Private Const DefaultPartyAskCommand As String = "add"
+    Private Const DefaultLootNameMatchThresholdPercent As Integer = 80
     Private Shared ReadOnly NtfyClient As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(7)}
     Private Shared ReadOnly PersistDirectoryPath As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel")
     Private Shared ReadOnly PersistFilePath As String = Path.Combine(PersistDirectoryPath, "user_lists.json")
@@ -155,6 +157,7 @@ Public Class Form1
         Public Property MonsterFilterEnabled As Boolean = True
         Public Property LootPickupEnabled As Boolean = False
         Public Property LootPickupSeconds As Decimal = 4D
+        Public Property LootNameMatchThresholdPercent As Decimal = 80D
         Public Property LootRejectPointEnabled As Boolean = False
         Public Property LootRejectPointX As Integer = -1
         Public Property LootRejectPointY As Integer = -1
@@ -236,6 +239,9 @@ Public Class Form1
         AddHandler nudMobHpThreshold.ValueChanged, AddressOf LiveConfigChanged
         AddHandler nudAutoPotHp.ValueChanged, AddressOf LiveConfigChanged
         AddHandler nudAutoPotMp.ValueChanged, AddressOf LiveConfigChanged
+        If nudLootNameMatchThreshold IsNot Nothing Then
+            AddHandler nudLootNameMatchThreshold.ValueChanged, AddressOf LiveConfigChanged
+        End If
         AddHandler nudAlarmVolume.ValueChanged, AddressOf LiveConfigChanged
         AddHandler chkMonsterFilter.CheckedChanged, AddressOf LiveConfigChanged
         AddHandler chkLootPickup.CheckedChanged, AddressOf LiveConfigChanged
@@ -253,6 +259,9 @@ Public Class Form1
         AddHandler chkMonsterFilter.CheckedChanged, AddressOf PersistListSettingsChanged
         AddHandler chkLootPickup.CheckedChanged, AddressOf PersistListSettingsChanged
         AddHandler nudLootPickupSeconds.ValueChanged, AddressOf PersistListSettingsChanged
+        If nudLootNameMatchThreshold IsNot Nothing Then
+            AddHandler nudLootNameMatchThreshold.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
         If nudPartyAskSeconds IsNot Nothing Then
             AddHandler nudPartyAskSeconds.ValueChanged, AddressOf PersistListSettingsChanged
         End If
@@ -475,11 +484,13 @@ Public Class Form1
 
     Private Function BuildAutoPotTab() As TabPage
         Dim tab As New TabPage("Auto-Pot") With {.BackColor = Color.FromArgb(20, 20, 20)}
-        Dim group As New GroupBox() With {.Text = "Quick Pot Thresholds", .Dock = DockStyle.Top, .Height = 260, .Padding = New Padding(10)}
-        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 5}
+        Dim group As New GroupBox() With {.Text = "Quick Pot Thresholds", .Dock = DockStyle.Top, .Height = 300, .Padding = New Padding(10)}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 7}
         layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 170.0F))
         layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 320.0F))
         layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
@@ -512,6 +523,10 @@ Public Class Form1
         txtItemNtfyTopic = New TextBox() With {.Dock = DockStyle.Fill, .Text = ""}
         layout.Controls.Add(txtItemNtfyTopic, 1, 4)
 
+        layout.Controls.Add(New Label() With {.Text = "Loot Name Match %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 5)
+        nudLootNameMatchThreshold = New NumericUpDown() With {.Minimum = 50, .Maximum = 100, .Value = DefaultLootNameMatchThresholdPercent, .Dock = DockStyle.Fill}
+        layout.Controls.Add(nudLootNameMatchThreshold, 1, 5)
+
         Dim buttonRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
         Dim btnApply As New Button() With {.Text = "Apply To Heal/Mana/Max-HP Rows", .Width = 220, .Height = 30, .BackColor = Color.FromArgb(42, 120, 80), .ForeColor = Color.White}
         AddHandler btnApply.Click, Sub(_s As Object, _e As EventArgs) ApplyQuickAutoPotThresholds()
@@ -522,11 +537,11 @@ Public Class Form1
         buttonRow.Controls.Add(btnApply)
         buttonRow.Controls.Add(btnTestAlarm)
         buttonRow.Controls.Add(btnTestPhone)
-        layout.Controls.Add(buttonRow, 1, 5)
+        layout.Controls.Add(buttonRow, 1, 6)
 
-        Dim note As New Label() With {.Text = "Use role 'max_health' in Combat Skills and set TriggerPercent for when the max-health potion should fire first. HP alarm triggers only at HP=0.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        Dim note As New Label() With {.Text = "Loot Name Match % controls fuzzy OCR matching for Loot Filter names (Levenshtein similarity). 80% allows minor OCR mistakes (ex: Destruction vs Defruction); raise for stricter matching, lower for more tolerance. Use role 'max_health' in Combat Skills and set TriggerPercent for when the max-health potion should fire first. HP alarm triggers only at HP=0.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
         layout.Controls.Add(note, 2, 0)
-        layout.SetRowSpan(note, 6)
+        layout.SetRowSpan(note, 7)
         group.Controls.Add(layout)
         tab.Controls.Add(group)
         Return tab
@@ -611,7 +626,7 @@ Public Class Form1
         layout.Controls.Add(lstMonsterFilter, 0, 1)
 
         Dim actionRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
-        txtMonsterName = New TextBox() With {.Width = 140}
+        txtMonsterName = New TextBox() With {.Width = 140, .PlaceholderText = "name1, name2, name3"}
         Dim btnAddMonster As New Button() With {.Text = "Add", .Width = 70}
         Dim btnRemoveMonster As New Button() With {.Text = "Remove", .Width = 80}
         AddHandler btnAddMonster.Click, AddressOf AddMonsterClicked
@@ -645,7 +660,7 @@ Public Class Form1
         layout.Controls.Add(lstLootFilter, 0, 2)
 
         Dim actionRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
-        txtLootName = New TextBox() With {.Width = 140}
+        txtLootName = New TextBox() With {.Width = 140, .PlaceholderText = "item1, item2, item3"}
         Dim btnAddLoot As New Button() With {.Text = "Add", .Width = 70}
         Dim btnRemoveLoot As New Button() With {.Text = "Remove", .Width = 80}
         AddHandler btnAddLoot.Click, AddressOf AddLootClicked
@@ -1317,6 +1332,7 @@ Public Class Form1
             "4) COMBAT TAB - LOOT FILTER",
             "- Loot pickup toggle and interval seconds.",
             "- Add / Remove loot names to allow-list.",
+            "- Loot Name Match % (Auto-Pot tab) sets fuzzy OCR matching threshold for loot names (default 80%).",
             "- Loot reject point can be picked from snapshot to click reject button.",
             "",
             "5) CENTER CONTROL PANEL",
@@ -1392,7 +1408,7 @@ Public Class Form1
             "- OCR based unreachable target detection and forced retarget.",
             "- Party invite / resurrection prompt OCR and auto accept click.",
             "- Party ask command automation with cooldown and in-party suppression.",
-            "- Loot scan, allow-list check, reject handling by click point or fallback key.",
+            "- Loot scan with fuzzy OCR allow-list matching (Loot Name Match %), reject handling by click point or fallback key.",
             "- Periodic snapshot save every ~15 minutes to Pictures/KathanaBot.",
             "- Prana/EXP OCR reading and hourly rate calculation.",
             "",
@@ -1440,6 +1456,7 @@ Public Class Form1
             "4) FILTRO DE LOOT",
             "- Activar loot y definir intervalo en segundos.",
             "- Lista de nombres permitidos para recoger.",
+            "- Loot Name Match % (pestana Auto-Pot) define el umbral de coincidencia OCR difusa para loot (80% por defecto).",
             "- Punto de rechazo de loot configurable desde snapshot.",
             "",
             "5) PANEL CENTRAL",
@@ -1505,7 +1522,7 @@ Public Class Form1
             "- OCR para objetivo inalcanzable y retarget forzado.",
             "- OCR para party/ress y click de auto-aceptar.",
             "- Auto comando add con cooldown y pausa si ya esta en party.",
-            "- Escaneo de loot, validacion de lista, rechazo por click o tecla.",
+            "- Escaneo de loot con coincidencia OCR difusa configurable (Loot Name Match %), rechazo por click o tecla.",
             "- Snapshot periodico cada ~15 minutos.",
             "- Lectura OCR de Prana/EXP y calculo de tasa por hora.",
             "",
@@ -1552,6 +1569,7 @@ Public Class Form1
             "4) LOOT FILTER",
             "- Toggle ng loot pickup at interval in seconds.",
             "- Allowed loot names list.",
+            "- Loot Name Match % (Auto-Pot tab) sets fuzzy OCR match threshold for loot names (default 80%).",
             "- Loot reject point na puwedeng piliin mula sa snapshot image.",
             "",
             "5) CENTER CONTROL PANEL",
@@ -1618,7 +1636,7 @@ Public Class Form1
             "- OCR para sa unreachable text at forced retarget.",
             "- OCR party/ress detection at auto accept click.",
             "- Auto add party command na may cooldown at suppression kapag nasa party na.",
-            "- Loot scan, allow-list check, reject handling (click point/fallback key).",
+            "- Loot scan with configurable fuzzy OCR allow-list matching (Loot Name Match %), reject handling (click point/fallback key).",
             "- Periodic snapshot save bawat ~15 minuto.",
             "- Prana/EXP OCR at hourly rate calculation.",
             "",
@@ -1722,6 +1740,7 @@ Public Class Form1
             $"NtfyTopic: {GetNtfyTopicName()}{Environment.NewLine}" &
             $"LootPickupEnabled: {If(chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked, "True", "False")}{Environment.NewLine}" &
             $"LootPickupIntervalSec: {If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value.ToString(), "4")}{Environment.NewLine}" &
+            $"LootNameMatchThreshold%: {If(nudLootNameMatchThreshold IsNot Nothing, nudLootNameMatchThreshold.Value.ToString(), DefaultLootNameMatchThresholdPercent.ToString())}{Environment.NewLine}" &
             $"LootRejectPoint: {If(_lootRejectPointX >= 0 AndAlso _lootRejectPointY >= 0, _lootRejectPointX.ToString() & "," & _lootRejectPointY.ToString(), "not set")}{Environment.NewLine}" &
             $"AlarmVolume%: {_alarmVolumePercent}{Environment.NewLine}" &
             $"HpZeroAlarm: {_hpZeroAlarmActive}{Environment.NewLine}" &
@@ -1864,17 +1883,34 @@ Public Class Form1
     End Sub
 
     Private Sub AddMonsterClicked(sender As Object, e As EventArgs)
-        Dim name As String = txtMonsterName.Text.Trim()
-        If String.IsNullOrWhiteSpace(name) Then
+        Dim names As List(Of String) = ParseBulkFilterNames(If(txtMonsterName IsNot Nothing, txtMonsterName.Text, ""))
+        If names.Count = 0 Then
             Return
         End If
-        If Not MonsterExists(name) Then
-            lstMonsterFilter.Items.Add(name)
-            AppendLog("Monster filter added: " & name)
+
+        Dim added As New List(Of String)()
+        Dim skipped As New List(Of String)()
+        For Each name As String In names
+            If MonsterExists(name) Then
+                skipped.Add(name)
+            Else
+                lstMonsterFilter.Items.Add(name)
+                added.Add(name)
+            End If
+        Next
+
+        If added.Count > 0 Then
+            AppendLog("Monster filter added: " & String.Join(", ", added))
             PushLiveConfig()
             SavePersistedListState(False)
         End If
-        txtMonsterName.Text = ""
+        If skipped.Count > 0 Then
+            AppendLog("Monster filter skipped (already exists): " & String.Join(", ", skipped))
+        End If
+
+        If txtMonsterName IsNot Nothing Then
+            txtMonsterName.Text = ""
+        End If
     End Sub
 
     Private Sub RemoveMonsterClicked(sender As Object, e As EventArgs)
@@ -1898,17 +1934,34 @@ Public Class Form1
     End Function
 
     Private Sub AddLootClicked(sender As Object, e As EventArgs)
-        Dim name As String = txtLootName.Text.Trim()
-        If String.IsNullOrWhiteSpace(name) Then
+        Dim names As List(Of String) = ParseBulkFilterNames(If(txtLootName IsNot Nothing, txtLootName.Text, ""))
+        If names.Count = 0 Then
             Return
         End If
-        If Not LootExists(name) Then
-            lstLootFilter.Items.Add(name)
-            AppendLog("Loot filter added: " & name)
+
+        Dim added As New List(Of String)()
+        Dim skipped As New List(Of String)()
+        For Each name As String In names
+            If LootExists(name) Then
+                skipped.Add(name)
+            Else
+                lstLootFilter.Items.Add(name)
+                added.Add(name)
+            End If
+        Next
+
+        If added.Count > 0 Then
+            AppendLog("Loot filter added: " & String.Join(", ", added))
             PushLiveConfig()
             SavePersistedListState(False)
         End If
-        txtLootName.Text = ""
+        If skipped.Count > 0 Then
+            AppendLog("Loot filter skipped (already exists): " & String.Join(", ", skipped))
+        End If
+
+        If txtLootName IsNot Nothing Then
+            txtLootName.Text = ""
+        End If
     End Sub
 
     Private Sub RemoveLootClicked(sender As Object, e As EventArgs)
@@ -1929,6 +1982,25 @@ Public Class Form1
             End If
         Next
         Return False
+    End Function
+
+    Private Shared Function ParseBulkFilterNames(rawInput As String) As List(Of String)
+        Dim result As New List(Of String)()
+        Dim seen As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+        If String.IsNullOrWhiteSpace(rawInput) Then
+            Return result
+        End If
+
+        Dim normalized As String = rawInput.Replace(vbCrLf, ",").Replace(vbCr, ",").Replace(vbLf, ",")
+        Dim chunks As String() = normalized.Split({","c}, StringSplitOptions.RemoveEmptyEntries)
+        For Each chunk As String In chunks
+            Dim cleaned As String = chunk.Trim()
+            If cleaned <> "" AndAlso seen.Add(cleaned) Then
+                result.Add(cleaned)
+            End If
+        Next
+
+        Return result
     End Function
 
     Private Sub ApplyQuickAutoPotThresholds(Optional silent As Boolean = False)
@@ -1988,6 +2060,7 @@ Public Class Form1
         cfg.PartyInviteOkRect = BuildRect("party_invite_ok_rect")
         cfg.LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked)
         cfg.LootPickupIntervalMs = CInt(Math.Round(CDbl(If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value, 4D)) * 1000.0))
+        cfg.LootNameMatchThresholdPercent = CInt(If(nudLootNameMatchThreshold IsNot Nothing, nudLootNameMatchThreshold.Value, CDec(DefaultLootNameMatchThresholdPercent)))
         cfg.LootPickupVerifyDelayMs = 80
         cfg.LootRejectClickEnabled = (_lootRejectPointX >= 0 AndAlso _lootRejectPointY >= 0)
         cfg.LootRejectPointX = _lootRejectPointX
@@ -2101,6 +2174,10 @@ Public Class Form1
                 Dim boundedSeconds As Decimal = Math.Max(nudLootPickupSeconds.Minimum, Math.Min(nudLootPickupSeconds.Maximum, state.LootPickupSeconds))
                 nudLootPickupSeconds.Value = boundedSeconds
             End If
+            If nudLootNameMatchThreshold IsNot Nothing Then
+                Dim boundedLootMatch As Decimal = Math.Max(nudLootNameMatchThreshold.Minimum, Math.Min(nudLootNameMatchThreshold.Maximum, state.LootNameMatchThresholdPercent))
+                nudLootNameMatchThreshold.Value = boundedLootMatch
+            End If
             If state.LootRejectPointEnabled Then
                 _lootRejectPointX = Math.Max(0, state.LootRejectPointX)
                 _lootRejectPointY = Math.Max(0, state.LootRejectPointY)
@@ -2169,6 +2246,7 @@ Public Class Form1
                 .MonsterFilterEnabled = (chkMonsterFilter IsNot Nothing AndAlso chkMonsterFilter.Checked),
                 .LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked),
                 .LootPickupSeconds = If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value, 4D),
+                .LootNameMatchThresholdPercent = If(nudLootNameMatchThreshold IsNot Nothing, nudLootNameMatchThreshold.Value, CDec(DefaultLootNameMatchThresholdPercent)),
                 .LootRejectPointEnabled = (_lootRejectPointX >= 0 AndAlso _lootRejectPointY >= 0),
                 .LootRejectPointX = _lootRejectPointX,
                 .LootRejectPointY = _lootRejectPointY,

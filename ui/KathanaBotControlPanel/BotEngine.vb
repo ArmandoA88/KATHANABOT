@@ -70,6 +70,7 @@ Public Class BotConfig
     Public Property LootRejectPointX As Integer = -1
     Public Property LootRejectPointY As Integer = -1
     Public Property LootAllowedNames As List(Of String) = New List(Of String)()
+    Public Property LootNameMatchThresholdPercent As Integer = 80
     Public Property PartyAutoAcceptEnabled As Boolean = True
     Public Property PartyAskEnabled As Boolean = False
     Public Property PartyAskIntervalMs As Integer = 30000
@@ -545,41 +546,37 @@ Public Class BotEngine
                     RaiseEvent LogLine("Auto right-alt scan (400ms).")
                     
                     If altFrame IsNot Nothing Then
-                        Dim allowedNames As List(Of String) = cfg.LootAllowedNames
+                        Dim allowedNames As List(Of String) = If(cfg.LootAllowedNames, New List(Of String)()).ToList()
+                        Dim lootMatchThresholdPercent As Integer = ClampLootMatchThresholdPercent(cfg.LootNameMatchThresholdPercent)
                         Task.Run(Sub()
                             Try
                                 Dim ocrText As String = OcrReader.ReadScreenText(altFrame)
                                 altFrame.Dispose()
                                 
                                 If Not String.IsNullOrWhiteSpace(ocrText) AndAlso allowedNames IsNot Nothing Then
-                                    Dim normOcr As String = ocrText.ToLowerInvariant()
-                                    For Each item As String In allowedNames
-                                        Dim normItem As String = item.ToLowerInvariant().Trim()
-                                        If normItem <> "" AndAlso normOcr.Contains(normItem) Then
-                                            System.Media.SystemSounds.Exclamation.Play()
-                                            Console.Beep(800, 1000)
-                                            Console.Beep(800, 1000)
-                                            RaiseEvent LogLine("LOOT ALARM: Found " & item)
-                                            
-                                            Dim topic As String = cfg.ItemNtfyTopic
-                                            If Not String.IsNullOrWhiteSpace(topic) Then
-                                                Task.Run(Async Function()
-                                                    Try
-                                                        Using client As New System.Net.Http.HttpClient()
-                                                            Dim request As New System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, "https://ntfy.sh/" & Uri.EscapeDataString(topic))
-                                                            request.Content = New System.Net.Http.StringContent("Found important item: " & item)
-                                                            request.Headers.Add("Title", "KathanaBot Loot Finder")
-                                                            Await client.SendAsync(request)
-                                                        End Using
-                                                    Catch ex As Exception
-                                                        RaiseEvent LogLine("Item Ntfy send failed: " & ex.Message)
-                                                    End Try
-                                                End Function)
-                                            End If
-                                            
-                                            Exit For
+                                    Dim matchedItem As String = ""
+                                    If TryFindAllowedLootMatch(ocrText, allowedNames, lootMatchThresholdPercent, matchedItem) Then
+                                        System.Media.SystemSounds.Exclamation.Play()
+                                        Console.Beep(800, 1000)
+                                        Console.Beep(800, 1000)
+                                        RaiseEvent LogLine($"LOOT ALARM: Found {matchedItem} (fuzzy {lootMatchThresholdPercent}%).")
+
+                                        Dim topic As String = cfg.ItemNtfyTopic
+                                        If Not String.IsNullOrWhiteSpace(topic) Then
+                                            Task.Run(Async Function()
+                                                Try
+                                                    Using client As New System.Net.Http.HttpClient()
+                                                        Dim request As New System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, "https://ntfy.sh/" & Uri.EscapeDataString(topic))
+                                                        request.Content = New System.Net.Http.StringContent("Found important item: " & matchedItem)
+                                                        request.Headers.Add("Title", "KathanaBot Loot Finder")
+                                                        Await client.SendAsync(request)
+                                                    End Using
+                                                Catch ex As Exception
+                                                    RaiseEvent LogLine("Item Ntfy send failed: " & ex.Message)
+                                                End Try
+                                            End Function)
                                         End If
-                                    Next
+                                    End If
                                 End If
                             Catch ex As Exception
                             End Try
@@ -1007,7 +1004,7 @@ Public Class BotEngine
             ResolveVisionRegions(cfg, verifyFrame.Width, verifyFrame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, partyInviteScanRegion, partyInviteOkRegion)
 
             Dim selectedName As String = ReadMobNameIfNeeded(verifyFrame, mobNameRegion, DateTime.UtcNow, True)
-            If IsAllowedLootName(selectedName, cfg.LootAllowedNames) Then
+            If IsAllowedLootName(selectedName, cfg.LootAllowedNames, cfg.LootNameMatchThresholdPercent) Then
                 SetLastAction($"F (loot accepted: {If(String.IsNullOrWhiteSpace(selectedName), "unknown", selectedName)})")
                 Thread.Sleep(700)
                 Return
@@ -1717,36 +1714,134 @@ Public Class BotEngine
         Return d(n, m)
     End Function
 
-    Private Shared Function IsAllowedLootName(rawName As String, allowList As List(Of String)) As Boolean
-        If String.IsNullOrWhiteSpace(rawName) OrElse allowList Is Nothing OrElse allowList.Count = 0 Then
+    Private Shared Function ClampLootMatchThresholdPercent(value As Integer) As Integer
+        Return Math.Max(50, Math.Min(100, value))
+    End Function
+
+    Private Shared Function IsAllowedLootName(rawName As String, allowList As List(Of String), thresholdPercent As Integer) As Boolean
+        Dim matchedAllowedName As String = ""
+        Return TryFindAllowedLootMatch(rawName, allowList, thresholdPercent, matchedAllowedName)
+    End Function
+
+    Private Shared Function TryFindAllowedLootMatch(rawObservedText As String, allowList As List(Of String), thresholdPercent As Integer, ByRef matchedAllowedName As String) As Boolean
+        matchedAllowedName = ""
+        If String.IsNullOrWhiteSpace(rawObservedText) OrElse allowList Is Nothing OrElse allowList.Count = 0 Then
             Return False
         End If
 
-        Dim normName As String = NormalizeMobName(rawName)
-        If normName = "" Then
+        Dim candidates As List(Of String) = BuildLootMatchCandidates(rawObservedText)
+        If candidates.Count = 0 Then
             Return False
         End If
 
-        For Each entry In allowList
-            Dim normAllowed As String = NormalizeMobName(entry)
+        Dim threshold As Double = ClampLootMatchThresholdPercent(thresholdPercent) / 100.0
+        For Each entry As String In allowList
+            Dim originalAllowed As String = If(entry, "").Trim()
+            Dim normAllowed As String = NormalizeMobName(originalAllowed)
             If normAllowed = "" Then
                 Continue For
             End If
-            If normName.Equals(normAllowed, StringComparison.OrdinalIgnoreCase) Then
-                Return True
-            End If
-            If normName.Contains(normAllowed, StringComparison.OrdinalIgnoreCase) Then
-                Return True
-            End If
-            If normAllowed.Contains(normName, StringComparison.OrdinalIgnoreCase) Then
-                Return True
-            End If
-            If AreTextsClose(normName, normAllowed) Then
-                Return True
-            End If
+
+            For Each candidate As String In candidates
+                Dim score As Double = GetLootMatchScore(candidate, normAllowed)
+                If score >= threshold Then
+                    matchedAllowedName = If(originalAllowed = "", normAllowed, originalAllowed)
+                    Return True
+                End If
+            Next
         Next
 
         Return False
+    End Function
+
+    Private Shared Function BuildLootMatchCandidates(rawObservedText As String) As List(Of String)
+        Dim candidates As New List(Of String)()
+        If String.IsNullOrWhiteSpace(rawObservedText) Then
+            Return candidates
+        End If
+
+        Dim normFull As String = NormalizeMobName(rawObservedText)
+        If normFull <> "" Then
+            candidates.Add(normFull)
+        End If
+
+        Dim lines As String() = rawObservedText.Replace(vbCrLf, vbLf).Replace(vbCr, vbLf).Split({vbLf}, StringSplitOptions.RemoveEmptyEntries)
+        For Each rawLine As String In lines
+            Dim normLine As String = NormalizeMobName(rawLine)
+            If normLine = "" Then
+                Continue For
+            End If
+            If Not candidates.Contains(normLine, StringComparer.OrdinalIgnoreCase) Then
+                candidates.Add(normLine)
+            End If
+        Next
+
+        Return candidates
+    End Function
+
+    Private Shared Function GetLootMatchScore(normObserved As String, normAllowed As String) As Double
+        If String.IsNullOrWhiteSpace(normObserved) OrElse String.IsNullOrWhiteSpace(normAllowed) Then
+            Return 0.0
+        End If
+
+        Dim compactObserved As String = ToCompactLootText(normObserved)
+        Dim compactAllowed As String = ToCompactLootText(normAllowed)
+        If compactObserved = "" OrElse compactAllowed = "" Then
+            Return 0.0
+        End If
+
+        If compactObserved = compactAllowed Then
+            Return 1.0
+        End If
+
+        Dim bestScore As Double = CalculateCompactSimilarity(compactObserved, compactAllowed)
+        If compactObserved.Contains(compactAllowed, StringComparison.Ordinal) OrElse compactAllowed.Contains(compactObserved, StringComparison.Ordinal) Then
+            Dim coverage As Double = Math.Min(compactObserved.Length, compactAllowed.Length) / Math.Max(1.0, CDbl(Math.Max(compactObserved.Length, compactAllowed.Length)))
+            bestScore = Math.Max(bestScore, coverage)
+        End If
+
+        Dim observedTokens As String() = normObserved.Split({" "c}, StringSplitOptions.RemoveEmptyEntries)
+        Dim allowedTokens As String() = normAllowed.Split({" "c}, StringSplitOptions.RemoveEmptyEntries)
+        If observedTokens.Length = 0 OrElse allowedTokens.Length = 0 Then
+            Return bestScore
+        End If
+
+        Dim minWindow As Integer = Math.Max(1, allowedTokens.Length - 1)
+        Dim maxWindow As Integer = Math.Min(observedTokens.Length, allowedTokens.Length + 1)
+        For windowLen As Integer = minWindow To maxWindow
+            For start As Integer = 0 To observedTokens.Length - windowLen
+                Dim window As String = String.Join(" ", observedTokens.Skip(start).Take(windowLen))
+                Dim windowCompact As String = ToCompactLootText(window)
+                If windowCompact = "" Then
+                    Continue For
+                End If
+                bestScore = Math.Max(bestScore, CalculateCompactSimilarity(windowCompact, compactAllowed))
+                If bestScore >= 0.999 Then
+                    Return 1.0
+                End If
+            Next
+        Next
+
+        Return bestScore
+    End Function
+
+    Private Shared Function ToCompactLootText(value As String) As String
+        If String.IsNullOrWhiteSpace(value) Then
+            Return ""
+        End If
+        Return Regex.Replace(value.ToLowerInvariant(), "[^a-z0-9]", "")
+    End Function
+
+    Private Shared Function CalculateCompactSimilarity(compactA As String, compactB As String) As Double
+        If String.IsNullOrWhiteSpace(compactA) OrElse String.IsNullOrWhiteSpace(compactB) Then
+            Return 0.0
+        End If
+        If compactA.Equals(compactB, StringComparison.Ordinal) Then
+            Return 1.0
+        End If
+        Dim distance As Integer = LevenshteinDistance(compactA, compactB)
+        Dim maxLen As Integer = Math.Max(compactA.Length, compactB.Length)
+        Return 1.0 - (distance / Math.Max(1.0, CDbl(maxLen)))
     End Function
 
     Private Shared Function NormalizeMobName(raw As String) As String
