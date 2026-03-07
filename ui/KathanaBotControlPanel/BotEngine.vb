@@ -66,6 +66,8 @@ Public Class BotConfig
     Public Property LoopMs As Integer = 80
     Public Property RetargetMs As Integer = 550
     Public Property MobHpPresenceThreshold As Double = 1.0
+    Public Property HighMaxHpSpecialEnabled As Boolean = False
+    Public Property HighMaxHpThreshold As Integer = 2000
     Public Property HpBar As RectRegion = New RectRegion(11, 25, 151, 11)
     Public Property MpBar As RectRegion = New RectRegion(3, 40, 161, 11)
     Public Property MobNameRect As RectRegion = New RectRegion(860, 711, 162, 23)
@@ -150,6 +152,8 @@ Public Class BotStatus
     Public Property HpPercent As Double
     Public Property MpPercent As Double
     Public Property MobHpPercent As Double
+    Public Property MobMaxHp As Integer = -1
+    Public Property MobHpText As String = ""
     Public Property ExpPercent As Double
     Public Property ExpPerHour As Double = -1
     Public Property MobName As String = ""
@@ -264,6 +268,7 @@ Public Class BotEngine
     Private Const TargetNameConfirmRequiredCount As Integer = 2
     Private Const ExpRateSampleMs As Integer = 60000
     Private Const ExpOcrMinIntervalMs As Integer = 900
+    Private Const MobHpTextOcrMinIntervalMs As Integer = 450
     Private Const PartyInviteOcrMinIntervalMs As Integer = 900
     Private Const UnreachableOcrMinIntervalMs As Integer = 260
     Private Const UnreachableConfirmWindowMs As Integer = 900
@@ -285,6 +290,10 @@ Public Class BotEngine
     Private _lastMobHpMovement As DateTime = DateTime.MinValue
     Private _lastMobNameRead As DateTime = DateTime.MinValue
     Private _cachedMobName As String = ""
+    Private _lastMobHpTextScan As DateTime = DateTime.MinValue
+    Private _mobHpTextOcrTask As Task(Of String) = Nothing
+    Private _lastMobHpText As String = ""
+    Private _lastMobDetectedMaxHp As Integer = -1
     Private _lastPeriodicSnapshot As DateTime = DateTime.MinValue
     Private _lastLootPickup As DateTime = DateTime.MinValue
     Private _firstHitPending As Boolean = False
@@ -389,6 +398,10 @@ Public Class BotEngine
             _lastMobHpMovement = DateTime.MinValue
             _lastMobNameRead = DateTime.MinValue
             _cachedMobName = ""
+            _lastMobHpTextScan = DateTime.MinValue
+            _mobHpTextOcrTask = Nothing
+            _lastMobHpText = ""
+            _lastMobDetectedMaxHp = -1
             _lastPeriodicSnapshot = DateTime.MinValue
             _lastLootPickup = DateTime.MinValue
             _firstHitPending = False
@@ -488,6 +501,8 @@ Public Class BotEngine
                               s.HpPercent = 0
                               s.MpPercent = 0
                               s.MobHpPercent = 0
+                              s.MobMaxHp = -1
+                              s.MobHpText = ""
                               s.ExpPercent = 0
                               s.ExpPerHour = -1
                               s.MobName = ""
@@ -503,6 +518,8 @@ Public Class BotEngine
             If frame Is Nothing Then
                 SetStatus(Sub(s)
                               s.WindowFound = True
+                              s.MobMaxHp = -1
+                              s.MobHpText = ""
                               s.NotAttackingReason = "Capture failed."
                               s.ErrorMessage = "Unable to capture game client."
                           End Sub)
@@ -651,6 +668,12 @@ Public Class BotEngine
             ApplyVisionStabilityFilter(hpPct, mpPct, mobHpPct, mobName, captureGlitch)
             Dim expPerHour As Double = UpdateExpRate(expPct, now)
             Dim targetWindowVisible As Boolean = HasTargetWindowSignal(frame, mobHpRegion, mobName, mobHpPct)
+            Dim hasHighMaxHpAction As Boolean = HasHighMaxHpAttackAction(cfg)
+            Dim mobMaxHp As Integer = UpdateMobMaxHpTracking(cfg, frame, mobHpRegion, targetWindowVisible, mobHpPct, now)
+            Dim highMaxHpAttackActive As Boolean =
+                cfg.HighMaxHpSpecialEnabled AndAlso
+                hasHighMaxHpAction AndAlso
+                mobMaxHp >= Math.Max(1, cfg.HighMaxHpThreshold)
             If targetWindowVisible Then
                 _lastTargetWindowSeen = now
                 _noTargetBeganAt = DateTime.MinValue
@@ -772,13 +795,13 @@ Public Class BotEngine
 
                 ' Support keys can fire without blocking attack/special in the same loop.
                 Dim allowBlindAttack As Boolean = AllowBlindAttackWhenTargetMissing AndAlso (Not deniedTarget)
-                Dim chosen As ActionRule = ChooseAction(cfg, hpPct, mpPct, targetValid, allowBlindAttack, reason)
+                Dim chosen As ActionRule = ChooseAction(cfg, hpPct, mpPct, targetValid, allowBlindAttack, highMaxHpAttackActive, reason)
                 If chosen IsNot Nothing AndAlso SendKey(hwnd, chosen.KeyName, 35) Then
                     MarkKeyUsed(chosen.KeyName)
                     SetLastAction($"{chosen.KeyName} ({chosen.Role})")
                     actionSent = True
                     reason = ""
-                    If chosen.Role = "attack" OrElse chosen.Role = "special" Then
+                    If chosen.Role = "attack" OrElse chosen.Role = "special" OrElse chosen.Role = "high_max_hp" Then
                         _lastAttackAction = now
                         _firstHitPending = False
                         _firstHitWindowUntil = DateTime.MinValue
@@ -855,6 +878,8 @@ Public Class BotEngine
                           s.HpPercent = Math.Round(hpPct, 1)
                           s.MpPercent = Math.Round(mpPct, 1)
                           s.MobHpPercent = Math.Round(mobHpPct, 1)
+                          s.MobMaxHp = mobMaxHp
+                          s.MobHpText = _lastMobHpText
                           s.ExpPercent = Math.Round(Math.Max(0, If(expPct < 0, 0, expPct)), 2)
                           s.ExpPerHour = If(expPerHour < 0, -1, Math.Round(expPerHour, 2))
                           s.MobName = mobName
@@ -1105,6 +1130,124 @@ Public Class BotEngine
         Finally
             crop.Dispose()
         End Try
+    End Function
+
+    Private Shared Function HasHighMaxHpAttackAction(cfg As BotConfig) As Boolean
+        Return cfg IsNot Nothing AndAlso
+            cfg.Actions IsNot Nothing AndAlso
+            cfg.Actions.Any(Function(a) a IsNot Nothing AndAlso a.Enabled AndAlso a.Role = "high_max_hp")
+    End Function
+
+    Private Function UpdateMobMaxHpTracking(cfg As BotConfig, frame As Bitmap, region As RectRegion, targetWindowVisible As Boolean, mobHpPercent As Double, now As DateTime) As Integer
+        If _mobHpTextOcrTask IsNot Nothing AndAlso _mobHpTextOcrTask.IsCompleted Then
+            Try
+                _lastMobHpText = NormalizeMobHpText(If(_mobHpTextOcrTask.Result, "").Trim())
+                _lastMobDetectedMaxHp = ParseMobMaxHpFromText(_lastMobHpText)
+            Catch
+                _lastMobHpText = ""
+                _lastMobDetectedMaxHp = -1
+            End Try
+            _mobHpTextOcrTask = Nothing
+        End If
+
+        Dim canTrack As Boolean =
+            frame IsNot Nothing AndAlso
+            targetWindowVisible AndAlso
+            mobHpPercent >= Math.Max(0.6, cfg.MobHpPresenceThreshold * 0.7)
+
+        If Not canTrack Then
+            If _mobHpTextOcrTask Is Nothing Then
+                _lastMobHpText = ""
+                _lastMobDetectedMaxHp = -1
+            End If
+            Return _lastMobDetectedMaxHp
+        End If
+
+        If _mobHpTextOcrTask IsNot Nothing Then
+            Return _lastMobDetectedMaxHp
+        End If
+
+        If _lastMobHpTextScan <> DateTime.MinValue AndAlso (now - _lastMobHpTextScan).TotalMilliseconds < MobHpTextOcrMinIntervalMs Then
+            Return _lastMobDetectedMaxHp
+        End If
+
+        Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
+        Dim paddedRect As Rectangle = Rectangle.FromLTRB(
+            Math.Max(0, rect.Left - 2),
+            Math.Max(0, rect.Top - 8),
+            Math.Min(frame.Width, rect.Right + 2),
+            Math.Min(frame.Height, rect.Bottom + 8))
+        If paddedRect.Width <= 1 OrElse paddedRect.Height <= 1 Then
+            Return _lastMobDetectedMaxHp
+        End If
+
+        Dim crop As New Bitmap(Math.Max(1, paddedRect.Width), Math.Max(1, paddedRect.Height), PixelFormat.Format24bppRgb)
+        Try
+            Using g As Graphics = Graphics.FromImage(crop)
+                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), paddedRect, GraphicsUnit.Pixel)
+            End Using
+
+            Dim workerCrop As Bitmap = DirectCast(crop.Clone(), Bitmap)
+            _lastMobHpTextScan = now
+            _mobHpTextOcrTask = Task.Run(
+                Function()
+                    Using workerCrop
+                        Return OcrReader.ReadHpFraction(workerCrop)
+                    End Using
+                End Function)
+        Finally
+            crop.Dispose()
+        End Try
+
+        Return _lastMobDetectedMaxHp
+    End Function
+
+    Private Shared Function ParseMobMaxHpFromText(raw As String) As Integer
+        If String.IsNullOrWhiteSpace(raw) Then
+            Return -1
+        End If
+
+        Dim normalized As String = NormalizeMobHpText(raw)
+        If normalized = "" Then
+            Return -1
+        End If
+
+        Dim fractionMatch As Match = Regex.Match(normalized, "(\d{2,9})\s*/\s*(\d{2,9})")
+        If fractionMatch.Success Then
+            Dim maxValue As Integer
+            If Integer.TryParse(fractionMatch.Groups(2).Value, maxValue) AndAlso maxValue > 0 Then
+                Return maxValue
+            End If
+        End If
+
+        Dim numbers As List(Of Integer) = Regex.Matches(normalized, "\d{2,9}").
+            Cast(Of Match)().
+            Select(Function(m)
+                       Dim value As Integer = -1
+                       Integer.TryParse(m.Value, value)
+                       Return value
+                   End Function).
+            Where(Function(v) v > 0).
+            ToList()
+        If numbers.Count >= 2 Then
+            Return numbers.Max()
+        End If
+
+        Return -1
+    End Function
+
+    Private Shared Function NormalizeMobHpText(raw As String) As String
+        If String.IsNullOrWhiteSpace(raw) Then
+            Return ""
+        End If
+
+        Dim normalized As String = raw.ToUpperInvariant()
+        normalized = normalized.Replace("O", "0").Replace("I", "1").Replace("L", "1").Replace("|", "1")
+        normalized = normalized.Replace(",", "").Replace(".", "")
+        normalized = Regex.Replace(normalized, "[^0-9/ ]", " ")
+        normalized = Regex.Replace(normalized, "/{2,}", "/")
+        normalized = Regex.Replace(normalized, "\s+", " ").Trim()
+        Return normalized
     End Function
 
     Private Sub TryHandleLootPickup(cfg As BotConfig, hwnd As IntPtr, now As DateTime, actionSent As Boolean)
@@ -2212,7 +2355,7 @@ Public Class BotEngine
         Return False
     End Function
 
-    Private Function ChooseAction(cfg As BotConfig, hpPercent As Double, mpPercent As Double, targetValid As Boolean, allowBlindAttack As Boolean, ByRef reason As String) As ActionRule
+    Private Function ChooseAction(cfg As BotConfig, hpPercent As Double, mpPercent As Double, targetValid As Boolean, allowBlindAttack As Boolean, highMaxHpAttackActive As Boolean, ByRef reason As String) As ActionRule
         Dim ordered = cfg.Actions.Where(Function(a) a.Enabled).OrderBy(Function(a) a.Priority).ToList()
         If ordered.Count = 0 Then
             reason = "No enabled keys."
@@ -2224,7 +2367,11 @@ Public Class BotEngine
         Dim cooldownBlocked As Boolean = False
 
         For Each action In ordered
-            If action.Role <> "attack" AndAlso action.Role <> "special" Then
+            Dim isAttackLike As Boolean =
+                action.Role = "attack" OrElse
+                action.Role = "special" OrElse
+                (action.Role = "high_max_hp" AndAlso highMaxHpAttackActive)
+            If Not isAttackLike Then
                 Continue For
             End If
             hasAttackKey = True
@@ -2246,7 +2393,7 @@ Public Class BotEngine
         Next
 
         If Not hasAttackKey Then
-            reason = "No enabled attack/special keys."
+            reason = "No enabled attack/special/high_max_hp keys."
         ElseIf Not targetValid AndAlso Not allowBlindAttack Then
             reason = "No target detected."
         ElseIf statBlocked AndAlso (Not cfg.BypassHpMpLimits) Then
@@ -2303,6 +2450,8 @@ Public Class BotEngine
             .HpPercent = src.HpPercent,
             .MpPercent = src.MpPercent,
             .MobHpPercent = src.MobHpPercent,
+            .MobMaxHp = src.MobMaxHp,
+            .MobHpText = src.MobHpText,
             .ExpPercent = src.ExpPercent,
             .ExpPerHour = src.ExpPerHour,
             .MobName = src.MobName,

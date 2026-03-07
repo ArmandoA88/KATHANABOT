@@ -57,7 +57,24 @@ Public NotInheritable Class OcrReader
         Return ReadPercentStaFallback(source)
     End Function
 
-        Public Shared Function ReadScreenText(source As Bitmap) As String
+    Public Shared Function ReadHpFraction(source As Bitmap) As String
+        If source Is Nothing Then
+            Return ""
+        End If
+
+        Dim direct As String = ""
+        Try
+            direct = ReadHpFractionInternal(source)
+            If Not String.IsNullOrWhiteSpace(direct) Then
+                Return direct
+            End If
+        Catch
+        End Try
+
+        Return ReadHpFractionStaFallback(source)
+    End Function
+
+    Public Shared Function ReadScreenText(source As Bitmap) As String
         If source Is Nothing Then
             Return ""
         End If
@@ -72,6 +89,31 @@ Public NotInheritable Class OcrReader
         End Try
 
         Return ReadScreenTextStaFallback(source)
+    End Function
+
+    Private Shared Function ReadHpFractionStaFallback(source As Bitmap) As String
+        Dim output As String = ""
+        Dim done As New ManualResetEventSlim(False)
+
+        Dim worker As New Thread(
+            Sub()
+                Try
+                    output = ReadHpFractionInternal(source)
+                Catch ex As Exception
+                    SetLastError(ex.Message)
+                Finally
+                    done.Set()
+                End Try
+            End Sub)
+        worker.IsBackground = True
+        worker.SetApartmentState(ApartmentState.STA)
+        worker.Start()
+
+        If Not done.Wait(900) Then
+            SetLastError("OCR timeout.")
+            Return ""
+        End If
+        Return output
     End Function
 
     Private Shared Function ReadScreenTextStaFallback(source As Bitmap) As String
@@ -229,6 +271,37 @@ Public NotInheritable Class OcrReader
         Return bestPercent
     End Function
 
+    Private Shared Function ReadHpFractionInternal(source As Bitmap) As String
+        Dim engine = GetEngine()
+        If engine Is Nothing Then
+            Return ""
+        End If
+
+        Dim candidates As List(Of Bitmap) = BuildHpFractionCandidates(source)
+        Dim bestText As String = ""
+        Dim bestScore As Integer = -1
+
+        Try
+            For Each candidate In candidates
+                Dim text As String = NormalizeHpFractionText(ReadRawTextAsync(engine, candidate).GetAwaiter().GetResult())
+                Dim score As Integer = ScoreHpFractionText(text)
+                If score > bestScore Then
+                    bestScore = score
+                    bestText = text
+                End If
+                If score >= 60 Then
+                    Exit For
+                End If
+            Next
+        Finally
+            For Each candidate In candidates
+                candidate.Dispose()
+            Next
+        End Try
+
+        Return bestText
+    End Function
+
     Private Shared Async Function ReadNameAsync(engine As OcrEngine, prepared As Bitmap) As Task(Of String)
         Dim soft As SoftwareBitmap = Await ConvertBitmapAsync(prepared)
         If soft Is Nothing Then
@@ -306,6 +379,18 @@ Public NotInheritable Class OcrReader
         Return list
     End Function
 
+    Private Shared Function BuildHpFractionCandidates(source As Bitmap) As List(Of Bitmap)
+        Dim list As New List(Of Bitmap)()
+        Dim baseScaled As Bitmap = ScaleBitmap(source, 5)
+        Dim whiteDigits As Bitmap = IsolateWhiteDigits(baseScaled)
+        list.Add(baseScaled)
+        list.Add(ToGrayHighContrast(baseScaled))
+        list.Add(whiteDigits)
+        list.Add(ToBinary(whiteDigits, 120, False))
+        list.Add(ToBinary(baseScaled, 165, False))
+        Return list
+    End Function
+
     Private Shared Function ScaleBitmap(source As Bitmap, scale As Integer) As Bitmap
         Dim w As Integer = Math.Max(1, source.Width * scale)
         Dim h As Integer = Math.Max(1, source.Height * scale)
@@ -368,6 +453,20 @@ Public NotInheritable Class OcrReader
         Return outBmp
     End Function
 
+    Private Shared Function IsolateWhiteDigits(source As Bitmap) As Bitmap
+        Dim outBmp As New Bitmap(source.Width, source.Height, PixelFormat.Format24bppRgb)
+        For y As Integer = 0 To source.Height - 1
+            For x As Integer = 0 To source.Width - 1
+                Dim c As Color = source.GetPixel(x, y)
+                Dim maxChannel As Integer = Math.Max(c.R, Math.Max(c.G, c.B))
+                Dim minChannel As Integer = Math.Min(c.R, Math.Min(c.G, c.B))
+                Dim isNearWhite As Boolean = maxChannel >= 165 AndAlso (maxChannel - minChannel) <= 65
+                outBmp.SetPixel(x, y, If(isNearWhite, Color.White, Color.Black))
+            Next
+        Next
+        Return outBmp
+    End Function
+
     Private Shared Function ScoreText(text As String) As Integer
         If String.IsNullOrWhiteSpace(text) Then
             Return -1
@@ -395,6 +494,41 @@ Public NotInheritable Class OcrReader
         End If
         If value >= 0 AndAlso value <= 100 Then
             score += 30
+        End If
+        Return score
+    End Function
+
+    Private Shared Function NormalizeHpFractionText(raw As String) As String
+        If String.IsNullOrWhiteSpace(raw) Then
+            Return ""
+        End If
+
+        Dim normalized As String = raw.ToUpperInvariant()
+        normalized = normalized.Replace("O", "0").Replace("I", "1").Replace("L", "1").Replace("|", "1")
+        normalized = normalized.Replace(",", "").Replace(".", "")
+        normalized = Regex.Replace(normalized, "[^0-9/ ]", " ")
+        normalized = Regex.Replace(normalized, "/{2,}", "/")
+        normalized = Regex.Replace(normalized, "\s+", " ").Trim()
+
+        Dim fractionMatch As Match = Regex.Match(normalized, "(\d{2,9})\s*/\s*(\d{2,9})")
+        If fractionMatch.Success Then
+            Return $"{fractionMatch.Groups(1).Value}/{fractionMatch.Groups(2).Value}"
+        End If
+
+        Return normalized
+    End Function
+
+    Private Shared Function ScoreHpFractionText(text As String) As Integer
+        If String.IsNullOrWhiteSpace(text) Then
+            Return -1
+        End If
+
+        Dim score As Integer = Regex.Matches(text, "\d").Count * 4
+        If text.Contains("/"c) Then
+            score += 18
+        End If
+        If Regex.IsMatch(text, "^\d{2,9}/\d{2,9}$") Then
+            score += 40
         End If
         Return score
     End Function

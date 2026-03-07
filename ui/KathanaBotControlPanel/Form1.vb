@@ -22,6 +22,8 @@ Public Class Form1
     Private nudLoopMs As NumericUpDown
     Private nudRetargetMs As NumericUpDown
     Private nudMobHpThreshold As NumericUpDown
+    Private chkHighMaxHpSpecial As CheckBox
+    Private nudHighMaxHpThreshold As NumericUpDown
     Private lstProcessWindows As ListBox
     Private txtProcessRename As TextBox
     Private btnOverlayToggle As Button
@@ -253,6 +255,12 @@ Public Class Form1
         AddHandler nudLoopMs.ValueChanged, AddressOf LiveConfigChanged
         AddHandler nudRetargetMs.ValueChanged, AddressOf LiveConfigChanged
         AddHandler nudMobHpThreshold.ValueChanged, AddressOf LiveConfigChanged
+        If chkHighMaxHpSpecial IsNot Nothing Then
+            AddHandler chkHighMaxHpSpecial.CheckedChanged, AddressOf LiveConfigChanged
+        End If
+        If nudHighMaxHpThreshold IsNot Nothing Then
+            AddHandler nudHighMaxHpThreshold.ValueChanged, AddressOf LiveConfigChanged
+        End If
         AddHandler nudAutoPotHp.ValueChanged, AddressOf LiveConfigChanged
         AddHandler nudAutoPotMp.ValueChanged, AddressOf LiveConfigChanged
         If nudStuckTargetMs IsNot Nothing Then
@@ -278,6 +286,12 @@ Public Class Form1
         AddHandler chkMonsterFilter.CheckedChanged, AddressOf PersistListSettingsChanged
         AddHandler chkLootPickup.CheckedChanged, AddressOf PersistListSettingsChanged
         AddHandler nudLootPickupSeconds.ValueChanged, AddressOf PersistListSettingsChanged
+        If chkHighMaxHpSpecial IsNot Nothing Then
+            AddHandler chkHighMaxHpSpecial.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudHighMaxHpThreshold IsNot Nothing Then
+            AddHandler nudHighMaxHpThreshold.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
         If nudStuckTargetMs IsNot Nothing Then
             AddHandler nudStuckTargetMs.ValueChanged, AddressOf PersistListSettingsChanged
         End If
@@ -382,11 +396,11 @@ Public Class Form1
         tab.Controls.Add(root)
 
         Dim left As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
-        left.RowStyles.Add(New RowStyle(SizeType.Absolute, 220.0F))
+        left.RowStyles.Add(New RowStyle(SizeType.Absolute, 260.0F))
         left.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
 
         Dim generalGroup As New GroupBox() With {.Text = "Vision + Window Setup", .Dock = DockStyle.Fill}
-        Dim generalLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 4, .RowCount = 4}
+        Dim generalLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 4, .RowCount = 5}
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 130.0F))
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 130.0F))
@@ -417,8 +431,23 @@ Public Class Form1
         AddHandler btnCaptureSnapshot.Click, AddressOf SnapshotClicked
         generalLayout.Controls.Add(btnCaptureSnapshot, 3, 2)
 
-        Dim hint As New Label() With {.Text = "Mob HP Presence % = minimum red-fill detected in Mob HP bar. Lower value = easier target detection.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.LightGreen}
-        generalLayout.Controls.Add(hint, 0, 3)
+        chkHighMaxHpSpecial = New CheckBox() With {.Text = "Use special key on high max HP mobs", .Dock = DockStyle.Fill}
+        generalLayout.Controls.Add(chkHighMaxHpSpecial, 0, 3)
+        generalLayout.SetColumnSpan(chkHighMaxHpSpecial, 2)
+
+        generalLayout.Controls.Add(New Label() With {.Text = "Max HP >=", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 2, 3)
+        nudHighMaxHpThreshold = New NumericUpDown() With {
+            .Dock = DockStyle.Fill,
+            .Minimum = 100,
+            .Maximum = 50000000,
+            .Increment = 100,
+            .ThousandsSeparator = True,
+            .Value = 2000
+        }
+        generalLayout.Controls.Add(nudHighMaxHpThreshold, 3, 3)
+
+        Dim hint As New Label() With {.Text = "Mob HP Presence % = minimum red-fill detected in Mob HP bar. For high max HP special, make mob_hp_rect include the HP numbers and assign a Combat Skill row role to high_max_hp.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.LightGreen}
+        generalLayout.Controls.Add(hint, 0, 4)
         generalLayout.SetColumnSpan(hint, 4)
 
         generalGroup.Controls.Add(generalLayout)
@@ -714,7 +743,7 @@ Public Class Form1
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Key", .ReadOnly = True, .FillWeight = 60.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "CooldownSec", .FillWeight = 90.0F})
         Dim roleColumn As New DataGridViewComboBoxColumn() With {.Name = "Role", .FillWeight = 80.0F}
-        roleColumn.Items.AddRange(New Object() {"attack", "heal", "max_health", "mana", "special", "stop"})
+        roleColumn.Items.AddRange(New Object() {"attack", "heal", "max_health", "mana", "special", "high_max_hp", "stop"})
         dgvCombat.Columns.Add(roleColumn)
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Priority", .FillWeight = 75.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "TriggerPercent", .FillWeight = 85.0F})
@@ -1500,10 +1529,11 @@ Public Class Form1
             "- Enabled: if checked, action is available.",
             "- Key: keyboard key sent to game (1-0, F1-F10 plus 3 custom rows after F10).",
             "- CooldownSec: minimum seconds between sends of this key.",
-            "- Role: attack, heal, max_health, mana, special, stop.",
+            "- Role: attack, heal, max_health, mana, special, high_max_hp, stop.",
             "- Priority: lower values act first inside same category checks.",
             "- TriggerPercent: role threshold (heal/mana/max_health use this heavily).",
             "- MinHpPercent / MinMpPercent: minimum self HP/MP to allow this action.",
+            "- high_max_hp only fires when enabled in Vision and mob_hp_rect OCR reads Max HP above your threshold.",
             "",
             "3) COMBAT TAB - MONSTER FILTER",
             "- Enable Monster Filter (blacklist): active deny list for mob names.",
@@ -1623,10 +1653,11 @@ Public Class Form1
             "- Enabled: activa/desactiva la accion.",
             "- Key: tecla enviada al juego.",
             "- CooldownSec: tiempo minimo entre envios de la tecla.",
-            "- Role: attack, heal, max_health, mana, special, stop.",
+            "- Role: attack, heal, max_health, mana, special, high_max_hp, stop.",
             "- Priority: orden de prioridad.",
             "- TriggerPercent: umbral principal para roles de soporte.",
             "- MinHpPercent / MinMpPercent: minimos para permitir la accion.",
+            "- high_max_hp solo dispara si esta activo en Vision y el OCR de mob_hp_rect lee Max HP arriba del umbral.",
             "",
             "3) FILTRO DE MONSTRUOS",
             "- Enable Monster Filter (blacklist): lista negra de mobs.",
@@ -1735,10 +1766,11 @@ Public Class Form1
             "- Enabled: naka-on o naka-off ang action.",
             "- Key: key na ipapadala sa game.",
             "- CooldownSec: minimum na pagitan bago ulitin ang key.",
-            "- Role: attack, heal, max_health, mana, special, stop.",
+            "- Role: attack, heal, max_health, mana, special, high_max_hp, stop.",
             "- Priority: pagkakasunod ng aksyon.",
             "- TriggerPercent: pangunahing threshold ng support actions.",
             "- MinHpPercent / MinMpPercent: minimum HP/MP para payagan ang action.",
+            "- high_max_hp gagana lang kapag naka-enable sa Vision at nabasa ng mob_hp_rect OCR ang Max HP lampas sa threshold mo.",
             "",
             "3) MONSTER FILTER",
             "- Enable Monster Filter (blacklist): listahan ng bawal at i-skip na mobs.",
@@ -1960,8 +1992,10 @@ Public Class Form1
             $"Prana/EXP%: {st.ExpPercent:0.00}{Environment.NewLine}" &
             $"Prana/EXP Rate %/hr: {If(st.ExpPerHour < 0, "Calculating (1m)", st.ExpPerHour.ToString("0.00"))}{Environment.NewLine}" &
             $"MobName: {st.MobName}{Environment.NewLine}" &
+            $"MobHpText: {If(String.IsNullOrWhiteSpace(st.MobHpText), "n/a", st.MobHpText)}{Environment.NewLine}" &
             $"OcrError: {OcrReader.LastError()}{Environment.NewLine}" &
             $"MobHP%: {st.MobHpPercent:0.0}{Environment.NewLine}" &
+            $"MobMaxHP: {If(st.MobMaxHp > 0, st.MobMaxHp.ToString(), "n/a")}{Environment.NewLine}" &
             $"TargetValid: {st.TargetValid}{Environment.NewLine}" &
             $"LastAction: {st.LastAction}{Environment.NewLine}" &
              $"NotAttackingReason: {st.NotAttackingReason}{Environment.NewLine}" &
@@ -2046,7 +2080,11 @@ Public Class Form1
         lblMp.Text = $"MP%: {status.MpPercent:0.0}"
         lblHp.ForeColor = HpColor(status.HpPercent)
         lblMp.ForeColor = MpColor(status.MpPercent)
-        lblMobName.Text = $"Mob: {If(String.IsNullOrWhiteSpace(status.MobName), "(none)", status.MobName)}"
+        Dim mobDisplayName As String = If(String.IsNullOrWhiteSpace(status.MobName), "(none)", status.MobName)
+        If Not String.IsNullOrWhiteSpace(status.MobHpText) Then
+            mobDisplayName &= $" ({status.MobHpText})"
+        End If
+        lblMobName.Text = $"Mob: {mobDisplayName}"
         lblExpRate.Text = $"Prana/EXP: {status.ExpPercent:0.00}% | Rate: {If(status.ExpPerHour < 0, "Calculating (1m)", status.ExpPerHour.ToString("0.00") & "%/hr")}"
         UpdateAttackButtonAppearance(status.Running)
         HandleHpZeroAlarm(status)
@@ -2278,6 +2316,8 @@ Public Class Form1
         cfg.RetargetMs = CInt(nudRetargetMs.Value)
         cfg.StuckTargetMs = CInt(If(nudStuckTargetMs IsNot Nothing, nudStuckTargetMs.Value, 2200D))
         cfg.MobHpPresenceThreshold = CDbl(nudMobHpThreshold.Value)
+        cfg.HighMaxHpSpecialEnabled = (chkHighMaxHpSpecial IsNot Nothing AndAlso chkHighMaxHpSpecial.Checked)
+        cfg.HighMaxHpThreshold = CInt(If(nudHighMaxHpThreshold IsNot Nothing, nudHighMaxHpThreshold.Value, 2000D))
         cfg.BypassHpMpLimits = _bypassHpMpLimits
         cfg.BypassStuckTarget = _bypassStuckTarget
         cfg.PartyAutoAcceptEnabled = _partyAutoAccept
@@ -2627,6 +2667,10 @@ Public Class Form1
         SetNumericControlValue(nudRetargetMs, cfg.RetargetMs)
         SetNumericControlValue(nudStuckTargetMs, cfg.StuckTargetMs)
         SetNumericControlValue(nudMobHpThreshold, CDec(cfg.MobHpPresenceThreshold))
+        If chkHighMaxHpSpecial IsNot Nothing Then
+            chkHighMaxHpSpecial.Checked = cfg.HighMaxHpSpecialEnabled
+        End If
+        SetNumericControlValue(nudHighMaxHpThreshold, CDec(Math.Max(100, cfg.HighMaxHpThreshold)))
 
         _bypassHpMpLimits = cfg.BypassHpMpLimits
         If btnBypassLimits IsNot Nothing Then
@@ -2867,7 +2911,7 @@ Public Class Form1
     Private Shared Function NormalizePersistedRole(rawRole As String) As String
         Dim role As String = If(rawRole, "").Trim().ToLowerInvariant()
         Select Case role
-            Case "attack", "heal", "max_health", "mana", "special", "stop"
+            Case "attack", "heal", "max_health", "mana", "special", "high_max_hp", "stop"
                 Return role
             Case Else
                 Return "attack"
