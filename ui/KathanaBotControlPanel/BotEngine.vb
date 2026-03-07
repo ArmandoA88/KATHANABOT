@@ -834,6 +834,7 @@ Public Class BotEngine
             End If
 
             If Not targetValid AndAlso Not actionSent Then
+                Dim filterBlockedRetarget As Boolean = deniedTarget OrElse blacklistLockActive OrElse missingNameBlockedByFilter OrElse nameConfirmationBlockedByFilter
                 If _firstHitPending Then
                     If String.IsNullOrWhiteSpace(reason) Then
                         If firstHitWindowActive Then
@@ -843,7 +844,7 @@ Public Class BotEngine
                         End If
                     End If
                 Else
-                    If _lastTargetWindowSeen <> DateTime.MinValue AndAlso (now - _lastTargetWindowSeen).TotalMilliseconds < retargetDelayMs Then
+                    If (Not filterBlockedRetarget) AndAlso _lastTargetWindowSeen <> DateTime.MinValue AndAlso (now - _lastTargetWindowSeen).TotalMilliseconds < retargetDelayMs Then
                         If String.IsNullOrWhiteSpace(reason) Then
                             reason = $"Target window just changed. Waiting {retargetDelayMs}ms before retarget."
                         End If
