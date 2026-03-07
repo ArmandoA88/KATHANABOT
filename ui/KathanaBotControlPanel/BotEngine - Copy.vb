@@ -555,14 +555,13 @@ Public Class BotEngine
                         Dim allowedNames As List(Of String) = If(cfg.LootAllowedNames, New List(Of String)()).ToList()
                         Dim lootMatchThresholdPercent As Integer = ClampLootMatchThresholdPercent(cfg.LootNameMatchThresholdPercent)
                         Task.Run(Sub()
-                            Dim scanFrame As Bitmap = altFrame
                             Try
-                                Dim ocrText As String = OcrReader.ReadScreenText(scanFrame)
+                                Dim ocrText As String = OcrReader.ReadScreenText(altFrame)
+                                altFrame.Dispose()
                                 
                                 If Not String.IsNullOrWhiteSpace(ocrText) AndAlso allowedNames IsNot Nothing Then
                                     Dim matchedItem As String = ""
                                     If TryFindAllowedLootMatch(ocrText, allowedNames, lootMatchThresholdPercent, matchedItem) Then
-                                        SaveLootScannerSnapshot(scanFrame, matchedItem, DateTime.UtcNow)
                                         System.Media.SystemSounds.Exclamation.Play()
                                         Console.Beep(800, 1000)
                                         Console.Beep(800, 1000)
@@ -586,9 +585,6 @@ Public Class BotEngine
                                     End If
                                 End If
                             Catch ex As Exception
-                                RaiseEvent LogLine("Loot scanner processing failed: " & ex.Message)
-                            Finally
-                                scanFrame.Dispose()
                             End Try
                         End Sub)
                     End If
@@ -931,7 +927,11 @@ Public Class BotEngine
 
         _lastPeriodicSnapshot = now
         Try
-            Dim galleryDir As String = GetSnapshotRootDirectory()
+            Dim picturesRoot As String = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures)
+            If String.IsNullOrWhiteSpace(picturesRoot) Then
+                picturesRoot = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)
+            End If
+            Dim galleryDir As String = Path.Combine(picturesRoot, "KathanaBot")
             Directory.CreateDirectory(galleryDir)
 
             Dim fileName As String = $"kathana_{now:yyyyMMdd_HHmmss}.png"
@@ -942,70 +942,6 @@ Public Class BotEngine
             RaiseEvent LogLine("Snapshot save failed: " & ex.Message)
         End Try
     End Sub
-
-    Private Sub SaveLootScannerSnapshot(frame As Bitmap, detectedItemName As String, now As DateTime)
-        If frame Is Nothing Then
-            Return
-        End If
-
-        Try
-            Dim scannerDir As String = GetLootScannerSnapshotDirectory()
-            Directory.CreateDirectory(scannerDir)
-
-            Dim safeItemName As String = SanitizeFileNameSegment(detectedItemName)
-            If safeItemName = "" Then
-                safeItemName = "detected_item"
-            End If
-
-            Dim fileName As String = $"{safeItemName}_{now:yyyyMMdd_HHmmss_fff}.png"
-            Dim fullPath As String = Path.Combine(scannerDir, fileName)
-            frame.Save(fullPath, ImageFormat.Png)
-            RaiseEvent LogLine("Loot scanner snapshot saved: " & fullPath)
-        Catch ex As Exception
-            RaiseEvent LogLine("Loot scanner snapshot save failed: " & ex.Message)
-        End Try
-    End Sub
-
-    Private Shared Function GetLootScannerSnapshotDirectory() As String
-        Return Path.Combine(GetApplicationRootDirectory(), "item scanner pics")
-    End Function
-
-    Private Shared Function GetSnapshotRootDirectory() As String
-        Dim picturesRoot As String = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures)
-        If String.IsNullOrWhiteSpace(picturesRoot) Then
-            picturesRoot = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)
-        End If
-        Return Path.Combine(picturesRoot, "KathanaBot")
-    End Function
-
-    Private Shared Function GetApplicationRootDirectory() As String
-        Return Path.GetFullPath(AppContext.BaseDirectory)
-    End Function
-
-    Private Shared Function SanitizeFileNameSegment(value As String) As String
-        Dim raw As String = If(value, "").Trim()
-        If raw = "" Then
-            Return ""
-        End If
-
-        Dim invalidChars As Char() = Path.GetInvalidFileNameChars()
-        Dim sb As New StringBuilder(raw.Length)
-        For Each ch As Char In raw
-            If invalidChars.Contains(ch) OrElse Char.IsControl(ch) Then
-                sb.Append("_"c)
-            ElseIf Char.IsWhiteSpace(ch) Then
-                sb.Append("_"c)
-            Else
-                sb.Append(ch)
-            End If
-        Next
-
-        Dim sanitized As String = Regex.Replace(sb.ToString(), "_{2,}", "_").Trim("_"c, "."c, " "c)
-        If sanitized.Length > 80 Then
-            sanitized = sanitized.Substring(0, 80).Trim("_"c, "."c, " "c)
-        End If
-        Return sanitized
-    End Function
 
     Private Function ReadMobNameIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime, Optional forceRefresh As Boolean = False) As String
         If frame Is Nothing Then

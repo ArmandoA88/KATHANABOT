@@ -14,12 +14,6 @@
     <Import Include="System.Windows.Forms" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Compile Remove="**\* - Copy.vb" />
-    <EmbeddedResource Remove="**\* - Copy.*" />
-    <None Remove="**\* - Copy.*" />
-  </ItemGroup>
-
   <Target Name="CopyUiArtifactsToRepoRoot" AfterTargets="Build">
     <PropertyGroup>
       <RepoRoot>$(MSBuildProjectDirectory)\..\..\</RepoRoot>
