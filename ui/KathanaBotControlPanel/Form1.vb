@@ -52,6 +52,7 @@ Public Class Form1
     Private lblMp As Label
     Private lblMobName As Label
     Private lblExpRate As Label
+    Private lblRupiahsRate As Label
     Private btnAttack As Button
     Private btnSaveSettings As Button
     Private btnStopBot As Button
@@ -851,36 +852,37 @@ Public Class Form1
         lblMp = New Label() With {.Text = "MP%: 0", .Top = 132, .Left = 136, .Width = 120, .Height = 22, .ForeColor = Color.DeepSkyBlue}
         lblMobName = New Label() With {.Text = "Mob: (none)", .Top = 156, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.LightSkyBlue}
         lblExpRate = New Label() With {.Text = "Prana/EXP: 0.00% | Rate: Calculating (1m)", .Top = 178, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.Khaki}
-        btnAttack = New Button() With {.Text = "Attack", .Top = 210, .Left = 8, .Width = 210, .Height = 42, .BackColor = Color.FromArgb(40, 180, 80), .ForeColor = Color.White}
-        btnSaveSettings = New Button() With {.Text = "Save Settings", .Top = 264, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(55, 55, 55), .ForeColor = Color.White}
-        btnStopBot = New Button() With {.Text = "Stop Bot", .Top = 314, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(20, 130, 210), .ForeColor = Color.White}
-        btnBypassLimits = New Button() With {.Text = "Ignore Skill Min HP/MP: OFF", .Top = 364, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
+        lblRupiahsRate = New Label() With {.Text = "Rupiahs: n/a | Rate: Calculating (1m)", .Top = 200, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.Gold}
+        btnAttack = New Button() With {.Text = "Attack", .Top = 234, .Left = 8, .Width = 210, .Height = 42, .BackColor = Color.FromArgb(40, 180, 80), .ForeColor = Color.White}
+        btnSaveSettings = New Button() With {.Text = "Save Settings", .Top = 288, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(55, 55, 55), .ForeColor = Color.White}
+        btnStopBot = New Button() With {.Text = "Stop Bot", .Top = 338, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(20, 130, 210), .ForeColor = Color.White}
+        btnBypassLimits = New Button() With {.Text = "Ignore Skill Min HP/MP: OFF", .Top = 388, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
         btnBypassStuck = New Button() With {
             .Text = If(_bypassStuckTarget, "Auto Retarget If Stuck: ON", "Auto Retarget If Stuck: OFF"),
-            .Top = 414,
+            .Top = 438,
             .Left = 8,
             .Width = 210,
             .Height = 38,
             .BackColor = If(_bypassStuckTarget, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
             .ForeColor = Color.White
         }
-        btnRetargetNow = New Button() With {.Text = "Retarget Now (E)", .Top = 464, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
+        btnRetargetNow = New Button() With {.Text = "Retarget Now (E)", .Top = 488, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
         btnPartyAutoAccept = New Button() With {
             .Text = If(_partyAutoAccept, "Auto Accept Party/Ress: ON", "Auto Accept Party/Ress: OFF"),
-            .Top = 514,
+            .Top = 538,
             .Left = 8,
             .Width = 210,
             .Height = 38,
             .BackColor = If(_partyAutoAccept, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
             .ForeColor = Color.White
         }
-        Dim lblPartyAskEvery As New Label() With {.Text = "Ask Party Every (sec)", .Top = 560, .Left = 8, .Width = 210, .Height = 22}
-        nudPartyAskSeconds = New NumericUpDown() With {.Top = 582, .Left = 8, .Width = 210, .Height = 28, .Minimum = 5, .Maximum = 600, .Value = 30}
-        Dim lblPartyAskText As New Label() With {.Text = "Auto Ask Party Text", .Top = 616, .Left = 8, .Width = 210, .Height = 22}
-        txtPartyAskText = New TextBox() With {.Top = 638, .Left = 8, .Width = 210, .Height = 28, .Text = DefaultPartyAskCommand}
+        Dim lblPartyAskEvery As New Label() With {.Text = "Ask Party Every (sec)", .Top = 584, .Left = 8, .Width = 210, .Height = 22}
+        nudPartyAskSeconds = New NumericUpDown() With {.Top = 606, .Left = 8, .Width = 210, .Height = 28, .Minimum = 5, .Maximum = 600, .Value = 30}
+        Dim lblPartyAskText As New Label() With {.Text = "Auto Ask Party Text", .Top = 640, .Left = 8, .Width = 210, .Height = 22}
+        txtPartyAskText = New TextBox() With {.Top = 662, .Left = 8, .Width = 210, .Height = 28, .Text = DefaultPartyAskCommand}
         btnPartyAsk = New Button() With {
             .Text = If(_partyAskEnabled, "Auto Ask Party (add): ON", "Auto Ask Party (add): OFF"),
-            .Top = 672,
+            .Top = 696,
             .Left = 8,
             .Width = 210,
             .Height = 38,
@@ -889,7 +891,7 @@ Public Class Form1
         }
         btnLootScanner = New Button() With {
             .Text = If(_lootScannerEnabled, "Loot Scanner (Alt): ON", "Loot Scanner (Alt): OFF"),
-            .Top = 722,
+            .Top = 746,
             .Left = 8,
             .Width = 210,
             .Height = 38,
@@ -898,7 +900,7 @@ Public Class Form1
         }
         btnHelp = New Button() With {
             .Text = "Help (EN/ES/FIL)",
-            .Top = 772,
+            .Top = 796,
             .Left = 8,
             .Width = 210,
             .Height = 38,
@@ -924,6 +926,7 @@ Public Class Form1
         panel.Controls.Add(lblMp)
         panel.Controls.Add(lblMobName)
         panel.Controls.Add(lblExpRate)
+        panel.Controls.Add(lblRupiahsRate)
         panel.Controls.Add(btnAttack)
         panel.Controls.Add(btnSaveSettings)
         panel.Controls.Add(btnStopBot)
@@ -1025,6 +1028,7 @@ Public Class Form1
         dgvRegions.Rows.Add("mob_hp_rect", "859", "737", "165", "11")
         dgvRegions.Rows.Add("unreachable_text_rect", "15", "582", "128", "22")
         dgvRegions.Rows.Add("prana_exp_rect", "472", "745", "78", "21")
+        dgvRegions.Rows.Add("rupiahs_rect", "560", "745", "110", "21")
         dgvRegions.Rows.Add("party_invite_scan_rect", "349", "318", "328", "124")
         dgvRegions.Rows.Add("party_invite_ok_rect", "463", "410", "59", "21")
         If txtLootScanAreaPoints IsNot Nothing Then
@@ -1567,7 +1571,7 @@ Public Class Form1
             "",
             "7) VISION TAB - CALIBRATION REGIONS",
             "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, unreachable_text_rect,",
-            "  prana_exp_rect, party_invite_scan_rect, party_invite_ok_rect.",
+            "  prana_exp_rect, rupiahs_rect, party_invite_scan_rect, party_invite_ok_rect.",
             "- Loot Scan Area uses 4 freeform points: x,y | x,y | x,y | x,y.",
             "- You can edit coordinates directly in grid or through overlay.",
             "",
@@ -1686,7 +1690,7 @@ Public Class Form1
             "",
             "7) REGIONES DE CALIBRACION",
             "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, unreachable_text_rect,",
-            "  prana_exp_rect, party_invite_scan_rect, party_invite_ok_rect.",
+            "  prana_exp_rect, rupiahs_rect, party_invite_scan_rect, party_invite_ok_rect.",
             "- Loot Scan Area usa 4 puntos libres: x,y | x,y | x,y | x,y.",
             "- Puedes editar coordenadas en tabla o con overlay.",
             "",
@@ -1799,7 +1803,7 @@ Public Class Form1
             "",
             "7) CALIBRATION REGIONS",
             "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, unreachable_text_rect,",
-            "  prana_exp_rect, party_invite_scan_rect, party_invite_ok_rect.",
+            "  prana_exp_rect, rupiahs_rect, party_invite_scan_rect, party_invite_ok_rect.",
             "- Loot Scan Area ay 4 na freeform points: x,y | x,y | x,y | x,y.",
             "- Puwedeng i-edit sa grid o sa overlay.",
             "",
@@ -1996,6 +2000,8 @@ Public Class Form1
             $"OcrError: {OcrReader.LastError()}{Environment.NewLine}" &
             $"MobHP%: {st.MobHpPercent:0.0}{Environment.NewLine}" &
             $"MobMaxHP: {If(st.MobMaxHp > 0, st.MobMaxHp.ToString(), "n/a")}{Environment.NewLine}" &
+            $"RupiahsTotal: {If(st.RupiahsTotal >= 0, st.RupiahsTotal.ToString("N0"), "n/a")}{Environment.NewLine}" &
+            $"RupiahsPerHour: {If(st.RupiahsPerHour < 0, "Calculating (1m)", st.RupiahsPerHour.ToString("N0"))}{Environment.NewLine}" &
             $"TargetValid: {st.TargetValid}{Environment.NewLine}" &
             $"LastAction: {st.LastAction}{Environment.NewLine}" &
              $"NotAttackingReason: {st.NotAttackingReason}{Environment.NewLine}" &
@@ -2086,6 +2092,7 @@ Public Class Form1
         End If
         lblMobName.Text = $"Mob: {mobDisplayName}"
         lblExpRate.Text = $"Prana/EXP: {status.ExpPercent:0.00}% | Rate: {If(status.ExpPerHour < 0, "Calculating (1m)", status.ExpPerHour.ToString("0.00") & "%/hr")}"
+        lblRupiahsRate.Text = $"Rupiahs: {If(status.RupiahsTotal >= 0, status.RupiahsTotal.ToString("N0"), "n/a")} | Rate: {If(status.RupiahsPerHour < 0, "Calculating (1m)", status.RupiahsPerHour.ToString("N0") & "/hr")}"
         UpdateAttackButtonAppearance(status.Running)
         HandleHpZeroAlarm(status)
         HandleWindowMissingAlarm(status)
@@ -2332,6 +2339,7 @@ Public Class Form1
         cfg.MobHpRect = BuildRect("mob_hp_rect")
         cfg.UnreachableTextRect = BuildRect("unreachable_text_rect")
         cfg.PranaExpRect = BuildRect("prana_exp_rect")
+        cfg.RupiahsRect = BuildRect("rupiahs_rect")
         cfg.PartyInviteScanRect = BuildRect("party_invite_scan_rect")
         cfg.PartyInviteOkRect = BuildRect("party_invite_ok_rect")
         cfg.LootScanPoints = BuildLootScanPoints()
@@ -2724,6 +2732,7 @@ Public Class Form1
         UpsertRegionRow("mob_hp_rect", cfg.MobHpRect)
         UpsertRegionRow("unreachable_text_rect", cfg.UnreachableTextRect)
         UpsertRegionRow("prana_exp_rect", cfg.PranaExpRect)
+        UpsertRegionRow("rupiahs_rect", cfg.RupiahsRect)
         UpsertRegionRow("party_invite_scan_rect", cfg.PartyInviteScanRect)
         UpsertRegionRow("party_invite_ok_rect", cfg.PartyInviteOkRect)
         If txtLootScanAreaPoints IsNot Nothing Then

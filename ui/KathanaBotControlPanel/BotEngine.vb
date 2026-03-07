@@ -74,6 +74,7 @@ Public Class BotConfig
     Public Property MobHpRect As RectRegion = New RectRegion(859, 737, 165, 11)
     Public Property UnreachableTextRect As RectRegion = New RectRegion(15, 582, 128, 22)
     Public Property PranaExpRect As RectRegion = New RectRegion(472, 745, 78, 21)
+    Public Property RupiahsRect As RectRegion = New RectRegion(560, 745, 110, 21)
     Public Property PartyInviteScanRect As RectRegion = New RectRegion(349, 318, 328, 124)
     Public Property PartyInviteOkRect As RectRegion = New RectRegion(463, 410, 59, 21)
     Public Property LootScanRect As RectRegion = New RectRegion(220, 80, 584, 430)
@@ -156,6 +157,8 @@ Public Class BotStatus
     Public Property MobHpText As String = ""
     Public Property ExpPercent As Double
     Public Property ExpPerHour As Double = -1
+    Public Property RupiahsTotal As Long = -1
+    Public Property RupiahsPerHour As Double = -1
     Public Property MobName As String = ""
     Public Property TargetValid As Boolean
     Public Property LastAction As String = ""
@@ -268,6 +271,7 @@ Public Class BotEngine
     Private Const TargetNameConfirmRequiredCount As Integer = 2
     Private Const ExpRateSampleMs As Integer = 60000
     Private Const ExpOcrMinIntervalMs As Integer = 900
+    Private Const RupiahsOcrMinIntervalMs As Integer = 900
     Private Const MobHpTextOcrMinIntervalMs As Integer = 450
     Private Const PartyInviteOcrMinIntervalMs As Integer = 900
     Private Const UnreachableOcrMinIntervalMs As Integer = 260
@@ -328,6 +332,12 @@ Public Class BotEngine
     Private _lastExpRateSampleAt As DateTime = DateTime.MinValue
     Private _lastExpRateSamplePercent As Double = -1
     Private _lastExpPerHour As Double = -1
+    Private _lastRupiahsTotal As Long = -1
+    Private _lastRupiahsOcrAt As DateTime = DateTime.MinValue
+    Private _rupiahsOcrTask As Task(Of Long) = Nothing
+    Private _lastRupiahsRateSampleAt As DateTime = DateTime.MinValue
+    Private _lastRupiahsRateSampleTotal As Long = -1
+    Private _lastRupiahsPerHour As Double = -1
     Private ReadOnly _lootRandom As New Random()
     Private ReadOnly _lastKeyTime As New Dictionary(Of String, DateTime)(StringComparer.OrdinalIgnoreCase)
     Private _lastGoodHpPercent As Double = -1
@@ -436,6 +446,12 @@ Public Class BotEngine
             _lastExpRateSampleAt = DateTime.MinValue
             _lastExpRateSamplePercent = -1
             _lastExpPerHour = -1
+            _lastRupiahsTotal = -1
+            _lastRupiahsOcrAt = DateTime.MinValue
+            _rupiahsOcrTask = Nothing
+            _lastRupiahsRateSampleAt = DateTime.MinValue
+            _lastRupiahsRateSampleTotal = -1
+            _lastRupiahsPerHour = -1
             _lastGoodHpPercent = -1
             _lastGoodMpPercent = -1
             _lastGoodMobHpPercent = -1
@@ -505,6 +521,8 @@ Public Class BotEngine
                               s.MobHpText = ""
                               s.ExpPercent = 0
                               s.ExpPerHour = -1
+                              s.RupiahsTotal = -1
+                              s.RupiahsPerHour = -1
                               s.MobName = ""
                               s.TargetValid = False
                               s.NotAttackingReason = "Window not found."
@@ -520,6 +538,8 @@ Public Class BotEngine
                               s.WindowFound = True
                               s.MobMaxHp = -1
                               s.MobHpText = ""
+                              s.RupiahsTotal = -1
+                              s.RupiahsPerHour = -1
                               s.NotAttackingReason = "Capture failed."
                               s.ErrorMessage = "Unable to capture game client."
                           End Sub)
@@ -533,15 +553,17 @@ Public Class BotEngine
             Dim mobHpRegion As New RectRegion(0, 0, 1, 1)
             Dim unreachableTextRegion As New RectRegion(0, 0, 1, 1)
             Dim pranaExpRegion As New RectRegion(0, 0, 1, 1)
+            Dim rupiahsRegion As New RectRegion(0, 0, 1, 1)
             Dim partyInviteScanRegion As New RectRegion(0, 0, 1, 1)
             Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
-            ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, partyInviteScanRegion, partyInviteOkRegion)
+            ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion)
             Dim lootScanPolygon As List(Of DrawingPoint) = ResolveLootScanPolygon(cfg, frame.Width, frame.Height)
 
             Dim hpPct As Double = ComputeBarPercent(frame, hpRegion, True)
             Dim mpPct As Double = ComputeBarPercent(frame, mpRegion, False)
             Dim mobHpPct As Double = ComputeBarPercent(frame, mobHpRegion, True)
             Dim expPct As Double = ReadPranaExpPercent(frame, pranaExpRegion)
+            Dim rupiahsTotal As Long = ReadRupiahsTotal(frame, rupiahsRegion)
             Dim captureGlitch As Boolean = IsLikelyVisionCaptureGlitch(frame, hpRegion, mpRegion, hpPct, mpPct)
 
             If captureGlitch Then
@@ -553,12 +575,13 @@ Public Class BotEngine
                         Exit For
                     End If
 
-                    ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, partyInviteScanRegion, partyInviteOkRegion)
+                    ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion)
                     lootScanPolygon = ResolveLootScanPolygon(cfg, frame.Width, frame.Height)
                     hpPct = ComputeBarPercent(frame, hpRegion, True)
                     mpPct = ComputeBarPercent(frame, mpRegion, False)
                     mobHpPct = ComputeBarPercent(frame, mobHpRegion, True)
                     expPct = ReadPranaExpPercent(frame, pranaExpRegion)
+                    rupiahsTotal = ReadRupiahsTotal(frame, rupiahsRegion)
                     captureGlitch = IsLikelyVisionCaptureGlitch(frame, hpRegion, mpRegion, hpPct, mpPct)
                     If Not captureGlitch Then
                         Exit For
@@ -667,6 +690,7 @@ Public Class BotEngine
             End If
             ApplyVisionStabilityFilter(hpPct, mpPct, mobHpPct, mobName, captureGlitch)
             Dim expPerHour As Double = UpdateExpRate(expPct, now)
+            Dim rupiahsPerHour As Double = UpdateRupiahsRate(rupiahsTotal, now)
             Dim targetWindowVisible As Boolean = HasTargetWindowSignal(frame, mobHpRegion, mobName, mobHpPct)
             Dim hasHighMaxHpAction As Boolean = HasHighMaxHpAttackAction(cfg)
             Dim mobMaxHp As Integer = UpdateMobMaxHpTracking(cfg, frame, mobHpRegion, targetWindowVisible, mobHpPct, now)
@@ -882,6 +906,8 @@ Public Class BotEngine
                           s.MobHpText = _lastMobHpText
                           s.ExpPercent = Math.Round(Math.Max(0, If(expPct < 0, 0, expPct)), 2)
                           s.ExpPerHour = If(expPerHour < 0, -1, Math.Round(expPerHour, 2))
+                          s.RupiahsTotal = rupiahsTotal
+                          s.RupiahsPerHour = If(rupiahsPerHour < 0, -1, Math.Round(rupiahsPerHour, 0))
                           s.MobName = mobName
                           s.TargetValid = targetValid
                           s.NotAttackingReason = If(actionSent, "", reason)
@@ -1296,9 +1322,10 @@ Public Class BotEngine
             Dim mobHpRegion As New RectRegion(0, 0, 1, 1)
             Dim unreachableTextRegion As New RectRegion(0, 0, 1, 1)
             Dim pranaExpRegion As New RectRegion(0, 0, 1, 1)
+            Dim rupiahsRegion As New RectRegion(0, 0, 1, 1)
             Dim partyInviteScanRegion As New RectRegion(0, 0, 1, 1)
             Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
-            ResolveVisionRegions(cfg, verifyFrame.Width, verifyFrame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, partyInviteScanRegion, partyInviteOkRegion)
+            ResolveVisionRegions(cfg, verifyFrame.Width, verifyFrame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion)
 
             Dim selectedName As String = ReadMobNameIfNeeded(verifyFrame, mobNameRegion, DateTime.UtcNow, True)
             If IsAllowedLootName(selectedName, cfg.LootAllowedNames, cfg.LootNameMatchThresholdPercent) Then
@@ -1444,6 +1471,93 @@ Public Class BotEngine
         _lastExpRateSampleAt = now
         _lastExpRateSamplePercent = expPercent
         Return _lastExpPerHour
+    End Function
+
+    Private Function ReadRupiahsTotal(frame As Bitmap, rupiahsRegion As RectRegion) As Long
+        Dim now As DateTime = DateTime.UtcNow
+        If _rupiahsOcrTask IsNot Nothing AndAlso _rupiahsOcrTask.IsCompleted Then
+            Try
+                Dim parsed As Long = _rupiahsOcrTask.Result
+                If parsed >= 0 Then
+                    _lastRupiahsTotal = parsed
+                End If
+            Catch
+            End Try
+            _rupiahsOcrTask = Nothing
+        End If
+
+        If _rupiahsOcrTask IsNot Nothing Then
+            Return _lastRupiahsTotal
+        End If
+
+        If _lastRupiahsOcrAt <> DateTime.MinValue AndAlso (now - _lastRupiahsOcrAt).TotalMilliseconds < RupiahsOcrMinIntervalMs Then
+            Return _lastRupiahsTotal
+        End If
+
+        If frame Is Nothing OrElse rupiahsRegion Is Nothing Then
+            Return _lastRupiahsTotal
+        End If
+
+        Dim rect As Rectangle = rupiahsRegion.Clamp(frame.Width, frame.Height)
+        If rect.Width <= 1 OrElse rect.Height <= 1 Then
+            Return _lastRupiahsTotal
+        End If
+
+        Dim crop As New Bitmap(Math.Max(1, rect.Width), Math.Max(1, rect.Height), PixelFormat.Format24bppRgb)
+        Try
+            Using g As Graphics = Graphics.FromImage(crop)
+                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
+            End Using
+            _lastRupiahsOcrAt = now
+            _rupiahsOcrTask = Task.Run(
+                Function()
+                    Try
+                        Return OcrReader.ReadInteger(crop)
+                    Finally
+                        crop.Dispose()
+                    End Try
+                End Function)
+            Return _lastRupiahsTotal
+        Catch
+            crop.Dispose()
+        End Try
+
+        Return _lastRupiahsTotal
+    End Function
+
+    Private Function UpdateRupiahsRate(rupiahsTotal As Long, now As DateTime) As Double
+        If rupiahsTotal < 0 Then
+            Return _lastRupiahsPerHour
+        End If
+
+        If _lastRupiahsRateSampleAt = DateTime.MinValue Then
+            _lastRupiahsRateSampleAt = now
+            _lastRupiahsRateSampleTotal = rupiahsTotal
+            _lastRupiahsPerHour = -1
+            Return _lastRupiahsPerHour
+        End If
+
+        Dim elapsedMs As Double = (now - _lastRupiahsRateSampleAt).TotalMilliseconds
+        If elapsedMs < ExpRateSampleMs Then
+            Return _lastRupiahsPerHour
+        End If
+
+        Dim delta As Long = rupiahsTotal - _lastRupiahsRateSampleTotal
+        If delta < 0 Then
+            _lastRupiahsRateSampleAt = now
+            _lastRupiahsRateSampleTotal = rupiahsTotal
+            _lastRupiahsPerHour = -1
+            Return _lastRupiahsPerHour
+        End If
+
+        Dim hours As Double = elapsedMs / 3600000.0
+        If hours > 0 Then
+            _lastRupiahsPerHour = delta / hours
+        End If
+
+        _lastRupiahsRateSampleAt = now
+        _lastRupiahsRateSampleTotal = rupiahsTotal
+        Return _lastRupiahsPerHour
     End Function
 
     Private Function TryHandleAutoAcceptPrompts(cfg As BotConfig, hwnd As IntPtr, frame As Bitmap, now As DateTime, partyInviteScanRegion As RectRegion, partyInviteOkRegion As RectRegion) As Boolean
@@ -2454,6 +2568,8 @@ Public Class BotEngine
             .MobHpText = src.MobHpText,
             .ExpPercent = src.ExpPercent,
             .ExpPerHour = src.ExpPerHour,
+            .RupiahsTotal = src.RupiahsTotal,
+            .RupiahsPerHour = src.RupiahsPerHour,
             .MobName = src.MobName,
             .TargetValid = src.TargetValid,
             .LastAction = src.LastAction,
@@ -2870,13 +2986,14 @@ Public Class BotEngine
         Return colored / CDbl(total)
     End Function
 
-    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef unreachableTextRect As RectRegion, ByRef pranaExpRect As RectRegion, ByRef partyInviteScanRect As RectRegion, ByRef partyInviteOkRect As RectRegion)
+    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef unreachableTextRect As RectRegion, ByRef pranaExpRect As RectRegion, ByRef rupiahsRect As RectRegion, ByRef partyInviteScanRect As RectRegion, ByRef partyInviteOkRect As RectRegion)
         hpBar = CloneRegion(cfg.HpBar)
         mpBar = CloneRegion(cfg.MpBar)
         mobNameRect = CloneRegion(cfg.MobNameRect)
         mobHpRect = CloneRegion(cfg.MobHpRect)
         unreachableTextRect = CloneRegion(cfg.UnreachableTextRect)
         pranaExpRect = CloneRegion(cfg.PranaExpRect)
+        rupiahsRect = CloneRegion(cfg.RupiahsRect)
         partyInviteScanRect = CloneRegion(cfg.PartyInviteScanRect)
         partyInviteOkRect = CloneRegion(cfg.PartyInviteOkRect)
 
@@ -2898,6 +3015,7 @@ Public Class BotEngine
         mobHpRect = ScaleRegionRightTop(cfg.MobHpRect, sx, sy, frameWidth)
         unreachableTextRect = ScaleRegionLeftTop(cfg.UnreachableTextRect, sx, sy)
         pranaExpRect = ScaleRegionLeftTop(cfg.PranaExpRect, sx, sy)
+        rupiahsRect = ScaleRegionLeftTop(cfg.RupiahsRect, sx, sy)
         partyInviteScanRect = ScaleRegionLeftTop(cfg.PartyInviteScanRect, sx, sy)
         partyInviteOkRect = ScaleRegionLeftTop(cfg.PartyInviteOkRect, sx, sy)
     End Sub
@@ -2924,6 +3042,7 @@ Public Class BotEngine
                SameRegion(cfg.MobHpRect, New RectRegion(859, 737, 165, 11)) AndAlso
                SameRegion(cfg.UnreachableTextRect, New RectRegion(15, 582, 128, 22)) AndAlso
                SameRegion(cfg.PranaExpRect, New RectRegion(472, 745, 78, 21)) AndAlso
+               SameRegion(cfg.RupiahsRect, New RectRegion(560, 745, 110, 21)) AndAlso
                SameRegion(cfg.PartyInviteScanRect, New RectRegion(349, 318, 328, 124)) AndAlso
                SameRegion(cfg.PartyInviteOkRect, New RectRegion(463, 410, 59, 21)) AndAlso
                SameLootScanPolygon(cfg.LootScanPoints, BotConfig.CreateDefaultLootScanPoints())

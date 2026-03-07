@@ -74,6 +74,23 @@ Public NotInheritable Class OcrReader
         Return ReadHpFractionStaFallback(source)
     End Function
 
+    Public Shared Function ReadInteger(source As Bitmap) As Long
+        If source Is Nothing Then
+            Return -1
+        End If
+
+        Dim direct As Long = -1
+        Try
+            direct = ReadIntegerInternal(source)
+            If direct >= 0 Then
+                Return direct
+            End If
+        Catch
+        End Try
+
+        Return ReadIntegerStaFallback(source)
+    End Function
+
     Public Shared Function ReadScreenText(source As Bitmap) As String
         If source Is Nothing Then
             Return ""
@@ -112,6 +129,31 @@ Public NotInheritable Class OcrReader
         If Not done.Wait(900) Then
             SetLastError("OCR timeout.")
             Return ""
+        End If
+        Return output
+    End Function
+
+    Private Shared Function ReadIntegerStaFallback(source As Bitmap) As Long
+        Dim output As Long = -1
+        Dim done As New ManualResetEventSlim(False)
+
+        Dim worker As New Thread(
+            Sub()
+                Try
+                    output = ReadIntegerInternal(source)
+                Catch ex As Exception
+                    SetLastError(ex.Message)
+                Finally
+                    done.Set()
+                End Try
+            End Sub)
+        worker.IsBackground = True
+        worker.SetApartmentState(ApartmentState.STA)
+        worker.Start()
+
+        If Not done.Wait(900) Then
+            SetLastError("OCR timeout.")
+            Return -1
         End If
         Return output
     End Function
@@ -302,6 +344,38 @@ Public NotInheritable Class OcrReader
         Return bestText
     End Function
 
+    Private Shared Function ReadIntegerInternal(source As Bitmap) As Long
+        Dim engine = GetEngine()
+        If engine Is Nothing Then
+            Return -1
+        End If
+
+        Dim candidates As List(Of Bitmap) = BuildDigitCandidates(source)
+        Dim bestValue As Long = -1
+        Dim bestScore As Integer = -1
+
+        Try
+            For Each candidate In candidates
+                Dim text As String = NormalizeIntegerText(ReadRawTextAsync(engine, candidate).GetAwaiter().GetResult())
+                Dim value As Long = ParseIntegerFromText(text)
+                Dim score As Integer = ScoreDigitText(text, value)
+                If score > bestScore Then
+                    bestScore = score
+                    bestValue = value
+                End If
+                If value >= 0 AndAlso score >= 45 Then
+                    Exit For
+                End If
+            Next
+        Finally
+            For Each candidate In candidates
+                candidate.Dispose()
+            Next
+        End Try
+
+        Return bestValue
+    End Function
+
     Private Shared Async Function ReadNameAsync(engine As OcrEngine, prepared As Bitmap) As Task(Of String)
         Dim soft As SoftwareBitmap = Await ConvertBitmapAsync(prepared)
         If soft Is Nothing Then
@@ -380,6 +454,18 @@ Public NotInheritable Class OcrReader
     End Function
 
     Private Shared Function BuildHpFractionCandidates(source As Bitmap) As List(Of Bitmap)
+        Dim list As New List(Of Bitmap)()
+        Dim baseScaled As Bitmap = ScaleBitmap(source, 5)
+        Dim whiteDigits As Bitmap = IsolateWhiteDigits(baseScaled)
+        list.Add(baseScaled)
+        list.Add(ToGrayHighContrast(baseScaled))
+        list.Add(whiteDigits)
+        list.Add(ToBinary(whiteDigits, 120, False))
+        list.Add(ToBinary(baseScaled, 165, False))
+        Return list
+    End Function
+
+    Private Shared Function BuildDigitCandidates(source As Bitmap) As List(Of Bitmap)
         Dim list As New List(Of Bitmap)()
         Dim baseScaled As Bitmap = ScaleBitmap(source, 5)
         Dim whiteDigits As Bitmap = IsolateWhiteDigits(baseScaled)
@@ -529,6 +615,50 @@ Public NotInheritable Class OcrReader
         End If
         If Regex.IsMatch(text, "^\d{2,9}/\d{2,9}$") Then
             score += 40
+        End If
+        Return score
+    End Function
+
+    Private Shared Function NormalizeIntegerText(raw As String) As String
+        If String.IsNullOrWhiteSpace(raw) Then
+            Return ""
+        End If
+
+        Dim normalized As String = raw.ToUpperInvariant()
+        normalized = normalized.Replace("O", "0").Replace("I", "1").Replace("L", "1").Replace("|", "1")
+        normalized = normalized.Replace(",", "").Replace(".", "").Replace(" ", "")
+        normalized = Regex.Replace(normalized, "[^0-9]", "")
+        Return normalized
+    End Function
+
+    Private Shared Function ParseIntegerFromText(raw As String) As Long
+        If String.IsNullOrWhiteSpace(raw) Then
+            Return -1
+        End If
+
+        Dim normalized As String = NormalizeIntegerText(raw)
+        If normalized = "" Then
+            Return -1
+        End If
+
+        Dim value As Long
+        If Long.TryParse(normalized, value) AndAlso value >= 0 Then
+            Return value
+        End If
+        Return -1
+    End Function
+
+    Private Shared Function ScoreDigitText(text As String, value As Long) As Integer
+        If String.IsNullOrWhiteSpace(text) Then
+            Return -1
+        End If
+
+        Dim score As Integer = Regex.Matches(text, "\d").Count * 4
+        If value >= 0 Then
+            score += 20
+        End If
+        If Regex.IsMatch(text, "^\d{2,15}$") Then
+            score += 15
         End If
         Return score
     End Function
