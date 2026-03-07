@@ -1,10 +1,14 @@
 Imports System.Drawing.Drawing2D
+Imports System.Linq
+Imports DrawingPoint = System.Drawing.Point
 
 Public Class CalibrationOverlayForm
     Inherits Form
 
     Public Event OverlayRegionChanged(regionName As String, region As RectRegion)
     Public Event OverlayRegionCommitted(regionName As String, region As RectRegion)
+    Public Event OverlayLootScanAreaChanged(points As List(Of LootScanPoint))
+    Public Event OverlayLootScanAreaCommitted(points As List(Of LootScanPoint))
 
     Private Const WS_EX_TOOLWINDOW As Integer = &H80
     Private Const WS_EX_LAYERED As Integer = &H80000
@@ -15,6 +19,8 @@ Public Class CalibrationOverlayForm
         None
         Move
         ResizeBottomRight
+        MoveLootScanArea
+        MoveLootScanVertex
     End Enum
 
     Private ReadOnly _configProvider As Func(Of BotConfig)
@@ -25,6 +31,8 @@ Public Class CalibrationOverlayForm
     Private _dragMode As DragMode = DragMode.None
     Private _dragStart As System.Drawing.Point
     Private _dragOriginal As RectRegion
+    Private _dragLootScanPoints As List(Of LootScanPoint)
+    Private _activeLootScanVertexIndex As Integer = -1
     Private _isDragging As Boolean
 
     Public Sub New(configProvider As Func(Of BotConfig))
@@ -89,7 +97,8 @@ Public Class CalibrationOverlayForm
             Return
         End If
 
-        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias
+        e.Graphics.SmoothingMode = SmoothingMode.None
+        DrawLootScanArea(e.Graphics, "loot_scan_area", GetLootScanPoints(), Color.FromArgb(80, 70, 255, 255), "Loot Scan")
         DrawRegion(e.Graphics, "hp_bar", _currentConfig.HpBar, Color.FromArgb(170, 220, 70, 70), "HP")
         DrawRegion(e.Graphics, "mp_bar", _currentConfig.MpBar, Color.FromArgb(170, 70, 130, 240), "MP")
         DrawRegion(e.Graphics, "mob_name_rect", _currentConfig.MobNameRect, Color.FromArgb(170, 250, 230, 80), "Mob Name")
@@ -103,8 +112,44 @@ Public Class CalibrationOverlayForm
         Using b As New SolidBrush(Color.FromArgb(185, 0, 0, 0))
             e.Graphics.FillRectangle(b, tipRect)
         End Using
-        Dim tip As String = "Drag inside box to move. Drag white square to resize. Selected: " & _selectedRegion
+        Dim tip As String = "Rectangles: drag inside to move, white square to resize. Loot Scan: drag polygon or its corner points. Selected: " & _selectedRegion
         TextRenderer.DrawText(e.Graphics, tip, Font, tipRect, Color.White, TextFormatFlags.Left Or TextFormatFlags.VerticalCenter)
+    End Sub
+
+    Private Sub DrawLootScanArea(g As Graphics, key As String, points As List(Of DrawingPoint), colorFill As Color, label As String)
+        If points Is Nothing OrElse points.Count < 3 Then
+            Return
+        End If
+
+        Dim selected As Boolean = String.Equals(key, _selectedRegion, StringComparison.OrdinalIgnoreCase)
+        Using fillBrush As New SolidBrush(colorFill)
+            g.FillPolygon(fillBrush, points.ToArray())
+        End Using
+
+        Dim borderColor As Color = If(selected, Color.White, Color.FromArgb(235, colorFill.R, colorFill.G, colorFill.B))
+        Dim borderWidth As Single = If(selected, 2.8F, 2.0F)
+        Using p As New Pen(borderColor, borderWidth)
+            g.DrawPolygon(p, points.ToArray())
+        End Using
+
+        Dim bounds As Rectangle = GetLootScanBounds(points)
+        Using textBack As New SolidBrush(Color.FromArgb(185, 0, 0, 0))
+            Dim labelRect As New Rectangle(bounds.X, Math.Max(0, bounds.Y - 18), Math.Min(140, Math.Max(90, bounds.Width)), 18)
+            g.FillRectangle(textBack, labelRect)
+            TextRenderer.DrawText(g, label, Font, labelRect, Color.White, TextFormatFlags.Left Or TextFormatFlags.VerticalCenter)
+        End Using
+
+        If selected Then
+            For i As Integer = 0 To points.Count - 1
+                Dim handle As Rectangle = GetLootScanHandleRect(points(i))
+                Using hb As New SolidBrush(Color.White)
+                    g.FillRectangle(hb, handle)
+                End Using
+                Using hp As New Pen(Color.Black, 1.0F)
+                    g.DrawRectangle(hp, handle)
+                End Using
+            Next
+        End If
     End Sub
 
     Private Sub DrawRegion(g As Graphics, key As String, region As RectRegion, colorFill As Color, label As String)
@@ -147,6 +192,31 @@ Public Class CalibrationOverlayForm
             Return
         End If
 
+        Dim lootVertexIndex As Integer = HitTestLootScanHandle(e.Location)
+        If lootVertexIndex >= 0 Then
+            _selectedRegion = "loot_scan_area"
+            _dragMode = DragMode.MoveLootScanVertex
+            _dragStart = e.Location
+            _dragLootScanPoints = CloneLootScanPoints(_currentConfig.LootScanPoints)
+            _activeLootScanVertexIndex = lootVertexIndex
+            _isDragging = True
+            Capture = True
+            Invalidate()
+            Return
+        End If
+
+        If IsPointInLootScanArea(e.Location) Then
+            _selectedRegion = "loot_scan_area"
+            _dragMode = DragMode.MoveLootScanArea
+            _dragStart = e.Location
+            _dragLootScanPoints = CloneLootScanPoints(_currentConfig.LootScanPoints)
+            _activeLootScanVertexIndex = -1
+            _isDragging = True
+            Capture = True
+            Invalidate()
+            Return
+        End If
+
         Dim hitKey As String = HitTestRegion(e.Location)
         If String.IsNullOrWhiteSpace(hitKey) Then
             Return
@@ -181,19 +251,46 @@ Public Class CalibrationOverlayForm
             Dim dx As Integer = e.X - _dragStart.X
             Dim dy As Integer = e.Y - _dragStart.Y
 
-            Dim edited As RectRegion = CloneRegion(_dragOriginal)
-            If _dragMode = DragMode.Move Then
-                edited.X += dx
-                edited.Y += dy
-            ElseIf _dragMode = DragMode.ResizeBottomRight Then
-                edited.W += dx
-                edited.H += dy
-            End If
+            If _dragMode = DragMode.MoveLootScanArea OrElse _dragMode = DragMode.MoveLootScanVertex Then
+                Dim editedPoints As List(Of LootScanPoint) = CloneLootScanPoints(_dragLootScanPoints)
+                If _dragMode = DragMode.MoveLootScanArea Then
+                    For Each pt In editedPoints
+                        pt.X += dx
+                        pt.Y += dy
+                    Next
+                    ClampLootScanPointsToClient(editedPoints)
+                ElseIf _activeLootScanVertexIndex >= 0 AndAlso _activeLootScanVertexIndex < editedPoints.Count Then
+                    editedPoints(_activeLootScanVertexIndex).X += dx
+                    editedPoints(_activeLootScanVertexIndex).Y += dy
+                    ClampLootScanPointToClient(editedPoints(_activeLootScanVertexIndex))
+                End If
 
-            ClampRegionToClient(edited)
-            SetRegionByKey(_selectedRegion, edited)
-            RaiseEvent OverlayRegionChanged(_selectedRegion, CloneRegion(edited))
+                _currentConfig.LootScanPoints = editedPoints
+                RaiseEvent OverlayLootScanAreaChanged(CloneLootScanPoints(editedPoints))
+            Else
+                Dim edited As RectRegion = CloneRegion(_dragOriginal)
+                If _dragMode = DragMode.Move Then
+                    edited.X += dx
+                    edited.Y += dy
+                ElseIf _dragMode = DragMode.ResizeBottomRight Then
+                    edited.W += dx
+                    edited.H += dy
+                End If
+
+                ClampRegionToClient(edited)
+                SetRegionByKey(_selectedRegion, edited)
+                RaiseEvent OverlayRegionChanged(_selectedRegion, CloneRegion(edited))
+            End If
             Invalidate()
+            Return
+        End If
+
+        If HitTestLootScanHandle(e.Location) >= 0 Then
+            Cursor = Cursors.SizeAll
+            Return
+        End If
+        If IsPointInLootScanArea(e.Location) Then
+            Cursor = Cursors.SizeAll
             Return
         End If
 
@@ -221,11 +318,16 @@ Public Class CalibrationOverlayForm
 
         Capture = False
         _isDragging = False
+        Dim finishedMode As DragMode = _dragMode
         _dragMode = DragMode.None
 
-        Dim region As RectRegion = GetRegionByKey(_selectedRegion)
-        If region IsNot Nothing Then
-            RaiseEvent OverlayRegionCommitted(_selectedRegion, CloneRegion(region))
+        If finishedMode = DragMode.MoveLootScanArea OrElse finishedMode = DragMode.MoveLootScanVertex Then
+            RaiseEvent OverlayLootScanAreaCommitted(CloneLootScanPoints(_currentConfig.LootScanPoints))
+        Else
+            Dim region As RectRegion = GetRegionByKey(_selectedRegion)
+            If region IsNot Nothing Then
+                RaiseEvent OverlayRegionCommitted(_selectedRegion, CloneRegion(region))
+            End If
         End If
         Invalidate()
     End Sub
@@ -251,6 +353,58 @@ Public Class CalibrationOverlayForm
 
     Private Function GetResizeHandleRect(rect As System.Drawing.Rectangle) As System.Drawing.Rectangle
         Return New System.Drawing.Rectangle(rect.Right - HandleSize, rect.Bottom - HandleSize, HandleSize, HandleSize)
+    End Function
+
+    Private Function GetLootScanPoints() As List(Of DrawingPoint)
+        Dim source As List(Of LootScanPoint) = CloneLootScanPoints(_currentConfig?.LootScanPoints)
+        If source.Count < 3 Then
+            source = New List(Of LootScanPoint) From {
+                New LootScanPoint(_currentConfig.LootScanRect.X, _currentConfig.LootScanRect.Y),
+                New LootScanPoint(_currentConfig.LootScanRect.X + _currentConfig.LootScanRect.W, _currentConfig.LootScanRect.Y),
+                New LootScanPoint(_currentConfig.LootScanRect.X + _currentConfig.LootScanRect.W, _currentConfig.LootScanRect.Y + _currentConfig.LootScanRect.H),
+                New LootScanPoint(_currentConfig.LootScanRect.X, _currentConfig.LootScanRect.Y + _currentConfig.LootScanRect.H)
+            }
+        End If
+
+        Return source.Select(Function(pt) New DrawingPoint(pt.X, pt.Y)).ToList()
+    End Function
+
+    Private Function GetLootScanBounds(points As List(Of DrawingPoint)) As Rectangle
+        If points Is Nothing OrElse points.Count = 0 Then
+            Return Rectangle.Empty
+        End If
+
+        Dim minX As Integer = points.Min(Function(pt) pt.X)
+        Dim minY As Integer = points.Min(Function(pt) pt.Y)
+        Dim maxX As Integer = points.Max(Function(pt) pt.X)
+        Dim maxY As Integer = points.Max(Function(pt) pt.Y)
+        Return New Rectangle(minX, minY, Math.Max(1, maxX - minX + 1), Math.Max(1, maxY - minY + 1))
+    End Function
+
+    Private Function GetLootScanHandleRect(pt As DrawingPoint) As Rectangle
+        Return New Rectangle(pt.X - (HandleSize \ 2), pt.Y - (HandleSize \ 2), HandleSize, HandleSize)
+    End Function
+
+    Private Function HitTestLootScanHandle(pt As DrawingPoint) As Integer
+        Dim points As List(Of DrawingPoint) = GetLootScanPoints()
+        For i As Integer = 0 To points.Count - 1
+            If GetLootScanHandleRect(points(i)).Contains(pt) Then
+                Return i
+            End If
+        Next
+        Return -1
+    End Function
+
+    Private Function IsPointInLootScanArea(pt As DrawingPoint) As Boolean
+        Dim points As List(Of DrawingPoint) = GetLootScanPoints()
+        If points.Count < 3 Then
+            Return False
+        End If
+
+        Using path As New GraphicsPath()
+            path.AddPolygon(points.ToArray())
+            Return path.IsVisible(pt)
+        End Using
     End Function
 
     Private Function GetRegionByKey(regionKey As String) As RectRegion
@@ -308,6 +462,45 @@ Public Class CalibrationOverlayForm
         region.Y = Math.Max(0, Math.Min(ClientSize.Height - region.H, region.Y))
     End Sub
 
+    Private Sub ClampLootScanPointToClient(point As LootScanPoint)
+        If point Is Nothing Then
+            Return
+        End If
+
+        point.X = Math.Max(0, Math.Min(Math.Max(0, ClientSize.Width - 1), point.X))
+        point.Y = Math.Max(0, Math.Min(Math.Max(0, ClientSize.Height - 1), point.Y))
+    End Sub
+
+    Private Sub ClampLootScanPointsToClient(points As List(Of LootScanPoint))
+        If points Is Nothing OrElse points.Count = 0 Then
+            Return
+        End If
+
+        Dim minX As Integer = points.Min(Function(pt) pt.X)
+        Dim minY As Integer = points.Min(Function(pt) pt.Y)
+        Dim maxX As Integer = points.Max(Function(pt) pt.X)
+        Dim maxY As Integer = points.Max(Function(pt) pt.Y)
+
+        Dim offsetX As Integer = 0
+        Dim offsetY As Integer = 0
+        If minX < 0 Then
+            offsetX = -minX
+        ElseIf maxX >= ClientSize.Width Then
+            offsetX = (ClientSize.Width - 1) - maxX
+        End If
+        If minY < 0 Then
+            offsetY = -minY
+        ElseIf maxY >= ClientSize.Height Then
+            offsetY = (ClientSize.Height - 1) - maxY
+        End If
+
+        For Each pt In points
+            pt.X += offsetX
+            pt.Y += offsetY
+            ClampLootScanPointToClient(pt)
+        Next
+    End Sub
+
     Private Function CloneConfig(src As BotConfig) As BotConfig
         Dim cfg As New BotConfig()
         cfg.WindowTitle = src.WindowTitle
@@ -319,6 +512,8 @@ Public Class CalibrationOverlayForm
         cfg.PranaExpRect = CloneRegion(src.PranaExpRect)
         cfg.PartyInviteScanRect = CloneRegion(src.PartyInviteScanRect)
         cfg.PartyInviteOkRect = CloneRegion(src.PartyInviteOkRect)
+        cfg.LootScanRect = CloneRegion(src.LootScanRect)
+        cfg.LootScanPoints = CloneLootScanPoints(src.LootScanPoints)
         Return cfg
     End Function
 
@@ -327,6 +522,11 @@ Public Class CalibrationOverlayForm
             Return New RectRegion(0, 0, 1, 1)
         End If
         Return New RectRegion(src.X, src.Y, src.W, src.H)
+    End Function
+
+    Private Function CloneLootScanPoints(points As IEnumerable(Of LootScanPoint)) As List(Of LootScanPoint)
+        Dim source As IEnumerable(Of LootScanPoint) = If(points, Enumerable.Empty(Of LootScanPoint)())
+        Return source.Where(Function(pt) pt IsNot Nothing).Select(Function(pt) New LootScanPoint(pt.X, pt.Y)).ToList()
     End Function
 
     Protected Overrides Sub OnFormClosing(e As FormClosingEventArgs)

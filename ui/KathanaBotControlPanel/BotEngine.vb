@@ -1,6 +1,7 @@
 ﻿Imports System.Collections.Generic
 Imports System.Diagnostics
 Imports System.Drawing
+Imports System.Drawing.Drawing2D
 Imports System.Drawing.Imaging
 Imports System.IO
 Imports System.Linq
@@ -9,6 +10,7 @@ Imports System.Text.RegularExpressions
 Imports System.Text
 Imports System.Threading
 Imports System.Threading.Tasks
+Imports DrawingPoint = System.Drawing.Point
 
 Public Class RectRegion
     Public Property X As Integer
@@ -35,6 +37,19 @@ Public Class RectRegion
     End Function
 End Class
 
+Public Class LootScanPoint
+    Public Property X As Integer
+    Public Property Y As Integer
+
+    Public Sub New()
+    End Sub
+
+    Public Sub New(x As Integer, y As Integer)
+        Me.X = x
+        Me.Y = y
+    End Sub
+End Class
+
 Public Class ActionRule
     Public Property KeyName As String = ""
     Public Property Enabled As Boolean = True
@@ -59,6 +74,8 @@ Public Class BotConfig
     Public Property PranaExpRect As RectRegion = New RectRegion(472, 745, 78, 21)
     Public Property PartyInviteScanRect As RectRegion = New RectRegion(349, 318, 328, 124)
     Public Property PartyInviteOkRect As RectRegion = New RectRegion(463, 410, 59, 21)
+    Public Property LootScanRect As RectRegion = New RectRegion(220, 80, 584, 430)
+    Public Property LootScanPoints As List(Of LootScanPoint) = CreateDefaultLootScanPoints()
     Public Property BypassHpMpLimits As Boolean = False
     Public Property BypassStuckTarget As Boolean = True
     Public Property StuckTargetMs As Integer = 2200
@@ -115,6 +132,15 @@ Public Class BotConfig
             })
         Next
         Return cfg
+    End Function
+
+    Public Shared Function CreateDefaultLootScanPoints() As List(Of LootScanPoint)
+        Return New List(Of LootScanPoint) From {
+            New LootScanPoint(220, 80),
+            New LootScanPoint(804, 80),
+            New LootScanPoint(804, 510),
+            New LootScanPoint(220, 510)
+        }
     End Function
 End Class
 
@@ -493,6 +519,7 @@ Public Class BotEngine
             Dim partyInviteScanRegion As New RectRegion(0, 0, 1, 1)
             Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
             ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, partyInviteScanRegion, partyInviteOkRegion)
+            Dim lootScanPolygon As List(Of DrawingPoint) = ResolveLootScanPolygon(cfg, frame.Width, frame.Height)
 
             Dim hpPct As Double = ComputeBarPercent(frame, hpRegion, True)
             Dim mpPct As Double = ComputeBarPercent(frame, mpRegion, False)
@@ -510,6 +537,7 @@ Public Class BotEngine
                     End If
 
                     ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, partyInviteScanRegion, partyInviteOkRegion)
+                    lootScanPolygon = ResolveLootScanPolygon(cfg, frame.Width, frame.Height)
                     hpPct = ComputeBarPercent(frame, hpRegion, True)
                     mpPct = ComputeBarPercent(frame, mpRegion, False)
                     mobHpPct = ComputeBarPercent(frame, mobHpRegion, True)
@@ -554,15 +582,22 @@ Public Class BotEngine
                     If altFrame IsNot Nothing Then
                         Dim allowedNames As List(Of String) = If(cfg.LootAllowedNames, New List(Of String)()).ToList()
                         Dim lootMatchThresholdPercent As Integer = ClampLootMatchThresholdPercent(cfg.LootNameMatchThresholdPercent)
+                        Dim lootScanPolygonCopy As List(Of DrawingPoint) = ClonePointList(lootScanPolygon)
                         Task.Run(Sub()
                             Dim scanFrame As Bitmap = altFrame
+                            Dim lootScanFrame As Bitmap = Nothing
                             Try
-                                Dim ocrText As String = OcrReader.ReadScreenText(scanFrame)
+                                lootScanFrame = CropBitmapToPolygon(scanFrame, lootScanPolygonCopy)
+                                If lootScanFrame Is Nothing Then
+                                    lootScanFrame = DirectCast(scanFrame.Clone(), Bitmap)
+                                End If
+
+                                Dim ocrText As String = OcrReader.ReadScreenText(lootScanFrame)
                                 
                                 If Not String.IsNullOrWhiteSpace(ocrText) AndAlso allowedNames IsNot Nothing Then
                                     Dim matchedItem As String = ""
                                     If TryFindAllowedLootMatch(ocrText, allowedNames, lootMatchThresholdPercent, matchedItem) Then
-                                        SaveLootScannerSnapshot(scanFrame, matchedItem, DateTime.UtcNow)
+                                        SaveLootScannerSnapshot(lootScanFrame, matchedItem, DateTime.UtcNow)
                                         System.Media.SystemSounds.Exclamation.Play()
                                         Console.Beep(800, 1000)
                                         Console.Beep(800, 1000)
@@ -588,6 +623,9 @@ Public Class BotEngine
                             Catch ex As Exception
                                 RaiseEvent LogLine("Loot scanner processing failed: " & ex.Message)
                             Finally
+                                If lootScanFrame IsNot Nothing Then
+                                    lootScanFrame.Dispose()
+                                End If
                                 scanFrame.Dispose()
                             End Try
                         End Sub)
@@ -980,6 +1018,39 @@ Public Class BotEngine
 
     Private Shared Function GetApplicationRootDirectory() As String
         Return Path.GetFullPath(AppContext.BaseDirectory)
+    End Function
+
+    Private Shared Function CropBitmapToPolygon(frame As Bitmap, points As List(Of DrawingPoint)) As Bitmap
+        If frame Is Nothing OrElse points Is Nothing OrElse points.Count < 3 Then
+            Return Nothing
+        End If
+
+        Dim normalized As List(Of DrawingPoint) = points.Select(Function(pt) New DrawingPoint(Math.Max(0, Math.Min(frame.Width - 1, pt.X)), Math.Max(0, Math.Min(frame.Height - 1, pt.Y)))).ToList()
+        If normalized.Count < 3 Then
+            Return Nothing
+        End If
+
+        Dim minX As Integer = normalized.Min(Function(pt) pt.X)
+        Dim minY As Integer = normalized.Min(Function(pt) pt.Y)
+        Dim maxX As Integer = normalized.Max(Function(pt) pt.X)
+        Dim maxY As Integer = normalized.Max(Function(pt) pt.Y)
+        If maxX <= minX OrElse maxY <= minY Then
+            Return Nothing
+        End If
+
+        Dim bounds As New Rectangle(minX, minY, Math.Max(1, maxX - minX + 1), Math.Max(1, maxY - minY + 1))
+        Dim result As New Bitmap(bounds.Width, bounds.Height, PixelFormat.Format24bppRgb)
+        Using g As Graphics = Graphics.FromImage(result)
+            g.Clear(Color.Black)
+            Using path As New GraphicsPath()
+                Dim localPoints As DrawingPoint() = normalized.Select(Function(pt) New DrawingPoint(pt.X - bounds.X, pt.Y - bounds.Y)).ToArray()
+                path.AddPolygon(localPoints)
+                g.SetClip(path)
+                g.DrawImageUnscaled(frame, -bounds.X, -bounds.Y)
+                g.ResetClip()
+            End Using
+        End Using
+        Return result
     End Function
 
     Private Shared Function SanitizeFileNameSegment(value As String) As String
@@ -2682,6 +2753,21 @@ Public Class BotEngine
         partyInviteOkRect = ScaleRegionLeftTop(cfg.PartyInviteOkRect, sx, sy)
     End Sub
 
+    Private Shared Function ResolveLootScanPolygon(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer) As List(Of DrawingPoint)
+        Dim points As List(Of DrawingPoint) = GetEffectiveLootScanPolygon(cfg)
+        If frameWidth <= 0 OrElse frameHeight <= 0 Then
+            Return points
+        End If
+
+        If IsDefaultVisionLayout(cfg) AndAlso Not (frameWidth = BaseClientWidth AndAlso frameHeight = BaseClientHeight) Then
+            Dim sx As Double = frameWidth / CDbl(BaseClientWidth)
+            Dim sy As Double = frameHeight / CDbl(BaseClientHeight)
+            points = points.Select(Function(pt) New DrawingPoint(CInt(Math.Round(pt.X * sx)), CInt(Math.Round(pt.Y * sy)))).ToList()
+        End If
+
+        Return points.Select(Function(pt) New DrawingPoint(Math.Max(0, Math.Min(frameWidth - 1, pt.X)), Math.Max(0, Math.Min(frameHeight - 1, pt.Y)))).ToList()
+    End Function
+
     Private Shared Function IsDefaultVisionLayout(cfg As BotConfig) As Boolean
         Return SameRegion(cfg.HpBar, New RectRegion(11, 25, 151, 11)) AndAlso
                SameRegion(cfg.MpBar, New RectRegion(3, 40, 161, 11)) AndAlso
@@ -2690,7 +2776,51 @@ Public Class BotEngine
                SameRegion(cfg.UnreachableTextRect, New RectRegion(15, 582, 128, 22)) AndAlso
                SameRegion(cfg.PranaExpRect, New RectRegion(472, 745, 78, 21)) AndAlso
                SameRegion(cfg.PartyInviteScanRect, New RectRegion(349, 318, 328, 124)) AndAlso
-               SameRegion(cfg.PartyInviteOkRect, New RectRegion(463, 410, 59, 21))
+               SameRegion(cfg.PartyInviteOkRect, New RectRegion(463, 410, 59, 21)) AndAlso
+               SameLootScanPolygon(cfg.LootScanPoints, BotConfig.CreateDefaultLootScanPoints())
+    End Function
+
+    Private Shared Function SameLootScanPolygon(a As List(Of LootScanPoint), b As List(Of LootScanPoint)) As Boolean
+        If a Is Nothing OrElse b Is Nothing OrElse a.Count <> b.Count Then
+            Return False
+        End If
+
+        For i As Integer = 0 To a.Count - 1
+            If a(i) Is Nothing OrElse b(i) Is Nothing Then
+                Return False
+            End If
+            If a(i).X <> b(i).X OrElse a(i).Y <> b(i).Y Then
+                Return False
+            End If
+        Next
+
+        Return True
+    End Function
+
+    Private Shared Function GetEffectiveLootScanPolygon(cfg As BotConfig) As List(Of DrawingPoint)
+        Dim points As List(Of LootScanPoint) = If(cfg?.LootScanPoints, Nothing)
+        If points IsNot Nothing AndAlso points.Count >= 3 Then
+            Return points.Where(Function(pt) pt IsNot Nothing).Select(Function(pt) New DrawingPoint(pt.X, pt.Y)).ToList()
+        End If
+
+        Dim legacyRect As RectRegion = If(cfg?.LootScanRect, Nothing)
+        If legacyRect IsNot Nothing AndAlso legacyRect.W > 0 AndAlso legacyRect.H > 0 Then
+            Return New List(Of DrawingPoint) From {
+                New DrawingPoint(legacyRect.X, legacyRect.Y),
+                New DrawingPoint(legacyRect.X + legacyRect.W, legacyRect.Y),
+                New DrawingPoint(legacyRect.X + legacyRect.W, legacyRect.Y + legacyRect.H),
+                New DrawingPoint(legacyRect.X, legacyRect.Y + legacyRect.H)
+            }
+        End If
+
+        Return BotConfig.CreateDefaultLootScanPoints().Select(Function(pt) New DrawingPoint(pt.X, pt.Y)).ToList()
+    End Function
+
+    Private Shared Function ClonePointList(points As List(Of DrawingPoint)) As List(Of DrawingPoint)
+        If points Is Nothing Then
+            Return New List(Of DrawingPoint)()
+        End If
+        Return points.Select(Function(pt) New DrawingPoint(pt.X, pt.Y)).ToList()
     End Function
 
     Private Shared Function SameRegion(a As RectRegion, b As RectRegion) As Boolean

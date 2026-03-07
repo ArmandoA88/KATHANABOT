@@ -26,6 +26,7 @@ Public Class Form1
     Private txtProcessRename As TextBox
     Private btnOverlayToggle As Button
     Private dgvRegions As DataGridView
+    Private txtLootScanAreaPoints As TextBox
     Private picSnapshot As PictureBox
     Private pnlWindowFrame As Panel
     Private btnPickLootRejectPoint As Button
@@ -246,6 +247,9 @@ Public Class Form1
         If txtNtfyTopic IsNot Nothing Then
             AddHandler txtNtfyTopic.TextChanged, AddressOf LiveConfigChanged
         End If
+        If txtLootScanAreaPoints IsNot Nothing Then
+            AddHandler txtLootScanAreaPoints.TextChanged, AddressOf LiveConfigChanged
+        End If
         AddHandler nudLoopMs.ValueChanged, AddressOf LiveConfigChanged
         AddHandler nudRetargetMs.ValueChanged, AddressOf LiveConfigChanged
         AddHandler nudMobHpThreshold.ValueChanged, AddressOf LiveConfigChanged
@@ -285,6 +289,9 @@ Public Class Form1
         End If
         If txtPartyAskText IsNot Nothing Then
             AddHandler txtPartyAskText.TextChanged, AddressOf PersistListSettingsChanged
+        End If
+        If txtLootScanAreaPoints IsNot Nothing Then
+            AddHandler txtLootScanAreaPoints.TextChanged, AddressOf PersistListSettingsChanged
         End If
         AddHandler dgvCombat.CurrentCellDirtyStateChanged,
             Sub(_s As Object, _e As EventArgs)
@@ -417,14 +424,36 @@ Public Class Form1
         generalGroup.Controls.Add(generalLayout)
         left.Controls.Add(generalGroup, 0, 0)
 
-        Dim regionGroup As New GroupBox() With {.Text = "Calibration Regions (client coordinates)", .Dock = DockStyle.Fill}
+        Dim regionGroup As New GroupBox() With {.Text = "Calibration Regions", .Dock = DockStyle.Fill}
+        Dim regionLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3, .Padding = New Padding(6)}
+        regionLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 22.0F))
+        regionLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        regionLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 60.0F))
+        regionGroup.Controls.Add(regionLayout)
+
+        Dim regionHint As New Label() With {
+            .Text = "Rectangle regions stay in the grid. Loot Scan uses freeform points below: x,y | x,y | x,y | x,y",
+            .Dock = DockStyle.Fill,
+            .ForeColor = Color.LightSteelBlue,
+            .TextAlign = ContentAlignment.MiddleLeft
+        }
+        regionLayout.Controls.Add(regionHint, 0, 0)
+
         dgvRegions = New DataGridView() With {.Dock = DockStyle.Fill, .AllowUserToAddRows = False, .AllowUserToDeleteRows = False, .RowHeadersVisible = False, .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill}
         dgvRegions.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Region", .ReadOnly = True})
         dgvRegions.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "X"})
         dgvRegions.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Y"})
         dgvRegions.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "W"})
         dgvRegions.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "H"})
-        regionGroup.Controls.Add(dgvRegions)
+        regionLayout.Controls.Add(dgvRegions, 0, 1)
+
+        Dim lootAreaPanel As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1, .Margin = New Padding(0, 6, 0, 0)}
+        lootAreaPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 150.0F))
+        lootAreaPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        lootAreaPanel.Controls.Add(New Label() With {.Text = "Loot Scan Area", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
+        txtLootScanAreaPoints = New TextBox() With {.Dock = DockStyle.Fill}
+        lootAreaPanel.Controls.Add(txtLootScanAreaPoints, 1, 0)
+        regionLayout.Controls.Add(lootAreaPanel, 0, 2)
         left.Controls.Add(regionGroup, 0, 1)
 
         root.Controls.Add(left, 0, 0)
@@ -435,26 +464,13 @@ Public Class Form1
         right.Controls.Add(BuildProcessListGroup(), 0, 0)
 
         Dim snapshotGroup As New GroupBox() With {.Text = "Snapshot", .Dock = DockStyle.Fill}
-        Dim snapshotLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3, .Padding = New Padding(6)}
+        Dim snapshotLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 1, .Padding = New Padding(6)}
         snapshotLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
-        snapshotLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
-        snapshotLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 22.0F))
 
         picSnapshot = New PictureBox() With {.Dock = DockStyle.Fill, .SizeMode = PictureBoxSizeMode.Zoom, .BackColor = Color.Black}
         AddHandler picSnapshot.MouseClick, AddressOf SnapshotMouseClick
         snapshotLayout.Controls.Add(picSnapshot, 0, 0)
 
-        Dim pointRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
-        btnPickLootRejectPoint = New Button() With {.Text = "Pick Loot Reject Point", .Width = 170, .Height = 28, .BackColor = Color.FromArgb(45, 95, 140), .ForeColor = Color.White}
-        AddHandler btnPickLootRejectPoint.Click, AddressOf PickLootRejectPointClicked
-        btnClearLootRejectPoint = New Button() With {.Text = "Clear Point", .Width = 95, .Height = 28, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
-        AddHandler btnClearLootRejectPoint.Click, AddressOf ClearLootRejectPointClicked
-        pointRow.Controls.Add(btnPickLootRejectPoint)
-        pointRow.Controls.Add(btnClearLootRejectPoint)
-        snapshotLayout.Controls.Add(pointRow, 0, 1)
-
-        lblLootRejectPoint = New Label() With {.Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.LightSteelBlue}
-        snapshotLayout.Controls.Add(lblLootRejectPoint, 0, 2)
         snapshotGroup.Controls.Add(snapshotLayout)
         right.Controls.Add(snapshotGroup, 0, 1)
 
@@ -501,70 +517,119 @@ Public Class Form1
 
     Private Function BuildAutoPotTab() As TabPage
         Dim tab As New TabPage("Auto-Pot") With {.BackColor = Color.FromArgb(20, 20, 20)}
-        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2, .Padding = New Padding(8)}
-        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 300.0F))
-        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 170.0F))
+        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2, .Padding = New Padding(10)}
+        root.RowStyles.Add(New RowStyle(SizeType.Percent, 62.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Percent, 38.0F))
 
-        Dim group As New GroupBox() With {.Text = "Quick Pot Thresholds", .Dock = DockStyle.Top, .Height = 300, .Padding = New Padding(10)}
-        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 7}
-        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 170.0F))
-        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 320.0F))
-        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        Dim settingsGroup As New GroupBox() With {.Text = "Auto-Pot Controls", .Dock = DockStyle.Fill, .Padding = New Padding(12)}
+        Dim settingsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 2}
+        settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 48.0F))
+        settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 52.0F))
+        settingsLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        settingsLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 48.0F))
 
-        layout.Controls.Add(New Label() With {.Text = "Heal Trigger %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
+        Dim thresholdsGroup As New GroupBox() With {.Text = "Thresholds", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
+        Dim thresholdsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 4}
+        thresholdsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 190.0F))
+        thresholdsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        thresholdsLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
+        thresholdsLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
+        thresholdsLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
+        thresholdsLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+
+        thresholdsLayout.Controls.Add(New Label() With {.Text = "Heal Trigger %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
         nudAutoPotHp = New NumericUpDown() With {.Minimum = 1, .Maximum = 99, .Value = 80, .Dock = DockStyle.Fill}
         AddHandler nudAutoPotHp.ValueChanged, Sub(_s As Object, _e As EventArgs) ApplyQuickAutoPotThresholds(True)
-        layout.Controls.Add(nudAutoPotHp, 1, 0)
+        thresholdsLayout.Controls.Add(nudAutoPotHp, 1, 0)
 
-        layout.Controls.Add(New Label() With {.Text = "Mana Trigger %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
+        thresholdsLayout.Controls.Add(New Label() With {.Text = "Mana Trigger %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
         nudAutoPotMp = New NumericUpDown() With {.Minimum = 1, .Maximum = 99, .Value = 35, .Dock = DockStyle.Fill}
         AddHandler nudAutoPotMp.ValueChanged, Sub(_s As Object, _e As EventArgs) ApplyQuickAutoPotThresholds(True)
-        layout.Controls.Add(nudAutoPotMp, 1, 1)
+        thresholdsLayout.Controls.Add(nudAutoPotMp, 1, 1)
 
-        layout.Controls.Add(New Label() With {.Text = "HP=0 Alarm Volume %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
+        thresholdsLayout.Controls.Add(New Label() With {.Text = "HP=0 Alarm Volume %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
         nudAlarmVolume = New NumericUpDown() With {.Minimum = 0, .Maximum = 100, .Value = 85, .Dock = DockStyle.Fill}
         AddHandler nudAlarmVolume.ValueChanged,
             Sub(_s As Object, _e As EventArgs)
                 _alarmVolumePercent = CInt(nudAlarmVolume.Value)
             End Sub
-        layout.Controls.Add(nudAlarmVolume, 1, 2)
+        thresholdsLayout.Controls.Add(nudAlarmVolume, 1, 2)
 
-        layout.Controls.Add(New Label() With {.Text = "ntfy Channel (Global)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 3)
+        Dim thresholdsHint As New Label() With {
+            .Text = "These quick values mirror your heal, mana, and max-health rows. HP alarm volume only affects the death alarm sound.",
+            .Dock = DockStyle.Fill,
+            .ForeColor = Color.LightSteelBlue,
+            .TextAlign = ContentAlignment.TopLeft
+        }
+        thresholdsLayout.Controls.Add(thresholdsHint, 0, 3)
+        thresholdsLayout.SetColumnSpan(thresholdsHint, 2)
+        thresholdsGroup.Controls.Add(thresholdsLayout)
+
+        Dim notifyGroup As New GroupBox() With {.Text = "Notifications + Loot Matching", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
+        Dim notifyLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 5}
+        notifyLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 180.0F))
+        notifyLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
+        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
+        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
+        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 30.0F))
+
+        notifyLayout.Controls.Add(New Label() With {.Text = "ntfy Channel (Global)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
         txtNtfyTopic = New TextBox() With {.Dock = DockStyle.Fill, .Text = DefaultNtfyTopicName}
-        layout.Controls.Add(txtNtfyTopic, 1, 3)
+        notifyLayout.Controls.Add(txtNtfyTopic, 1, 0)
 
-        layout.Controls.Add(New Label() With {.Text = "ntfy Channel (Items)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 4)
+        notifyLayout.Controls.Add(New Label() With {.Text = "ntfy Channel (Items)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
         txtItemNtfyTopic = New TextBox() With {.Dock = DockStyle.Fill, .Text = ""}
-        layout.Controls.Add(txtItemNtfyTopic, 1, 4)
+        notifyLayout.Controls.Add(txtItemNtfyTopic, 1, 1)
 
-        layout.Controls.Add(New Label() With {.Text = "Loot Name Match %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 5)
+        notifyLayout.Controls.Add(New Label() With {.Text = "Loot Name Match %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
         nudLootNameMatchThreshold = New NumericUpDown() With {.Minimum = 50, .Maximum = 100, .Value = DefaultLootNameMatchThresholdPercent, .Dock = DockStyle.Fill}
-        layout.Controls.Add(nudLootNameMatchThreshold, 1, 5)
+        notifyLayout.Controls.Add(nudLootNameMatchThreshold, 1, 2)
 
-        Dim buttonRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
+        Dim note As New Label() With {
+            .Text = "Loot Name Match % controls fuzzy OCR matching for Loot Filter names. Use a higher value for stricter matching and a lower value when OCR is inconsistent." & Environment.NewLine &
+                    "Use role 'max_health' in Combat Skills if you want the max-health potion threshold controlled here. HP alarm only triggers at HP=0.",
+            .Dock = DockStyle.Fill,
+            .ForeColor = Color.LightSteelBlue,
+            .TextAlign = ContentAlignment.TopLeft
+        }
+        notifyLayout.Controls.Add(note, 0, 3)
+        notifyLayout.SetColumnSpan(note, 2)
+
+        Dim notifyFoot As New Label() With {
+            .Text = "Item alerts use the item channel; death/window alerts use the global channel.",
+            .Dock = DockStyle.Fill,
+            .ForeColor = Color.Gray,
+            .TextAlign = ContentAlignment.MiddleLeft
+        }
+        notifyLayout.Controls.Add(notifyFoot, 0, 4)
+        notifyLayout.SetColumnSpan(notifyFoot, 2)
+        notifyGroup.Controls.Add(notifyLayout)
+
+        settingsLayout.Controls.Add(thresholdsGroup, 0, 0)
+        settingsLayout.Controls.Add(notifyGroup, 1, 0)
+
+        Dim buttonRow As New FlowLayoutPanel() With {
+            .Dock = DockStyle.Fill,
+            .FlowDirection = FlowDirection.LeftToRight,
+            .WrapContents = False,
+            .Padding = New Padding(0, 4, 0, 0)
+        }
         Dim btnApply As New Button() With {.Text = "Apply To Heal/Mana/Max-HP Rows", .Width = 220, .Height = 30, .BackColor = Color.FromArgb(42, 120, 80), .ForeColor = Color.White}
         AddHandler btnApply.Click, Sub(_s As Object, _e As EventArgs) ApplyQuickAutoPotThresholds()
-        Dim btnTestAlarm As New Button() With {.Text = "Test Alarm + Phone", .Width = 130, .Height = 30, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
+        Dim btnTestAlarm As New Button() With {.Text = "Test Alarm + Phone", .Width = 150, .Height = 30, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
         AddHandler btnTestAlarm.Click, AddressOf TestAlarmClicked
         Dim btnTestPhone As New Button() With {.Text = "Test Phone Alert", .Width = 130, .Height = 30, .BackColor = Color.FromArgb(55, 110, 170), .ForeColor = Color.White}
         AddHandler btnTestPhone.Click, AddressOf TestPhoneAlertClicked
         buttonRow.Controls.Add(btnApply)
         buttonRow.Controls.Add(btnTestAlarm)
         buttonRow.Controls.Add(btnTestPhone)
-        layout.Controls.Add(buttonRow, 1, 6)
+        settingsLayout.Controls.Add(buttonRow, 0, 1)
+        settingsLayout.SetColumnSpan(buttonRow, 2)
 
-        Dim note As New Label() With {.Text = "Loot Name Match % controls fuzzy OCR matching for Loot Filter names (Levenshtein similarity). 80% allows minor OCR mistakes (ex: Destruction vs Defruction); raise for stricter matching, lower for more tolerance. Use role 'max_health' in Combat Skills and set TriggerPercent for when the max-health potion should fire first. HP alarm triggers only at HP=0.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
-        layout.Controls.Add(note, 2, 0)
-        layout.SetRowSpan(note, 7)
-        group.Controls.Add(layout)
-        root.Controls.Add(group, 0, 0)
+        settingsGroup.Controls.Add(settingsLayout)
+        root.Controls.Add(settingsGroup, 0, 0)
         root.Controls.Add(BuildAutoPotUnstuckGroup(), 0, 1)
         tab.Controls.Add(root)
         Return tab
@@ -572,18 +637,23 @@ Public Class Form1
 
     Private Function BuildAutoPotUnstuckGroup() As GroupBox
         Dim group As New GroupBox() With {.Text = "Unstuck / Retarget", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
-        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 3}
-        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 190.0F))
-        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 160.0F))
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 2}
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 420.0F))
         layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 32.0F))
 
-        layout.Controls.Add(New Label() With {.Text = "Retarget Key", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
-        layout.Controls.Add(New Label() With {.Text = "E", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.LightGreen}, 1, 0)
-        layout.Controls.Add(New Label() With {.Text = "Retarget Interval (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
-        layout.Controls.Add(New Label() With {.Text = "Stuck Target Timeout (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
+        Dim controlsPanel As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 3}
+        controlsPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 200.0F))
+        controlsPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        controlsPanel.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
+        controlsPanel.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
+        controlsPanel.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
+
+        controlsPanel.Controls.Add(New Label() With {.Text = "Retarget Key", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
+        controlsPanel.Controls.Add(New Label() With {.Text = "E", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.LightGreen}, 1, 0)
+        controlsPanel.Controls.Add(New Label() With {.Text = "Retarget Interval (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
+        controlsPanel.Controls.Add(New Label() With {.Text = "Stuck Target Timeout (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
 
         Dim nudAutoPotRetarget As New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 50, .Maximum = 10000, .Value = 550}
         If nudRetargetMs IsNot Nothing Then
@@ -603,15 +673,29 @@ Public Class Form1
                     End If
                 End Sub
         End If
-        layout.Controls.Add(nudAutoPotRetarget, 1, 1)
+        controlsPanel.Controls.Add(nudAutoPotRetarget, 1, 1)
 
         nudStuckTargetMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 500, .Maximum = 30000, .Value = 2200}
         AddHandler nudStuckTargetMs.ValueChanged, Sub(_s As Object, _e As EventArgs) PushLiveConfig()
-        layout.Controls.Add(nudStuckTargetMs, 1, 2)
+        controlsPanel.Controls.Add(nudStuckTargetMs, 1, 2)
 
-        Dim note As New Label() With {.Text = "Use Retarget Interval and Stuck Target Timeout to tune unstuck behavior.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.LightSteelBlue}
-        layout.Controls.Add(note, 2, 1)
-        layout.SetRowSpan(note, 2)
+        Dim note As New Label() With {
+            .Text = "Retarget Interval is mirrored from Vision. Stuck Target Timeout controls when the bot decides a target is stalled and forces a retarget.",
+            .Dock = DockStyle.Fill,
+            .TextAlign = ContentAlignment.TopLeft,
+            .ForeColor = Color.LightSteelBlue
+        }
+        layout.Controls.Add(controlsPanel, 0, 0)
+        layout.Controls.Add(note, 1, 0)
+
+        Dim foot As New Label() With {
+            .Text = "Use a shorter timeout for crowded spots and a longer timeout for tankier mobs.",
+            .Dock = DockStyle.Fill,
+            .TextAlign = ContentAlignment.MiddleLeft,
+            .ForeColor = Color.Gray
+        }
+        layout.Controls.Add(foot, 0, 1)
+        layout.SetColumnSpan(foot, 2)
         group.Controls.Add(layout)
         Return group
     End Function
@@ -914,6 +998,9 @@ Public Class Form1
         dgvRegions.Rows.Add("prana_exp_rect", "472", "745", "78", "21")
         dgvRegions.Rows.Add("party_invite_scan_rect", "349", "318", "328", "124")
         dgvRegions.Rows.Add("party_invite_ok_rect", "463", "410", "59", "21")
+        If txtLootScanAreaPoints IsNot Nothing Then
+            txtLootScanAreaPoints.Text = FormatLootScanPoints(BotConfig.CreateDefaultLootScanPoints())
+        End If
         nudMobHpThreshold.Value = 1.0D
         nudRetargetMs.Value = 550D
 
@@ -1451,6 +1538,7 @@ Public Class Form1
             "7) VISION TAB - CALIBRATION REGIONS",
             "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, unreachable_text_rect,",
             "  prana_exp_rect, party_invite_scan_rect, party_invite_ok_rect.",
+            "- Loot Scan Area uses 4 freeform points: x,y | x,y | x,y | x,y.",
             "- You can edit coordinates directly in grid or through overlay.",
             "",
             "8) VISION TAB - PROCESS LIST",
@@ -1460,8 +1548,6 @@ Public Class Form1
             "",
             "9) SNAPSHOT PANEL",
             "- Displays latest captured frame.",
-            "- Pick Loot Reject Point: click image to map x,y inside game client.",
-            "- Clear Point: clears reject point.",
             "",
             "10) AUTO-POT TAB",
             "- Heal Trigger %, Mana Trigger % quick sliders.",
@@ -1570,6 +1656,7 @@ Public Class Form1
             "7) REGIONES DE CALIBRACION",
             "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, unreachable_text_rect,",
             "  prana_exp_rect, party_invite_scan_rect, party_invite_ok_rect.",
+            "- Loot Scan Area usa 4 puntos libres: x,y | x,y | x,y | x,y.",
             "- Puedes editar coordenadas en tabla o con overlay.",
             "",
             "8) PROCESS LIST",
@@ -1578,8 +1665,6 @@ Public Class Form1
             "",
             "9) SNAPSHOT",
             "- Muestra la ultima captura.",
-            "- Pick Loot Reject Point selecciona coordenada de rechazo.",
-            "- Clear Point limpia la coordenada.",
             "",
             "10) PESTANA AUTO-POT",
             "- Heal Trigger %, Mana Trigger %. ",
@@ -1683,6 +1768,7 @@ Public Class Form1
             "7) CALIBRATION REGIONS",
             "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, unreachable_text_rect,",
             "  prana_exp_rect, party_invite_scan_rect, party_invite_ok_rect.",
+            "- Loot Scan Area ay 4 na freeform points: x,y | x,y | x,y | x,y.",
             "- Puwedeng i-edit sa grid o sa overlay.",
             "",
             "8) PROCESS LIST",
@@ -1691,8 +1777,6 @@ Public Class Form1
             "",
             "9) SNAPSHOT PANEL",
             "- Ipinapakita ang latest capture.",
-            "- Pick Loot Reject Point: click sa image para makuha ang exact x,y.",
-            "- Clear Point: alisin ang naka-save na reject point.",
             "",
             "10) AUTO-POT TAB",
             "- Heal Trigger %, Mana Trigger % quick controls.",
@@ -1774,6 +1858,8 @@ Public Class Form1
         _overlayForm = New CalibrationOverlayForm(Function() BuildConfig())
         AddHandler _overlayForm.OverlayRegionChanged, AddressOf OverlayRegionChanged
         AddHandler _overlayForm.OverlayRegionCommitted, AddressOf OverlayRegionCommitted
+        AddHandler _overlayForm.OverlayLootScanAreaChanged, AddressOf OverlayLootScanAreaChanged
+        AddHandler _overlayForm.OverlayLootScanAreaCommitted, AddressOf OverlayLootScanAreaCommitted
         AddHandler _overlayForm.FormClosed,
             Sub(_s As Object, _e As FormClosedEventArgs)
                 _overlayForm = Nothing
@@ -1807,6 +1893,27 @@ Public Class Form1
         AppendLog($"Overlay updated {regionName}: x={region.X}, y={region.Y}, w={region.W}, h={region.H}")
     End Sub
 
+    Private Sub OverlayLootScanAreaChanged(points As List(Of LootScanPoint))
+        If InvokeRequired Then
+            BeginInvoke(New Action(Of List(Of LootScanPoint))(AddressOf OverlayLootScanAreaChanged), points)
+            Return
+        End If
+
+        UpdateLootScanAreaText(points)
+        PushLiveConfig()
+    End Sub
+
+    Private Sub OverlayLootScanAreaCommitted(points As List(Of LootScanPoint))
+        If InvokeRequired Then
+            BeginInvoke(New Action(Of List(Of LootScanPoint))(AddressOf OverlayLootScanAreaCommitted), points)
+            Return
+        End If
+
+        UpdateLootScanAreaText(points)
+        PushLiveConfig()
+        AppendLog("Overlay updated loot_scan_area: " & FormatLootScanPoints(points))
+    End Sub
+
     Private Sub UpdateRegionGridRow(regionName As String, region As RectRegion)
         For Each row As DataGridViewRow In dgvRegions.Rows
             Dim name As String = SafeCell(row, "Region", "").ToLowerInvariant()
@@ -1818,6 +1925,14 @@ Public Class Form1
                 Exit For
             End If
         Next
+    End Sub
+
+    Private Sub UpdateLootScanAreaText(points As List(Of LootScanPoint))
+        If txtLootScanAreaPoints Is Nothing Then
+            Return
+        End If
+
+        txtLootScanAreaPoints.Text = FormatLootScanPoints(points)
     End Sub
 
     Private Sub UiTimerTick(sender As Object, e As EventArgs)
@@ -2179,6 +2294,8 @@ Public Class Form1
         cfg.PranaExpRect = BuildRect("prana_exp_rect")
         cfg.PartyInviteScanRect = BuildRect("party_invite_scan_rect")
         cfg.PartyInviteOkRect = BuildRect("party_invite_ok_rect")
+        cfg.LootScanPoints = BuildLootScanPoints()
+        cfg.LootScanRect = BuildLootScanBoundingRect(cfg.LootScanPoints)
         cfg.LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked)
         cfg.LootPickupIntervalMs = CInt(Math.Round(CDbl(If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value, 4D)) * 1000.0))
         cfg.LootNameMatchThresholdPercent = CInt(If(nudLootNameMatchThreshold IsNot Nothing, nudLootNameMatchThreshold.Value, CDec(DefaultLootNameMatchThresholdPercent)))
@@ -2248,6 +2365,82 @@ Public Class Form1
             End If
         Next
         Return New RectRegion(0, 0, 1, 1)
+    End Function
+
+    Private Function BuildLootScanPoints() As List(Of LootScanPoint)
+        Dim parsed As List(Of LootScanPoint) = ParseLootScanPoints(If(txtLootScanAreaPoints IsNot Nothing, txtLootScanAreaPoints.Text, ""))
+        If parsed.Count >= 3 Then
+            Return parsed
+        End If
+        Return CloneLootScanPoints(BotConfig.CreateDefaultLootScanPoints())
+    End Function
+
+    Private Shared Function BuildLootScanBoundingRect(points As List(Of LootScanPoint)) As RectRegion
+        Dim source As List(Of LootScanPoint) = If(points, New List(Of LootScanPoint)())
+        If source.Count = 0 Then
+            source = BotConfig.CreateDefaultLootScanPoints()
+        End If
+
+        Dim valid As List(Of LootScanPoint) = source.Where(Function(pt) pt IsNot Nothing).ToList()
+        If valid.Count = 0 Then
+            valid = BotConfig.CreateDefaultLootScanPoints()
+        End If
+
+        Dim minX As Integer = valid.Min(Function(pt) pt.X)
+        Dim minY As Integer = valid.Min(Function(pt) pt.Y)
+        Dim maxX As Integer = valid.Max(Function(pt) pt.X)
+        Dim maxY As Integer = valid.Max(Function(pt) pt.Y)
+        Return New RectRegion(minX, minY, Math.Max(1, maxX - minX), Math.Max(1, maxY - minY))
+    End Function
+
+    Private Shared Function ParseLootScanPoints(raw As String) As List(Of LootScanPoint)
+        Dim result As New List(Of LootScanPoint)()
+        Dim normalized As String = If(raw, "").Replace(vbCrLf, "|").Replace(vbCr, "|").Replace(vbLf, "|")
+        Dim chunks As String() = normalized.Split({"|"}, StringSplitOptions.RemoveEmptyEntries)
+
+        For Each chunk As String In chunks
+            Dim pair As String() = chunk.Split({","c}, StringSplitOptions.RemoveEmptyEntries)
+            If pair.Length <> 2 Then
+                Continue For
+            End If
+
+            Dim x As Integer
+            Dim y As Integer
+            If Integer.TryParse(pair(0).Trim(), x) AndAlso Integer.TryParse(pair(1).Trim(), y) Then
+                result.Add(New LootScanPoint(x, y))
+            End If
+        Next
+
+        Return result
+    End Function
+
+    Private Shared Function FormatLootScanPoints(points As IEnumerable(Of LootScanPoint)) As String
+        Dim source As IEnumerable(Of LootScanPoint) = If(points, Enumerable.Empty(Of LootScanPoint)())
+        Return String.Join(" | ", source.Where(Function(pt) pt IsNot Nothing).Select(Function(pt) $"{pt.X},{pt.Y}"))
+    End Function
+
+    Private Shared Function CloneLootScanPoints(points As IEnumerable(Of LootScanPoint)) As List(Of LootScanPoint)
+        Dim source As IEnumerable(Of LootScanPoint) = If(points, Enumerable.Empty(Of LootScanPoint)())
+        Return source.Where(Function(pt) pt IsNot Nothing).Select(Function(pt) New LootScanPoint(pt.X, pt.Y)).ToList()
+    End Function
+
+    Private Shared Function GetEffectiveLootScanPoints(cfg As BotConfig) As List(Of LootScanPoint)
+        Dim fromConfig As List(Of LootScanPoint) = CloneLootScanPoints(If(cfg?.LootScanPoints, Nothing))
+        If fromConfig.Count >= 3 Then
+            Return fromConfig
+        End If
+
+        Dim legacyRect As RectRegion = If(cfg?.LootScanRect, Nothing)
+        If legacyRect IsNot Nothing AndAlso legacyRect.W > 0 AndAlso legacyRect.H > 0 Then
+            Return New List(Of LootScanPoint) From {
+                New LootScanPoint(legacyRect.X, legacyRect.Y),
+                New LootScanPoint(legacyRect.X + legacyRect.W, legacyRect.Y),
+                New LootScanPoint(legacyRect.X + legacyRect.W, legacyRect.Y + legacyRect.H),
+                New LootScanPoint(legacyRect.X, legacyRect.Y + legacyRect.H)
+            }
+        End If
+
+        Return CloneLootScanPoints(BotConfig.CreateDefaultLootScanPoints())
     End Function
 
     Private Function SafeCell(row As DataGridViewRow, column As String, fallback As String) As String
@@ -2489,6 +2682,10 @@ Public Class Form1
         UpsertRegionRow("prana_exp_rect", cfg.PranaExpRect)
         UpsertRegionRow("party_invite_scan_rect", cfg.PartyInviteScanRect)
         UpsertRegionRow("party_invite_ok_rect", cfg.PartyInviteOkRect)
+        If txtLootScanAreaPoints IsNot Nothing Then
+            Dim lootPoints As List(Of LootScanPoint) = GetEffectiveLootScanPoints(cfg)
+            txtLootScanAreaPoints.Text = FormatLootScanPoints(lootPoints)
+        End If
 
         If cfg.Actions IsNot Nothing AndAlso cfg.Actions.Count > 0 Then
             Dim persisted As New List(Of PersistedCombatAction)()
