@@ -232,7 +232,9 @@ Public Class BotEngine
     Public Event StatusUpdated(status As BotStatus)
     Public Event LogLine(line As String)
     Private Const AllowBlindAttackWhenTargetMissing As Boolean = False
-    Private Const NoTargetRetargetMs As Integer = 300
+    Private Const NoTargetRetargetMinMs As Integer = 250
+    Private Const NoTargetStableWindowMs As Integer = 220
+    Private Const MaxNoTargetRetargetBackoffSteps As Integer = 3
     Private Const FirstHitWindowMs As Integer = 800
     Private Const BlacklistLockWindowMs As Integer = 800
     Private Const TargetNameConfirmMinGapMs As Integer = 120
@@ -256,6 +258,9 @@ Public Class BotEngine
     Private _cts As CancellationTokenSource
     Private _task As Task
     Private _lastRetarget As DateTime = DateTime.MinValue
+    Private _lastTargetWindowSeen As DateTime = DateTime.MinValue
+    Private _noTargetBeganAt As DateTime = DateTime.MinValue
+    Private _noTargetRetargetStreak As Integer = 0
     Private _lastAttackAction As DateTime = DateTime.MinValue
     Private _lastMobHpSample As Double = -1
     Private _lastMobHpMovement As DateTime = DateTime.MinValue
@@ -325,7 +330,10 @@ Public Class BotEngine
         {"ESC", &H1B}, {"ESCAPE", &H1B},
         {"ENTER", &HD}, {"RETURN", &HD},
         {"F1", &H70}, {"F2", &H71}, {"F3", &H72}, {"F4", &H73}, {"F5", &H74},
-        {"F6", &H75}, {"F7", &H76}, {"F8", &H77}, {"F9", &H78}, {"F10", &H79}
+        {"F6", &H75}, {"F7", &H76}, {"F8", &H77}, {"F9", &H78}, {"F10", &H79},
+        {"F11", &H7A}, {"F12", &H7B}, {"F13", &H7C}, {"F14", &H7D}, {"F15", &H7E},
+        {"F16", &H7F}, {"F17", &H80}, {"F18", &H81}, {"F19", &H82}, {"F20", &H83},
+        {"F21", &H84}, {"F22", &H85}, {"F23", &H86}, {"F24", &H87}
     }
 
     Public Sub UpdateConfig(cfg As BotConfig)
@@ -355,6 +363,9 @@ Public Class BotEngine
             _status.Running = True
             _status.ErrorMessage = ""
             _lastRetarget = DateTime.MinValue
+            _lastTargetWindowSeen = DateTime.MinValue
+            _noTargetBeganAt = DateTime.MinValue
+            _noTargetRetargetStreak = 0
             _lastAttackAction = DateTime.MinValue
             _lastMobHpSample = -1
             _lastMobHpMovement = DateTime.MinValue
@@ -603,6 +614,13 @@ Public Class BotEngine
             ApplyVisionStabilityFilter(hpPct, mpPct, mobHpPct, mobName, captureGlitch)
             Dim expPerHour As Double = UpdateExpRate(expPct, now)
             Dim targetWindowVisible As Boolean = HasTargetWindowSignal(frame, mobHpRegion, mobName, mobHpPct)
+            If targetWindowVisible Then
+                _lastTargetWindowSeen = now
+                _noTargetBeganAt = DateTime.MinValue
+                _noTargetRetargetStreak = 0
+            ElseIf _noTargetBeganAt = DateTime.MinValue Then
+                _noTargetBeganAt = now
+            End If
             Dim deniedTarget As Boolean = IsDeniedMob(mobName, cfg.DeniedMobs)
             Dim normMobName As String = NormalizeMobName(mobName)
             Dim unreachableTriggered As Boolean = TryHandleUnreachableTarget(cfg, hwnd, frame, now, unreachableTextRegion)
@@ -742,10 +760,22 @@ Public Class BotEngine
                         End If
                     End If
                 Else
-                    Dim retargetDelayMs As Integer = Math.Max(100, NoTargetRetargetMs)
-                    If (now - _lastRetarget).TotalMilliseconds >= retargetDelayMs Then
+                    Dim baseRetargetDelayMs As Integer = Math.Max(NoTargetRetargetMinMs, cfg.RetargetMs)
+                    Dim backoffStep As Integer = Math.Min(MaxNoTargetRetargetBackoffSteps, Math.Max(0, _noTargetRetargetStreak))
+                    Dim retargetDelayMs As Integer = baseRetargetDelayMs * (backoffStep + 1)
+
+                    If _lastTargetWindowSeen <> DateTime.MinValue AndAlso (now - _lastTargetWindowSeen).TotalMilliseconds < baseRetargetDelayMs Then
+                        If String.IsNullOrWhiteSpace(reason) Then
+                            reason = $"Target window just changed. Waiting {baseRetargetDelayMs}ms before retarget."
+                        End If
+                    ElseIf _noTargetBeganAt <> DateTime.MinValue AndAlso (now - _noTargetBeganAt).TotalMilliseconds < NoTargetStableWindowMs Then
+                        If String.IsNullOrWhiteSpace(reason) Then
+                            reason = $"No target not stable yet. Waiting {NoTargetStableWindowMs}ms."
+                        End If
+                    ElseIf (now - _lastRetarget).TotalMilliseconds >= retargetDelayMs Then
                         If SendKey(hwnd, "E", 35) Then
                             _lastRetarget = now
+                            _noTargetRetargetStreak = Math.Min(MaxNoTargetRetargetBackoffSteps, _noTargetRetargetStreak + 1)
                             SetLastAction("E (retarget)")
                             If String.IsNullOrWhiteSpace(reason) Then
                                 If deniedTarget Then
@@ -777,9 +807,9 @@ Public Class BotEngine
                         ElseIf unreachableLockActive Then
                             reason = "Unable-to-reach lock active. Waiting retarget cooldown."
                         ElseIf Not targetWindowVisible Then
-                            reason = "No target window detected. Waiting 300ms retarget cooldown."
+                            reason = $"No target window detected. Waiting {retargetDelayMs}ms retarget cooldown."
                         Else
-                            reason = "No target detected. Waiting 300ms retarget cooldown."
+                            reason = $"No target detected. Waiting {retargetDelayMs}ms retarget cooldown."
                         End If
                     End If
                 End If

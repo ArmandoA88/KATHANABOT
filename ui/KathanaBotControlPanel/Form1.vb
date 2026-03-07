@@ -12,6 +12,7 @@ Imports System.Diagnostics
 Public Class Form1
     Private Shared ReadOnly PrimaryKeys As String() = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"}
     Private Shared ReadOnly FunctionKeys As String() = {"F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10"}
+    Private Shared ReadOnly CustomCombatDefaultKeys As String() = {"F11", "F12", "F13"}
 
     Private ReadOnly _engine As New BotEngine()
     Private ReadOnly _uiTimer As New System.Windows.Forms.Timer()
@@ -42,6 +43,8 @@ Public Class Form1
 
     Private lblState As Label
     Private lblSystem As Label
+    Private lblRunState As Label
+    Private lblShortcutHint As Label
     Private lblHp As Label
     Private lblMp As Label
     Private lblMobName As Label
@@ -91,10 +94,11 @@ Public Class Form1
     Private _hpPendingTask As Task = Nothing
     Private _lastHpZeroNotification As DateTime = DateTime.MinValue
     Private _lastWindowMissingNotification As DateTime = DateTime.MinValue
+    Private _notificationWarmupUntilUtc As DateTime = DateTime.MinValue
     Private _deadHpConfirmCount As Integer = 0
     Private _deathNotificationLatched As Boolean = False
     Private _windowMissingNotificationLatched As Boolean = False
-    Private _enterWasDown As Boolean = False
+    Private _ctrlShiftWasDown As Boolean = False
     Private _isPickingLootRejectPoint As Boolean = False
     Private _lootRejectPointX As Integer = -1
     Private _lootRejectPointY As Integer = -1
@@ -107,6 +111,7 @@ Public Class Form1
     Private Const DeadRecoverThreshold As Double = 2.0
     Private Const DeadConfirmRequiredCount As Integer = 5
     Private Const DeathNotificationRetryCount As Integer = 3
+    Private Const StartupNotificationWarmupSeconds As Integer = 20
     Private Const DefaultNtfyTopicName As String = "Katana12345"
     Private Const DefaultPartyAskCommand As String = "add"
     Private Const DefaultLootNameMatchThresholdPercent As Integer = 80
@@ -165,8 +170,13 @@ Public Class Form1
         Public Property AskForPartyEnabled As Boolean = False
         Public Property AskForPartySeconds As Decimal = 30D
             Public Property AskForPartyText As String
-    Public Property LootScannerEnabled As Boolean = True
-    Public Property ItemNtfyTopic As String = "add"
+        Public Property LootScannerEnabled As Boolean = True
+        Public Property ItemNtfyTopic As String = "add"
+        Public Property NtfyTopic As String = ""
+        Public Property AutoPotHpPercent As Decimal = 80D
+        Public Property AutoPotMpPercent As Decimal = 35D
+        Public Property AlarmVolumePercent As Integer = 85
+        Public Property SavedConfig As BotConfig = Nothing
         Public Property MonsterNames As List(Of String) = New List(Of String)()
         Public Property LootNames As List(Of String) = New List(Of String)()
         Public Property CombatActions As List(Of PersistedCombatAction) = New List(Of PersistedCombatAction)()
@@ -174,6 +184,7 @@ Public Class Form1
 
     Private Class PersistedCombatAction
         Public Property ActionKey As String = ""
+        Public Property RowIndex As Integer = -1
         Public Property Enabled As Boolean = True
         Public Property Role As String = "attack"
         Public Property Priority As Integer = 100
@@ -674,42 +685,62 @@ Public Class Form1
 
     Private Function BuildCenterControlPanel() As Panel
         Dim panel As New Panel() With {.Dock = DockStyle.Fill, .Padding = New Padding(12), .AutoScroll = True}
-        lblState = New Label() With {.Text = "Status: Searching for target...", .Top = 16, .Left = 8, .Width = 260, .Height = 22}
-        lblSystem = New Label() With {.Text = "System Active: False", .Top = 44, .Left = 8, .Width = 260, .Height = 22, .ForeColor = Color.LightGreen}
-        lblHp = New Label() With {.Text = "HP%: 0", .Top = 72, .Left = 8, .Width = 120, .Height = 22, .ForeColor = Color.LimeGreen}
-        lblMp = New Label() With {.Text = "MP%: 0", .Top = 72, .Left = 136, .Width = 120, .Height = 22, .ForeColor = Color.DeepSkyBlue}
-        lblMobName = New Label() With {.Text = "Mob: (none)", .Top = 96, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.LightSkyBlue}
-        lblExpRate = New Label() With {.Text = "Prana/EXP: 0.00% | Rate: Calculating (1m)", .Top = 118, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.Khaki}
-        btnAttack = New Button() With {.Text = "Attack", .Top = 150, .Left = 8, .Width = 210, .Height = 42, .BackColor = Color.FromArgb(40, 180, 80), .ForeColor = Color.White}
-        btnSaveSettings = New Button() With {.Text = "Save Settings", .Top = 204, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(55, 55, 55), .ForeColor = Color.White}
-        btnStopBot = New Button() With {.Text = "Stop Bot", .Top = 254, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(20, 130, 210), .ForeColor = Color.White}
-        btnBypassLimits = New Button() With {.Text = "Ignore Skill Min HP/MP: OFF", .Top = 304, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
+        lblRunState = New Label() With {
+            .Text = "BOT PAUSED",
+            .Top = 10,
+            .Left = 8,
+            .Width = 210,
+            .Height = 30,
+            .BackColor = Color.FromArgb(110, 45, 45),
+            .ForeColor = Color.White,
+            .TextAlign = ContentAlignment.MiddleCenter,
+            .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold)
+        }
+        lblShortcutHint = New Label() With {
+            .Text = "Shortcut: Ctrl+Shift -> Pause / Resume",
+            .Top = 44,
+            .Left = 8,
+            .Width = 280,
+            .Height = 28,
+            .ForeColor = Color.Gold,
+            .TextAlign = ContentAlignment.MiddleLeft
+        }
+        lblState = New Label() With {.Text = "Status: Searching for target...", .Top = 76, .Left = 8, .Width = 300, .Height = 22}
+        lblSystem = New Label() With {.Text = "System Active: False", .Top = 104, .Left = 8, .Width = 260, .Height = 22, .ForeColor = Color.LightGreen}
+        lblHp = New Label() With {.Text = "HP%: 0", .Top = 132, .Left = 8, .Width = 120, .Height = 22, .ForeColor = Color.LimeGreen}
+        lblMp = New Label() With {.Text = "MP%: 0", .Top = 132, .Left = 136, .Width = 120, .Height = 22, .ForeColor = Color.DeepSkyBlue}
+        lblMobName = New Label() With {.Text = "Mob: (none)", .Top = 156, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.LightSkyBlue}
+        lblExpRate = New Label() With {.Text = "Prana/EXP: 0.00% | Rate: Calculating (1m)", .Top = 178, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.Khaki}
+        btnAttack = New Button() With {.Text = "Attack", .Top = 210, .Left = 8, .Width = 210, .Height = 42, .BackColor = Color.FromArgb(40, 180, 80), .ForeColor = Color.White}
+        btnSaveSettings = New Button() With {.Text = "Save Settings", .Top = 264, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(55, 55, 55), .ForeColor = Color.White}
+        btnStopBot = New Button() With {.Text = "Stop Bot", .Top = 314, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(20, 130, 210), .ForeColor = Color.White}
+        btnBypassLimits = New Button() With {.Text = "Ignore Skill Min HP/MP: OFF", .Top = 364, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
         btnBypassStuck = New Button() With {
             .Text = If(_bypassStuckTarget, "Auto Retarget If Stuck: ON", "Auto Retarget If Stuck: OFF"),
-            .Top = 354,
+            .Top = 414,
             .Left = 8,
             .Width = 210,
             .Height = 38,
             .BackColor = If(_bypassStuckTarget, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
             .ForeColor = Color.White
         }
-        btnRetargetNow = New Button() With {.Text = "Retarget Now (E)", .Top = 404, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
+        btnRetargetNow = New Button() With {.Text = "Retarget Now (E)", .Top = 464, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
         btnPartyAutoAccept = New Button() With {
             .Text = If(_partyAutoAccept, "Auto Accept Party/Ress: ON", "Auto Accept Party/Ress: OFF"),
-            .Top = 454,
+            .Top = 514,
             .Left = 8,
             .Width = 210,
             .Height = 38,
             .BackColor = If(_partyAutoAccept, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
             .ForeColor = Color.White
         }
-        Dim lblPartyAskEvery As New Label() With {.Text = "Ask Party Every (sec)", .Top = 500, .Left = 8, .Width = 210, .Height = 22}
-        nudPartyAskSeconds = New NumericUpDown() With {.Top = 522, .Left = 8, .Width = 210, .Height = 28, .Minimum = 5, .Maximum = 600, .Value = 30}
-        Dim lblPartyAskText As New Label() With {.Text = "Auto Ask Party Text", .Top = 556, .Left = 8, .Width = 210, .Height = 22}
-        txtPartyAskText = New TextBox() With {.Top = 578, .Left = 8, .Width = 210, .Height = 28, .Text = DefaultPartyAskCommand}
+        Dim lblPartyAskEvery As New Label() With {.Text = "Ask Party Every (sec)", .Top = 560, .Left = 8, .Width = 210, .Height = 22}
+        nudPartyAskSeconds = New NumericUpDown() With {.Top = 582, .Left = 8, .Width = 210, .Height = 28, .Minimum = 5, .Maximum = 600, .Value = 30}
+        Dim lblPartyAskText As New Label() With {.Text = "Auto Ask Party Text", .Top = 616, .Left = 8, .Width = 210, .Height = 22}
+        txtPartyAskText = New TextBox() With {.Top = 638, .Left = 8, .Width = 210, .Height = 28, .Text = DefaultPartyAskCommand}
         btnPartyAsk = New Button() With {
             .Text = If(_partyAskEnabled, "Auto Ask Party (add): ON", "Auto Ask Party (add): OFF"),
-            .Top = 612,
+            .Top = 672,
             .Left = 8,
             .Width = 210,
             .Height = 38,
@@ -718,7 +749,7 @@ Public Class Form1
         }
         btnLootScanner = New Button() With {
             .Text = If(_lootScannerEnabled, "Loot Scanner (Alt): ON", "Loot Scanner (Alt): OFF"),
-            .Top = 662,
+            .Top = 722,
             .Left = 8,
             .Width = 210,
             .Height = 38,
@@ -727,7 +758,7 @@ Public Class Form1
         }
         btnHelp = New Button() With {
             .Text = "Help (EN/ES/FIL)",
-            .Top = 712,
+            .Top = 772,
             .Left = 8,
             .Width = 210,
             .Height = 38,
@@ -745,6 +776,8 @@ Public Class Form1
         AddHandler btnLootScanner.Click, AddressOf ToggleLootScannerClicked
         AddHandler txtPartyAskText.TextChanged, AddressOf PartyAskTextChanged
         AddHandler btnHelp.Click, AddressOf HelpClicked
+        panel.Controls.Add(lblRunState)
+        panel.Controls.Add(lblShortcutHint)
         panel.Controls.Add(lblState)
         panel.Controls.Add(lblSystem)
         panel.Controls.Add(lblHp)
@@ -877,6 +910,13 @@ Public Class Form1
             dgvCombat.Rows.Add(False, key, "1.0", "special", keyIndex * 10, 40, 1, 1)
             keyIndex += 1
         Next
+        For i As Integer = 0 To CustomCombatDefaultKeys.Length - 1
+            Dim customKey As String = CustomCombatDefaultKeys(i)
+            dgvCombat.Rows.Add(False, customKey, "1.0", "special", keyIndex * 10, 40, 1, 1)
+            Dim customRow As DataGridViewRow = dgvCombat.Rows(dgvCombat.Rows.Count - 1)
+            customRow.Cells("Key").ReadOnly = False
+            keyIndex += 1
+        Next
         If Not MonsterExists("avara kara") Then
             lstMonsterFilter.Items.Add("avara kara")
         End If
@@ -896,12 +936,14 @@ Public Class Form1
         UpdateLootRejectPointUi()
         RefreshKeyActionSummary()
         AppendLog("UI loaded. No API required.")
+        AppendLog("Shortcut active: Ctrl+Shift toggles pause/resume.")
     End Sub
 
     Private Sub SaveClicked(sender As Object, e As EventArgs)
+        CommitPendingGridEdits()
         PushLiveConfig()
-        SavePersistedListState(True)
-        AppendLog("Settings saved to in-app engine.")
+        SavePersistedListState(True, True)
+        AppendLog("Settings saved (engine + disk).")
     End Sub
 
     Private Sub StartClicked(sender As Object, e As EventArgs)
@@ -914,6 +956,7 @@ Public Class Form1
 
         SavePersistedListState(False)
         ResetHpZeroAlarmState("Alarm state reset for bot start.")
+        BeginNotificationWarmup()
         PushLiveConfig()
         _engine.Start()
         UpdateAttackButtonAppearance(True)
@@ -929,6 +972,7 @@ Public Class Form1
         End If
         SavePersistedListState(False)
         ResetHpZeroAlarmState("Alarm state reset for bot start.")
+        BeginNotificationWarmup()
         PushLiveConfig()
         _engine.Start()
         UpdateAttackButtonAppearance(True)
@@ -949,9 +993,32 @@ Public Class Form1
             AppendLog("Hard stop macro not sent (window not found or input blocked).")
         End If
         _engine.Stop()
+        _notificationWarmupUntilUtc = DateTime.MinValue
         ApplyHealthUiTint(100.0, False)
         ResetHpZeroAlarmState("Alarm state reset for bot stop.")
         UpdateAttackButtonAppearance(False)
+    End Sub
+
+    Private Sub CommitPendingGridEdits()
+        If dgvCombat IsNot Nothing Then
+            Try
+                If dgvCombat.IsCurrentCellDirty Then
+                    dgvCombat.CommitEdit(DataGridViewDataErrorContexts.Commit)
+                End If
+                dgvCombat.EndEdit()
+            Catch
+            End Try
+        End If
+
+        If dgvRegions IsNot Nothing Then
+            Try
+                If dgvRegions.IsCurrentCellDirty Then
+                    dgvRegions.CommitEdit(DataGridViewDataErrorContexts.Commit)
+                End If
+                dgvRegions.EndEdit()
+            Catch
+            End Try
+        End If
     End Sub
 
     Private Sub SnapshotClicked(sender As Object, e As EventArgs)
@@ -1313,11 +1380,11 @@ Public Class Form1
             "- Verify Window Title in Vision tab.",
             "- Press Attack to start bot loop.",
             "- Press Stop Bot to hard stop movement and stop loop.",
-            "- You can also toggle start/stop with Enter when game window is foreground.",
+            "- You can also toggle pause/resume with Ctrl+Shift when game or control panel is focused.",
             "",
             "2) COMBAT TAB - COMBAT SKILLS GRID",
             "- Enabled: if checked, action is available.",
-            "- Key: keyboard key sent to game (1-0, F1-F10).",
+            "- Key: keyboard key sent to game (1-0, F1-F10 plus 3 custom rows after F10).",
             "- CooldownSec: minimum seconds between sends of this key.",
             "- Role: attack, heal, max_health, mana, special, stop.",
             "- Priority: lower values act first inside same category checks.",
@@ -1761,24 +1828,26 @@ Public Class Form1
     End Sub
 
     Private Sub EnterToggleTimerTick(sender As Object, e As EventArgs)
-        Dim isEnterDown As Boolean = (GetAsyncKeyState(CInt(Keys.Enter)) And &H8000S) <> 0
-        If isEnterDown AndAlso Not _enterWasDown Then
-            HandleEnterTogglePress()
+        Dim ctrlDown As Boolean = (GetAsyncKeyState(CInt(Keys.LControlKey)) And &H8000S) <> 0 OrElse (GetAsyncKeyState(CInt(Keys.RControlKey)) And &H8000S) <> 0
+        Dim shiftDown As Boolean = (GetAsyncKeyState(CInt(Keys.LShiftKey)) And &H8000S) <> 0 OrElse (GetAsyncKeyState(CInt(Keys.RShiftKey)) And &H8000S) <> 0
+        Dim comboDown As Boolean = ctrlDown AndAlso shiftDown
+        If comboDown AndAlso Not _ctrlShiftWasDown Then
+            HandleCtrlShiftTogglePress()
         End If
-        _enterWasDown = isEnterDown
+        _ctrlShiftWasDown = comboDown
     End Sub
 
-    Private Sub HandleEnterTogglePress()
-        If Not IsGameWindowForeground() Then
+    Private Sub HandleCtrlShiftTogglePress()
+        If Not (IsGameWindowForeground() OrElse IsControlPanelForeground()) Then
             Return
         End If
 
         If _engine.IsRunning() Then
             StopClicked(Nothing, EventArgs.Empty)
-            AppendLog("Enter toggle: bot paused.")
+            AppendLog("Ctrl+Shift toggle: bot paused.")
         Else
             StartClicked(Nothing, EventArgs.Empty)
-            AppendLog("Enter toggle: bot resumed.")
+            AppendLog("Ctrl+Shift toggle: bot resumed.")
         End If
     End Sub
 
@@ -1801,6 +1870,17 @@ Public Class Form1
 
         Dim activeTitle As String = sb.ToString()
         Return activeTitle.IndexOf(targetTitle, StringComparison.OrdinalIgnoreCase) >= 0
+    End Function
+
+    Private Function IsControlPanelForeground() As Boolean
+        Dim hwnd As IntPtr = GetForegroundWindow()
+        If hwnd = IntPtr.Zero Then
+            Return False
+        End If
+        If hwnd = Me.Handle Then
+            Return True
+        End If
+        Return ContainsFocus
     End Function
 
     Private Sub OnEngineStatusUpdated(status As BotStatus)
@@ -1851,6 +1931,15 @@ Public Class Form1
         End If
     End Sub
 
+    Private Sub BeginNotificationWarmup()
+        _notificationWarmupUntilUtc = DateTime.UtcNow.AddSeconds(StartupNotificationWarmupSeconds)
+        AppendLog($"Startup guard: suppressing death/window alerts for {StartupNotificationWarmupSeconds} seconds.")
+    End Sub
+
+    Private Function IsNotificationWarmupActive() As Boolean
+        Return DateTime.UtcNow < _notificationWarmupUntilUtc
+    End Function
+
     Private Sub HandleWindowMissingAlarm(status As BotStatus)
         If status Is Nothing Then
             Return
@@ -1859,6 +1948,10 @@ Public Class Form1
         Dim missingWindow As Boolean =
             status.Running AndAlso
             ((Not status.WindowFound) OrElse status.ErrorMessage.IndexOf("window not found", StringComparison.OrdinalIgnoreCase) >= 0)
+
+        If status.Running AndAlso IsNotificationWarmupActive() AndAlso missingWindow Then
+            Return
+        End If
 
         If missingWindow Then
             If Not _windowMissingNotificationLatched Then
@@ -2054,7 +2147,7 @@ Public Class Form1
         cfg.MpBar = BuildRect("mp_bar")
         cfg.MobNameRect = BuildRect("mob_name_rect")
         cfg.MobHpRect = BuildRect("mob_hp_rect")
-        cfg.UnreachableTextRect = New RectRegion(15, 582, 128, 22)
+        cfg.UnreachableTextRect = BuildRect("unreachable_text_rect")
         cfg.PranaExpRect = BuildRect("prana_exp_rect")
         cfg.PartyInviteScanRect = BuildRect("party_invite_scan_rect")
         cfg.PartyInviteOkRect = BuildRect("party_invite_ok_rect")
@@ -2089,6 +2182,11 @@ Public Class Form1
     Private Function BuildActionList() As List(Of ActionRule)
         Dim actions As New List(Of ActionRule)()
         For Each row As DataGridViewRow In dgvCombat.Rows
+            Dim keyName As String = SafeCell(row, "Key", "").ToUpperInvariant()
+            If keyName = "" Then
+                Continue For
+            End If
+
             Dim enabled As Boolean = False
             Try
                 enabled = Convert.ToBoolean(row.Cells("Enabled").Value)
@@ -2097,7 +2195,7 @@ Public Class Form1
 
             Dim cooldownSec As Double = Math.Max(0.05, ParseDouble(SafeCell(row, "CooldownSec", "1.0"), 1.0))
             actions.Add(New ActionRule With {
-                .KeyName = SafeCell(row, "Key", "").ToUpperInvariant(),
+                .KeyName = keyName,
                 .Enabled = enabled,
                 .Role = SafeCell(row, "Role", "attack").ToLowerInvariant(),
                 .Priority = ParseInt(SafeCell(row, "Priority", "100"), 100),
@@ -2164,6 +2262,10 @@ Public Class Form1
                 Return
             End If
 
+            If state.SavedConfig IsNot Nothing Then
+                ApplySavedConfigToUi(state.SavedConfig)
+            End If
+
             If chkMonsterFilter IsNot Nothing Then
                 chkMonsterFilter.Checked = state.MonsterFilterEnabled
             End If
@@ -2204,8 +2306,25 @@ Public Class Form1
                 btnLootScanner.Text = If(_lootScannerEnabled, "Loot Scanner (Alt): ON", "Loot Scanner (Alt): OFF")
                 btnLootScanner.BackColor = If(_lootScannerEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
             End If
+            If txtNtfyTopic IsNot Nothing Then
+                Dim topic As String = If(state.NtfyTopic, "").Trim()
+                txtNtfyTopic.Text = If(topic = "", DefaultNtfyTopicName, topic)
+            End If
             If txtItemNtfyTopic IsNot Nothing Then
                 txtItemNtfyTopic.Text = If(state.ItemNtfyTopic, "").Trim()
+            End If
+            If nudAutoPotHp IsNot Nothing Then
+                Dim boundedAutoHp As Decimal = Math.Max(nudAutoPotHp.Minimum, Math.Min(nudAutoPotHp.Maximum, state.AutoPotHpPercent))
+                nudAutoPotHp.Value = boundedAutoHp
+            End If
+            If nudAutoPotMp IsNot Nothing Then
+                Dim boundedAutoMp As Decimal = Math.Max(nudAutoPotMp.Minimum, Math.Min(nudAutoPotMp.Maximum, state.AutoPotMpPercent))
+                nudAutoPotMp.Value = boundedAutoMp
+            End If
+            If nudAlarmVolume IsNot Nothing Then
+                Dim boundedVolume As Decimal = Math.Max(nudAlarmVolume.Minimum, Math.Min(nudAlarmVolume.Maximum, state.AlarmVolumePercent))
+                nudAlarmVolume.Value = boundedVolume
+                _alarmVolumePercent = CInt(boundedVolume)
             End If
 
             If state.MonsterNames IsNot Nothing AndAlso lstMonsterFilter IsNot Nothing Then
@@ -2236,7 +2355,7 @@ Public Class Form1
         End Try
     End Sub
 
-    Private Sub SavePersistedListState(Optional logFailure As Boolean = False)
+    Private Sub SavePersistedListState(Optional logFailure As Boolean = False, Optional includeFullConfig As Boolean = True)
         Try
             If Not Directory.Exists(PersistDirectoryPath) Then
                 Directory.CreateDirectory(PersistDirectoryPath)
@@ -2255,7 +2374,12 @@ Public Class Form1
                 .AskForPartySeconds = If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D),
                                 .AskForPartyText = GetPartyAskCommandText(),
                 .LootScannerEnabled = _lootScannerEnabled,
+                .NtfyTopic = If(txtNtfyTopic IsNot Nothing, txtNtfyTopic.Text.Trim(), ""),
                 .ItemNtfyTopic = If(txtItemNtfyTopic IsNot Nothing, txtItemNtfyTopic.Text.Trim(), ""),
+                .AutoPotHpPercent = If(nudAutoPotHp IsNot Nothing, nudAutoPotHp.Value, 80D),
+                .AutoPotMpPercent = If(nudAutoPotMp IsNot Nothing, nudAutoPotMp.Value, 35D),
+                .AlarmVolumePercent = CInt(If(nudAlarmVolume IsNot Nothing, nudAlarmVolume.Value, CDec(_alarmVolumePercent))),
+                .SavedConfig = If(includeFullConfig, BuildConfig(), Nothing),
                 .MonsterNames = GetListBoxItems(lstMonsterFilter),
                 .LootNames = GetListBoxItems(lstLootFilter),
                 .CombatActions = GetPersistedCombatActions()
@@ -2268,6 +2392,136 @@ Public Class Form1
                 AppendLog("Unable to save list state: " & ex.Message)
             End If
         End Try
+    End Sub
+
+    Private Sub ApplySavedConfigToUi(cfg As BotConfig)
+        If cfg Is Nothing Then
+            Return
+        End If
+
+        If txtWindowTitle IsNot Nothing Then
+            txtWindowTitle.Text = If(cfg.WindowTitle, "").Trim()
+        End If
+        SetNumericControlValue(nudLoopMs, cfg.LoopMs)
+        SetNumericControlValue(nudRetargetMs, cfg.RetargetMs)
+        SetNumericControlValue(nudMobHpThreshold, CDec(cfg.MobHpPresenceThreshold))
+
+        _bypassHpMpLimits = cfg.BypassHpMpLimits
+        If btnBypassLimits IsNot Nothing Then
+            btnBypassLimits.Text = If(_bypassHpMpLimits, "Ignore Skill Min HP/MP: ON", "Ignore Skill Min HP/MP: OFF")
+            btnBypassLimits.BackColor = If(_bypassHpMpLimits, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+        End If
+
+        _bypassStuckTarget = cfg.BypassStuckTarget
+        If btnBypassStuck IsNot Nothing Then
+            btnBypassStuck.Text = If(_bypassStuckTarget, "Auto Retarget If Stuck: ON", "Auto Retarget If Stuck: OFF")
+            btnBypassStuck.BackColor = If(_bypassStuckTarget, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+        End If
+
+        _partyAutoAccept = cfg.PartyAutoAcceptEnabled
+        UpdatePromptAutoAcceptButton()
+        _partyAskEnabled = cfg.PartyAskEnabled
+        SetNumericControlValue(nudPartyAskSeconds, CDec(Math.Max(1, cfg.PartyAskIntervalMs) / 1000.0))
+        If txtPartyAskText IsNot Nothing Then
+            txtPartyAskText.Text = If(String.IsNullOrWhiteSpace(cfg.PartyAskText), DefaultPartyAskCommand, cfg.PartyAskText.Trim())
+        End If
+        UpdatePartyAskButton()
+
+        _lootScannerEnabled = cfg.LootScannerEnabled
+        If btnLootScanner IsNot Nothing Then
+            btnLootScanner.Text = If(_lootScannerEnabled, "Loot Scanner (Alt): ON", "Loot Scanner (Alt): OFF")
+            btnLootScanner.BackColor = If(_lootScannerEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+        End If
+        If txtItemNtfyTopic IsNot Nothing Then
+            txtItemNtfyTopic.Text = If(cfg.ItemNtfyTopic, "").Trim()
+        End If
+
+        If chkLootPickup IsNot Nothing Then
+            chkLootPickup.Checked = cfg.LootPickupEnabled
+        End If
+        SetNumericControlValue(nudLootPickupSeconds, CDec(Math.Max(100, cfg.LootPickupIntervalMs) / 1000.0))
+        SetNumericControlValue(nudLootNameMatchThreshold, CDec(cfg.LootNameMatchThresholdPercent))
+
+        If cfg.LootRejectClickEnabled AndAlso cfg.LootRejectPointX >= 0 AndAlso cfg.LootRejectPointY >= 0 Then
+            _lootRejectPointX = cfg.LootRejectPointX
+            _lootRejectPointY = cfg.LootRejectPointY
+        Else
+            _lootRejectPointX = -1
+            _lootRejectPointY = -1
+        End If
+        _isPickingLootRejectPoint = False
+        UpdateLootRejectPointUi()
+
+        UpsertRegionRow("hp_bar", cfg.HpBar)
+        UpsertRegionRow("mp_bar", cfg.MpBar)
+        UpsertRegionRow("mob_name_rect", cfg.MobNameRect)
+        UpsertRegionRow("mob_hp_rect", cfg.MobHpRect)
+        UpsertRegionRow("unreachable_text_rect", cfg.UnreachableTextRect)
+        UpsertRegionRow("prana_exp_rect", cfg.PranaExpRect)
+        UpsertRegionRow("party_invite_scan_rect", cfg.PartyInviteScanRect)
+        UpsertRegionRow("party_invite_ok_rect", cfg.PartyInviteOkRect)
+
+        If cfg.Actions IsNot Nothing AndAlso cfg.Actions.Count > 0 Then
+            Dim persisted As New List(Of PersistedCombatAction)()
+            Dim actionIndex As Integer = 0
+            For Each action As ActionRule In cfg.Actions
+                If action Is Nothing Then
+                    actionIndex += 1
+                    Continue For
+                End If
+
+                Dim keyName As String = If(action.KeyName, "").Trim().ToUpperInvariant()
+                If keyName = "" Then
+                    actionIndex += 1
+                    Continue For
+                End If
+
+                persisted.Add(New PersistedCombatAction With {
+                    .ActionKey = keyName,
+                    .RowIndex = actionIndex,
+                    .Enabled = action.Enabled,
+                    .Role = NormalizePersistedRole(action.Role),
+                    .Priority = Math.Max(1, action.Priority),
+                    .CooldownSec = Math.Max(0.05, Math.Max(1, action.CooldownMs) / 1000.0),
+                    .TriggerPercent = Math.Min(99, Math.Max(1, action.TriggerPercent)),
+                    .MinHpPercent = Math.Min(100, Math.Max(1, action.MinHpPercent)),
+                    .MinMpPercent = Math.Min(100, Math.Max(1, action.MinMpPercent))
+                })
+                actionIndex += 1
+            Next
+
+            If persisted.Count > 0 Then
+                ApplyPersistedCombatActions(persisted)
+            End If
+        End If
+    End Sub
+
+    Private Sub UpsertRegionRow(regionName As String, region As RectRegion)
+        If dgvRegions Is Nothing OrElse String.IsNullOrWhiteSpace(regionName) OrElse region Is Nothing Then
+            Return
+        End If
+
+        For Each row As DataGridViewRow In dgvRegions.Rows
+            Dim name As String = SafeCell(row, "Region", "").ToLowerInvariant()
+            If name = regionName.ToLowerInvariant() Then
+                row.Cells("X").Value = region.X.ToString()
+                row.Cells("Y").Value = region.Y.ToString()
+                row.Cells("W").Value = Math.Max(1, region.W).ToString()
+                row.Cells("H").Value = Math.Max(1, region.H).ToString()
+                Return
+            End If
+        Next
+
+        dgvRegions.Rows.Add(regionName, region.X.ToString(), region.Y.ToString(), Math.Max(1, region.W).ToString(), Math.Max(1, region.H).ToString())
+    End Sub
+
+    Private Shared Sub SetNumericControlValue(control As NumericUpDown, rawValue As Decimal)
+        If control Is Nothing Then
+            Return
+        End If
+
+        Dim bounded As Decimal = Math.Max(control.Minimum, Math.Min(control.Maximum, rawValue))
+        control.Value = bounded
     End Sub
 
     Private Shared Function GetListBoxItems(listBox As ListBox) As List(Of String)
@@ -2312,6 +2566,7 @@ Public Class Form1
 
             result.Add(New PersistedCombatAction With {
                 .ActionKey = actionKey,
+                .RowIndex = row.Index,
                 .Enabled = enabled,
                 .Role = role,
                 .Priority = priority,
@@ -2331,9 +2586,13 @@ Public Class Form1
         End If
 
         Dim keyed As New Dictionary(Of String, PersistedCombatAction)(StringComparer.OrdinalIgnoreCase)
+        Dim indexed As New Dictionary(Of Integer, PersistedCombatAction)()
         For Each action In actions
             If action Is Nothing Then
                 Continue For
+            End If
+            If action.RowIndex >= 0 AndAlso Not indexed.ContainsKey(action.RowIndex) Then
+                indexed(action.RowIndex) = action
             End If
             Dim actionKey As String = If(action.ActionKey, "").Trim().ToUpperInvariant()
             If actionKey = "" Then
@@ -2342,17 +2601,26 @@ Public Class Form1
             keyed(actionKey) = action
         Next
 
-        If keyed.Count = 0 Then
+        If keyed.Count = 0 AndAlso indexed.Count = 0 Then
             Return
         End If
 
         For Each row As DataGridViewRow In dgvCombat.Rows
             Dim actionKey As String = SafeCell(row, "Key", "").ToUpperInvariant()
-            If actionKey = "" OrElse Not keyed.ContainsKey(actionKey) Then
+            Dim item As PersistedCombatAction = Nothing
+            If indexed.ContainsKey(row.Index) Then
+                item = indexed(row.Index)
+            ElseIf actionKey <> "" AndAlso keyed.ContainsKey(actionKey) Then
+                item = keyed(actionKey)
+            End If
+            If item Is Nothing Then
                 Continue For
             End If
 
-            Dim item As PersistedCombatAction = keyed(actionKey)
+            Dim restoredKey As String = If(item.ActionKey, "").Trim().ToUpperInvariant()
+            If restoredKey <> "" Then
+                row.Cells("Key").Value = restoredKey
+            End If
             row.Cells("Enabled").Value = item.Enabled
             row.Cells("Role").Value = NormalizePersistedRole(item.Role)
             row.Cells("Priority").Value = Math.Max(1, item.Priority).ToString()
@@ -2530,18 +2798,26 @@ Public Class Form1
     End Sub
 
     Private Sub UpdateAttackButtonAppearance(isRunning As Boolean)
-        If btnAttack Is Nothing Then
-            Return
+        If btnAttack IsNot Nothing Then
+            If isRunning Then
+                btnAttack.Text = "RUNNING"
+                btnAttack.BackColor = Color.FromArgb(220, 70, 55)
+                btnAttack.ForeColor = Color.White
+            Else
+                btnAttack.Text = "PAUSED"
+                btnAttack.BackColor = Color.FromArgb(40, 180, 80)
+                btnAttack.ForeColor = Color.White
+            End If
         End If
 
-        If isRunning Then
-            btnAttack.Text = "ATTACKING"
-            btnAttack.BackColor = Color.FromArgb(220, 70, 55)
-            btnAttack.ForeColor = Color.White
-        Else
-            btnAttack.Text = "Attack"
-            btnAttack.BackColor = Color.FromArgb(40, 180, 80)
-            btnAttack.ForeColor = Color.White
+        If lblRunState IsNot Nothing Then
+            lblRunState.Text = If(isRunning, "BOT RUNNING", "BOT PAUSED")
+            lblRunState.BackColor = If(isRunning, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+            lblRunState.ForeColor = Color.White
+        End If
+
+        If lblShortcutHint IsNot Nothing Then
+            lblShortcutHint.Text = If(isRunning, "Ctrl+Shift -> Pause Bot", "Ctrl+Shift -> Resume Bot")
         End If
     End Sub
 
@@ -2573,6 +2849,14 @@ Public Class Form1
 
     Private Sub HandleHpZeroAlarm(status As BotStatus)
         If status Is Nothing Then
+            Return
+        End If
+
+        If status.Running AndAlso IsNotificationWarmupActive() Then
+            _deadHpConfirmCount = 0
+            If _hpZeroPending Then
+                CancelHpZeroPendingCountdown(False)
+            End If
             Return
         End If
 
@@ -2710,6 +2994,7 @@ Public Class Form1
             _hpAlarmCts = Nothing
         End If
         _deadHpConfirmCount = 0
+        _deathNotificationLatched = False
         _lastHpZeroNotification = DateTime.MinValue
         _lastWindowMissingNotification = DateTime.MinValue
         _windowMissingNotificationLatched = False
@@ -2732,6 +3017,7 @@ Public Class Form1
         End If
 
         _deadHpConfirmCount = 0
+        _deathNotificationLatched = False
         _lastHpZeroNotification = DateTime.MinValue
         _lastWindowMissingNotification = DateTime.MinValue
         _windowMissingNotificationLatched = False
