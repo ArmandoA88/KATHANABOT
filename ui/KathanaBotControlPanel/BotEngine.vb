@@ -232,9 +232,6 @@ Public Class BotEngine
     Public Event StatusUpdated(status As BotStatus)
     Public Event LogLine(line As String)
     Private Const AllowBlindAttackWhenTargetMissing As Boolean = False
-    Private Const NoTargetRetargetMinMs As Integer = 250
-    Private Const NoTargetStableWindowMs As Integer = 220
-    Private Const MaxNoTargetRetargetBackoffSteps As Integer = 3
     Private Const FirstHitWindowMs As Integer = 800
     Private Const BlacklistLockWindowMs As Integer = 800
     Private Const TargetNameConfirmMinGapMs As Integer = 120
@@ -245,10 +242,7 @@ Public Class BotEngine
     Private Const UnreachableOcrMinIntervalMs As Integer = 260
     Private Const UnreachableConfirmWindowMs As Integer = 900
     Private Const UnreachableConfirmRequiredCount As Integer = 2
-    Private Const UnreachableRetargetLockMs As Integer = 1200
-    Private Const UnreachableTriggerCooldownMs As Integer = 850
     Private Const UnreachableClearRequiredCount As Integer = 2
-    Private Const MinStuckRetargetMs As Integer = 3000
     Private Const BaseClientWidth As Integer = 1024
     Private Const BaseClientHeight As Integer = 768
 
@@ -260,7 +254,6 @@ Public Class BotEngine
     Private _lastRetarget As DateTime = DateTime.MinValue
     Private _lastTargetWindowSeen As DateTime = DateTime.MinValue
     Private _noTargetBeganAt As DateTime = DateTime.MinValue
-    Private _noTargetRetargetStreak As Integer = 0
     Private _lastAttackAction As DateTime = DateTime.MinValue
     Private _lastMobHpSample As Double = -1
     Private _lastMobHpMovement As DateTime = DateTime.MinValue
@@ -365,7 +358,6 @@ Public Class BotEngine
             _lastRetarget = DateTime.MinValue
             _lastTargetWindowSeen = DateTime.MinValue
             _noTargetBeganAt = DateTime.MinValue
-            _noTargetRetargetStreak = 0
             _lastAttackAction = DateTime.MinValue
             _lastMobHpSample = -1
             _lastMobHpMovement = DateTime.MinValue
@@ -459,6 +451,9 @@ Public Class BotEngine
             SyncLock _sync
                 cfg = _config
             End SyncLock
+            Dim loopDelayMs As Integer = Math.Max(1, cfg.LoopMs)
+            Dim retargetDelayMs As Integer = Math.Max(loopDelayMs, cfg.RetargetMs)
+            Dim noTargetStableMs As Integer = retargetDelayMs
 
             Dim hwnd As IntPtr = FindGameWindow(cfg.WindowTitle)
             If hwnd = IntPtr.Zero Then
@@ -474,7 +469,7 @@ Public Class BotEngine
                               s.NotAttackingReason = "Window not found."
                               s.ErrorMessage = "Game window not found."
                           End Sub)
-                Await Task.Delay(450, token)
+                Await Task.Delay(loopDelayMs, token)
                 Continue While
             End If
 
@@ -485,7 +480,7 @@ Public Class BotEngine
                               s.NotAttackingReason = "Capture failed."
                               s.ErrorMessage = "Unable to capture game client."
                           End Sub)
-                Await Task.Delay(120, token)
+                Await Task.Delay(loopDelayMs, token)
                 Continue While
             End If
 
@@ -508,7 +503,7 @@ Public Class BotEngine
             If captureGlitch Then
                 For retry As Integer = 1 To 2
                     frame.Dispose()
-                    Thread.Sleep(12)
+                    Thread.Sleep(loopDelayMs)
                     frame = CaptureClient(hwnd)
                     If frame Is Nothing Then
                         Exit For
@@ -531,7 +526,7 @@ Public Class BotEngine
                                   s.NotAttackingReason = "Capture failed."
                                   s.ErrorMessage = "Unable to capture game client."
                               End Sub)
-                    Await Task.Delay(120, token)
+                    Await Task.Delay(loopDelayMs, token)
                     Continue While
                 End If
             End If
@@ -617,7 +612,6 @@ Public Class BotEngine
             If targetWindowVisible Then
                 _lastTargetWindowSeen = now
                 _noTargetBeganAt = DateTime.MinValue
-                _noTargetRetargetStreak = 0
             ElseIf _noTargetBeganAt = DateTime.MinValue Then
                 _noTargetBeganAt = now
             End If
@@ -760,22 +754,17 @@ Public Class BotEngine
                         End If
                     End If
                 Else
-                    Dim baseRetargetDelayMs As Integer = Math.Max(NoTargetRetargetMinMs, cfg.RetargetMs)
-                    Dim backoffStep As Integer = Math.Min(MaxNoTargetRetargetBackoffSteps, Math.Max(0, _noTargetRetargetStreak))
-                    Dim retargetDelayMs As Integer = baseRetargetDelayMs * (backoffStep + 1)
-
-                    If _lastTargetWindowSeen <> DateTime.MinValue AndAlso (now - _lastTargetWindowSeen).TotalMilliseconds < baseRetargetDelayMs Then
+                    If _lastTargetWindowSeen <> DateTime.MinValue AndAlso (now - _lastTargetWindowSeen).TotalMilliseconds < retargetDelayMs Then
                         If String.IsNullOrWhiteSpace(reason) Then
-                            reason = $"Target window just changed. Waiting {baseRetargetDelayMs}ms before retarget."
+                            reason = $"Target window just changed. Waiting {retargetDelayMs}ms before retarget."
                         End If
-                    ElseIf _noTargetBeganAt <> DateTime.MinValue AndAlso (now - _noTargetBeganAt).TotalMilliseconds < NoTargetStableWindowMs Then
+                    ElseIf _noTargetBeganAt <> DateTime.MinValue AndAlso (now - _noTargetBeganAt).TotalMilliseconds < noTargetStableMs Then
                         If String.IsNullOrWhiteSpace(reason) Then
-                            reason = $"No target not stable yet. Waiting {NoTargetStableWindowMs}ms."
+                            reason = $"No target not stable yet. Waiting {noTargetStableMs}ms."
                         End If
                     ElseIf (now - _lastRetarget).TotalMilliseconds >= retargetDelayMs Then
                         If SendKey(hwnd, "E", 35) Then
                             _lastRetarget = now
-                            _noTargetRetargetStreak = Math.Min(MaxNoTargetRetargetBackoffSteps, _noTargetRetargetStreak + 1)
                             SetLastAction("E (retarget)")
                             If String.IsNullOrWhiteSpace(reason) Then
                                 If deniedTarget Then
@@ -832,7 +821,7 @@ Public Class BotEngine
                           s.ErrorMessage = ""
                       End Sub)
 
-            Await Task.Delay(Math.Max(20, cfg.LoopMs), token)
+            Await Task.Delay(loopDelayMs, token)
         End While
     End Function
 
@@ -1410,10 +1399,11 @@ Public Class BotEngine
         End If
 
         If (Not _unreachableLatched) AndAlso _unreachableConfirmCount >= UnreachableConfirmRequiredCount Then
-            Dim triggerReady As Boolean = (_lastUnreachableTrigger = DateTime.MinValue) OrElse ((now - _lastUnreachableTrigger).TotalMilliseconds >= UnreachableTriggerCooldownMs)
+            Dim unreachableRetargetMs As Integer = Math.Max(1, cfg.RetargetMs)
+            Dim triggerReady As Boolean = (_lastUnreachableTrigger = DateTime.MinValue) OrElse ((now - _lastUnreachableTrigger).TotalMilliseconds >= unreachableRetargetMs)
             If triggerReady Then
                 _lastUnreachableTrigger = now
-                _unreachableLockUntil = now.AddMilliseconds(UnreachableRetargetLockMs)
+                _unreachableLockUntil = now.AddMilliseconds(unreachableRetargetMs)
                 _unreachableConfirmCount = 0
                 _unreachableLastMatchAt = DateTime.MinValue
                 _lastUnreachableCandidate = ""
@@ -1920,9 +1910,10 @@ Public Class BotEngine
             Return False
         End If
 
-        Dim stuckMs As Integer = Math.Max(MinStuckRetargetMs, cfg.StuckTargetMs)
+        Dim stuckMs As Integer = Math.Max(1, cfg.StuckTargetMs)
         Dim sinceAttackMs As Double = (now - _lastAttackAction).TotalMilliseconds
-        If sinceAttackMs > Math.Max(15000, stuckMs * 5) Then
+        Dim staleAttackWindowMs As Integer = Math.Max(stuckMs * 5, Math.Max(1, cfg.RetargetMs) * 6)
+        If sinceAttackMs > staleAttackWindowMs Then
             Return False
         End If
 
@@ -1931,7 +1922,7 @@ Public Class BotEngine
             Return False
         End If
 
-        Dim retargetCooldownMs As Integer = Math.Max(250, cfg.RetargetMs \ 2)
+        Dim retargetCooldownMs As Integer = Math.Max(1, cfg.RetargetMs)
         Return (now - _lastRetarget).TotalMilliseconds >= retargetCooldownMs
     End Function
 

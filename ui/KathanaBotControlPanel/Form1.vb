@@ -70,6 +70,7 @@ Public Class Form1
 
     Private nudAutoPotHp As NumericUpDown
     Private nudAutoPotMp As NumericUpDown
+    Private nudStuckTargetMs As NumericUpDown
     Private nudLootNameMatchThreshold As NumericUpDown
     Private nudAlarmVolume As NumericUpDown
     Private txtNtfyTopic As TextBox
@@ -250,6 +251,9 @@ Public Class Form1
         AddHandler nudMobHpThreshold.ValueChanged, AddressOf LiveConfigChanged
         AddHandler nudAutoPotHp.ValueChanged, AddressOf LiveConfigChanged
         AddHandler nudAutoPotMp.ValueChanged, AddressOf LiveConfigChanged
+        If nudStuckTargetMs IsNot Nothing Then
+            AddHandler nudStuckTargetMs.ValueChanged, AddressOf LiveConfigChanged
+        End If
         If nudLootNameMatchThreshold IsNot Nothing Then
             AddHandler nudLootNameMatchThreshold.ValueChanged, AddressOf LiveConfigChanged
         End If
@@ -270,6 +274,9 @@ Public Class Form1
         AddHandler chkMonsterFilter.CheckedChanged, AddressOf PersistListSettingsChanged
         AddHandler chkLootPickup.CheckedChanged, AddressOf PersistListSettingsChanged
         AddHandler nudLootPickupSeconds.ValueChanged, AddressOf PersistListSettingsChanged
+        If nudStuckTargetMs IsNot Nothing Then
+            AddHandler nudStuckTargetMs.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
         If nudLootNameMatchThreshold IsNot Nothing Then
             AddHandler nudLootNameMatchThreshold.ValueChanged, AddressOf PersistListSettingsChanged
         End If
@@ -337,7 +344,6 @@ Public Class Form1
         tabs.TabPages.Add(BuildCombatTab())
         tabs.TabPages.Add(BuildVisionTab())
         tabs.TabPages.Add(BuildAutoPotTab())
-        tabs.TabPages.Add(BuildUnstuckTab())
         tabs.TabPages.Add(BuildDiagnosticsTab())
     End Sub
 
@@ -495,6 +501,10 @@ Public Class Form1
 
     Private Function BuildAutoPotTab() As TabPage
         Dim tab As New TabPage("Auto-Pot") With {.BackColor = Color.FromArgb(20, 20, 20)}
+        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2, .Padding = New Padding(8)}
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 300.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 170.0F))
+
         Dim group As New GroupBox() With {.Text = "Quick Pot Thresholds", .Dock = DockStyle.Top, .Height = 300, .Padding = New Padding(10)}
         Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 7}
         layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 170.0F))
@@ -554,39 +564,56 @@ Public Class Form1
         layout.Controls.Add(note, 2, 0)
         layout.SetRowSpan(note, 7)
         group.Controls.Add(layout)
-        tab.Controls.Add(group)
+        root.Controls.Add(group, 0, 0)
+        root.Controls.Add(BuildAutoPotUnstuckGroup(), 0, 1)
+        tab.Controls.Add(root)
         Return tab
     End Function
 
-    Private Function BuildUnstuckTab() As TabPage
-        Dim tab As New TabPage("Unstuck") With {.BackColor = Color.FromArgb(20, 20, 20)}
-        Dim group As New GroupBox() With {.Text = "Unstuck / Retarget", .Dock = DockStyle.Top, .Height = 160}
-        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 2}
+    Private Function BuildAutoPotUnstuckGroup() As GroupBox
+        Dim group As New GroupBox() With {.Text = "Unstuck / Retarget", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 3}
         layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 190.0F))
         layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 160.0F))
         layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
 
         layout.Controls.Add(New Label() With {.Text = "Retarget Key", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
         layout.Controls.Add(New Label() With {.Text = "E", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.LightGreen}, 1, 0)
         layout.Controls.Add(New Label() With {.Text = "Retarget Interval (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
+        layout.Controls.Add(New Label() With {.Text = "Stuck Target Timeout (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
 
-        Dim localRetarget As New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 100, .Maximum = 5000, .Value = 550}
-        AddHandler localRetarget.ValueChanged,
+        Dim nudAutoPotRetarget As New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 50, .Maximum = 10000, .Value = 550}
+        If nudRetargetMs IsNot Nothing Then
+            nudAutoPotRetarget.Value = nudRetargetMs.Value
+        End If
+        AddHandler nudAutoPotRetarget.ValueChanged,
             Sub(_s As Object, _e As EventArgs)
-                nudRetargetMs.Value = localRetarget.Value
-                PushLiveConfig()
+                If nudRetargetMs IsNot Nothing AndAlso nudRetargetMs.Value <> nudAutoPotRetarget.Value Then
+                    nudRetargetMs.Value = nudAutoPotRetarget.Value
+                End If
             End Sub
-        layout.Controls.Add(localRetarget, 1, 1)
+        If nudRetargetMs IsNot Nothing Then
+            AddHandler nudRetargetMs.ValueChanged,
+                Sub(_s As Object, _e As EventArgs)
+                    If nudAutoPotRetarget.Value <> nudRetargetMs.Value Then
+                        nudAutoPotRetarget.Value = nudRetargetMs.Value
+                    End If
+                End Sub
+        End If
+        layout.Controls.Add(nudAutoPotRetarget, 1, 1)
 
-        Dim btnApply As New Button() With {.Text = "Use This Interval", .Width = 160, .BackColor = Color.FromArgb(45, 85, 135), .ForeColor = Color.White}
-        AddHandler btnApply.Click, Sub(_s As Object, _e As EventArgs)
-                                       nudRetargetMs.Value = localRetarget.Value
-                                       AppendLog("Updated retarget interval from Unstuck tab.")
-                                   End Sub
-        layout.Controls.Add(btnApply, 2, 1)
+        nudStuckTargetMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 500, .Maximum = 30000, .Value = 2200}
+        AddHandler nudStuckTargetMs.ValueChanged, Sub(_s As Object, _e As EventArgs) PushLiveConfig()
+        layout.Controls.Add(nudStuckTargetMs, 1, 2)
+
+        Dim note As New Label() With {.Text = "Use Retarget Interval and Stuck Target Timeout to tune unstuck behavior.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.LightSteelBlue}
+        layout.Controls.Add(note, 2, 1)
+        layout.SetRowSpan(note, 2)
         group.Controls.Add(layout)
-        tab.Controls.Add(group)
-        Return tab
+        Return group
     End Function
 
     Private Function BuildDiagnosticsTab() As TabPage
@@ -1444,9 +1471,9 @@ Public Class Form1
             "- Test Alarm + Phone tests sound and ntfy message.",
             "- Test Phone Alert sends only ntfy test.",
             "",
-            "11) UNSTUCK TAB",
-            "- Secondary retarget interval controls.",
-            "- Use This Interval syncs retarget setting to main config.",
+            "11) AUTO-POT TAB - UNSTUCK / RETARGET",
+            "- Retarget Interval (ms) mirrors Vision tab Retarget (ms).",
+            "- Stuck Target Timeout (ms) controls when stuck-target bypass retarget can fire.",
             "",
             "12) DIAGNOSTICS TAB",
             "- Live internal state: running flags, hp/mp, target state, OCR error,",
@@ -1484,7 +1511,7 @@ Public Class Form1
             "- Includes filter toggles, lists, loot reject point, party settings, combat rows.",
             "",
             "18) HOTKEY BEHAVIOR",
-            "- Enter key toggles start/stop only if game window is active foreground.",
+            "- Ctrl+Shift toggles pause/resume when game or control panel is focused.",
             "",
             "19) TROUBLESHOOTING",
             "- If no actions happen: verify window title and capture snapshot first.",
@@ -1504,7 +1531,7 @@ Public Class Form1
             "- Verifica Window Title en la pestana Vision.",
             "- Presiona Attack para iniciar el bot.",
             "- Presiona Stop Bot para detener movimiento y loop.",
-            "- Tambien puedes usar Enter para iniciar/parar si la ventana del juego esta al frente.",
+            "- Tambien puedes usar Ctrl+Shift para pausar/reanudar cuando el juego o el panel tienen foco.",
             "",
             "2) PESTANA COMBAT - TABLA COMBAT SKILLS",
             "- Enabled: activa/desactiva la accion.",
@@ -1561,9 +1588,9 @@ Public Class Form1
             "- Apply To Heal/Mana/Max-HP Rows aplica umbrales rapidos.",
             "- Test Alarm + Phone y Test Phone Alert para pruebas.",
             "",
-            "11) PESTANA UNSTUCK",
-            "- Controla intervalo de retarget.",
-            "- Use This Interval sincroniza valor al config principal.",
+            "11) PESTANA AUTO-POT - UNSTUCK / RETARGET",
+            "- Retarget Interval (ms) refleja el valor Retarget(ms) de Vision.",
+            "- Stuck Target Timeout (ms) controla cuando se activa el bypass por objetivo atascado.",
             "",
             "12) PESTANA DIAGNOSTICS",
             "- Muestra estado interno completo en tiempo real.",
@@ -1596,8 +1623,8 @@ Public Class Form1
             "17) PERSISTENCIA",
             "- Guarda estado en AppData/KathanaBotControlPanel/user_lists.json.",
             "",
-            "18) ATAJO ENTER",
-            "- Enter solo alterna start/stop si la ventana del juego esta activa.",
+            "18) ATAJO CTRL+SHIFT",
+            "- Ctrl+Shift alterna pausa/reanudar cuando el juego o el panel estan en foco.",
             "",
             "19) SOLUCION DE PROBLEMAS",
             "- Sin acciones: valida Window Title y prueba Capture Snapshot.",
@@ -1617,7 +1644,7 @@ Public Class Form1
             "- I-check ang Window Title sa Vision tab.",
             "- Pindutin ang Attack para simulan ang bot.",
             "- Pindutin ang Stop Bot para ihinto ang movement at loop.",
-            "- Puwede ring Enter para start/stop kung active ang game window.",
+            "- Puwede ring Ctrl+Shift para pause/resume kapag focused ang game o control panel.",
             "",
             "2) COMBAT TAB - COMBAT SKILLS TABLE",
             "- Enabled: naka-on o naka-off ang action.",
@@ -1674,9 +1701,9 @@ Public Class Form1
             "- Apply To Heal/Mana/Max-HP Rows para sa mabilis na threshold apply.",
             "- Test Alarm + Phone at Test Phone Alert para sa testing.",
             "",
-            "11) UNSTUCK TAB",
-            "- Extra controls para retarget interval.",
-            "- Use This Interval para i-sync sa main config.",
+            "11) AUTO-POT TAB - UNSTUCK / RETARGET",
+            "- Retarget Interval (ms) naka-sync sa Retarget(ms) ng Vision tab.",
+            "- Stuck Target Timeout (ms) ang threshold para mag-fire ang stuck-target bypass retarget.",
             "",
             "12) DIAGNOSTICS TAB",
             "- Real-time internal status: running flags, hp/mp, target info, OCR error,",
@@ -1710,8 +1737,8 @@ Public Class Form1
             "17) SAVE/PERSISTENCE",
             "- Naka-save ang list/config state sa AppData/KathanaBotControlPanel/user_lists.json.",
             "",
-            "18) ENTER HOTKEY",
-            "- Enter start/stop toggle gumagana lang kapag active foreground ang game window.",
+            "18) CTRL+SHIFT HOTKEY",
+            "- Ctrl+Shift pause/resume toggle gumagana kapag active ang game o control panel.",
             "",
             "19) TROUBLESHOOTING",
             "- Walang action: i-check Window Title at subukan ang Capture Snapshot.",
@@ -2134,6 +2161,7 @@ Public Class Form1
         cfg.WindowTitle = txtWindowTitle.Text.Trim()
         cfg.LoopMs = CInt(nudLoopMs.Value)
         cfg.RetargetMs = CInt(nudRetargetMs.Value)
+        cfg.StuckTargetMs = CInt(If(nudStuckTargetMs IsNot Nothing, nudStuckTargetMs.Value, 2200D))
         cfg.MobHpPresenceThreshold = CDbl(nudMobHpThreshold.Value)
         cfg.BypassHpMpLimits = _bypassHpMpLimits
         cfg.BypassStuckTarget = _bypassStuckTarget
@@ -2404,6 +2432,7 @@ Public Class Form1
         End If
         SetNumericControlValue(nudLoopMs, cfg.LoopMs)
         SetNumericControlValue(nudRetargetMs, cfg.RetargetMs)
+        SetNumericControlValue(nudStuckTargetMs, cfg.StuckTargetMs)
         SetNumericControlValue(nudMobHpThreshold, CDec(cfg.MobHpPresenceThreshold))
 
         _bypassHpMpLimits = cfg.BypassHpMpLimits
