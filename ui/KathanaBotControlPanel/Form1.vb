@@ -3195,15 +3195,7 @@ Public Class Form1
         AppendLog($"HP is zero. Death alert started at volume {_alarmVolumePercent}%.")
         SendHpZeroPhoneAlert()
         Task.Run(Sub() PlayAlarmPulse(_alarmVolumePercent))
-        StopBotAfterDeathAlert()
-    End Sub
-
-    Private Sub StopBotAfterDeathAlert()
-        If _engine.IsRunning() Then
-            _engine.Stop()
-        End If
-        UpdateAttackButtonAppearance(False)
-        StopHpZeroAlarm("Death confirmed by HP=0 on consecutive frames. Bot stopped to prevent repeated alarms.")
+        AppendLog("Death confirmed by HP=0 on consecutive frames. Bot will keep running.")
     End Sub
 
     Private Sub StopHpZeroAlarm(Optional reason As String = "HP recovered. Alarm stopped.")
