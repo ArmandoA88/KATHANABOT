@@ -43,6 +43,27 @@ Public Class Form1
     Private lstLootFilter As ListBox
     Private txtMonsterName As TextBox
     Private txtLootName As TextBox
+    Private chkLevelingAgent As CheckBox
+    Private txtLevelingPreferredMobs As TextBox
+    Private nudLevelingStopHp As NumericUpDown
+    Private nudLevelingStopMp As NumericUpDown
+    Private nudLevelingMaxNoTargetSeconds As NumericUpDown
+    Private chkLevelingStopOnLowExp As CheckBox
+    Private nudLevelingMinExpPerHour As NumericUpDown
+    Private chkLevelingStopOnRepeatedUnreachable As CheckBox
+    Private nudLevelingUnreachableLimit As NumericUpDown
+    Private chkNavigationEnabled As CheckBox
+    Private txtMapOpenKey As TextBox
+    Private chkTravelPreview As CheckBox
+    Private cboNavigationStartNode As ComboBox
+    Private cboNavigationTargetNode As ComboBox
+    Private lblLevelingState As Label
+    Private lblLevelingReason As Label
+    Private lblMapCoordinate As Label
+    Private lblMapHeading As Label
+    Private lblMapMarker As Label
+    Private lblMapLocalizationConfidence As Label
+    Private lblRoutePreview As Label
 
     Private lblState As Label
     Private lblSystem As Label
@@ -83,6 +104,7 @@ Public Class Form1
     Private _lastState As String = ""
     Private _lastError As String = ""
     Private _lastNoAttackReason As String = ""
+    Private _lastAgentState As String = ""
     Private _bypassHpMpLimits As Boolean = False
     Private _bypassStuckTarget As Boolean = True
     Private _partyAutoAccept As Boolean = True
@@ -120,6 +142,8 @@ Public Class Form1
     Private Const DefaultNtfyTopicName As String = "Katana12345"
     Private Const DefaultPartyAskCommand As String = "add"
     Private Const DefaultLootNameMatchThresholdPercent As Integer = 80
+    Private Const DefaultMapOpenKey As String = "M"
+    Private Const DefaultLevelingMinExpPerHour As Decimal = 0.15D
     Private Shared ReadOnly NtfyClient As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(7)}
     Private Shared ReadOnly PersistDirectoryPath As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel")
     Private Shared ReadOnly PersistFilePath As String = Path.Combine(PersistDirectoryPath, "user_lists.json")
@@ -280,6 +304,48 @@ Public Class Form1
         If txtPartyAskText IsNot Nothing Then
             AddHandler txtPartyAskText.TextChanged, AddressOf LiveConfigChanged
         End If
+        If chkLevelingAgent IsNot Nothing Then
+            AddHandler chkLevelingAgent.CheckedChanged, AddressOf LiveConfigChanged
+        End If
+        If txtLevelingPreferredMobs IsNot Nothing Then
+            AddHandler txtLevelingPreferredMobs.TextChanged, AddressOf LiveConfigChanged
+        End If
+        If nudLevelingStopHp IsNot Nothing Then
+            AddHandler nudLevelingStopHp.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If nudLevelingStopMp IsNot Nothing Then
+            AddHandler nudLevelingStopMp.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If nudLevelingMaxNoTargetSeconds IsNot Nothing Then
+            AddHandler nudLevelingMaxNoTargetSeconds.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If chkLevelingStopOnLowExp IsNot Nothing Then
+            AddHandler chkLevelingStopOnLowExp.CheckedChanged, AddressOf LiveConfigChanged
+        End If
+        If nudLevelingMinExpPerHour IsNot Nothing Then
+            AddHandler nudLevelingMinExpPerHour.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If chkLevelingStopOnRepeatedUnreachable IsNot Nothing Then
+            AddHandler chkLevelingStopOnRepeatedUnreachable.CheckedChanged, AddressOf LiveConfigChanged
+        End If
+        If nudLevelingUnreachableLimit IsNot Nothing Then
+            AddHandler nudLevelingUnreachableLimit.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If chkNavigationEnabled IsNot Nothing Then
+            AddHandler chkNavigationEnabled.CheckedChanged, AddressOf LiveConfigChanged
+        End If
+        If txtMapOpenKey IsNot Nothing Then
+            AddHandler txtMapOpenKey.TextChanged, AddressOf LiveConfigChanged
+        End If
+        If chkTravelPreview IsNot Nothing Then
+            AddHandler chkTravelPreview.CheckedChanged, AddressOf LiveConfigChanged
+        End If
+        If cboNavigationStartNode IsNot Nothing Then
+            AddHandler cboNavigationStartNode.SelectedIndexChanged, AddressOf LiveConfigChanged
+        End If
+        If cboNavigationTargetNode IsNot Nothing Then
+            AddHandler cboNavigationTargetNode.SelectedIndexChanged, AddressOf LiveConfigChanged
+        End If
         AddHandler dgvCombat.CellValueChanged, AddressOf LiveConfigChanged
         AddHandler dgvCombat.CellEndEdit, AddressOf LiveConfigChanged
         AddHandler dgvRegions.CellValueChanged, AddressOf LiveConfigChanged
@@ -304,6 +370,48 @@ Public Class Form1
         End If
         If txtPartyAskText IsNot Nothing Then
             AddHandler txtPartyAskText.TextChanged, AddressOf PersistListSettingsChanged
+        End If
+        If chkLevelingAgent IsNot Nothing Then
+            AddHandler chkLevelingAgent.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
+        If txtLevelingPreferredMobs IsNot Nothing Then
+            AddHandler txtLevelingPreferredMobs.TextChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudLevelingStopHp IsNot Nothing Then
+            AddHandler nudLevelingStopHp.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudLevelingStopMp IsNot Nothing Then
+            AddHandler nudLevelingStopMp.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudLevelingMaxNoTargetSeconds IsNot Nothing Then
+            AddHandler nudLevelingMaxNoTargetSeconds.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If chkLevelingStopOnLowExp IsNot Nothing Then
+            AddHandler chkLevelingStopOnLowExp.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudLevelingMinExpPerHour IsNot Nothing Then
+            AddHandler nudLevelingMinExpPerHour.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If chkLevelingStopOnRepeatedUnreachable IsNot Nothing Then
+            AddHandler chkLevelingStopOnRepeatedUnreachable.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudLevelingUnreachableLimit IsNot Nothing Then
+            AddHandler nudLevelingUnreachableLimit.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If chkNavigationEnabled IsNot Nothing Then
+            AddHandler chkNavigationEnabled.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
+        If txtMapOpenKey IsNot Nothing Then
+            AddHandler txtMapOpenKey.TextChanged, AddressOf PersistListSettingsChanged
+        End If
+        If chkTravelPreview IsNot Nothing Then
+            AddHandler chkTravelPreview.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
+        If cboNavigationStartNode IsNot Nothing Then
+            AddHandler cboNavigationStartNode.SelectedIndexChanged, AddressOf PersistListSettingsChanged
+        End If
+        If cboNavigationTargetNode IsNot Nothing Then
+            AddHandler cboNavigationTargetNode.SelectedIndexChanged, AddressOf PersistListSettingsChanged
         End If
         If txtLootScanAreaPoints IsNot Nothing Then
             AddHandler txtLootScanAreaPoints.TextChanged, AddressOf PersistListSettingsChanged
@@ -366,6 +474,7 @@ Public Class Form1
         tabs.TabPages.Add(BuildCombatTab())
         tabs.TabPages.Add(BuildVisionTab())
         tabs.TabPages.Add(BuildAutoPotTab())
+        tabs.TabPages.Add(BuildLevelingTab())
         tabs.TabPages.Add(BuildDiagnosticsTab())
     End Sub
 
@@ -737,6 +846,110 @@ Public Class Form1
         Return tab
     End Function
 
+    Private Function BuildLevelingTab() As TabPage
+        Dim tab As New TabPage("Leveling") With {.BackColor = Color.FromArgb(20, 20, 20)}
+        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2, .Padding = New Padding(8)}
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 320.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        tab.Controls.Add(root)
+
+        Dim settingsGroup As New GroupBox() With {.Text = "Leveling Agent", .Dock = DockStyle.Fill}
+        Dim settingsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 12}
+        settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 220.0F))
+        settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        settingsGroup.Controls.Add(settingsLayout)
+
+        chkLevelingAgent = New CheckBox() With {.Text = "Enable leveling agent", .Dock = DockStyle.Fill}
+        settingsLayout.Controls.Add(chkLevelingAgent, 0, 0)
+        settingsLayout.SetColumnSpan(chkLevelingAgent, 2)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Preferred Mobs", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
+        txtLevelingPreferredMobs = New TextBox() With {.Dock = DockStyle.Fill, .PlaceholderText = "mob1, mob2, mob3"}
+        settingsLayout.Controls.Add(txtLevelingPreferredMobs, 1, 1)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Stop HP %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
+        nudLevelingStopHp = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1, .Maximum = 100, .Value = 20, .Width = 120}
+        settingsLayout.Controls.Add(nudLevelingStopHp, 1, 2)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Stop MP %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 3)
+        nudLevelingStopMp = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1, .Maximum = 100, .Value = 10, .Width = 120}
+        settingsLayout.Controls.Add(nudLevelingStopMp, 1, 3)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Max No Target (sec)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 4)
+        nudLevelingMaxNoTargetSeconds = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 5, .Maximum = 600, .Value = 45, .Width = 120}
+        settingsLayout.Controls.Add(nudLevelingMaxNoTargetSeconds, 1, 4)
+
+        chkNavigationEnabled = New CheckBox() With {.Text = "Enable map localization", .Dock = DockStyle.Fill}
+        settingsLayout.Controls.Add(chkNavigationEnabled, 0, 5)
+        settingsLayout.SetColumnSpan(chkNavigationEnabled, 2)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Map Open Key", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 6)
+        txtMapOpenKey = New TextBox() With {.Dock = DockStyle.Left, .Width = 120, .Text = DefaultMapOpenKey}
+        settingsLayout.Controls.Add(txtMapOpenKey, 1, 6)
+
+        chkTravelPreview = New CheckBox() With {.Text = "Enable travel preview route planning", .Dock = DockStyle.Fill}
+        settingsLayout.Controls.Add(chkTravelPreview, 0, 7)
+        settingsLayout.SetColumnSpan(chkTravelPreview, 2)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Route Start Node", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 8)
+        cboNavigationStartNode = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList}
+        settingsLayout.Controls.Add(cboNavigationStartNode, 1, 8)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Route Target Node", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 9)
+        cboNavigationTargetNode = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList}
+        settingsLayout.Controls.Add(cboNavigationTargetNode, 1, 9)
+
+        chkLevelingStopOnLowExp = New CheckBox() With {.Text = "Stop when EXP/hour is below threshold", .Dock = DockStyle.Fill}
+        settingsLayout.Controls.Add(chkLevelingStopOnLowExp, 0, 10)
+        settingsLayout.SetColumnSpan(chkLevelingStopOnLowExp, 2)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Min EXP/hour %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 11)
+        nudLevelingMinExpPerHour = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0.01D, .Maximum = 100D, .DecimalPlaces = 2, .Increment = 0.05D, .Value = DefaultLevelingMinExpPerHour, .Width = 120}
+        Dim lowExpPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
+        lowExpPanel.Controls.Add(nudLevelingMinExpPerHour)
+        chkLevelingStopOnRepeatedUnreachable = New CheckBox() With {.Text = "Stop after repeated unreachable targets", .AutoSize = True, .Margin = New Padding(16, 4, 0, 0)}
+        lowExpPanel.Controls.Add(chkLevelingStopOnRepeatedUnreachable)
+        nudLevelingUnreachableLimit = New NumericUpDown() With {.Minimum = 1, .Maximum = 20, .Value = 4, .Width = 70, .Margin = New Padding(8, 0, 0, 0)}
+        lowExpPanel.Controls.Add(nudLevelingUnreachableLimit)
+        settingsLayout.Controls.Add(lowExpPanel, 1, 11)
+
+        Dim statusGroup As New GroupBox() With {.Text = "Agent Runtime", .Dock = DockStyle.Fill}
+        Dim statusLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 9, .Padding = New Padding(6)}
+        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 32.0F))
+        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 54.0F))
+        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 26.0F))
+        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 26.0F))
+        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 26.0F))
+        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 26.0F))
+        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 28.0F))
+        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 44.0F))
+        statusLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        statusGroup.Controls.Add(statusLayout)
+
+        lblLevelingState = New Label() With {.Text = "Agent State: Disabled", .Dock = DockStyle.Fill, .ForeColor = Color.Khaki, .Font = New Font("Segoe UI", 11.0F, FontStyle.Bold), .TextAlign = ContentAlignment.MiddleLeft}
+        lblLevelingReason = New Label() With {.Text = "Reason: Leveling agent is disabled.", .Dock = DockStyle.Fill, .ForeColor = Color.Gainsboro, .AutoSize = False}
+        lblMapCoordinate = New Label() With {.Text = "Map Coordinate: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.LightGreen}
+        lblMapHeading = New Label() With {.Text = "Map Heading: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.LightSkyBlue}
+        lblMapMarker = New Label() With {.Text = "Map Marker: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.Salmon}
+        lblMapLocalizationConfidence = New Label() With {.Text = "Localization Confidence: 0%", .Dock = DockStyle.Fill, .ForeColor = Color.Khaki}
+        lblRoutePreview = New Label() With {.Text = "Route Preview: disabled", .Dock = DockStyle.Fill, .ForeColor = Color.LightCyan}
+        Dim hintLabel As New Label() With {.Text = "Preferred mobs are a positive filter. When the list is not empty, the agent will skip non-matching targets.", .Dock = DockStyle.Fill, .ForeColor = Color.LightSkyBlue}
+        Dim guardrailLabel As New Label() With {.Text = "Phase 2 map localization reads coordinate and heading from calibrated map regions. It does not move yet; it gives you calibration feedback for future travel work.", .Dock = DockStyle.Fill, .ForeColor = Color.Silver}
+        statusLayout.Controls.Add(lblLevelingState, 0, 0)
+        statusLayout.Controls.Add(lblLevelingReason, 0, 1)
+        statusLayout.Controls.Add(lblMapCoordinate, 0, 2)
+        statusLayout.Controls.Add(lblMapHeading, 0, 3)
+        statusLayout.Controls.Add(lblMapMarker, 0, 4)
+        statusLayout.Controls.Add(lblMapLocalizationConfidence, 0, 5)
+        statusLayout.Controls.Add(lblRoutePreview, 0, 6)
+        statusLayout.Controls.Add(hintLabel, 0, 7)
+        statusLayout.Controls.Add(guardrailLabel, 0, 8)
+
+        root.Controls.Add(settingsGroup, 0, 0)
+        root.Controls.Add(statusGroup, 0, 1)
+        PopulateNavigationNodeCombos()
+        Return tab
+    End Function
+
     Private Function BuildCombatSkillsGroup() As GroupBox
         Dim group As New GroupBox() With {.Text = "Combat Skills", .Dock = DockStyle.Fill}
         dgvCombat = New DataGridView() With {.Dock = DockStyle.Fill, .AllowUserToAddRows = False, .AllowUserToDeleteRows = False, .RowHeadersVisible = False, .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill}
@@ -1031,8 +1244,15 @@ Public Class Form1
         dgvRegions.Rows.Add("rupiahs_rect", "560", "745", "110", "21")
         dgvRegions.Rows.Add("party_invite_scan_rect", "349", "318", "328", "124")
         dgvRegions.Rows.Add("party_invite_ok_rect", "463", "410", "59", "21")
+        dgvRegions.Rows.Add("map_rect", "0", "0", "1024", "768")
+        dgvRegions.Rows.Add("map_coordinate_rect", "6", "744", "120", "22")
+        dgvRegions.Rows.Add("map_player_marker_rect", "470", "585", "120", "120")
+        dgvRegions.Rows.Add("map_heading_rect", "968", "4", "40", "24")
         If txtLootScanAreaPoints IsNot Nothing Then
             txtLootScanAreaPoints.Text = FormatLootScanPoints(BotConfig.CreateDefaultLootScanPoints())
+        End If
+        If txtMapOpenKey IsNot Nothing Then
+            txtMapOpenKey.Text = DefaultMapOpenKey
         End If
         nudMobHpThreshold.Value = 1.0D
         nudRetargetMs.Value = 550D
@@ -1982,6 +2202,20 @@ Public Class Form1
             $"AutoAskPartyEnabled: {_partyAskEnabled}{Environment.NewLine}" &
             $"AutoAskPartyIntervalSec: {If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value.ToString(), "30")}{Environment.NewLine}" &
             $"AutoAskPartyText: {GetPartyAskCommandText()}{Environment.NewLine}" &
+            $"LevelingAgentEnabled: {st.AgentEnabled}{Environment.NewLine}" &
+            $"LevelingPreferredMobs: {If(txtLevelingPreferredMobs IsNot Nothing, txtLevelingPreferredMobs.Text.Trim(), "")}{Environment.NewLine}" &
+            $"LevelingStopHp%: {If(nudLevelingStopHp IsNot Nothing, nudLevelingStopHp.Value.ToString(), "20")}{Environment.NewLine}" &
+            $"LevelingStopMp%: {If(nudLevelingStopMp IsNot Nothing, nudLevelingStopMp.Value.ToString(), "10")}{Environment.NewLine}" &
+            $"LevelingMaxNoTargetSec: {If(nudLevelingMaxNoTargetSeconds IsNot Nothing, nudLevelingMaxNoTargetSeconds.Value.ToString(), "45")}{Environment.NewLine}" &
+            $"LevelingStopOnLowExp: {If(chkLevelingStopOnLowExp IsNot Nothing AndAlso chkLevelingStopOnLowExp.Checked, "True", "False")}{Environment.NewLine}" &
+            $"LevelingMinExpPerHour%: {If(nudLevelingMinExpPerHour IsNot Nothing, nudLevelingMinExpPerHour.Value.ToString("0.00"), DefaultLevelingMinExpPerHour.ToString("0.00"))}{Environment.NewLine}" &
+            $"LevelingStopOnRepeatedUnreachable: {If(chkLevelingStopOnRepeatedUnreachable IsNot Nothing AndAlso chkLevelingStopOnRepeatedUnreachable.Checked, "True", "False")}{Environment.NewLine}" &
+            $"LevelingUnreachableLimit: {If(nudLevelingUnreachableLimit IsNot Nothing, nudLevelingUnreachableLimit.Value.ToString(), "4")}{Environment.NewLine}" &
+            $"NavigationEnabled: {If(chkNavigationEnabled IsNot Nothing AndAlso chkNavigationEnabled.Checked, "True", "False")}{Environment.NewLine}" &
+            $"MapOpenKey: {If(txtMapOpenKey IsNot Nothing AndAlso txtMapOpenKey.Text.Trim() <> "", txtMapOpenKey.Text.Trim().ToUpperInvariant(), DefaultMapOpenKey)}{Environment.NewLine}" &
+            $"TravelPreviewEnabled: {If(chkTravelPreview IsNot Nothing AndAlso chkTravelPreview.Checked, "True", "False")}{Environment.NewLine}" &
+            $"RouteStartNode: {ExtractNavigationNodeId(If(cboNavigationStartNode IsNot Nothing, cboNavigationStartNode.SelectedItem, Nothing))}{Environment.NewLine}" &
+            $"RouteTargetNode: {ExtractNavigationNodeId(If(cboNavigationTargetNode IsNot Nothing, cboNavigationTargetNode.SelectedItem, Nothing))}{Environment.NewLine}" &
             $"NtfyTopic: {GetNtfyTopicName()}{Environment.NewLine}" &
             $"LootPickupEnabled: {If(chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked, "True", "False")}{Environment.NewLine}" &
             $"LootPickupIntervalSec: {If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value.ToString(), "4")}{Environment.NewLine}" &
@@ -2003,6 +2237,20 @@ Public Class Form1
             $"RupiahsTotal: {If(st.RupiahsTotal >= 0, st.RupiahsTotal.ToString("N0"), "n/a")}{Environment.NewLine}" &
             $"RupiahsPerHour: {If(st.RupiahsPerHour < 0, "Calculating (1m)", st.RupiahsPerHour.ToString("N0"))}{Environment.NewLine}" &
             $"TargetValid: {st.TargetValid}{Environment.NewLine}" &
+            $"AgentState: {st.AgentState}{Environment.NewLine}" &
+            $"AgentReason: {st.AgentReason}{Environment.NewLine}" &
+            $"AgentGuardrailTriggered: {st.AgentGuardrailTriggered}{Environment.NewLine}" &
+            $"MapCoordinateText: {If(String.IsNullOrWhiteSpace(st.MapCoordinateText), "n/a", st.MapCoordinateText)}{Environment.NewLine}" &
+            $"MapCoordinateXY: {If(st.MapCoordinateX >= 0 AndAlso st.MapCoordinateY >= 0, st.MapCoordinateX.ToString() & "," & st.MapCoordinateY.ToString(), "n/a")}{Environment.NewLine}" &
+            $"MapHeading: {If(String.IsNullOrWhiteSpace(st.MapHeading), "n/a", st.MapHeading)}{Environment.NewLine}" &
+            $"MapCoordinateConfidence: {st.MapCoordinateConfidence}{Environment.NewLine}" &
+            $"MapMarkerDetected: {st.MapMarkerDetected}{Environment.NewLine}" &
+            $"MapMarkerXY: {If(st.MapMarkerX >= 0 AndAlso st.MapMarkerY >= 0, st.MapMarkerX.ToString() & "," & st.MapMarkerY.ToString(), "n/a")}{Environment.NewLine}" &
+            $"MapLocalizationConfidence: {st.MapLocalizationConfidence}{Environment.NewLine}" &
+            $"NavigationCurrentNode: {If(String.IsNullOrWhiteSpace(st.NavigationCurrentNodeLabel), "n/a", st.NavigationCurrentNodeLabel)}{Environment.NewLine}" &
+            $"NavigationNextWaypoint: {If(String.IsNullOrWhiteSpace(st.NavigationNextWaypointLabel), "n/a", st.NavigationNextWaypointLabel)}{Environment.NewLine}" &
+            $"NavigationRouteReady: {st.NavigationRouteReady}{Environment.NewLine}" &
+            $"NavigationRoute: {If(String.IsNullOrWhiteSpace(st.NavigationRouteText), "n/a", st.NavigationRouteText)}{Environment.NewLine}" &
             $"LastAction: {st.LastAction}{Environment.NewLine}" &
              $"NotAttackingReason: {st.NotAttackingReason}{Environment.NewLine}" &
              $"Error: {st.ErrorMessage}"
@@ -2093,6 +2341,45 @@ Public Class Form1
         lblMobName.Text = $"Mob: {mobDisplayName}"
         lblExpRate.Text = $"Prana/EXP: {status.ExpPercent:0.00}% | Rate: {If(status.ExpPerHour < 0, "Calculating (1m)", status.ExpPerHour.ToString("0.00") & "%/hr")}"
         lblRupiahsRate.Text = $"Rupiahs: {If(status.RupiahsTotal >= 0, status.RupiahsTotal.ToString("N0"), "n/a")} | Rate: {If(status.RupiahsPerHour < 0, "Calculating (1m)", status.RupiahsPerHour.ToString("N0") & "/hr")}"
+        If lblLevelingState IsNot Nothing Then
+            lblLevelingState.Text = $"Agent State: {status.AgentState}"
+            lblLevelingState.ForeColor = If(status.AgentGuardrailTriggered, Color.FromArgb(255, 120, 120), If(status.AgentEnabled, Color.Khaki, Color.DimGray))
+        End If
+        If lblLevelingReason IsNot Nothing Then
+            Dim agentReason As String = If(String.IsNullOrWhiteSpace(status.AgentReason), "No active leveling-agent reason.", status.AgentReason)
+            lblLevelingReason.Text = $"Reason: {agentReason}"
+            lblLevelingReason.ForeColor = If(status.AgentGuardrailTriggered, Color.FromArgb(255, 160, 160), Color.Gainsboro)
+        End If
+        If lblMapCoordinate IsNot Nothing Then
+            Dim coordText As String = If(status.MapCoordinateX >= 0 AndAlso status.MapCoordinateY >= 0, $"{status.MapCoordinateX}/{status.MapCoordinateY}", If(String.IsNullOrWhiteSpace(status.MapCoordinateText), "n/a", status.MapCoordinateText))
+            lblMapCoordinate.Text = $"Map Coordinate: {coordText} (confidence {status.MapCoordinateConfidence}%)"
+        End If
+        If lblMapHeading IsNot Nothing Then
+            lblMapHeading.Text = $"Map Heading: {If(String.IsNullOrWhiteSpace(status.MapHeading), "n/a", status.MapHeading)}"
+        End If
+        If lblMapMarker IsNot Nothing Then
+            Dim markerText As String = If(status.MapMarkerDetected, $"{status.MapMarkerX},{status.MapMarkerY}", "not detected")
+            lblMapMarker.Text = $"Map Marker: {markerText}"
+            lblMapMarker.ForeColor = If(status.MapMarkerDetected, Color.FromArgb(255, 140, 120), Color.DimGray)
+        End If
+        If lblMapLocalizationConfidence IsNot Nothing Then
+            lblMapLocalizationConfidence.Text = $"Localization Confidence: {status.MapLocalizationConfidence}%"
+            lblMapLocalizationConfidence.ForeColor = If(status.MapLocalizationConfidence >= 80, Color.LightGreen, If(status.MapLocalizationConfidence >= 50, Color.Khaki, Color.OrangeRed))
+        End If
+        If lblRoutePreview IsNot Nothing Then
+            Dim routeText As String
+            If Not status.NavigationTravelPreviewEnabled Then
+                routeText = "Route Preview: disabled"
+            ElseIf Not status.NavigationRouteReady Then
+                routeText = "Route Preview: waiting for route"
+            Else
+                Dim currentNodeText As String = If(String.IsNullOrWhiteSpace(status.NavigationCurrentNodeLabel), "unknown start", status.NavigationCurrentNodeLabel)
+                Dim nextNodeText As String = If(String.IsNullOrWhiteSpace(status.NavigationNextWaypointLabel), "destination reached", status.NavigationNextWaypointLabel)
+                routeText = $"Route Preview: {currentNodeText} -> {nextNodeText}{Environment.NewLine}{status.NavigationRouteText}"
+            End If
+            lblRoutePreview.Text = routeText
+            lblRoutePreview.ForeColor = If(status.NavigationRouteReady, Color.LightCyan, Color.DimGray)
+        End If
         UpdateAttackButtonAppearance(status.Running)
         HandleHpZeroAlarm(status)
         HandleWindowMissingAlarm(status)
@@ -2115,6 +2402,11 @@ Public Class Form1
             _lastNoAttackReason = status.NotAttackingReason
         ElseIf status.NotAttackingReason = "" Then
             _lastNoAttackReason = ""
+        End If
+        Dim agentStateText As String = $"{status.AgentState}|{status.AgentReason}|{status.AgentGuardrailTriggered}"
+        If agentStateText <> _lastAgentState Then
+            AppendLog($"Leveling agent: {status.AgentState}{If(String.IsNullOrWhiteSpace(status.AgentReason), "", " - " & status.AgentReason)}")
+            _lastAgentState = agentStateText
         End If
     End Sub
 
@@ -2333,6 +2625,21 @@ Public Class Form1
                 cfg.PartyAskText = GetPartyAskCommandText()
         cfg.LootScannerEnabled = _lootScannerEnabled
         cfg.ItemNtfyTopic = If(txtItemNtfyTopic IsNot Nothing, txtItemNtfyTopic.Text.Trim(), "")
+        cfg.LevelingAgentEnabled = (chkLevelingAgent IsNot Nothing AndAlso chkLevelingAgent.Checked)
+        cfg.LevelingPreferredMobs = ParseCommaSeparatedList(If(txtLevelingPreferredMobs IsNot Nothing, txtLevelingPreferredMobs.Text, ""))
+        cfg.LevelingStopHpPercent = CInt(If(nudLevelingStopHp IsNot Nothing, nudLevelingStopHp.Value, 20D))
+        cfg.LevelingStopMpPercent = CInt(If(nudLevelingStopMp IsNot Nothing, nudLevelingStopMp.Value, 10D))
+        cfg.LevelingMaxNoTargetSeconds = CInt(If(nudLevelingMaxNoTargetSeconds IsNot Nothing, nudLevelingMaxNoTargetSeconds.Value, 45D))
+        cfg.LevelingStopOnLowExpRate = (chkLevelingStopOnLowExp IsNot Nothing AndAlso chkLevelingStopOnLowExp.Checked)
+        cfg.LevelingMinExpPerHour = CDbl(If(nudLevelingMinExpPerHour IsNot Nothing, nudLevelingMinExpPerHour.Value, DefaultLevelingMinExpPerHour))
+        cfg.LevelingStopOnRepeatedUnreachable = (chkLevelingStopOnRepeatedUnreachable IsNot Nothing AndAlso chkLevelingStopOnRepeatedUnreachable.Checked)
+        cfg.LevelingUnreachableLimit = CInt(If(nudLevelingUnreachableLimit IsNot Nothing, nudLevelingUnreachableLimit.Value, 4D))
+        cfg.NavigationEnabled = (chkNavigationEnabled IsNot Nothing AndAlso chkNavigationEnabled.Checked)
+        cfg.MapOpenKey = If(txtMapOpenKey IsNot Nothing AndAlso txtMapOpenKey.Text.Trim() <> "", txtMapOpenKey.Text.Trim().ToUpperInvariant(), DefaultMapOpenKey)
+        cfg.NavigationMapName = "Jina Basin"
+        cfg.NavigationStartNodeId = ExtractNavigationNodeId(If(cboNavigationStartNode IsNot Nothing, cboNavigationStartNode.SelectedItem, Nothing))
+        cfg.NavigationTargetNodeId = ExtractNavigationNodeId(If(cboNavigationTargetNode IsNot Nothing, cboNavigationTargetNode.SelectedItem, Nothing))
+        cfg.NavigationTravelPreviewEnabled = (chkTravelPreview IsNot Nothing AndAlso chkTravelPreview.Checked)
         cfg.HpBar = BuildRect("hp_bar")
         cfg.MpBar = BuildRect("mp_bar")
         cfg.MobNameRect = BuildRect("mob_name_rect")
@@ -2342,6 +2649,10 @@ Public Class Form1
         cfg.RupiahsRect = BuildRect("rupiahs_rect")
         cfg.PartyInviteScanRect = BuildRect("party_invite_scan_rect")
         cfg.PartyInviteOkRect = BuildRect("party_invite_ok_rect")
+        cfg.MapRect = BuildRect("map_rect")
+        cfg.MapCoordinateRect = BuildRect("map_coordinate_rect")
+        cfg.MapPlayerMarkerRect = BuildRect("map_player_marker_rect")
+        cfg.MapHeadingRect = BuildRect("map_heading_rect")
         cfg.LootScanPoints = BuildLootScanPoints()
         cfg.LootScanRect = BuildLootScanBoundingRect(cfg.LootScanPoints)
         cfg.LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked)
@@ -2470,6 +2781,60 @@ Public Class Form1
     Private Shared Function CloneLootScanPoints(points As IEnumerable(Of LootScanPoint)) As List(Of LootScanPoint)
         Dim source As IEnumerable(Of LootScanPoint) = If(points, Enumerable.Empty(Of LootScanPoint)())
         Return source.Where(Function(pt) pt IsNot Nothing).Select(Function(pt) New LootScanPoint(pt.X, pt.Y)).ToList()
+    End Function
+
+    Private Shared Function ParseCommaSeparatedList(raw As String) As List(Of String)
+        Dim results As New List(Of String)()
+        For Each part As String In If(raw, "").Split({","c}, StringSplitOptions.RemoveEmptyEntries)
+            Dim cleaned As String = part.Trim()
+            If cleaned = "" Then
+                Continue For
+            End If
+            If Not results.Any(Function(existing) existing.Equals(cleaned, StringComparison.OrdinalIgnoreCase)) Then
+                results.Add(cleaned)
+            End If
+        Next
+        Return results
+    End Function
+
+    Private Sub PopulateNavigationNodeCombos()
+        Dim nodes As List(Of NavigationNode) = BotEngine.GetNavigationNodeOptions("Jina Basin")
+        Dim items As List(Of String) = nodes.Select(Function(node) $"{node.Id} - {node.Label}").ToList()
+
+        If cboNavigationStartNode IsNot Nothing Then
+            cboNavigationStartNode.Items.Clear()
+            cboNavigationStartNode.Items.Add("(auto from map)")
+            For Each item As String In items
+                cboNavigationStartNode.Items.Add(item)
+            Next
+            If cboNavigationStartNode.SelectedIndex < 0 Then
+                cboNavigationStartNode.SelectedIndex = 0
+            End If
+        End If
+
+        If cboNavigationTargetNode IsNot Nothing Then
+            cboNavigationTargetNode.Items.Clear()
+            For Each item As String In items
+                cboNavigationTargetNode.Items.Add(item)
+            Next
+            If cboNavigationTargetNode.Items.Count > 0 AndAlso cboNavigationTargetNode.SelectedIndex < 0 Then
+                Dim preferred As Integer = items.FindIndex(Function(item) item.StartsWith("farming_area ", StringComparison.OrdinalIgnoreCase) OrElse item.StartsWith("farming_area-", StringComparison.OrdinalIgnoreCase) OrElse item.StartsWith("farming_area", StringComparison.OrdinalIgnoreCase))
+                cboNavigationTargetNode.SelectedIndex = If(preferred >= 0, preferred, 0)
+            End If
+        End If
+    End Sub
+
+    Private Shared Function ExtractNavigationNodeId(selectedItem As Object) As String
+        Dim raw As String = If(selectedItem, "").ToString().Trim()
+        If raw = "" OrElse raw.StartsWith("(auto", StringComparison.OrdinalIgnoreCase) Then
+            Return ""
+        End If
+
+        Dim separatorIndex As Integer = raw.IndexOf(" - ", StringComparison.Ordinal)
+        If separatorIndex > 0 Then
+            Return raw.Substring(0, separatorIndex).Trim()
+        End If
+        Return raw
     End Function
 
     Private Shared Function GetEffectiveLootScanPoints(cfg As BotConfig) As List(Of LootScanPoint)
@@ -2709,6 +3074,55 @@ Public Class Form1
         If txtItemNtfyTopic IsNot Nothing Then
             txtItemNtfyTopic.Text = If(cfg.ItemNtfyTopic, "").Trim()
         End If
+        If chkLevelingAgent IsNot Nothing Then
+            chkLevelingAgent.Checked = cfg.LevelingAgentEnabled
+        End If
+        If txtLevelingPreferredMobs IsNot Nothing Then
+            txtLevelingPreferredMobs.Text = String.Join(", ", If(cfg.LevelingPreferredMobs, New List(Of String)()))
+        End If
+        SetNumericControlValue(nudLevelingStopHp, CDec(Math.Max(1, cfg.LevelingStopHpPercent)))
+        SetNumericControlValue(nudLevelingStopMp, CDec(Math.Max(1, cfg.LevelingStopMpPercent)))
+        SetNumericControlValue(nudLevelingMaxNoTargetSeconds, CDec(Math.Max(5, cfg.LevelingMaxNoTargetSeconds)))
+        If chkLevelingStopOnLowExp IsNot Nothing Then
+            chkLevelingStopOnLowExp.Checked = cfg.LevelingStopOnLowExpRate
+        End If
+        SetNumericControlValue(nudLevelingMinExpPerHour, CDec(Math.Max(0.01, cfg.LevelingMinExpPerHour)))
+        If chkLevelingStopOnRepeatedUnreachable IsNot Nothing Then
+            chkLevelingStopOnRepeatedUnreachable.Checked = cfg.LevelingStopOnRepeatedUnreachable
+        End If
+        SetNumericControlValue(nudLevelingUnreachableLimit, CDec(Math.Max(1, cfg.LevelingUnreachableLimit)))
+        If chkNavigationEnabled IsNot Nothing Then
+            chkNavigationEnabled.Checked = cfg.NavigationEnabled
+        End If
+        If txtMapOpenKey IsNot Nothing Then
+            txtMapOpenKey.Text = If(String.IsNullOrWhiteSpace(cfg.MapOpenKey), DefaultMapOpenKey, cfg.MapOpenKey.Trim().ToUpperInvariant())
+        End If
+        If chkTravelPreview IsNot Nothing Then
+            chkTravelPreview.Checked = cfg.NavigationTravelPreviewEnabled
+        End If
+        PopulateNavigationNodeCombos()
+        If cboNavigationStartNode IsNot Nothing Then
+            Dim startNodeId As String = If(cfg.NavigationStartNodeId, "").Trim()
+            If startNodeId = "" Then
+                cboNavigationStartNode.SelectedIndex = 0
+            Else
+                For i As Integer = 0 To cboNavigationStartNode.Items.Count - 1
+                    If ExtractNavigationNodeId(cboNavigationStartNode.Items(i)).Equals(startNodeId, StringComparison.OrdinalIgnoreCase) Then
+                        cboNavigationStartNode.SelectedIndex = i
+                        Exit For
+                    End If
+                Next
+            End If
+        End If
+        If cboNavigationTargetNode IsNot Nothing Then
+            Dim targetNodeId As String = If(cfg.NavigationTargetNodeId, "").Trim()
+            For i As Integer = 0 To cboNavigationTargetNode.Items.Count - 1
+                If ExtractNavigationNodeId(cboNavigationTargetNode.Items(i)).Equals(targetNodeId, StringComparison.OrdinalIgnoreCase) Then
+                    cboNavigationTargetNode.SelectedIndex = i
+                    Exit For
+                End If
+            Next
+        End If
 
         If chkLootPickup IsNot Nothing Then
             chkLootPickup.Checked = cfg.LootPickupEnabled
@@ -2735,6 +3149,10 @@ Public Class Form1
         UpsertRegionRow("rupiahs_rect", cfg.RupiahsRect)
         UpsertRegionRow("party_invite_scan_rect", cfg.PartyInviteScanRect)
         UpsertRegionRow("party_invite_ok_rect", cfg.PartyInviteOkRect)
+        UpsertRegionRow("map_rect", cfg.MapRect)
+        UpsertRegionRow("map_coordinate_rect", cfg.MapCoordinateRect)
+        UpsertRegionRow("map_player_marker_rect", cfg.MapPlayerMarkerRect)
+        UpsertRegionRow("map_heading_rect", cfg.MapHeadingRect)
         If txtLootScanAreaPoints IsNot Nothing Then
             Dim lootPoints As List(Of LootScanPoint) = GetEffectiveLootScanPoints(cfg)
             txtLootScanAreaPoints.Text = FormatLootScanPoints(lootPoints)

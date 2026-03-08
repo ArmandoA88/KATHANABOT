@@ -61,6 +61,34 @@ Public Class ActionRule
     Public Property MinMpPercent As Integer = 1
 End Class
 
+Public Enum LevelingAgentState
+    Disabled
+    Searching
+    Engaging
+    Fighting
+    Looting
+    Recovering
+    Stuck
+    GuardedStop
+End Enum
+
+Public Class NavigationNode
+    Public Property Id As String = ""
+    Public Property MapName As String = ""
+    Public Property X As Integer
+    Public Property Y As Integer
+    Public Property Label As String = ""
+    Public Property Tags As List(Of String) = New List(Of String)()
+End Class
+
+Public Class NavigationEdge
+    Public Property FromNodeId As String = ""
+    Public Property ToNodeId As String = ""
+    Public Property TravelMode As String = "walk"
+    Public Property Cost As Double = 1.0
+    Public Property Notes As String = ""
+End Class
+
 Public Class BotConfig
     Public Property WindowTitle As String = "Kathana - The Coming of the Dark Ages"
     Public Property LoopMs As Integer = 80
@@ -77,6 +105,10 @@ Public Class BotConfig
     Public Property RupiahsRect As RectRegion = New RectRegion(560, 745, 110, 21)
     Public Property PartyInviteScanRect As RectRegion = New RectRegion(349, 318, 328, 124)
     Public Property PartyInviteOkRect As RectRegion = New RectRegion(463, 410, 59, 21)
+    Public Property MapRect As RectRegion = New RectRegion(0, 0, 1024, 768)
+    Public Property MapCoordinateRect As RectRegion = New RectRegion(6, 744, 120, 22)
+    Public Property MapPlayerMarkerRect As RectRegion = New RectRegion(470, 585, 120, 120)
+    Public Property MapHeadingRect As RectRegion = New RectRegion(968, 4, 40, 24)
     Public Property LootScanRect As RectRegion = New RectRegion(220, 80, 584, 430)
     Public Property LootScanPoints As List(Of LootScanPoint) = CreateDefaultLootScanPoints()
     Public Property BypassHpMpLimits As Boolean = False
@@ -97,6 +129,21 @@ Public Class BotConfig
     Public Property PartyAskText As String = "add"
     Public Property LootScannerEnabled As Boolean = True
     Public Property ItemNtfyTopic As String = ""
+    Public Property LevelingAgentEnabled As Boolean = False
+    Public Property LevelingPreferredMobs As List(Of String) = New List(Of String)()
+    Public Property LevelingStopHpPercent As Integer = 20
+    Public Property LevelingStopMpPercent As Integer = 10
+    Public Property LevelingMaxNoTargetSeconds As Integer = 45
+    Public Property LevelingStopOnLowExpRate As Boolean = False
+    Public Property LevelingMinExpPerHour As Double = 0.15
+    Public Property LevelingStopOnRepeatedUnreachable As Boolean = True
+    Public Property LevelingUnreachableLimit As Integer = 4
+    Public Property NavigationEnabled As Boolean = False
+    Public Property MapOpenKey As String = "M"
+    Public Property NavigationMapName As String = "Jina Basin"
+    Public Property NavigationStartNodeId As String = ""
+    Public Property NavigationTargetNodeId As String = "farming_area"
+    Public Property NavigationTravelPreviewEnabled As Boolean = False
     Public Property Actions As List(Of ActionRule) = New List(Of ActionRule)()
 
     Public Shared Function CreateDefault() As BotConfig
@@ -161,9 +208,30 @@ Public Class BotStatus
     Public Property RupiahsPerHour As Double = -1
     Public Property MobName As String = ""
     Public Property TargetValid As Boolean
+    Public Property MapCoordinateText As String = ""
+    Public Property MapCoordinateX As Integer = -1
+    Public Property MapCoordinateY As Integer = -1
+    Public Property MapHeading As String = ""
+    Public Property MapCoordinateConfidence As Integer = 0
+    Public Property MapMarkerDetected As Boolean
+    Public Property MapMarkerX As Integer = -1
+    Public Property MapMarkerY As Integer = -1
+    Public Property MapLocalizationConfidence As Integer = 0
+    Public Property NavigationMapName As String = ""
+    Public Property NavigationCurrentNodeId As String = ""
+    Public Property NavigationCurrentNodeLabel As String = ""
+    Public Property NavigationNextWaypointId As String = ""
+    Public Property NavigationNextWaypointLabel As String = ""
+    Public Property NavigationRouteText As String = ""
+    Public Property NavigationRouteReady As Boolean
+    Public Property NavigationTravelPreviewEnabled As Boolean
     Public Property LastAction As String = ""
     Public Property NotAttackingReason As String = ""
     Public Property ErrorMessage As String = ""
+    Public Property AgentEnabled As Boolean
+    Public Property AgentState As String = "Disabled"
+    Public Property AgentReason As String = ""
+    Public Property AgentGuardrailTriggered As Boolean
     Public Property UpdatedAt As DateTime = DateTime.UtcNow
 End Class
 
@@ -272,6 +340,9 @@ Public Class BotEngine
     Private Const ExpRateSampleMs As Integer = 60000
     Private Const ExpOcrMinIntervalMs As Integer = 900
     Private Const RupiahsOcrMinIntervalMs As Integer = 900
+    Private Const MapCoordinateOcrMinIntervalMs As Integer = 900
+    Private Const MapHeadingOcrMinIntervalMs As Integer = 900
+    Private Const MapMarkerScanMinIntervalMs As Integer = 250
     Private Const MobHpTextOcrMinIntervalMs As Integer = 450
     Private Const PartyInviteOcrMinIntervalMs As Integer = 900
     Private Const UnreachableOcrMinIntervalMs As Integer = 260
@@ -338,6 +409,25 @@ Public Class BotEngine
     Private _lastRupiahsRateSampleAt As DateTime = DateTime.MinValue
     Private _lastRupiahsRateSampleTotal As Long = -1
     Private _lastRupiahsPerHour As Double = -1
+    Private _lastMapCoordinateOcrAt As DateTime = DateTime.MinValue
+    Private _lastMapCoordinateText As String = ""
+    Private _lastMapCoordinateX As Integer = -1
+    Private _lastMapCoordinateY As Integer = -1
+    Private _lastMapCoordinateConfidence As Integer = 0
+    Private _lastMapHeadingOcrAt As DateTime = DateTime.MinValue
+    Private _lastMapHeading As String = ""
+    Private _lastMapMarkerScanAt As DateTime = DateTime.MinValue
+    Private _lastMapMarkerDetected As Boolean = False
+    Private _lastMapMarkerX As Integer = -1
+    Private _lastMapMarkerY As Integer = -1
+    Private _lastMapLocalizationConfidence As Integer = 0
+    Private _lastNavigationMapName As String = ""
+    Private _lastNavigationCurrentNodeId As String = ""
+    Private _lastNavigationCurrentNodeLabel As String = ""
+    Private _lastNavigationNextWaypointId As String = ""
+    Private _lastNavigationNextWaypointLabel As String = ""
+    Private _lastNavigationRouteText As String = ""
+    Private _lastNavigationRouteReady As Boolean = False
     Private ReadOnly _lootRandom As New Random()
     Private ReadOnly _lastKeyTime As New Dictionary(Of String, DateTime)(StringComparer.OrdinalIgnoreCase)
     Private _lastGoodHpPercent As Double = -1
@@ -347,6 +437,10 @@ Public Class BotEngine
     Private _zeroSpikeHoldCount As Integer = 0
     Private _zeroPairConfirmCount As Integer = 0
     Private _lastRightAltAt As DateTime = DateTime.MinValue
+    Private _agentState As LevelingAgentState = LevelingAgentState.Disabled
+    Private _agentReason As String = ""
+    Private _agentGuardrailTriggered As Boolean = False
+    Private _agentUnreachableEvents As Integer = 0
     Private Shared ReadOnly MovementStopVks As Integer() = {&H57, &H41, &H53, &H44, &H26, &H28, &H25, &H27}
 
     Private Shared ReadOnly KeyMap As New Dictionary(Of String, Integer)(StringComparer.OrdinalIgnoreCase) From {
@@ -452,6 +546,25 @@ Public Class BotEngine
             _lastRupiahsRateSampleAt = DateTime.MinValue
             _lastRupiahsRateSampleTotal = -1
             _lastRupiahsPerHour = -1
+            _lastMapCoordinateOcrAt = DateTime.MinValue
+            _lastMapCoordinateText = ""
+            _lastMapCoordinateX = -1
+            _lastMapCoordinateY = -1
+            _lastMapCoordinateConfidence = 0
+            _lastMapHeadingOcrAt = DateTime.MinValue
+            _lastMapHeading = ""
+            _lastMapMarkerScanAt = DateTime.MinValue
+            _lastMapMarkerDetected = False
+            _lastMapMarkerX = -1
+            _lastMapMarkerY = -1
+            _lastMapLocalizationConfidence = 0
+            _lastNavigationMapName = ""
+            _lastNavigationCurrentNodeId = ""
+            _lastNavigationCurrentNodeLabel = ""
+            _lastNavigationNextWaypointId = ""
+            _lastNavigationNextWaypointLabel = ""
+            _lastNavigationRouteText = ""
+            _lastNavigationRouteReady = False
             _lastGoodHpPercent = -1
             _lastGoodMpPercent = -1
             _lastGoodMobHpPercent = -1
@@ -459,6 +572,10 @@ Public Class BotEngine
             _zeroSpikeHoldCount = 0
             _zeroPairConfirmCount = 0
             _lastRightAltAt = DateTime.MinValue
+            _agentState = If(_config.LevelingAgentEnabled, LevelingAgentState.Searching, LevelingAgentState.Disabled)
+            _agentReason = ""
+            _agentGuardrailTriggered = False
+            _agentUnreachableEvents = 0
             _task = Task.Run(Sub() LoopAsync(_cts.Token).GetAwaiter().GetResult())
         End SyncLock
         RaiseEvent LogLine("Bot loop started.")
@@ -512,6 +629,8 @@ Public Class BotEngine
 
             Dim hwnd As IntPtr = FindGameWindow(cfg.WindowTitle)
             If hwnd = IntPtr.Zero Then
+                ClearMapLocalizationRuntime()
+                UpdateLevelingAgentState(cfg, LevelingAgentState.Searching, "Game window not found.")
                 SetStatus(Sub(s)
                               s.WindowFound = False
                               s.HpPercent = 0
@@ -534,6 +653,8 @@ Public Class BotEngine
 
             Dim frame As Bitmap = CaptureClient(hwnd)
             If frame Is Nothing Then
+                ClearMapLocalizationRuntime()
+                UpdateLevelingAgentState(cfg, LevelingAgentState.Searching, "Unable to capture game client.")
                 SetStatus(Sub(s)
                               s.WindowFound = True
                               s.MobMaxHp = -1
@@ -556,7 +677,11 @@ Public Class BotEngine
             Dim rupiahsRegion As New RectRegion(0, 0, 1, 1)
             Dim partyInviteScanRegion As New RectRegion(0, 0, 1, 1)
             Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
-            ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion)
+            Dim mapRegion As New RectRegion(0, 0, 1, 1)
+            Dim mapCoordinateRegion As New RectRegion(0, 0, 1, 1)
+            Dim mapPlayerMarkerRegion As New RectRegion(0, 0, 1, 1)
+            Dim mapHeadingRegion As New RectRegion(0, 0, 1, 1)
+            ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, mapRegion, mapCoordinateRegion, mapPlayerMarkerRegion, mapHeadingRegion)
             Dim lootScanPolygon As List(Of DrawingPoint) = ResolveLootScanPolygon(cfg, frame.Width, frame.Height)
 
             Dim hpPct As Double = ComputeBarPercent(frame, hpRegion, True)
@@ -575,7 +700,7 @@ Public Class BotEngine
                         Exit For
                     End If
 
-                    ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion)
+                    ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, mapRegion, mapCoordinateRegion, mapPlayerMarkerRegion, mapHeadingRegion)
                     lootScanPolygon = ResolveLootScanPolygon(cfg, frame.Width, frame.Height)
                     hpPct = ComputeBarPercent(frame, hpRegion, True)
                     mpPct = ComputeBarPercent(frame, mpRegion, False)
@@ -589,6 +714,8 @@ Public Class BotEngine
                 Next
 
                 If frame Is Nothing Then
+                    ClearMapLocalizationRuntime()
+                    UpdateLevelingAgentState(cfg, LevelingAgentState.Searching, "Unable to capture game client.")
                     SetStatus(Sub(s)
                                   s.WindowFound = True
                                   s.NotAttackingReason = "Capture failed."
@@ -691,6 +818,16 @@ Public Class BotEngine
             ApplyVisionStabilityFilter(hpPct, mpPct, mobHpPct, mobName, captureGlitch)
             Dim expPerHour As Double = UpdateExpRate(expPct, now)
             Dim rupiahsPerHour As Double = UpdateRupiahsRate(rupiahsTotal, now)
+            If cfg.NavigationEnabled Then
+                ReadMapCoordinateIfNeeded(frame, mapCoordinateRegion, now)
+                ReadMapHeadingIfNeeded(frame, mapHeadingRegion, now)
+                ScanMapPlayerMarkerIfNeeded(frame, mapPlayerMarkerRegion, now)
+                UpdateMapLocalizationConfidence()
+                UpdateNavigationPreview(cfg)
+            Else
+                ClearMapLocalizationRuntime()
+                ClearNavigationPreviewRuntime()
+            End If
             Dim targetWindowVisible As Boolean = HasTargetWindowSignal(frame, mobHpRegion, mobName, mobHpPct)
             Dim hasHighMaxHpAction As Boolean = HasHighMaxHpAttackAction(cfg)
             Dim mobMaxHp As Integer = UpdateMobMaxHpTracking(cfg, frame, mobHpRegion, targetWindowVisible, mobHpPct, now)
@@ -706,8 +843,14 @@ Public Class BotEngine
             End If
             Dim deniedTarget As Boolean = IsDeniedMob(mobName, cfg.DeniedMobs)
             Dim normMobName As String = NormalizeMobName(mobName)
+            Dim preferredMobFilterActive As Boolean = cfg.LevelingAgentEnabled AndAlso cfg.LevelingPreferredMobs IsNot Nothing AndAlso cfg.LevelingPreferredMobs.Count > 0
+            Dim missingNameBlockedByPreference As Boolean = preferredMobFilterActive AndAlso targetWindowVisible AndAlso normMobName = ""
+            Dim preferredTargetMismatch As Boolean = preferredMobFilterActive AndAlso normMobName <> "" AndAlso Not IsPreferredMob(mobName, cfg.LevelingPreferredMobs)
             Dim unreachableTriggered As Boolean = TryHandleUnreachableTarget(cfg, hwnd, frame, now, unreachableTextRegion)
             Dim unreachableLockActive As Boolean = (_unreachableLockUntil <> DateTime.MinValue AndAlso now < _unreachableLockUntil)
+            If unreachableTriggered Then
+                _agentUnreachableEvents += 1
+            End If
 
             If monsterFilterActive AndAlso deniedTarget Then
                 _blacklistLockUntil = now.AddMilliseconds(BlacklistLockWindowMs)
@@ -779,10 +922,19 @@ Public Class BotEngine
                 (mobHpPct >= cfg.MobHpPresenceThreshold) AndAlso
                 (Not deniedTarget) AndAlso
                 (Not missingNameBlockedByFilter) AndAlso
+                (Not missingNameBlockedByPreference) AndAlso
+                (Not preferredTargetMismatch) AndAlso
                 (Not nameConfirmationBlockedByFilter) AndAlso
                 (Not blacklistLockActive) AndAlso
                 (Not unreachableLockActive)
             TrackMobHpMovement(targetValid, mobHpPct, now)
+
+            Dim guardrailReason As String = ""
+            If ShouldTriggerLevelingGuardrail(cfg, hpPct, mpPct, expPerHour, now, targetWindowVisible, guardrailReason) Then
+                frame.Dispose()
+                TriggerLevelingGuardrailStop(cfg, guardrailReason)
+                Exit While
+            End If
 
             Dim reason As String = ""
             Dim actionSent As Boolean = TryHandleAutoAcceptPrompts(cfg, hwnd, frame, now, partyInviteScanRegion, partyInviteOkRegion)
@@ -834,7 +986,7 @@ Public Class BotEngine
             End If
 
             If Not targetValid AndAlso Not actionSent Then
-                Dim filterBlockedRetarget As Boolean = deniedTarget OrElse blacklistLockActive OrElse missingNameBlockedByFilter OrElse nameConfirmationBlockedByFilter
+                Dim filterBlockedRetarget As Boolean = deniedTarget OrElse blacklistLockActive OrElse missingNameBlockedByFilter OrElse missingNameBlockedByPreference OrElse preferredTargetMismatch OrElse nameConfirmationBlockedByFilter
                 If _firstHitPending Then
                     If String.IsNullOrWhiteSpace(reason) Then
                         If firstHitWindowActive Then
@@ -863,6 +1015,10 @@ Public Class BotEngine
                                     reason = $"Monster filter lock active ({BlacklistLockWindowMs}ms). Retarget key sent."
                                 ElseIf missingNameBlockedByFilter Then
                                     reason = "Monster filter waiting for mob name OCR. Retarget key sent."
+                                ElseIf missingNameBlockedByPreference Then
+                                    reason = "Leveling agent waiting for mob name OCR before preferred-mob check. Retarget key sent."
+                                ElseIf preferredTargetMismatch Then
+                                    reason = $"Leveling agent skipped non-preferred mob '{If(String.IsNullOrWhiteSpace(mobName), "unknown", mobName)}'. Retarget key sent."
                                 ElseIf nameConfirmationBlockedByFilter Then
                                     reason = "Monster filter waiting for 2x name confirmation. Retarget key sent."
                                 ElseIf unreachableLockActive Then
@@ -881,6 +1037,10 @@ Public Class BotEngine
                             reason = $"Monster filter lock active ({BlacklistLockWindowMs}ms). Waiting retarget cooldown."
                         ElseIf missingNameBlockedByFilter Then
                             reason = "Monster filter waiting for mob name OCR. Waiting retarget cooldown."
+                        ElseIf missingNameBlockedByPreference Then
+                            reason = "Leveling agent waiting for mob name OCR before preferred-mob check."
+                        ElseIf preferredTargetMismatch Then
+                            reason = "Leveling agent is searching for a preferred mob."
                         ElseIf nameConfirmationBlockedByFilter Then
                             reason = "Monster filter waiting for 2x name confirmation. Waiting retarget cooldown."
                         ElseIf unreachableLockActive Then
@@ -895,6 +1055,7 @@ Public Class BotEngine
             End If
 
             TryHandleLootPickup(cfg, hwnd, now, actionSent OrElse _firstHitPending)
+            UpdateLevelingAgentRuntimeState(cfg, now, hpPct, mpPct, targetWindowVisible, targetValid, actionSent, forcedRetarget OrElse unreachableTriggered, unreachableLockActive, reason)
 
             frame.Dispose()
 
@@ -1058,6 +1219,549 @@ Public Class BotEngine
 
     Private Shared Function GetLootScannerSnapshotDirectory() As String
         Return Path.Combine(GetApplicationRootDirectory(), "item scanner pics")
+    End Function
+
+    Private Sub UpdateLevelingAgentState(cfg As BotConfig, state As LevelingAgentState, reason As String, Optional guardrailTriggered As Boolean = False)
+        SyncLock _sync
+            If cfg Is Nothing OrElse Not cfg.LevelingAgentEnabled Then
+                _agentState = LevelingAgentState.Disabled
+                _agentReason = ""
+                _agentGuardrailTriggered = False
+                Return
+            End If
+
+            _agentState = state
+            _agentReason = If(reason, "").Trim()
+            _agentGuardrailTriggered = guardrailTriggered
+        End SyncLock
+    End Sub
+
+    Private Function ShouldTriggerLevelingGuardrail(cfg As BotConfig, hpPct As Double, mpPct As Double, expPerHour As Double, now As DateTime, targetWindowVisible As Boolean, ByRef guardrailReason As String) As Boolean
+        guardrailReason = ""
+        If cfg Is Nothing OrElse Not cfg.LevelingAgentEnabled Then
+            Return False
+        End If
+
+        If hpPct <= Math.Max(1, cfg.LevelingStopHpPercent) Then
+            guardrailReason = $"HP reached leveling stop threshold ({hpPct:0.0}% <= {cfg.LevelingStopHpPercent}%)."
+            Return True
+        End If
+
+        If mpPct <= Math.Max(1, cfg.LevelingStopMpPercent) Then
+            guardrailReason = $"MP reached leveling stop threshold ({mpPct:0.0}% <= {cfg.LevelingStopMpPercent}%)."
+            Return True
+        End If
+
+        If cfg.LevelingStopOnLowExpRate AndAlso expPerHour >= 0 AndAlso expPerHour < Math.Max(0.01, cfg.LevelingMinExpPerHour) Then
+            guardrailReason = $"EXP/hour fell below threshold ({expPerHour:0.00}%/hr < {cfg.LevelingMinExpPerHour:0.00}%/hr)."
+            Return True
+        End If
+
+        If cfg.LevelingStopOnRepeatedUnreachable AndAlso _agentUnreachableEvents >= Math.Max(1, cfg.LevelingUnreachableLimit) Then
+            guardrailReason = $"Unreachable target limit hit ({_agentUnreachableEvents}/{Math.Max(1, cfg.LevelingUnreachableLimit)})."
+            Return True
+        End If
+
+        If cfg.LevelingMaxNoTargetSeconds > 0 AndAlso Not targetWindowVisible AndAlso _noTargetBeganAt <> DateTime.MinValue Then
+            If (now - _noTargetBeganAt).TotalSeconds >= cfg.LevelingMaxNoTargetSeconds Then
+                guardrailReason = $"No target detected for {Math.Round((now - _noTargetBeganAt).TotalSeconds, 1):0.0}s."
+                Return True
+            End If
+        End If
+
+        Return False
+    End Function
+
+    Private Sub TriggerLevelingGuardrailStop(cfg As BotConfig, reason As String)
+        Dim snapshot As BotStatus
+        SyncLock _sync
+            _agentState = LevelingAgentState.GuardedStop
+            _agentReason = If(reason, "").Trim()
+            _agentGuardrailTriggered = True
+            _status.Running = False
+            _status.NotAttackingReason = _agentReason
+            _status.ErrorMessage = ""
+            _status.UpdatedAt = DateTime.UtcNow
+            _status.AgentEnabled = cfg IsNot Nothing AndAlso cfg.LevelingAgentEnabled
+            _status.AgentState = _agentState.ToString()
+            _status.AgentReason = _agentReason
+            _status.AgentGuardrailTriggered = True
+            snapshot = CloneStatus(_status)
+            If _cts IsNot Nothing AndAlso Not _cts.IsCancellationRequested Then
+                _cts.Cancel()
+            End If
+        End SyncLock
+
+        RaiseEvent LogLine("Leveling agent guardrail stop: " & reason)
+        RaiseEvent StatusUpdated(snapshot)
+    End Sub
+
+    Private Sub UpdateLevelingAgentRuntimeState(cfg As BotConfig, now As DateTime, hpPct As Double, mpPct As Double, targetWindowVisible As Boolean, targetValid As Boolean, actionSent As Boolean, retargeting As Boolean, unreachableLockActive As Boolean, reason As String)
+        If cfg Is Nothing OrElse Not cfg.LevelingAgentEnabled Then
+            UpdateLevelingAgentState(cfg, LevelingAgentState.Disabled, "")
+            Return
+        End If
+
+        If _agentGuardrailTriggered Then
+            Return
+        End If
+
+        Dim nextState As LevelingAgentState
+        Dim nextReason As String = If(reason, "").Trim()
+        Dim lastActionText As String = ""
+        SyncLock _sync
+            lastActionText = If(_status.LastAction, "")
+        End SyncLock
+
+        If hpPct <= Math.Max(cfg.LevelingStopHpPercent + 5, 1) OrElse mpPct <= Math.Max(cfg.LevelingStopMpPercent + 5, 1) Then
+            nextState = LevelingAgentState.Recovering
+            If nextReason = "" Then
+                nextReason = "HP/MP is near leveling guardrails."
+            End If
+        ElseIf retargeting OrElse unreachableLockActive Then
+            nextState = LevelingAgentState.Stuck
+            If nextReason = "" Then
+                nextReason = "Recovering from a stuck or unreachable target."
+            End If
+        ElseIf actionSent AndAlso lastActionText.IndexOf("loot", StringComparison.OrdinalIgnoreCase) >= 0 Then
+            nextState = LevelingAgentState.Looting
+            If nextReason = "" Then
+                nextReason = "Processing loot."
+            End If
+        ElseIf targetValid AndAlso (actionSent OrElse (_lastAttackAction <> DateTime.MinValue AndAlso (now - _lastAttackAction).TotalMilliseconds < Math.Max(500, cfg.RetargetMs * 2))) Then
+            nextState = LevelingAgentState.Fighting
+            If nextReason = "" Then
+                nextReason = "Target acquired and attack loop is active."
+            End If
+        ElseIf targetWindowVisible OrElse targetValid Then
+            nextState = LevelingAgentState.Engaging
+            If nextReason = "" Then
+                nextReason = "Preparing to engage current target."
+            End If
+        Else
+            nextState = LevelingAgentState.Searching
+            If nextReason = "" Then
+                nextReason = "Searching for a valid target."
+            End If
+        End If
+
+        UpdateLevelingAgentState(cfg, nextState, nextReason)
+    End Sub
+
+    Private Sub ClearMapLocalizationRuntime()
+        _lastMapCoordinateOcrAt = DateTime.MinValue
+        _lastMapCoordinateText = ""
+        _lastMapCoordinateX = -1
+        _lastMapCoordinateY = -1
+        _lastMapCoordinateConfidence = 0
+        _lastMapHeadingOcrAt = DateTime.MinValue
+        _lastMapHeading = ""
+        _lastMapMarkerScanAt = DateTime.MinValue
+        _lastMapMarkerDetected = False
+        _lastMapMarkerX = -1
+        _lastMapMarkerY = -1
+        _lastMapLocalizationConfidence = 0
+    End Sub
+
+    Private Sub ClearNavigationPreviewRuntime()
+        _lastNavigationMapName = ""
+        _lastNavigationCurrentNodeId = ""
+        _lastNavigationCurrentNodeLabel = ""
+        _lastNavigationNextWaypointId = ""
+        _lastNavigationNextWaypointLabel = ""
+        _lastNavigationRouteText = ""
+        _lastNavigationRouteReady = False
+    End Sub
+
+    Private Sub ReadMapCoordinateIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime)
+        If _lastMapCoordinateOcrAt <> DateTime.MinValue AndAlso (now - _lastMapCoordinateOcrAt).TotalMilliseconds < MapCoordinateOcrMinIntervalMs Then
+            Return
+        End If
+
+        _lastMapCoordinateOcrAt = now
+        If frame Is Nothing OrElse region Is Nothing Then
+            _lastMapCoordinateText = ""
+            _lastMapCoordinateX = -1
+            _lastMapCoordinateY = -1
+            _lastMapCoordinateConfidence = 0
+            Return
+        End If
+
+        Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then
+            _lastMapCoordinateText = ""
+            _lastMapCoordinateX = -1
+            _lastMapCoordinateY = -1
+            _lastMapCoordinateConfidence = 0
+            Return
+        End If
+
+        Using crop As New Bitmap(Math.Max(1, rect.Width), Math.Max(1, rect.Height), PixelFormat.Format24bppRgb)
+            Using g As Graphics = Graphics.FromImage(crop)
+                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
+            End Using
+
+            Dim rawText As String = OcrReader.ReadScreenText(crop)
+            Dim x As Integer = -1
+            Dim y As Integer = -1
+            Dim confidence As Integer = 0
+            Dim normalized As String = ""
+            If TryParseMapCoordinate(rawText, x, y, normalized, confidence) Then
+                _lastMapCoordinateText = normalized
+                _lastMapCoordinateX = x
+                _lastMapCoordinateY = y
+                _lastMapCoordinateConfidence = confidence
+            Else
+                _lastMapCoordinateText = If(rawText, "").Trim()
+                _lastMapCoordinateX = -1
+                _lastMapCoordinateY = -1
+                _lastMapCoordinateConfidence = 0
+            End If
+        End Using
+    End Sub
+
+    Private Sub ReadMapHeadingIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime)
+        If _lastMapHeadingOcrAt <> DateTime.MinValue AndAlso (now - _lastMapHeadingOcrAt).TotalMilliseconds < MapHeadingOcrMinIntervalMs Then
+            Return
+        End If
+
+        _lastMapHeadingOcrAt = now
+        If frame Is Nothing OrElse region Is Nothing Then
+            _lastMapHeading = ""
+            Return
+        End If
+
+        Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then
+            _lastMapHeading = ""
+            Return
+        End If
+
+        Using crop As New Bitmap(Math.Max(1, rect.Width), Math.Max(1, rect.Height), PixelFormat.Format24bppRgb)
+            Using g As Graphics = Graphics.FromImage(crop)
+                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
+            End Using
+
+            Dim rawText As String = OcrReader.ReadScreenText(crop)
+            _lastMapHeading = ParseMapHeading(rawText)
+        End Using
+    End Sub
+
+    Private Sub ScanMapPlayerMarkerIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime)
+        If _lastMapMarkerScanAt <> DateTime.MinValue AndAlso (now - _lastMapMarkerScanAt).TotalMilliseconds < MapMarkerScanMinIntervalMs Then
+            Return
+        End If
+
+        _lastMapMarkerScanAt = now
+        _lastMapMarkerDetected = False
+        _lastMapMarkerX = -1
+        _lastMapMarkerY = -1
+
+        If frame Is Nothing OrElse region Is Nothing Then
+            Return
+        End If
+
+        Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then
+            Return
+        End If
+
+        Dim hitCount As Integer = 0
+        Dim totalX As Long = 0
+        Dim totalY As Long = 0
+
+        For y As Integer = rect.Top To rect.Bottom - 1
+            For x As Integer = rect.Left To rect.Right - 1
+                Dim c As Color = frame.GetPixel(x, y)
+                If IsMapMarkerColor(c) Then
+                    hitCount += 1
+                    totalX += x - rect.Left
+                    totalY += y - rect.Top
+                End If
+            Next
+        Next
+
+        If hitCount >= 8 Then
+            _lastMapMarkerDetected = True
+            _lastMapMarkerX = CInt(Math.Round(totalX / Math.Max(1.0, CDbl(hitCount))))
+            _lastMapMarkerY = CInt(Math.Round(totalY / Math.Max(1.0, CDbl(hitCount))))
+        End If
+    End Sub
+
+    Private Sub UpdateMapLocalizationConfidence()
+        Dim confidence As Integer = 0
+        confidence += Math.Max(0, Math.Min(60, _lastMapCoordinateConfidence))
+        If _lastMapHeading <> "" Then
+            confidence += 15
+        End If
+        If _lastMapMarkerDetected Then
+            confidence += 25
+        End If
+        _lastMapLocalizationConfidence = Math.Max(0, Math.Min(100, confidence))
+    End Sub
+
+    Private Sub UpdateNavigationPreview(cfg As BotConfig)
+        If cfg Is Nothing OrElse Not cfg.NavigationEnabled OrElse Not cfg.NavigationTravelPreviewEnabled Then
+            ClearNavigationPreviewRuntime()
+            Return
+        End If
+
+        Dim mapName As String = If(String.IsNullOrWhiteSpace(cfg.NavigationMapName), "Jina Basin", cfg.NavigationMapName.Trim())
+        Dim nodes As List(Of NavigationNode) = GetNavigationNodesForMap(mapName)
+        Dim edges As List(Of NavigationEdge) = GetNavigationEdgesForMap(mapName)
+        If nodes.Count = 0 OrElse edges.Count = 0 Then
+            ClearNavigationPreviewRuntime()
+            _lastNavigationMapName = mapName
+            _lastNavigationRouteText = "No graph data loaded for this map."
+            Return
+        End If
+
+        _lastNavigationMapName = mapName
+
+        Dim currentNode As NavigationNode = Nothing
+        If _lastMapCoordinateX >= 0 AndAlso _lastMapCoordinateY >= 0 AndAlso _lastMapLocalizationConfidence >= 45 Then
+            currentNode = FindNearestNode(nodes, _lastMapCoordinateX, _lastMapCoordinateY)
+        End If
+
+        Dim startNode As NavigationNode = Nothing
+        If currentNode IsNot Nothing Then
+            startNode = currentNode
+        ElseIf Not String.IsNullOrWhiteSpace(cfg.NavigationStartNodeId) Then
+            startNode = FindNodeById(nodes, cfg.NavigationStartNodeId)
+        End If
+
+        Dim targetNode As NavigationNode = FindNodeById(nodes, cfg.NavigationTargetNodeId)
+        _lastNavigationCurrentNodeId = If(currentNode Is Nothing, "", currentNode.Id)
+        _lastNavigationCurrentNodeLabel = If(currentNode Is Nothing, "", currentNode.Label)
+
+        If startNode Is Nothing OrElse targetNode Is Nothing Then
+            _lastNavigationNextWaypointId = ""
+            _lastNavigationNextWaypointLabel = ""
+            _lastNavigationRouteText = "Waiting for valid start/target route nodes."
+            _lastNavigationRouteReady = False
+            Return
+        End If
+
+        Dim route As List(Of NavigationNode) = FindShortestRoute(nodes, edges, startNode.Id, targetNode.Id)
+        If route.Count = 0 Then
+            _lastNavigationNextWaypointId = ""
+            _lastNavigationNextWaypointLabel = ""
+            _lastNavigationRouteText = $"No route found from {startNode.Label} to {targetNode.Label}."
+            _lastNavigationRouteReady = False
+            Return
+        End If
+
+        Dim nextWaypoint As NavigationNode = If(route.Count > 1, route(1), route(0))
+        _lastNavigationNextWaypointId = If(nextWaypoint Is Nothing, "", nextWaypoint.Id)
+        _lastNavigationNextWaypointLabel = If(nextWaypoint Is Nothing, "", nextWaypoint.Label)
+        _lastNavigationRouteText = String.Join(" -> ", route.Select(Function(node) node.Label))
+        _lastNavigationRouteReady = True
+    End Sub
+
+    Public Shared Function GetNavigationNodeOptions(Optional mapName As String = "Jina Basin") As List(Of NavigationNode)
+        Return GetNavigationNodesForMap(mapName)
+    End Function
+
+    Private Shared Function GetNavigationNodesForMap(mapName As String) As List(Of NavigationNode)
+        Dim normalizedMap As String = If(mapName, "").Trim()
+        If Not normalizedMap.Equals("Jina Basin", StringComparison.OrdinalIgnoreCase) Then
+            Return New List(Of NavigationNode)()
+        End If
+
+        Return New List(Of NavigationNode) From {
+            New NavigationNode With {.Id = "jina_town", .MapName = "Jina Basin", .X = 512, .Y = 628, .Label = "Jina Town", .Tags = New List(Of String) From {"town", "safe"}},
+            New NavigationNode With {.Id = "shambala_portal", .MapName = "Jina Basin", .X = 420, .Y = 505, .Label = "Shambala Portal", .Tags = New List(Of String) From {"portal"}},
+            New NavigationNode With {.Id = "ferry_jina", .MapName = "Jina Basin", .X = 742, .Y = 518, .Label = "Ferry of Jina", .Tags = New List(Of String) From {"ferry"}},
+            New NavigationNode With {.Id = "tower_silence", .MapName = "Jina Basin", .X = 598, .Y = 284, .Label = "Tower of Silence", .Tags = New List(Of String) From {"road"}},
+            New NavigationNode With {.Id = "pamir_portal", .MapName = "Jina Basin", .X = 484, .Y = 126, .Label = "Pamir Portal", .Tags = New List(Of String) From {"portal"}},
+            New NavigationNode With {.Id = "farming_area", .MapName = "Jina Basin", .X = 124, .Y = 357, .Label = "Farming Area", .Tags = New List(Of String) From {"farm"}},
+            New NavigationNode With {.Id = "border", .MapName = "Jina Basin", .X = 102, .Y = 208, .Label = "Border", .Tags = New List(Of String) From {"road"}},
+            New NavigationNode With {.Id = "south_crossroad", .MapName = "Jina Basin", .X = 556, .Y = 625, .Label = "South Crossroad", .Tags = New List(Of String) From {"road"}},
+            New NavigationNode With {.Id = "east_road", .MapName = "Jina Basin", .X = 716, .Y = 406, .Label = "East Road", .Tags = New List(Of String) From {"road"}}
+        }
+    End Function
+
+    Private Shared Function GetNavigationEdgesForMap(mapName As String) As List(Of NavigationEdge)
+        Dim normalizedMap As String = If(mapName, "").Trim()
+        If Not normalizedMap.Equals("Jina Basin", StringComparison.OrdinalIgnoreCase) Then
+            Return New List(Of NavigationEdge)()
+        End If
+
+        Dim edges As New List(Of NavigationEdge)()
+        edges.AddRange(CreateBidirectionalEdge("jina_town", "south_crossroad", 1.0))
+        edges.AddRange(CreateBidirectionalEdge("south_crossroad", "shambala_portal", 1.2))
+        edges.AddRange(CreateBidirectionalEdge("south_crossroad", "ferry_jina", 1.2))
+        edges.AddRange(CreateBidirectionalEdge("ferry_jina", "east_road", 1.1))
+        edges.AddRange(CreateBidirectionalEdge("east_road", "tower_silence", 1.3))
+        edges.AddRange(CreateBidirectionalEdge("tower_silence", "pamir_portal", 1.1))
+        edges.AddRange(CreateBidirectionalEdge("tower_silence", "border", 1.4))
+        edges.AddRange(CreateBidirectionalEdge("border", "farming_area", 1.0))
+        edges.AddRange(CreateBidirectionalEdge("shambala_portal", "farming_area", 1.5))
+        Return edges
+    End Function
+
+    Private Shared Function CreateBidirectionalEdge(fromId As String, toId As String, cost As Double) As List(Of NavigationEdge)
+        Return New List(Of NavigationEdge) From {
+            New NavigationEdge With {.FromNodeId = fromId, .ToNodeId = toId, .Cost = cost, .TravelMode = "walk"},
+            New NavigationEdge With {.FromNodeId = toId, .ToNodeId = fromId, .Cost = cost, .TravelMode = "walk"}
+        }
+    End Function
+
+    Private Shared Function FindNodeById(nodes As IEnumerable(Of NavigationNode), nodeId As String) As NavigationNode
+        Return nodes.FirstOrDefault(Function(node) node IsNot Nothing AndAlso node.Id.Equals(If(nodeId, "").Trim(), StringComparison.OrdinalIgnoreCase))
+    End Function
+
+    Private Shared Function FindNearestNode(nodes As IEnumerable(Of NavigationNode), x As Integer, y As Integer) As NavigationNode
+        Dim bestNode As NavigationNode = Nothing
+        Dim bestDistance As Double = Double.MaxValue
+        For Each node As NavigationNode In nodes
+            If node Is Nothing Then
+                Continue For
+            End If
+            Dim dx As Double = node.X - x
+            Dim dy As Double = node.Y - y
+            Dim distance As Double = Math.Sqrt((dx * dx) + (dy * dy))
+            If distance < bestDistance Then
+                bestDistance = distance
+                bestNode = node
+            End If
+        Next
+        Return bestNode
+    End Function
+
+    Private Shared Function FindShortestRoute(nodes As List(Of NavigationNode), edges As List(Of NavigationEdge), startNodeId As String, targetNodeId As String) As List(Of NavigationNode)
+        If nodes Is Nothing OrElse edges Is Nothing OrElse String.IsNullOrWhiteSpace(startNodeId) OrElse String.IsNullOrWhiteSpace(targetNodeId) Then
+            Return New List(Of NavigationNode)()
+        End If
+
+        Dim nodeMap As Dictionary(Of String, NavigationNode) = nodes.Where(Function(node) node IsNot Nothing).ToDictionary(Function(node) node.Id, StringComparer.OrdinalIgnoreCase)
+        If Not nodeMap.ContainsKey(startNodeId) OrElse Not nodeMap.ContainsKey(targetNodeId) Then
+            Return New List(Of NavigationNode)()
+        End If
+
+        Dim distances As New Dictionary(Of String, Double)(StringComparer.OrdinalIgnoreCase)
+        Dim previous As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
+        Dim unvisited As New HashSet(Of String)(nodeMap.Keys, StringComparer.OrdinalIgnoreCase)
+
+        For Each nodeId As String In nodeMap.Keys
+            distances(nodeId) = Double.MaxValue
+        Next
+        distances(startNodeId) = 0
+
+        While unvisited.Count > 0
+            Dim currentId As String = unvisited.OrderBy(Function(nodeId) distances(nodeId)).First()
+            unvisited.Remove(currentId)
+            If currentId.Equals(targetNodeId, StringComparison.OrdinalIgnoreCase) Then
+                Exit While
+            End If
+
+            Dim outgoing As IEnumerable(Of NavigationEdge) = edges.Where(Function(edge) edge IsNot Nothing AndAlso edge.FromNodeId.Equals(currentId, StringComparison.OrdinalIgnoreCase))
+            For Each edge As NavigationEdge In outgoing
+                If Not unvisited.Contains(edge.ToNodeId) Then
+                    Continue For
+                End If
+
+                Dim altDistance As Double = distances(currentId) + Math.Max(0.01, edge.Cost)
+                If altDistance < distances(edge.ToNodeId) Then
+                    distances(edge.ToNodeId) = altDistance
+                    previous(edge.ToNodeId) = currentId
+                End If
+            Next
+        End While
+
+        If startNodeId.Equals(targetNodeId, StringComparison.OrdinalIgnoreCase) Then
+            Return New List(Of NavigationNode) From {nodeMap(startNodeId)}
+        End If
+        If Not previous.ContainsKey(targetNodeId) Then
+            Return New List(Of NavigationNode)()
+        End If
+
+        Dim path As New List(Of NavigationNode)()
+        Dim walkId As String = targetNodeId
+        path.Add(nodeMap(walkId))
+        While previous.ContainsKey(walkId)
+            walkId = previous(walkId)
+            path.Add(nodeMap(walkId))
+            If walkId.Equals(startNodeId, StringComparison.OrdinalIgnoreCase) Then
+                Exit While
+            End If
+        End While
+
+        path.Reverse()
+        Return path
+    End Function
+
+    Private Shared Function TryParseMapCoordinate(rawText As String, ByRef x As Integer, ByRef y As Integer, ByRef normalized As String, ByRef confidence As Integer) As Boolean
+        x = -1
+        y = -1
+        normalized = ""
+        confidence = 0
+        If String.IsNullOrWhiteSpace(rawText) Then
+            Return False
+        End If
+
+        Dim normalizedRaw As String = rawText.ToUpperInvariant()
+        normalizedRaw = normalizedRaw.Replace("O", "0").Replace("I", "1").Replace("L", "1").Replace("|", "/")
+        normalizedRaw = Regex.Replace(normalizedRaw, "[^0-9/,\- ]", " ")
+        normalizedRaw = Regex.Replace(normalizedRaw, "\s+", " ").Trim()
+        If normalizedRaw = "" Then
+            Return False
+        End If
+
+        Dim explicitMatch As Match = Regex.Match(normalizedRaw, "(\d{1,4})\s*[/,]\s*(\d{1,4})")
+        If explicitMatch.Success Then
+            x = Integer.Parse(explicitMatch.Groups(1).Value)
+            y = Integer.Parse(explicitMatch.Groups(2).Value)
+            normalized = $"{x}/{y}"
+            confidence = 95
+            Return True
+        End If
+
+        Dim fallbackMatch As Match = Regex.Match(normalizedRaw, "(\d{1,4})\D+(\d{1,4})")
+        If fallbackMatch.Success Then
+            x = Integer.Parse(fallbackMatch.Groups(1).Value)
+            y = Integer.Parse(fallbackMatch.Groups(2).Value)
+            normalized = $"{x}/{y}"
+            confidence = 70
+            Return True
+        End If
+
+        Return False
+    End Function
+
+    Private Shared Function ParseMapHeading(rawText As String) As String
+        If String.IsNullOrWhiteSpace(rawText) Then
+            Return ""
+        End If
+
+        Dim normalized As String = Regex.Replace(rawText.ToUpperInvariant(), "[^NSEW]", "")
+        If normalized = "" Then
+            Return ""
+        End If
+
+        Dim directions As String() = {"NW", "NE", "SW", "SE", "N", "S", "E", "W"}
+        For Each direction As String In directions
+            If normalized.Contains(direction, StringComparison.Ordinal) Then
+                Return direction
+            End If
+        Next
+
+        Return ""
+    End Function
+
+    Private Shared Function IsMapMarkerColor(c As Color) As Boolean
+        Dim sat As Double = c.GetSaturation()
+        Dim bright As Double = c.GetBrightness()
+        If sat < 0.35 OrElse bright < 0.16 Then
+            Return False
+        End If
+
+        Dim hue As Double = c.GetHue()
+        Dim redHue As Boolean = hue <= 20.0 OrElse hue >= 340.0
+        Dim yellowHue As Boolean = hue >= 35.0 AndAlso hue <= 68.0
+        Dim redDominant As Boolean = c.R >= c.G + 25 AndAlso c.R >= c.B + 25
+        Dim yellowDominant As Boolean = c.R >= 170 AndAlso c.G >= 120 AndAlso c.B <= 140
+        Return (redHue AndAlso redDominant) OrElse (yellowHue AndAlso yellowDominant)
     End Function
 
     Private Shared Function GetSnapshotRootDirectory() As String
@@ -1326,7 +2030,11 @@ Public Class BotEngine
             Dim rupiahsRegion As New RectRegion(0, 0, 1, 1)
             Dim partyInviteScanRegion As New RectRegion(0, 0, 1, 1)
             Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
-            ResolveVisionRegions(cfg, verifyFrame.Width, verifyFrame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion)
+            Dim mapRegion As New RectRegion(0, 0, 1, 1)
+            Dim mapCoordinateRegion As New RectRegion(0, 0, 1, 1)
+            Dim mapPlayerMarkerRegion As New RectRegion(0, 0, 1, 1)
+            Dim mapHeadingRegion As New RectRegion(0, 0, 1, 1)
+            ResolveVisionRegions(cfg, verifyFrame.Width, verifyFrame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, mapRegion, mapCoordinateRegion, mapPlayerMarkerRegion, mapHeadingRegion)
 
             Dim selectedName As String = ReadMobNameIfNeeded(verifyFrame, mobNameRegion, DateTime.UtcNow, True)
             If IsAllowedLootName(selectedName, cfg.LootAllowedNames, cfg.LootNameMatchThresholdPercent) Then
@@ -2008,6 +2716,35 @@ Public Class BotEngine
         Return False
     End Function
 
+    Private Shared Function IsPreferredMob(mobName As String, preferred As List(Of String)) As Boolean
+        If String.IsNullOrWhiteSpace(mobName) OrElse preferred Is Nothing OrElse preferred.Count = 0 Then
+            Return True
+        End If
+
+        Dim normMob As String = NormalizeMobName(mobName)
+        If normMob = "" Then
+            Return False
+        End If
+
+        For Each item In preferred
+            Dim normPreferred As String = NormalizeMobName(item)
+            If normPreferred = "" Then
+                Continue For
+            End If
+            If normMob.Equals(normPreferred, StringComparison.OrdinalIgnoreCase) Then
+                Return True
+            End If
+            If normMob.Contains(normPreferred, StringComparison.OrdinalIgnoreCase) OrElse normPreferred.Contains(normMob, StringComparison.OrdinalIgnoreCase) Then
+                Return True
+            End If
+            If AreTextsClose(normMob, normPreferred) Then
+                Return True
+            End If
+        Next
+
+        Return False
+    End Function
+
     Private Shared Function IsFuzzyBlacklistMatch(normMob As String, normDenied As String) As Boolean
         If String.IsNullOrWhiteSpace(normMob) OrElse String.IsNullOrWhiteSpace(normDenied) Then
             Return False
@@ -2552,6 +3289,27 @@ Public Class BotEngine
         Dim snapshot As BotStatus
         SyncLock _sync
             updateAction(_status)
+            _status.AgentEnabled = _config IsNot Nothing AndAlso _config.LevelingAgentEnabled
+            _status.AgentState = _agentState.ToString()
+            _status.AgentReason = _agentReason
+            _status.AgentGuardrailTriggered = _agentGuardrailTriggered
+            _status.MapCoordinateText = _lastMapCoordinateText
+            _status.MapCoordinateX = _lastMapCoordinateX
+            _status.MapCoordinateY = _lastMapCoordinateY
+            _status.MapHeading = _lastMapHeading
+            _status.MapCoordinateConfidence = _lastMapCoordinateConfidence
+            _status.MapMarkerDetected = _lastMapMarkerDetected
+            _status.MapMarkerX = _lastMapMarkerX
+            _status.MapMarkerY = _lastMapMarkerY
+            _status.MapLocalizationConfidence = _lastMapLocalizationConfidence
+            _status.NavigationMapName = _lastNavigationMapName
+            _status.NavigationCurrentNodeId = _lastNavigationCurrentNodeId
+            _status.NavigationCurrentNodeLabel = _lastNavigationCurrentNodeLabel
+            _status.NavigationNextWaypointId = _lastNavigationNextWaypointId
+            _status.NavigationNextWaypointLabel = _lastNavigationNextWaypointLabel
+            _status.NavigationRouteText = _lastNavigationRouteText
+            _status.NavigationRouteReady = _lastNavigationRouteReady
+            _status.NavigationTravelPreviewEnabled = _config IsNot Nothing AndAlso _config.NavigationTravelPreviewEnabled
             _status.UpdatedAt = DateTime.UtcNow
             snapshot = CloneStatus(_status)
         End SyncLock
@@ -2573,9 +3331,30 @@ Public Class BotEngine
             .RupiahsPerHour = src.RupiahsPerHour,
             .MobName = src.MobName,
             .TargetValid = src.TargetValid,
+            .MapCoordinateText = src.MapCoordinateText,
+            .MapCoordinateX = src.MapCoordinateX,
+            .MapCoordinateY = src.MapCoordinateY,
+            .MapHeading = src.MapHeading,
+            .MapCoordinateConfidence = src.MapCoordinateConfidence,
+            .MapMarkerDetected = src.MapMarkerDetected,
+            .MapMarkerX = src.MapMarkerX,
+            .MapMarkerY = src.MapMarkerY,
+            .MapLocalizationConfidence = src.MapLocalizationConfidence,
+            .NavigationMapName = src.NavigationMapName,
+            .NavigationCurrentNodeId = src.NavigationCurrentNodeId,
+            .NavigationCurrentNodeLabel = src.NavigationCurrentNodeLabel,
+            .NavigationNextWaypointId = src.NavigationNextWaypointId,
+            .NavigationNextWaypointLabel = src.NavigationNextWaypointLabel,
+            .NavigationRouteText = src.NavigationRouteText,
+            .NavigationRouteReady = src.NavigationRouteReady,
+            .NavigationTravelPreviewEnabled = src.NavigationTravelPreviewEnabled,
             .LastAction = src.LastAction,
             .NotAttackingReason = src.NotAttackingReason,
             .ErrorMessage = src.ErrorMessage,
+            .AgentEnabled = src.AgentEnabled,
+            .AgentState = src.AgentState,
+            .AgentReason = src.AgentReason,
+            .AgentGuardrailTriggered = src.AgentGuardrailTriggered,
             .UpdatedAt = src.UpdatedAt
         }
     End Function
@@ -2987,7 +3766,7 @@ Public Class BotEngine
         Return colored / CDbl(total)
     End Function
 
-    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef unreachableTextRect As RectRegion, ByRef pranaExpRect As RectRegion, ByRef rupiahsRect As RectRegion, ByRef partyInviteScanRect As RectRegion, ByRef partyInviteOkRect As RectRegion)
+    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef unreachableTextRect As RectRegion, ByRef pranaExpRect As RectRegion, ByRef rupiahsRect As RectRegion, ByRef partyInviteScanRect As RectRegion, ByRef partyInviteOkRect As RectRegion, ByRef mapRect As RectRegion, ByRef mapCoordinateRect As RectRegion, ByRef mapPlayerMarkerRect As RectRegion, ByRef mapHeadingRect As RectRegion)
         hpBar = CloneRegion(cfg.HpBar)
         mpBar = CloneRegion(cfg.MpBar)
         mobNameRect = CloneRegion(cfg.MobNameRect)
@@ -2997,6 +3776,10 @@ Public Class BotEngine
         rupiahsRect = CloneRegion(cfg.RupiahsRect)
         partyInviteScanRect = CloneRegion(cfg.PartyInviteScanRect)
         partyInviteOkRect = CloneRegion(cfg.PartyInviteOkRect)
+        mapRect = CloneRegion(cfg.MapRect)
+        mapCoordinateRect = CloneRegion(cfg.MapCoordinateRect)
+        mapPlayerMarkerRect = CloneRegion(cfg.MapPlayerMarkerRect)
+        mapHeadingRect = CloneRegion(cfg.MapHeadingRect)
 
         If frameWidth <= 0 OrElse frameHeight <= 0 Then
             Exit Sub
@@ -3019,6 +3802,10 @@ Public Class BotEngine
         rupiahsRect = ScaleRegionLeftTop(cfg.RupiahsRect, sx, sy)
         partyInviteScanRect = ScaleRegionLeftTop(cfg.PartyInviteScanRect, sx, sy)
         partyInviteOkRect = ScaleRegionLeftTop(cfg.PartyInviteOkRect, sx, sy)
+        mapRect = ScaleRegionLeftTop(cfg.MapRect, sx, sy)
+        mapCoordinateRect = ScaleRegionLeftTop(cfg.MapCoordinateRect, sx, sy)
+        mapPlayerMarkerRect = ScaleRegionLeftTop(cfg.MapPlayerMarkerRect, sx, sy)
+        mapHeadingRect = ScaleRegionRightTop(cfg.MapHeadingRect, sx, sy, frameWidth)
     End Sub
 
     Private Shared Function ResolveLootScanPolygon(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer) As List(Of DrawingPoint)
@@ -3046,6 +3833,10 @@ Public Class BotEngine
                SameRegion(cfg.RupiahsRect, New RectRegion(560, 745, 110, 21)) AndAlso
                SameRegion(cfg.PartyInviteScanRect, New RectRegion(349, 318, 328, 124)) AndAlso
                SameRegion(cfg.PartyInviteOkRect, New RectRegion(463, 410, 59, 21)) AndAlso
+               SameRegion(cfg.MapRect, New RectRegion(0, 0, 1024, 768)) AndAlso
+               SameRegion(cfg.MapCoordinateRect, New RectRegion(6, 744, 120, 22)) AndAlso
+               SameRegion(cfg.MapPlayerMarkerRect, New RectRegion(470, 585, 120, 120)) AndAlso
+               SameRegion(cfg.MapHeadingRect, New RectRegion(968, 4, 40, 24)) AndAlso
                SameLootScanPolygon(cfg.LootScanPoints, BotConfig.CreateDefaultLootScanPoints())
     End Function
 
