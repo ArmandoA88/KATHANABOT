@@ -56,6 +56,13 @@ Public Class Form1
     Private txtMapOpenKey As TextBox
     Private chkTravelPreview As CheckBox
     Private chkTravelExecute As CheckBox
+    Private chkRouteRecording As CheckBox
+    Private txtRouteRecordingName As TextBox
+    Private btnSaveRouteRecording As Button
+    Private cboRecordedRoute As ComboBox
+    Private cboRecordedRouteNode As ComboBox
+    Private btnDeleteRecordedRoute As Button
+    Private btnDeleteRecordedRouteNode As Button
     Private cboNavigationStartNode As ComboBox
     Private cboNavigationTargetNode As ComboBox
     Private nudNavigationWaypointRadius As NumericUpDown
@@ -71,6 +78,7 @@ Public Class Form1
     Private lblMapLocalizationConfidence As Label
     Private lblTravelStatus As Label
     Private lblRoutePreview As Label
+    Private lblRouteRecording As Label
 
     Private lblState As Label
     Private lblSystem As Label
@@ -112,6 +120,7 @@ Public Class Form1
     Private _lastError As String = ""
     Private _lastNoAttackReason As String = ""
     Private _lastAgentState As String = ""
+    Private _lastRouteRecordingSavedPath As String = ""
     Private _bypassHpMpLimits As Boolean = False
     Private _bypassStuckTarget As Boolean = True
     Private _partyAutoAccept As Boolean = True
@@ -350,6 +359,12 @@ Public Class Form1
         If chkTravelExecute IsNot Nothing Then
             AddHandler chkTravelExecute.CheckedChanged, AddressOf LiveConfigChanged
         End If
+        If chkRouteRecording IsNot Nothing Then
+            AddHandler chkRouteRecording.CheckedChanged, AddressOf LiveConfigChanged
+        End If
+        If txtRouteRecordingName IsNot Nothing Then
+            AddHandler txtRouteRecordingName.TextChanged, AddressOf LiveConfigChanged
+        End If
         If cboNavigationStartNode IsNot Nothing Then
             AddHandler cboNavigationStartNode.SelectedIndexChanged, AddressOf LiveConfigChanged
         End If
@@ -435,6 +450,12 @@ Public Class Form1
         If chkTravelExecute IsNot Nothing Then
             AddHandler chkTravelExecute.CheckedChanged, AddressOf PersistListSettingsChanged
         End If
+        If chkRouteRecording IsNot Nothing Then
+            AddHandler chkRouteRecording.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
+        If txtRouteRecordingName IsNot Nothing Then
+            AddHandler txtRouteRecordingName.TextChanged, AddressOf PersistListSettingsChanged
+        End If
         If cboNavigationStartNode IsNot Nothing Then
             AddHandler cboNavigationStartNode.SelectedIndexChanged, AddressOf PersistListSettingsChanged
         End If
@@ -465,6 +486,18 @@ Public Class Form1
                     dgvCombat.CommitEdit(DataGridViewDataErrorContexts.Commit)
                 End If
             End Sub
+        If btnSaveRouteRecording IsNot Nothing Then
+            AddHandler btnSaveRouteRecording.Click, AddressOf SaveRouteRecordingClicked
+        End If
+        If cboRecordedRoute IsNot Nothing Then
+            AddHandler cboRecordedRoute.SelectedIndexChanged, AddressOf RecordedRouteSelectionChanged
+        End If
+        If btnDeleteRecordedRoute IsNot Nothing Then
+            AddHandler btnDeleteRecordedRoute.Click, AddressOf DeleteRecordedRouteClicked
+        End If
+        If btnDeleteRecordedRouteNode IsNot Nothing Then
+            AddHandler btnDeleteRecordedRouteNode.Click, AddressOf DeleteRecordedRouteNodeClicked
+        End If
     End Sub
 
     Private Sub LiveConfigChanged(_sender As Object, _e As EventArgs)
@@ -907,10 +940,10 @@ Public Class Form1
         tab.Controls.Add(scrollPanel)
 
         Dim settingsGroup As New GroupBox() With {.Text = "Leveling Agent", .Dock = DockStyle.Top, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .Padding = New Padding(10)}
-        Dim settingsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 2, .RowCount = 18}
+        Dim settingsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 2, .RowCount = 23}
         settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 220.0F))
         settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
-        For i As Integer = 0 To 17
+        For i As Integer = 0 To 22
             settingsLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
         Next
         settingsGroup.Controls.Add(settingsLayout)
@@ -951,38 +984,66 @@ Public Class Form1
         settingsLayout.Controls.Add(chkTravelExecute, 0, 8)
         settingsLayout.SetColumnSpan(chkTravelExecute, 2)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Waypoint Radius", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 9)
-        nudNavigationWaypointRadius = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 10, .Maximum = 250, .Value = 36, .Width = 120}
-        settingsLayout.Controls.Add(nudNavigationWaypointRadius, 1, 9)
+        chkRouteRecording = New CheckBox() With {.Text = "Enable route recording mode", .Dock = DockStyle.Fill}
+        settingsLayout.Controls.Add(chkRouteRecording, 0, 9)
+        settingsLayout.SetColumnSpan(chkRouteRecording, 2)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Move Burst (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 10)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Recorded Route Name", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 10)
+        Dim recordingPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True}
+        txtRouteRecordingName = New TextBox() With {.Width = 220, .Text = "jina_route"}
+        recordingPanel.Controls.Add(txtRouteRecordingName)
+        btnSaveRouteRecording = New Button() With {.Text = "Save Recorded Route", .AutoSize = True}
+        recordingPanel.Controls.Add(btnSaveRouteRecording)
+        settingsLayout.Controls.Add(recordingPanel, 1, 10)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Recorded Routes", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 11)
+        Dim recordedRoutePanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True}
+        cboRecordedRoute = New ComboBox() With {.Width = 280, .DropDownStyle = ComboBoxStyle.DropDownList}
+        recordedRoutePanel.Controls.Add(cboRecordedRoute)
+        btnDeleteRecordedRoute = New Button() With {.Text = "Delete Route", .AutoSize = True}
+        recordedRoutePanel.Controls.Add(btnDeleteRecordedRoute)
+        settingsLayout.Controls.Add(recordedRoutePanel, 1, 11)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Recorded Route Nodes", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 12)
+        Dim recordedNodePanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True}
+        cboRecordedRouteNode = New ComboBox() With {.Width = 280, .DropDownStyle = ComboBoxStyle.DropDownList}
+        recordedNodePanel.Controls.Add(cboRecordedRouteNode)
+        btnDeleteRecordedRouteNode = New Button() With {.Text = "Delete Node", .AutoSize = True}
+        recordedNodePanel.Controls.Add(btnDeleteRecordedRouteNode)
+        settingsLayout.Controls.Add(recordedNodePanel, 1, 12)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Waypoint Radius", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 13)
+        nudNavigationWaypointRadius = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0, .Maximum = 250, .Value = 36, .Width = 120}
+        settingsLayout.Controls.Add(nudNavigationWaypointRadius, 1, 13)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Move Burst (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 14)
         nudNavigationMoveBurstMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 100, .Maximum = 1500, .Increment = 25, .Value = 350, .Width = 120}
-        settingsLayout.Controls.Add(nudNavigationMoveBurstMs, 1, 10)
+        settingsLayout.Controls.Add(nudNavigationMoveBurstMs, 1, 14)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Re-sample (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 11)
-        nudNavigationResampleMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 900, .Maximum = 10000, .Increment = 100, .Value = 1800, .Width = 120}
-        settingsLayout.Controls.Add(nudNavigationResampleMs, 1, 11)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Re-sample (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 15)
+        nudNavigationResampleMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 250, .Maximum = 10000, .Increment = 50, .Value = 1800, .Width = 120}
+        settingsLayout.Controls.Add(nudNavigationResampleMs, 1, 15)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Stall Timeout (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 12)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Stall Timeout (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 16)
         nudNavigationStallTimeoutMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1500, .Maximum = 30000, .Increment = 250, .Value = 6500, .Width = 120}
-        settingsLayout.Controls.Add(nudNavigationStallTimeoutMs, 1, 12)
+        settingsLayout.Controls.Add(nudNavigationStallTimeoutMs, 1, 16)
 
         chkNavigationRepathOnStuck = New CheckBox() With {.Text = "Run recovery/repath when travel stalls", .Dock = DockStyle.Fill, .Checked = True}
-        settingsLayout.Controls.Add(chkNavigationRepathOnStuck, 0, 13)
+        settingsLayout.Controls.Add(chkNavigationRepathOnStuck, 0, 17)
         settingsLayout.SetColumnSpan(chkNavigationRepathOnStuck, 2)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Route Start Node", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 14)
-        cboNavigationStartNode = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList}
-        settingsLayout.Controls.Add(cboNavigationStartNode, 1, 14)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Route Start", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 18)
+        cboNavigationStartNode = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList, .Enabled = False}
+        settingsLayout.Controls.Add(cboNavigationStartNode, 1, 18)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Route Target Node", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 15)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Travel Route", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 19)
         cboNavigationTargetNode = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList}
-        settingsLayout.Controls.Add(cboNavigationTargetNode, 1, 15)
+        settingsLayout.Controls.Add(cboNavigationTargetNode, 1, 19)
 
         chkLevelingStopOnLowExp = New CheckBox() With {.Text = "Stop when EXP/hour is below threshold", .Dock = DockStyle.Fill}
-        settingsLayout.Controls.Add(chkLevelingStopOnLowExp, 0, 16)
+        settingsLayout.Controls.Add(chkLevelingStopOnLowExp, 0, 20)
         settingsLayout.SetColumnSpan(chkLevelingStopOnLowExp, 2)
-        settingsLayout.Controls.Add(New Label() With {.Text = "Min EXP/hour %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 17)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Min EXP/hour %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 21)
         nudLevelingMinExpPerHour = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0.01D, .Maximum = 100D, .DecimalPlaces = 2, .Increment = 0.05D, .Value = DefaultLevelingMinExpPerHour, .Width = 120}
         Dim lowExpPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True}
         lowExpPanel.Controls.Add(nudLevelingMinExpPerHour)
@@ -990,11 +1051,11 @@ Public Class Form1
         lowExpPanel.Controls.Add(chkLevelingStopOnRepeatedUnreachable)
         nudLevelingUnreachableLimit = New NumericUpDown() With {.Minimum = 1, .Maximum = 20, .Value = 4, .Width = 70, .Margin = New Padding(8, 0, 0, 0)}
         lowExpPanel.Controls.Add(nudLevelingUnreachableLimit)
-        settingsLayout.Controls.Add(lowExpPanel, 1, 17)
+        settingsLayout.Controls.Add(lowExpPanel, 1, 21)
 
         Dim statusGroup As New GroupBox() With {.Text = "Agent Runtime", .Dock = DockStyle.Top, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .Padding = New Padding(10)}
-        Dim statusLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 1, .RowCount = 10, .Padding = New Padding(6)}
-        For i As Integer = 0 To 9
+        Dim statusLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 1, .RowCount = 11, .Padding = New Padding(6)}
+        For i As Integer = 0 To 10
             statusLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
         Next
         statusGroup.Controls.Add(statusLayout)
@@ -1007,6 +1068,7 @@ Public Class Form1
         lblMapLocalizationConfidence = New Label() With {.Text = "Localization Confidence: 0%", .Dock = DockStyle.Fill, .ForeColor = Color.Khaki, .AutoSize = True}
         lblTravelStatus = New Label() With {.Text = "Travel: idle", .Dock = DockStyle.Fill, .ForeColor = Color.LightSteelBlue, .AutoSize = True}
         lblRoutePreview = New Label() With {.Text = "Route Preview: disabled", .Dock = DockStyle.Fill, .ForeColor = Color.LightCyan, .AutoSize = True}
+        lblRouteRecording = New Label() With {.Text = "Route Recording: idle", .Dock = DockStyle.Fill, .ForeColor = Color.Plum, .AutoSize = True}
         Dim hintLabel As New Label() With {.Text = "Preferred mobs are a positive filter. When the list is not empty, the agent will skip non-matching targets.", .Dock = DockStyle.Fill, .ForeColor = Color.LightSkyBlue, .AutoSize = True}
         Dim guardrailLabel As New Label() With {.Text = "Travel execution is still guarded: it samples the map, plans a waypoint route, and sends short movement bursts only when combat is idle.", .Dock = DockStyle.Fill, .ForeColor = Color.Silver, .AutoSize = True}
         statusLayout.Controls.Add(lblLevelingState, 0, 0)
@@ -1017,12 +1079,14 @@ Public Class Form1
         statusLayout.Controls.Add(lblMapLocalizationConfidence, 0, 5)
         statusLayout.Controls.Add(lblTravelStatus, 0, 6)
         statusLayout.Controls.Add(lblRoutePreview, 0, 7)
-        statusLayout.Controls.Add(hintLabel, 0, 8)
-        statusLayout.Controls.Add(guardrailLabel, 0, 9)
+        statusLayout.Controls.Add(lblRouteRecording, 0, 8)
+        statusLayout.Controls.Add(hintLabel, 0, 9)
+        statusLayout.Controls.Add(guardrailLabel, 0, 10)
 
         root.Controls.Add(settingsGroup, 0, 0)
         root.Controls.Add(statusGroup, 0, 1)
         PopulateNavigationNodeCombos()
+        PopulateRecordedRouteManager()
         Return tab
     End Function
 
@@ -2289,6 +2353,8 @@ Public Class Form1
             $"MapOpenKey: {If(txtMapOpenKey IsNot Nothing AndAlso txtMapOpenKey.Text.Trim() <> "", txtMapOpenKey.Text.Trim().ToUpperInvariant(), DefaultMapOpenKey)}{Environment.NewLine}" &
             $"TravelPreviewEnabled: {If(chkTravelPreview IsNot Nothing AndAlso chkTravelPreview.Checked, "True", "False")}{Environment.NewLine}" &
             $"TravelExecutionEnabled: {If(chkTravelExecute IsNot Nothing AndAlso chkTravelExecute.Checked, "True", "False")}{Environment.NewLine}" &
+            $"RouteRecordingEnabled: {If(chkRouteRecording IsNot Nothing AndAlso chkRouteRecording.Checked, "True", "False")}{Environment.NewLine}" &
+            $"RouteRecordingName: {If(txtRouteRecordingName IsNot Nothing, txtRouteRecordingName.Text.Trim(), "jina_route")}{Environment.NewLine}" &
             $"WaypointRadius: {If(nudNavigationWaypointRadius IsNot Nothing, nudNavigationWaypointRadius.Value.ToString(), "36")}{Environment.NewLine}" &
             $"MoveBurstMs: {If(nudNavigationMoveBurstMs IsNot Nothing, nudNavigationMoveBurstMs.Value.ToString(), "350")}{Environment.NewLine}" &
             $"ResampleMs: {If(nudNavigationResampleMs IsNot Nothing, nudNavigationResampleMs.Value.ToString(), "1800")}{Environment.NewLine}" &
@@ -2296,6 +2362,12 @@ Public Class Form1
             $"RepathOnStuck: {If(chkNavigationRepathOnStuck IsNot Nothing AndAlso chkNavigationRepathOnStuck.Checked, "True", "False")}{Environment.NewLine}" &
             $"RouteStartNode: {ExtractNavigationNodeId(If(cboNavigationStartNode IsNot Nothing, cboNavigationStartNode.SelectedItem, Nothing))}{Environment.NewLine}" &
             $"RouteTargetNode: {ExtractNavigationNodeId(If(cboNavigationTargetNode IsNot Nothing, cboNavigationTargetNode.SelectedItem, Nothing))}{Environment.NewLine}" &
+            $"RouteRecordingActive: {st.RouteRecordingActive}{Environment.NewLine}" &
+            $"RouteRecordingMap: {If(String.IsNullOrWhiteSpace(st.RouteRecordingMapName), "n/a", st.RouteRecordingMapName)}{Environment.NewLine}" &
+            $"RouteRecordingName: {If(String.IsNullOrWhiteSpace(st.RouteRecordingName), "n/a", st.RouteRecordingName)}{Environment.NewLine}" &
+            $"RouteRecordingSamples: {st.RouteRecordingSampleCount}{Environment.NewLine}" &
+            $"RouteRecordingStatus: {If(String.IsNullOrWhiteSpace(st.RouteRecordingStatus), "n/a", st.RouteRecordingStatus)}{Environment.NewLine}" &
+            $"RouteRecordingLastSavedPath: {If(String.IsNullOrWhiteSpace(st.RouteRecordingLastSavedPath), "n/a", st.RouteRecordingLastSavedPath)}{Environment.NewLine}" &
             $"NtfyTopic: {GetNtfyTopicName()}{Environment.NewLine}" &
             $"LootPickupEnabled: {If(chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked, "True", "False")}{Environment.NewLine}" &
             $"LootPickupIntervalSec: {If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value.ToString(), "4")}{Environment.NewLine}" &
@@ -2481,10 +2553,21 @@ Public Class Form1
             lblRoutePreview.Text = routeText
             lblRoutePreview.ForeColor = If(status.NavigationRouteReady, Color.LightCyan, Color.DimGray)
         End If
+        If lblRouteRecording IsNot Nothing Then
+            Dim recordingText As String = If(String.IsNullOrWhiteSpace(status.RouteRecordingStatus), "idle", status.RouteRecordingStatus)
+            lblRouteRecording.Text = $"Route Recording: {recordingText}"
+            lblRouteRecording.ForeColor = If(status.RouteRecordingActive, Color.Plum, If(status.RouteRecordingSampleCount >= 1, Color.LightPink, Color.DimGray))
+        End If
         UpdateAttackButtonAppearance(status.Running)
         HandleHpZeroAlarm(status)
         HandleWindowMissingAlarm(status)
         ApplyHealthUiTint(status.HpPercent, status.Running AndAlso status.WindowFound)
+
+        If Not String.IsNullOrWhiteSpace(status.RouteRecordingLastSavedPath) AndAlso Not status.RouteRecordingLastSavedPath.Equals(_lastRouteRecordingSavedPath, StringComparison.OrdinalIgnoreCase) Then
+            _lastRouteRecordingSavedPath = status.RouteRecordingLastSavedPath
+            AppendLog("Recorded route saved: " & status.RouteRecordingLastSavedPath)
+            PopulateNavigationNodeCombos()
+        End If
 
         If status.LastAction <> "" AndAlso status.LastAction <> _lastAction Then
             AppendLog("Key action: " & status.LastAction)
@@ -2738,10 +2821,14 @@ Public Class Form1
         cfg.NavigationEnabled = (chkNavigationEnabled IsNot Nothing AndAlso chkNavigationEnabled.Checked)
         cfg.MapOpenKey = If(txtMapOpenKey IsNot Nothing AndAlso txtMapOpenKey.Text.Trim() <> "", txtMapOpenKey.Text.Trim().ToUpperInvariant(), DefaultMapOpenKey)
         cfg.NavigationMapName = "Jina Basin"
-        cfg.NavigationStartNodeId = ExtractNavigationNodeId(If(cboNavigationStartNode IsNot Nothing, cboNavigationStartNode.SelectedItem, Nothing))
-        cfg.NavigationTargetNodeId = ExtractNavigationNodeId(If(cboNavigationTargetNode IsNot Nothing, cboNavigationTargetNode.SelectedItem, Nothing))
+        cfg.NavigationStartNodeId = ""
+        Dim selectedRouteName As String = ExtractRecordedRouteNameFromNavigationSelection(If(cboNavigationTargetNode IsNot Nothing, cboNavigationTargetNode.SelectedItem, Nothing))
+        Dim selectedRouteEndNode As NavigationNode = If(selectedRouteName = "", Nothing, BotEngine.GetRecordedRouteEndNode(selectedRouteName, cfg.NavigationMapName))
+        cfg.NavigationTargetNodeId = If(selectedRouteEndNode Is Nothing, "", selectedRouteEndNode.Id)
         cfg.NavigationTravelPreviewEnabled = (chkTravelPreview IsNot Nothing AndAlso chkTravelPreview.Checked)
         cfg.NavigationTravelExecutionEnabled = (chkTravelExecute IsNot Nothing AndAlso chkTravelExecute.Checked)
+        cfg.RouteRecordingEnabled = (chkRouteRecording IsNot Nothing AndAlso chkRouteRecording.Checked)
+        cfg.RouteRecordingName = If(txtRouteRecordingName IsNot Nothing AndAlso txtRouteRecordingName.Text.Trim() <> "", txtRouteRecordingName.Text.Trim(), "jina_route")
         cfg.NavigationWaypointReachRadius = CInt(If(nudNavigationWaypointRadius IsNot Nothing, nudNavigationWaypointRadius.Value, 36D))
         cfg.NavigationMoveBurstMs = CInt(If(nudNavigationMoveBurstMs IsNot Nothing, nudNavigationMoveBurstMs.Value, 350D))
         cfg.NavigationResampleIntervalMs = CInt(If(nudNavigationResampleMs IsNot Nothing, nudNavigationResampleMs.Value, 1800D))
@@ -2903,31 +2990,179 @@ Public Class Form1
     End Function
 
     Private Sub PopulateNavigationNodeCombos()
-        Dim nodes As List(Of NavigationNode) = BotEngine.GetNavigationNodeOptions("Jina Basin")
-        Dim items As List(Of String) = nodes.Select(Function(node) $"{node.Id} - {node.Label}").ToList()
+        Dim mapName As String = GetSelectedNavigationMapName()
+        Dim routes As List(Of RecordedNavigationRouteInfo) = BotEngine.GetRecordedRouteOptions(mapName)
 
         If cboNavigationStartNode IsNot Nothing Then
             cboNavigationStartNode.Items.Clear()
             cboNavigationStartNode.Items.Add("(auto from map)")
-            For Each item As String In items
-                cboNavigationStartNode.Items.Add(item)
-            Next
-            If cboNavigationStartNode.SelectedIndex < 0 Then
-                cboNavigationStartNode.SelectedIndex = 0
-            End If
+            cboNavigationStartNode.SelectedIndex = 0
         End If
 
         If cboNavigationTargetNode IsNot Nothing Then
+            Dim previousRoute As String = ExtractRecordedRouteNameFromNavigationSelection(cboNavigationTargetNode.SelectedItem)
             cboNavigationTargetNode.Items.Clear()
-            For Each item As String In items
-                cboNavigationTargetNode.Items.Add(item)
+            For Each routeInfo As RecordedNavigationRouteInfo In routes
+                Dim endNode As NavigationNode = BotEngine.GetRecordedRouteEndNode(routeInfo.RouteName, mapName)
+                If endNode IsNot Nothing Then
+                    cboNavigationTargetNode.Items.Add($"{routeInfo.RouteName} -> {endNode.Label}")
+                End If
             Next
-            If cboNavigationTargetNode.Items.Count > 0 AndAlso cboNavigationTargetNode.SelectedIndex < 0 Then
-                Dim preferred As Integer = items.FindIndex(Function(item) item.StartsWith("farming_area ", StringComparison.OrdinalIgnoreCase) OrElse item.StartsWith("farming_area-", StringComparison.OrdinalIgnoreCase) OrElse item.StartsWith("farming_area", StringComparison.OrdinalIgnoreCase))
-                cboNavigationTargetNode.SelectedIndex = If(preferred >= 0, preferred, 0)
+            If cboNavigationTargetNode.Items.Count > 0 Then
+                Dim selectedIndex As Integer = -1
+                If previousRoute <> "" Then
+                    For i As Integer = 0 To cboNavigationTargetNode.Items.Count - 1
+                        If ExtractRecordedRouteNameFromNavigationSelection(cboNavigationTargetNode.Items(i)).Equals(previousRoute, StringComparison.OrdinalIgnoreCase) Then
+                            selectedIndex = i
+                            Exit For
+                        End If
+                    Next
+                End If
+                cboNavigationTargetNode.SelectedIndex = If(selectedIndex >= 0, selectedIndex, 0)
             End If
         End If
     End Sub
+
+    Private Function GetSelectedNavigationMapName() As String
+        Dim cfg As BotConfig = BuildConfig()
+        If cfg Is Nothing OrElse String.IsNullOrWhiteSpace(cfg.NavigationMapName) Then
+            Return "Jina Basin"
+        End If
+        Return cfg.NavigationMapName.Trim()
+    End Function
+
+    Private Sub PopulateRecordedRouteManager()
+        Dim mapName As String = GetSelectedNavigationMapName()
+        Dim routes As List(Of RecordedNavigationRouteInfo) = BotEngine.GetRecordedRouteOptions(mapName)
+
+        If cboRecordedRoute IsNot Nothing Then
+            Dim previousRoute As String = ExtractRecordedRouteName(cboRecordedRoute.SelectedItem)
+            cboRecordedRoute.Items.Clear()
+            cboRecordedRoute.Items.Add("(select recorded route)")
+            For Each routeInfo As RecordedNavigationRouteInfo In routes
+                cboRecordedRoute.Items.Add($"{routeInfo.RouteName} ({routeInfo.NodeCount} nodes)")
+            Next
+
+            Dim restoreIndex As Integer = 0
+            If previousRoute <> "" Then
+                For i As Integer = 1 To cboRecordedRoute.Items.Count - 1
+                    If ExtractRecordedRouteName(cboRecordedRoute.Items(i)).Equals(previousRoute, StringComparison.OrdinalIgnoreCase) Then
+                        restoreIndex = i
+                        Exit For
+                    End If
+                Next
+            End If
+            cboRecordedRoute.SelectedIndex = Math.Max(0, restoreIndex)
+        End If
+
+        PopulateRecordedRouteNodeManager()
+    End Sub
+
+    Private Sub PopulateRecordedRouteNodeManager()
+        If cboRecordedRouteNode Is Nothing Then
+            Return
+        End If
+
+        Dim mapName As String = GetSelectedNavigationMapName()
+        Dim routeName As String = ExtractRecordedRouteName(If(cboRecordedRoute Is Nothing, Nothing, cboRecordedRoute.SelectedItem))
+        Dim nodes As List(Of NavigationNode) = If(routeName = "", New List(Of NavigationNode)(), BotEngine.GetRecordedRouteNodeOptions(routeName, mapName))
+
+        cboRecordedRouteNode.Items.Clear()
+        cboRecordedRouteNode.Items.Add("(select recorded node)")
+        For Each node As NavigationNode In nodes
+            cboRecordedRouteNode.Items.Add($"{node.Id} - {node.Label}")
+        Next
+        cboRecordedRouteNode.SelectedIndex = 0
+    End Sub
+
+    Private Sub SaveRouteRecordingClicked(sender As Object, e As EventArgs)
+        Dim cfg As BotConfig = BuildConfig()
+        Dim savedPath As String = _engine.SaveRecordedRoute(cfg)
+        If String.IsNullOrWhiteSpace(savedPath) Then
+            AppendLog("Recorded route save failed. Make sure recording mode captured enough coordinate samples first.")
+            Return
+        End If
+
+        AppendLog("Recorded route saved: " & savedPath)
+        _lastRouteRecordingSavedPath = savedPath
+        PopulateNavigationNodeCombos()
+        PopulateRecordedRouteManager()
+        SavePersistedListState(False)
+    End Sub
+
+    Private Sub RecordedRouteSelectionChanged(sender As Object, e As EventArgs)
+        PopulateRecordedRouteNodeManager()
+    End Sub
+
+    Private Sub DeleteRecordedRouteClicked(sender As Object, e As EventArgs)
+        Dim routeName As String = ExtractRecordedRouteName(If(cboRecordedRoute Is Nothing, Nothing, cboRecordedRoute.SelectedItem))
+        If routeName = "" Then
+            AppendLog("Select a recorded route first.")
+            Return
+        End If
+
+        Dim mapName As String = GetSelectedNavigationMapName()
+        If Not BotEngine.DeleteRecordedRoute(routeName, mapName) Then
+            AppendLog("Recorded route delete failed: " & routeName)
+            Return
+        End If
+
+        AppendLog("Recorded route deleted: " & routeName)
+        PopulateNavigationNodeCombos()
+        PopulateRecordedRouteManager()
+        SavePersistedListState(False)
+    End Sub
+
+    Private Sub DeleteRecordedRouteNodeClicked(sender As Object, e As EventArgs)
+        Dim routeName As String = ExtractRecordedRouteName(If(cboRecordedRoute Is Nothing, Nothing, cboRecordedRoute.SelectedItem))
+        If routeName = "" Then
+            AppendLog("Select a recorded route first.")
+            Return
+        End If
+
+        Dim nodeId As String = ExtractNavigationNodeId(If(cboRecordedRouteNode Is Nothing, Nothing, cboRecordedRouteNode.SelectedItem))
+        If nodeId = "" Then
+            AppendLog("Select a recorded node first.")
+            Return
+        End If
+
+        Dim mapName As String = GetSelectedNavigationMapName()
+        If Not BotEngine.DeleteRecordedRouteNode(routeName, nodeId, mapName) Then
+            AppendLog($"Recorded route node delete failed: {routeName} / {nodeId}")
+            Return
+        End If
+
+        AppendLog($"Recorded route node deleted: {routeName} / {nodeId}")
+        PopulateNavigationNodeCombos()
+        PopulateRecordedRouteManager()
+        SavePersistedListState(False)
+    End Sub
+
+    Private Shared Function ExtractRecordedRouteName(selectedItem As Object) As String
+        Dim raw As String = If(selectedItem, "").ToString().Trim()
+        If raw = "" OrElse raw.StartsWith("(select", StringComparison.OrdinalIgnoreCase) Then
+            Return ""
+        End If
+
+        Dim suffixStart As Integer = raw.LastIndexOf(" (", StringComparison.Ordinal)
+        If suffixStart > 0 Then
+            Return raw.Substring(0, suffixStart).Trim()
+        End If
+        Return raw
+    End Function
+
+    Private Shared Function ExtractRecordedRouteNameFromNavigationSelection(selectedItem As Object) As String
+        Dim raw As String = If(selectedItem, "").ToString().Trim()
+        If raw = "" Then
+            Return ""
+        End If
+
+        Dim separatorIndex As Integer = raw.IndexOf(" -> ", StringComparison.Ordinal)
+        If separatorIndex > 0 Then
+            Return raw.Substring(0, separatorIndex).Trim()
+        End If
+        Return raw
+    End Function
 
     Private Shared Function ExtractNavigationNodeId(selectedItem As Object) As String
         Dim raw As String = If(selectedItem, "").ToString().Trim()
@@ -3208,31 +3443,29 @@ Public Class Form1
         If chkTravelExecute IsNot Nothing Then
             chkTravelExecute.Checked = cfg.NavigationTravelExecutionEnabled
         End If
-        SetNumericControlValue(nudNavigationWaypointRadius, CDec(Math.Max(10, cfg.NavigationWaypointReachRadius)))
+        If chkRouteRecording IsNot Nothing Then
+            chkRouteRecording.Checked = cfg.RouteRecordingEnabled
+        End If
+        If txtRouteRecordingName IsNot Nothing Then
+            txtRouteRecordingName.Text = If(String.IsNullOrWhiteSpace(cfg.RouteRecordingName), "jina_route", cfg.RouteRecordingName.Trim())
+        End If
+        SetNumericControlValue(nudNavigationWaypointRadius, CDec(Math.Max(0, cfg.NavigationWaypointReachRadius)))
         SetNumericControlValue(nudNavigationMoveBurstMs, CDec(Math.Max(100, cfg.NavigationMoveBurstMs)))
-        SetNumericControlValue(nudNavigationResampleMs, CDec(Math.Max(900, cfg.NavigationResampleIntervalMs)))
+        SetNumericControlValue(nudNavigationResampleMs, CDec(Math.Max(250, cfg.NavigationResampleIntervalMs)))
         SetNumericControlValue(nudNavigationStallTimeoutMs, CDec(Math.Max(1500, cfg.NavigationStallTimeoutMs)))
         If chkNavigationRepathOnStuck IsNot Nothing Then
             chkNavigationRepathOnStuck.Checked = cfg.NavigationRepathOnStuck
         End If
         PopulateNavigationNodeCombos()
         If cboNavigationStartNode IsNot Nothing Then
-            Dim startNodeId As String = If(cfg.NavigationStartNodeId, "").Trim()
-            If startNodeId = "" Then
-                cboNavigationStartNode.SelectedIndex = 0
-            Else
-                For i As Integer = 0 To cboNavigationStartNode.Items.Count - 1
-                    If ExtractNavigationNodeId(cboNavigationStartNode.Items(i)).Equals(startNodeId, StringComparison.OrdinalIgnoreCase) Then
-                        cboNavigationStartNode.SelectedIndex = i
-                        Exit For
-                    End If
-                Next
-            End If
+            cboNavigationStartNode.SelectedIndex = 0
         End If
         If cboNavigationTargetNode IsNot Nothing Then
             Dim targetNodeId As String = If(cfg.NavigationTargetNodeId, "").Trim()
             For i As Integer = 0 To cboNavigationTargetNode.Items.Count - 1
-                If ExtractNavigationNodeId(cboNavigationTargetNode.Items(i)).Equals(targetNodeId, StringComparison.OrdinalIgnoreCase) Then
+                Dim routeName As String = ExtractRecordedRouteNameFromNavigationSelection(cboNavigationTargetNode.Items(i))
+                Dim endNode As NavigationNode = If(routeName = "", Nothing, BotEngine.GetRecordedRouteEndNode(routeName, cfg.NavigationMapName))
+                If endNode IsNot Nothing AndAlso endNode.Id.Equals(targetNodeId, StringComparison.OrdinalIgnoreCase) Then
                     cboNavigationTargetNode.SelectedIndex = i
                     Exit For
                 End If

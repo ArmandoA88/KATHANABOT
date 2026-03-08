@@ -8,6 +8,7 @@ Imports System.Linq
 Imports System.Runtime.InteropServices
 Imports System.Text.RegularExpressions
 Imports System.Text
+Imports System.Text.Json
 Imports System.Threading
 Imports System.Threading.Tasks
 Imports DrawingPoint = System.Drawing.Point
@@ -103,6 +104,30 @@ Public Class NavigationPlan
     Public Property StatusText As String = ""
 End Class
 
+Public Class NavigationRouteSample
+    Public Property X As Integer
+    Public Property Y As Integer
+    Public Property CapturedAtUtc As DateTime = DateTime.UtcNow
+End Class
+
+Public Class RecordedNavigationGraph
+    Public Property MapName As String = ""
+    Public Property RouteName As String = ""
+    Public Property StartNodeId As String = ""
+    Public Property EndNodeId As String = ""
+    Public Property Nodes As List(Of NavigationNode) = New List(Of NavigationNode)()
+    Public Property Edges As List(Of NavigationEdge) = New List(Of NavigationEdge)()
+    Public Property Samples As List(Of NavigationRouteSample) = New List(Of NavigationRouteSample)()
+    Public Property SavedAtUtc As DateTime = DateTime.UtcNow
+End Class
+
+Public Class RecordedNavigationRouteInfo
+    Public Property MapName As String = ""
+    Public Property RouteName As String = ""
+    Public Property NodeCount As Integer
+    Public Property SavedAtUtc As DateTime = DateTime.UtcNow
+End Class
+
 Public Class BotConfig
     Public Property WindowTitle As String = "Kathana - The Coming of the Dark Ages"
     Public Property LoopMs As Integer = 80
@@ -162,6 +187,10 @@ Public Class BotConfig
     Public Property NavigationResampleIntervalMs As Integer = 1800
     Public Property NavigationStallTimeoutMs As Integer = 6500
     Public Property NavigationRepathOnStuck As Boolean = True
+    Public Property RouteRecordingEnabled As Boolean = False
+    Public Property RouteRecordingName As String = "jina_route"
+    Public Property RouteRecordingMinSampleDistance As Integer = 8
+    Public Property RouteRecordingMinNodeSpacing As Integer = 28
     Public Property Actions As List(Of ActionRule) = New List(Of ActionRule)()
 
     Public Shared Function CreateDefault() As BotConfig
@@ -252,6 +281,13 @@ Public Class BotStatus
     Public Property NavigationRecoveryCount As Integer
     Public Property NavigationDestinationReached As Boolean
     Public Property NavigationDestinationLabel As String = ""
+    Public Property RouteRecordingEnabled As Boolean
+    Public Property RouteRecordingActive As Boolean
+    Public Property RouteRecordingMapName As String = ""
+    Public Property RouteRecordingName As String = ""
+    Public Property RouteRecordingSampleCount As Integer
+    Public Property RouteRecordingStatus As String = ""
+    Public Property RouteRecordingLastSavedPath As String = ""
     Public Property LastAction As String = ""
     Public Property NotAttackingReason As String = ""
     Public Property ErrorMessage As String = ""
@@ -289,6 +325,10 @@ Friend Module NativeMethods
 
     <DllImport("user32.dll", SetLastError:=True)>
     Friend Function GetForegroundWindow() As IntPtr
+    End Function
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function SetForegroundWindow(hWnd As IntPtr) As Boolean
     End Function
 
     Friend Delegate Function EnumWindowsProc(hWnd As IntPtr, lParam As IntPtr) As Boolean
@@ -376,6 +416,8 @@ Public Class BotEngine
     Private Const NavigationKnownPoseMaxAgeMs As Integer = 15000
     Private Const NavigationProgressImprovementThreshold As Double = 8.0
     Private Const NavigationRecoveryCooldownMs As Integer = 1500
+    Private Const RouteRecordingMinSamplesToSave As Integer = 6
+    Private Const RouteRecordingMinSampleIntervalMs As Integer = 250
     Private Const MobHpTextOcrMinIntervalMs As Integer = 450
     Private Const PartyInviteOcrMinIntervalMs As Integer = 900
     Private Const UnreachableOcrMinIntervalMs As Integer = 260
@@ -386,6 +428,10 @@ Public Class BotEngine
     Private Const BaseClientHeight As Integer = 768
 
     Private ReadOnly _sync As New Object()
+    Private Shared ReadOnly NavigationRouteStorageRoot As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel", "navigation_routes")
+    Private Shared ReadOnly NavigationRouteJsonOptions As New JsonSerializerOptions With {.WriteIndented = True}
+    Private Shared ReadOnly _recordedGraphCache As New Dictionary(Of String, List(Of RecordedNavigationGraph))(StringComparer.OrdinalIgnoreCase)
+    Private Shared ReadOnly _recordedGraphCacheSync As New Object()
     Private _config As BotConfig = BotConfig.CreateDefault()
     Private _status As New BotStatus()
     Private _cts As CancellationTokenSource
@@ -477,6 +523,14 @@ Public Class BotEngine
     Private _lastNavigationPreviousX As Integer = -1
     Private _lastNavigationPreviousY As Integer = -1
     Private _lastNavigationKnownHeading As String = ""
+    Private _navigationRotationQuarterTurns As Integer = 0
+    Private _lastTravelInputKey As String = ""
+    Private _lastTravelInputDesiredDirection As String = ""
+    Private _lastTravelInputPoseX As Integer = -1
+    Private _lastTravelInputPoseY As Integer = -1
+    Private _lastTravelInputAt As DateTime = DateTime.MinValue
+    Private _navigationCommittedWaypointId As String = ""
+    Private _navigationCommittedWaypointLabel As String = ""
     Private _lastNavigationMapToggleAt As DateTime = DateTime.MinValue
     Private _lastNavigationMoveCommandAt As DateTime = DateTime.MinValue
     Private _navigationMapExpectedOpen As Boolean = False
@@ -484,6 +538,13 @@ Public Class BotEngine
     Private _navigationLocalizationRetryAfter As DateTime = DateTime.MinValue
     Private _navigationLocalizationFailureCount As Integer = 0
     Private _navigationLocalizationPaused As Boolean = False
+    Private _routeRecordingCaptureActive As Boolean = False
+    Private _routeRecordingMapName As String = ""
+    Private _routeRecordingName As String = ""
+    Private _routeRecordingStatus As String = ""
+    Private _routeRecordingLastSavedPath As String = ""
+    Private _routeRecordingLastSampleAt As DateTime = DateTime.MinValue
+    Private ReadOnly _routeRecordingSamples As New List(Of NavigationRouteSample)()
     Private ReadOnly _lootRandom As New Random()
     Private ReadOnly _lastKeyTime As New Dictionary(Of String, DateTime)(StringComparer.OrdinalIgnoreCase)
     Private _lastGoodHpPercent As Double = -1
@@ -617,6 +678,13 @@ Public Class BotEngine
             _navigationLocalizationRetryAfter = DateTime.MinValue
             _navigationLocalizationFailureCount = 0
             _navigationLocalizationPaused = False
+            _routeRecordingCaptureActive = False
+            _routeRecordingMapName = ""
+            _routeRecordingName = ""
+            _routeRecordingStatus = ""
+            _routeRecordingLastSavedPath = ""
+            _routeRecordingLastSampleAt = DateTime.MinValue
+            _routeRecordingSamples.Clear()
             _lastNavigationMapName = ""
             _lastNavigationCurrentNodeId = ""
             _lastNavigationCurrentNodeLabel = ""
@@ -641,6 +709,14 @@ Public Class BotEngine
             _lastNavigationPreviousX = -1
             _lastNavigationPreviousY = -1
             _lastNavigationKnownHeading = ""
+            _navigationRotationQuarterTurns = 0
+            _lastTravelInputKey = ""
+            _lastTravelInputDesiredDirection = ""
+            _lastTravelInputPoseX = -1
+            _lastTravelInputPoseY = -1
+            _lastTravelInputAt = DateTime.MinValue
+            _navigationCommittedWaypointId = ""
+            _navigationCommittedWaypointLabel = ""
             _lastNavigationMapToggleAt = DateTime.MinValue
             _lastNavigationMoveCommandAt = DateTime.MinValue
             _navigationMapExpectedOpen = False
@@ -901,6 +977,7 @@ Public Class BotEngine
                 UpdateMapLocalizationConfidence()
                 UpdateMapVisibleState()
                 UpdateLastKnownNavigationPose(now)
+                UpdateRouteRecording(cfg, now)
                 UpdateNavigationPreview(cfg, now)
             Else
                 ClearMapLocalizationRuntime()
@@ -1482,6 +1559,12 @@ Public Class BotEngine
         _navigationLocalizationRetryAfter = DateTime.MinValue
         _navigationLocalizationFailureCount = 0
         _navigationLocalizationPaused = False
+        _routeRecordingCaptureActive = False
+        _routeRecordingMapName = ""
+        _routeRecordingName = ""
+        _routeRecordingStatus = ""
+        _routeRecordingLastSampleAt = DateTime.MinValue
+        _routeRecordingSamples.Clear()
     End Sub
 
     Private Sub ClearNavigationPreviewRuntime()
@@ -1512,6 +1595,14 @@ Public Class BotEngine
         _lastNavigationPreviousX = -1
         _lastNavigationPreviousY = -1
         _lastNavigationKnownHeading = ""
+        _navigationRotationQuarterTurns = 0
+        _lastTravelInputKey = ""
+        _lastTravelInputDesiredDirection = ""
+        _lastTravelInputPoseX = -1
+        _lastTravelInputPoseY = -1
+        _lastTravelInputAt = DateTime.MinValue
+        _navigationCommittedWaypointId = ""
+        _navigationCommittedWaypointLabel = ""
         _lastNavigationMapToggleAt = DateTime.MinValue
         _lastNavigationMoveCommandAt = DateTime.MinValue
         _navigationMapExpectedOpen = False
@@ -1662,11 +1753,16 @@ Public Class BotEngine
 
     Private Sub UpdateLastKnownNavigationPose(now As DateTime)
         If _lastMapCoordinateX < 0 OrElse _lastMapCoordinateY < 0 Then
+            If _lastTravelInputAt <> DateTime.MinValue AndAlso (now - _lastTravelInputAt).TotalMilliseconds > Math.Max(2000, If(_config Is Nothing, 1800, _config.NavigationResampleIntervalMs * 2)) Then
+                ClearPendingNavigationTravelInput()
+            End If
             Return
         End If
         If _lastMapLocalizationConfidence < 45 Then
             Return
         End If
+
+        ObserveNavigationOrientation(now, _lastMapCoordinateX, _lastMapCoordinateY)
 
         If _lastNavigationKnownX >= 0 AndAlso _lastNavigationKnownY >= 0 Then
             _lastNavigationPreviousX = _lastNavigationKnownX
@@ -1686,6 +1782,455 @@ Public Class BotEngine
         _navigationLocalizationPaused = False
     End Sub
 
+    Private Sub ObserveNavigationOrientation(now As DateTime, newX As Integer, newY As Integer)
+        If _lastTravelInputAt = DateTime.MinValue OrElse String.IsNullOrWhiteSpace(_lastTravelInputKey) Then
+            Return
+        End If
+
+        Dim timeoutMs As Integer = Math.Max(1000, If(_config Is Nothing, 1800, _config.NavigationResampleIntervalMs * 2))
+        If (now - _lastTravelInputAt).TotalMilliseconds > timeoutMs Then
+            ClearPendingNavigationTravelInput()
+            Return
+        End If
+
+        If _lastTravelInputPoseX < 0 OrElse _lastTravelInputPoseY < 0 Then
+            Return
+        End If
+
+        If newX = _lastTravelInputPoseX AndAlso newY = _lastTravelInputPoseY Then
+            Return
+        End If
+
+        Dim actualDirection As String = InferHeadingFromCoordinateDelta(_lastTravelInputPoseX, _lastTravelInputPoseY, newX, newY)
+        If actualDirection = "" Then
+            Return
+        End If
+
+        Dim defaultDirection As String = GetDefaultDirectionForKey(_lastTravelInputKey)
+        Dim defaultIndex As Integer = CardinalDirectionIndex(defaultDirection)
+        Dim actualIndex As Integer = CardinalDirectionIndex(actualDirection)
+        If defaultIndex >= 0 AndAlso actualIndex >= 0 Then
+            _navigationRotationQuarterTurns = (actualIndex - defaultIndex + 4) Mod 4
+        End If
+
+        _lastNavigationKnownHeading = actualDirection
+        ClearPendingNavigationTravelInput()
+    End Sub
+
+    Private Sub ClearPendingNavigationTravelInput()
+        _lastTravelInputKey = ""
+        _lastTravelInputDesiredDirection = ""
+        _lastTravelInputPoseX = -1
+        _lastTravelInputPoseY = -1
+        _lastTravelInputAt = DateTime.MinValue
+    End Sub
+
+    Private Sub UpdateRouteRecording(cfg As BotConfig, now As DateTime)
+        If cfg Is Nothing OrElse Not cfg.NavigationEnabled Then
+            _routeRecordingCaptureActive = False
+            If _routeRecordingSamples.Count = 0 Then
+                _routeRecordingStatus = ""
+            End If
+            Return
+        End If
+
+        Dim desiredMapName As String = NormalizeNavigationMapName(cfg.NavigationMapName)
+        Dim desiredRouteName As String = NormalizeRecordedRouteName(cfg.RouteRecordingName)
+        If cfg.RouteRecordingEnabled Then
+            If (Not _routeRecordingCaptureActive) OrElse
+               (Not _routeRecordingMapName.Equals(desiredMapName, StringComparison.OrdinalIgnoreCase)) OrElse
+               (Not _routeRecordingName.Equals(desiredRouteName, StringComparison.OrdinalIgnoreCase)) Then
+                _routeRecordingCaptureActive = True
+                _routeRecordingMapName = desiredMapName
+                _routeRecordingName = desiredRouteName
+                _routeRecordingStatus = $"Recording route '{_routeRecordingName}' on {If(_routeRecordingMapName = "", "current map", _routeRecordingMapName)}."
+                _routeRecordingLastSampleAt = DateTime.MinValue
+                _routeRecordingSamples.Clear()
+            End If
+
+            TryAppendRouteRecordingSample(cfg, now)
+            Return
+        End If
+
+        If _routeRecordingCaptureActive Then
+            _routeRecordingCaptureActive = False
+            If _routeRecordingSamples.Count > 0 Then
+                _routeRecordingStatus = $"Recording paused with {_routeRecordingSamples.Count} samples for '{_routeRecordingName}'. Save to reuse this path."
+            Else
+                _routeRecordingStatus = "Route recording idle."
+            End If
+        End If
+    End Sub
+
+    Private Sub TryAppendRouteRecordingSample(cfg As BotConfig, now As DateTime)
+        If _lastMapCoordinateX < 0 OrElse _lastMapCoordinateY < 0 OrElse _lastMapCoordinateConfidence < 70 Then
+            Return
+        End If
+        If _routeRecordingLastSampleAt <> DateTime.MinValue AndAlso (now - _routeRecordingLastSampleAt).TotalMilliseconds < RouteRecordingMinSampleIntervalMs Then
+            Return
+        End If
+
+        Dim minDistance As Double = Math.Max(2, cfg.RouteRecordingMinSampleDistance)
+        If _routeRecordingSamples.Count > 0 Then
+            Dim lastSample As NavigationRouteSample = _routeRecordingSamples(_routeRecordingSamples.Count - 1)
+            If CalculateDistance(lastSample.X, lastSample.Y, _lastMapCoordinateX, _lastMapCoordinateY) < minDistance Then
+                Return
+            End If
+        End If
+
+        _routeRecordingSamples.Add(New NavigationRouteSample With {
+            .X = _lastMapCoordinateX,
+            .Y = _lastMapCoordinateY,
+            .CapturedAtUtc = now
+        })
+        _routeRecordingLastSampleAt = now
+        _routeRecordingStatus = $"Recording route '{_routeRecordingName}': {_routeRecordingSamples.Count} samples."
+    End Sub
+
+    Public Function SaveRecordedRoute(Optional cfg As BotConfig = Nothing) As String
+        Dim routeName As String = ""
+        Dim mapName As String = ""
+        Dim minNodeSpacing As Integer = 28
+        Dim samples As List(Of NavigationRouteSample)
+
+        SyncLock _sync
+            Dim effectiveCfg As BotConfig = If(cfg, _config)
+            routeName = NormalizeRecordedRouteName(If(effectiveCfg Is Nothing, "", effectiveCfg.RouteRecordingName))
+            mapName = NormalizeNavigationMapName(If(effectiveCfg Is Nothing, "", effectiveCfg.NavigationMapName))
+            minNodeSpacing = Math.Max(8, If(effectiveCfg Is Nothing, 28, effectiveCfg.RouteRecordingMinNodeSpacing))
+            samples = _routeRecordingSamples.Select(Function(sample) New NavigationRouteSample With {
+                .X = sample.X,
+                .Y = sample.Y,
+                .CapturedAtUtc = sample.CapturedAtUtc
+            }).ToList()
+        End SyncLock
+
+        If samples.Count < RouteRecordingMinSamplesToSave Then
+            SyncLock _sync
+                _routeRecordingStatus = $"Not enough samples to save route '{routeName}'. Walk the path with the map coordinates visible first."
+            End SyncLock
+            Return ""
+        End If
+
+        Dim graph As RecordedNavigationGraph = BuildRecordedNavigationGraph(mapName, routeName, samples, minNodeSpacing)
+        If graph Is Nothing OrElse graph.Nodes.Count < 2 OrElse graph.Edges.Count = 0 Then
+            SyncLock _sync
+                _routeRecordingStatus = $"Unable to build a reusable route graph from '{routeName}'."
+            End SyncLock
+            Return ""
+        End If
+
+        Dim savedPath As String = SaveRecordedNavigationGraph(graph)
+        If savedPath <> "" Then
+            SyncLock _sync
+                _routeRecordingLastSavedPath = savedPath
+                _routeRecordingStatus = $"Saved route '{routeName}' with {graph.Nodes.Count} nodes."
+            End SyncLock
+        End If
+
+        Return savedPath
+    End Function
+
+    Private Shared Function BuildRecordedNavigationGraph(mapName As String, routeName As String, samples As List(Of NavigationRouteSample), minNodeSpacing As Integer) As RecordedNavigationGraph
+        If samples Is Nothing OrElse samples.Count < 2 Then
+            Return Nothing
+        End If
+
+        Dim simplified As List(Of NavigationRouteSample) = SimplifyRecordedRouteSamples(samples, minNodeSpacing)
+        If simplified.Count < 2 Then
+            Return Nothing
+        End If
+
+        Dim graph As New RecordedNavigationGraph With {
+            .MapName = NormalizeNavigationMapName(mapName),
+            .RouteName = NormalizeRecordedRouteName(routeName),
+            .Samples = samples.Select(Function(sample) New NavigationRouteSample With {
+                .X = sample.X,
+                .Y = sample.Y,
+                .CapturedAtUtc = sample.CapturedAtUtc
+            }).ToList(),
+            .SavedAtUtc = DateTime.UtcNow
+        }
+
+        Dim prefix As String = $"recorded_{SanitizeIdentifier(graph.RouteName)}"
+        For i As Integer = 0 To simplified.Count - 1
+            Dim sample As NavigationRouteSample = simplified(i)
+            Dim coordinateSuffix As String = $" {sample.X:000}/{sample.Y:000}"
+            Dim label As String
+            If i = 0 Then
+                label = $"{graph.RouteName} Start{coordinateSuffix}"
+            ElseIf i = simplified.Count - 1 Then
+                label = $"{graph.RouteName} End{coordinateSuffix}"
+            Else
+                label = $"{graph.RouteName} {i:00}{coordinateSuffix}"
+            End If
+
+            graph.Nodes.Add(New NavigationNode With {
+                .Id = $"{prefix}_{i:000}",
+                .MapName = graph.MapName,
+                .X = sample.X,
+                .Y = sample.Y,
+                .Label = label,
+                .Tags = New List(Of String) From {"recorded", graph.RouteName}
+            })
+        Next
+
+        graph.StartNodeId = graph.Nodes(0).Id
+        graph.EndNodeId = graph.Nodes(graph.Nodes.Count - 1).Id
+        For i As Integer = 0 To graph.Nodes.Count - 2
+            Dim fromNode As NavigationNode = graph.Nodes(i)
+            Dim toNode As NavigationNode = graph.Nodes(i + 1)
+            Dim cost As Double = Math.Max(0.01, CalculateDistance(fromNode.X, fromNode.Y, toNode.X, toNode.Y))
+            graph.Edges.Add(New NavigationEdge With {.FromNodeId = fromNode.Id, .ToNodeId = toNode.Id, .Cost = cost, .TravelMode = "walk", .Notes = graph.RouteName})
+            graph.Edges.Add(New NavigationEdge With {.FromNodeId = toNode.Id, .ToNodeId = fromNode.Id, .Cost = cost, .TravelMode = "walk", .Notes = graph.RouteName})
+        Next
+
+        Return graph
+    End Function
+
+    Private Shared Function SimplifyRecordedRouteSamples(samples As List(Of NavigationRouteSample), minNodeSpacing As Integer) As List(Of NavigationRouteSample)
+        Dim result As New List(Of NavigationRouteSample)()
+        If samples Is Nothing OrElse samples.Count = 0 Then
+            Return result
+        End If
+
+        Dim minSpacing As Double = Math.Max(6, minNodeSpacing)
+        result.Add(samples(0))
+        For i As Integer = 1 To samples.Count - 2
+            Dim candidate As NavigationRouteSample = samples(i)
+            Dim lastKept As NavigationRouteSample = result(result.Count - 1)
+            If CalculateDistance(lastKept.X, lastKept.Y, candidate.X, candidate.Y) >= minSpacing Then
+                result.Add(candidate)
+            End If
+        Next
+
+        Dim finalSample As NavigationRouteSample = samples(samples.Count - 1)
+        Dim lastResult As NavigationRouteSample = result(result.Count - 1)
+        If CalculateDistance(lastResult.X, lastResult.Y, finalSample.X, finalSample.Y) >= Math.Max(3, minSpacing / 2.0) Then
+            result.Add(finalSample)
+        Else
+            result(result.Count - 1) = finalSample
+        End If
+
+        Return result
+    End Function
+
+    Private Shared Function SaveRecordedNavigationGraph(graph As RecordedNavigationGraph) As String
+        If graph Is Nothing OrElse graph.Nodes.Count = 0 Then
+            Return ""
+        End If
+
+        Try
+            Dim mapDirectory As String = Path.Combine(NavigationRouteStorageRoot, SanitizeIdentifier(graph.MapName))
+            Directory.CreateDirectory(mapDirectory)
+            Dim filePath As String = Path.Combine(mapDirectory, SanitizeIdentifier(graph.RouteName) & ".json")
+            Dim json As String = JsonSerializer.Serialize(graph, NavigationRouteJsonOptions)
+            File.WriteAllText(filePath, json, Encoding.UTF8)
+            InvalidateRecordedGraphCache(graph.MapName)
+            Return filePath
+        Catch
+            Return ""
+        End Try
+    End Function
+
+    Private Shared Function GetRecordedNavigationGraphPath(mapName As String, routeName As String) As String
+        Dim normalizedMap As String = NormalizeNavigationMapName(mapName)
+        Dim normalizedRoute As String = NormalizeRecordedRouteName(routeName)
+        Dim mapDirectory As String = Path.Combine(NavigationRouteStorageRoot, SanitizeIdentifier(normalizedMap))
+        Return Path.Combine(mapDirectory, SanitizeIdentifier(normalizedRoute) & ".json")
+    End Function
+
+    Private Shared Function LoadRecordedNavigationGraphs(mapName As String) As List(Of RecordedNavigationGraph)
+        Dim normalizedMap As String = NormalizeNavigationMapName(mapName)
+        SyncLock _recordedGraphCacheSync
+            If _recordedGraphCache.ContainsKey(normalizedMap) Then
+                Return _recordedGraphCache(normalizedMap).Select(Function(graph) graph).ToList()
+            End If
+        End SyncLock
+
+        Dim loaded As New List(Of RecordedNavigationGraph)()
+        Try
+            Dim mapDirectory As String = Path.Combine(NavigationRouteStorageRoot, SanitizeIdentifier(normalizedMap))
+            If Directory.Exists(mapDirectory) Then
+                For Each filePath As String In Directory.GetFiles(mapDirectory, "*.json")
+                    Dim raw As String = File.ReadAllText(filePath, Encoding.UTF8)
+                    Dim graph As RecordedNavigationGraph = JsonSerializer.Deserialize(Of RecordedNavigationGraph)(raw)
+                    If graph IsNot Nothing AndAlso graph.Nodes IsNot Nothing AndAlso graph.Nodes.Count > 0 Then
+                        loaded.Add(graph)
+                    End If
+                Next
+            End If
+        Catch
+        End Try
+
+        SyncLock _recordedGraphCacheSync
+            _recordedGraphCache(normalizedMap) = loaded
+        End SyncLock
+        Return loaded.Select(Function(graph) graph).ToList()
+    End Function
+
+    Public Shared Sub InvalidateRecordedGraphCache(Optional mapName As String = Nothing)
+        SyncLock _recordedGraphCacheSync
+            If String.IsNullOrWhiteSpace(mapName) Then
+                _recordedGraphCache.Clear()
+            Else
+                _recordedGraphCache.Remove(NormalizeNavigationMapName(mapName))
+            End If
+        End SyncLock
+    End Sub
+
+    Public Shared Function GetRecordedRouteOptions(Optional mapName As String = "Jina Basin") As List(Of RecordedNavigationRouteInfo)
+        Return LoadRecordedNavigationGraphs(mapName).
+            Where(Function(graph) graph IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(graph.RouteName)).
+            Select(Function(graph) New RecordedNavigationRouteInfo With {
+                .MapName = NormalizeNavigationMapName(graph.MapName),
+                .RouteName = graph.RouteName,
+                .NodeCount = If(graph.Nodes Is Nothing, 0, graph.Nodes.Count),
+                .SavedAtUtc = graph.SavedAtUtc
+            }).
+            OrderBy(Function(info) info.RouteName).
+            ToList()
+    End Function
+
+    Public Shared Function GetRecordedRouteNodeOptions(routeName As String, Optional mapName As String = "Jina Basin") As List(Of NavigationNode)
+        Dim normalizedRouteName As String = NormalizeRecordedRouteName(routeName)
+        Dim graph As RecordedNavigationGraph = GetRecordedGraphByRouteName(normalizedRouteName, mapName)
+        If graph Is Nothing OrElse graph.Nodes Is Nothing Then
+            Return New List(Of NavigationNode)()
+        End If
+
+        Return graph.Nodes.Where(Function(node) node IsNot Nothing).
+            Select(Function(node) New NavigationNode With {
+                .Id = node.Id,
+                .MapName = node.MapName,
+                .X = node.X,
+                .Y = node.Y,
+                .Label = node.Label,
+                .Tags = If(node.Tags, New List(Of String)()).ToList()
+            }).
+            ToList()
+    End Function
+
+    Public Shared Function GetRecordedRouteEndNode(routeName As String, Optional mapName As String = "Jina Basin") As NavigationNode
+        Dim graph As RecordedNavigationGraph = GetRecordedGraphByRouteName(routeName, mapName)
+        If graph Is Nothing OrElse graph.Nodes Is Nothing OrElse graph.Nodes.Count = 0 Then
+            Return Nothing
+        End If
+
+        Dim node As NavigationNode = graph.Nodes.FirstOrDefault(Function(candidate) candidate IsNot Nothing AndAlso candidate.Id.Equals(graph.EndNodeId, StringComparison.OrdinalIgnoreCase))
+        If node Is Nothing Then
+            node = graph.Nodes(graph.Nodes.Count - 1)
+        End If
+        If node Is Nothing Then
+            Return Nothing
+        End If
+
+        Return New NavigationNode With {
+            .Id = node.Id,
+            .MapName = node.MapName,
+            .X = node.X,
+            .Y = node.Y,
+            .Label = node.Label,
+            .Tags = If(node.Tags, New List(Of String)()).ToList()
+        }
+    End Function
+
+    Public Shared Function DeleteRecordedRoute(routeName As String, Optional mapName As String = "Jina Basin") As Boolean
+        If String.IsNullOrWhiteSpace(routeName) Then
+            Return False
+        End If
+
+        Dim path As String = GetRecordedNavigationGraphPath(mapName, routeName)
+        Try
+            If File.Exists(path) Then
+                File.Delete(path)
+            End If
+            InvalidateRecordedGraphCache(mapName)
+            Return True
+        Catch
+            Return False
+        End Try
+    End Function
+
+    Public Shared Function DeleteRecordedRouteNode(routeName As String, nodeId As String, Optional mapName As String = "Jina Basin") As Boolean
+        If String.IsNullOrWhiteSpace(routeName) OrElse String.IsNullOrWhiteSpace(nodeId) Then
+            Return False
+        End If
+
+        Dim normalizedMap As String = NormalizeNavigationMapName(mapName)
+        Dim normalizedRoute As String = NormalizeRecordedRouteName(routeName)
+        Dim graph As RecordedNavigationGraph = GetRecordedGraphByRouteName(normalizedRoute, normalizedMap)
+        If graph Is Nothing OrElse graph.Nodes Is Nothing Then
+            Return False
+        End If
+
+        Dim remainingNodes As List(Of NavigationNode) = graph.Nodes.
+            Where(Function(node) node IsNot Nothing AndAlso Not node.Id.Equals(nodeId, StringComparison.OrdinalIgnoreCase)).
+            Select(Function(node) New NavigationNode With {
+                .Id = node.Id,
+                .MapName = node.MapName,
+                .X = node.X,
+                .Y = node.Y,
+                .Label = node.Label,
+                .Tags = If(node.Tags, New List(Of String)()).ToList()
+            }).
+            ToList()
+
+        If remainingNodes.Count = graph.Nodes.Count Then
+            Return False
+        End If
+
+        If remainingNodes.Count < 2 Then
+            Return DeleteRecordedRoute(normalizedRoute, normalizedMap)
+        End If
+
+        graph.Nodes = remainingNodes
+        graph.StartNodeId = graph.Nodes(0).Id
+        graph.EndNodeId = graph.Nodes(graph.Nodes.Count - 1).Id
+        graph.Edges = New List(Of NavigationEdge)()
+        For i As Integer = 0 To graph.Nodes.Count - 2
+            Dim fromNode As NavigationNode = graph.Nodes(i)
+            Dim toNode As NavigationNode = graph.Nodes(i + 1)
+            Dim cost As Double = Math.Max(0.01, CalculateDistance(fromNode.X, fromNode.Y, toNode.X, toNode.Y))
+            graph.Edges.Add(New NavigationEdge With {.FromNodeId = fromNode.Id, .ToNodeId = toNode.Id, .Cost = cost, .TravelMode = "walk", .Notes = graph.RouteName})
+            graph.Edges.Add(New NavigationEdge With {.FromNodeId = toNode.Id, .ToNodeId = fromNode.Id, .Cost = cost, .TravelMode = "walk", .Notes = graph.RouteName})
+        Next
+
+        Dim savedPath As String = SaveRecordedNavigationGraph(graph)
+        Return savedPath <> ""
+    End Function
+
+    Private Shared Function GetRecordedGraphByRouteName(routeName As String, mapName As String) As RecordedNavigationGraph
+        Dim normalizedMap As String = NormalizeNavigationMapName(mapName)
+        Dim normalizedRoute As String = NormalizeRecordedRouteName(routeName)
+        Return LoadRecordedNavigationGraphs(normalizedMap).
+            FirstOrDefault(Function(candidate) candidate IsNot Nothing AndAlso candidate.RouteName.Equals(normalizedRoute, StringComparison.OrdinalIgnoreCase))
+    End Function
+
+    Private Shared Function NormalizeNavigationMapName(rawMapName As String) As String
+        Dim normalized As String = If(rawMapName, "").Trim()
+        If normalized = "" Then
+            Return "Jina Basin"
+        End If
+        Return normalized
+    End Function
+
+    Private Shared Function NormalizeRecordedRouteName(rawRouteName As String) As String
+        Dim normalized As String = If(rawRouteName, "").Trim()
+        If normalized = "" Then
+            Return "recorded_route"
+        End If
+        Return normalized
+    End Function
+
+    Private Shared Function SanitizeIdentifier(rawValue As String) As String
+        Dim cleaned As String = Regex.Replace(If(rawValue, "").Trim().ToLowerInvariant(), "[^a-z0-9]+", "_").Trim("_"c)
+        If cleaned = "" Then
+            Return "route"
+        End If
+        Return cleaned
+    End Function
+
     Private Function BuildNavigationPlan(cfg As BotConfig, now As DateTime, allowStaleLocalization As Boolean) As NavigationPlan
         Dim plan As New NavigationPlan()
         If cfg Is Nothing OrElse Not cfg.NavigationEnabled Then
@@ -1697,7 +2242,7 @@ Public Class BotEngine
         Dim nodes As List(Of NavigationNode) = GetNavigationNodesForMap(plan.MapName)
         Dim edges As List(Of NavigationEdge) = GetNavigationEdgesForMap(plan.MapName)
         If nodes.Count = 0 OrElse edges.Count = 0 Then
-            plan.StatusText = "No graph data loaded for this map."
+            plan.StatusText = "No recorded routes loaded for this map."
             Return plan
         End If
 
@@ -1723,7 +2268,7 @@ Public Class BotEngine
 
         plan.TargetNode = FindNodeById(nodes, cfg.NavigationTargetNodeId)
         If plan.StartNode Is Nothing OrElse plan.TargetNode Is Nothing Then
-            plan.StatusText = "Waiting for valid start/target route nodes."
+            plan.StatusText = "Waiting for a selected recorded route destination."
             Return plan
         End If
 
@@ -1733,7 +2278,19 @@ Public Class BotEngine
             Return plan
         End If
 
-        plan.NextWaypoint = If(plan.Route.Count > 1, plan.Route(1), plan.Route(0))
+        Dim proposedNextWaypoint As NavigationNode = If(plan.Route.Count > 1, plan.Route(1), plan.Route(0))
+        If Not String.IsNullOrWhiteSpace(_navigationCommittedWaypointId) Then
+            Dim committedWaypoint As NavigationNode = FindNodeById(nodes, _navigationCommittedWaypointId)
+            If committedWaypoint IsNot Nothing AndAlso Not IsExactNavigationNodeMatch(committedWaypoint) Then
+                plan.NextWaypoint = committedWaypoint
+            Else
+                _navigationCommittedWaypointId = ""
+                _navigationCommittedWaypointLabel = ""
+            End If
+        End If
+        If plan.NextWaypoint Is Nothing Then
+            plan.NextWaypoint = proposedNextWaypoint
+        End If
         If poseX >= 0 AndAlso poseY >= 0 AndAlso plan.TargetNode IsNot Nothing Then
             plan.DistanceToTarget = CalculateDistance(poseX, poseY, plan.TargetNode.X, plan.TargetNode.Y)
         End If
@@ -1773,40 +2330,28 @@ Public Class BotEngine
     End Function
 
     Private Shared Function GetNavigationNodesForMap(mapName As String) As List(Of NavigationNode)
-        Dim normalizedMap As String = If(mapName, "").Trim()
-        If Not normalizedMap.Equals("Jina Basin", StringComparison.OrdinalIgnoreCase) Then
-            Return New List(Of NavigationNode)()
-        End If
+        Dim normalizedMap As String = NormalizeNavigationMapName(mapName)
+        Dim result As New List(Of NavigationNode)()
 
-        Return New List(Of NavigationNode) From {
-            New NavigationNode With {.Id = "jina_town", .MapName = "Jina Basin", .X = 512, .Y = 628, .Label = "Jina Town", .Tags = New List(Of String) From {"town", "safe"}},
-            New NavigationNode With {.Id = "shambala_portal", .MapName = "Jina Basin", .X = 420, .Y = 505, .Label = "Shambala Portal", .Tags = New List(Of String) From {"portal"}},
-            New NavigationNode With {.Id = "ferry_jina", .MapName = "Jina Basin", .X = 742, .Y = 518, .Label = "Ferry of Jina", .Tags = New List(Of String) From {"ferry"}},
-            New NavigationNode With {.Id = "tower_silence", .MapName = "Jina Basin", .X = 598, .Y = 284, .Label = "Tower of Silence", .Tags = New List(Of String) From {"road"}},
-            New NavigationNode With {.Id = "pamir_portal", .MapName = "Jina Basin", .X = 484, .Y = 126, .Label = "Pamir Portal", .Tags = New List(Of String) From {"portal"}},
-            New NavigationNode With {.Id = "farming_area", .MapName = "Jina Basin", .X = 124, .Y = 357, .Label = "Farming Area", .Tags = New List(Of String) From {"farm"}},
-            New NavigationNode With {.Id = "border", .MapName = "Jina Basin", .X = 102, .Y = 208, .Label = "Border", .Tags = New List(Of String) From {"road"}},
-            New NavigationNode With {.Id = "south_crossroad", .MapName = "Jina Basin", .X = 556, .Y = 625, .Label = "South Crossroad", .Tags = New List(Of String) From {"road"}},
-            New NavigationNode With {.Id = "east_road", .MapName = "Jina Basin", .X = 716, .Y = 406, .Label = "East Road", .Tags = New List(Of String) From {"road"}}
-        }
+        For Each graph As RecordedNavigationGraph In LoadRecordedNavigationGraphs(normalizedMap)
+            If graph IsNot Nothing AndAlso graph.Nodes IsNot Nothing Then
+                result.AddRange(graph.Nodes.Where(Function(node) node IsNot Nothing))
+            End If
+        Next
+
+        Return result.GroupBy(Function(node) node.Id, StringComparer.OrdinalIgnoreCase).Select(Function(group) group.First()).OrderBy(Function(node) node.Label).ToList()
     End Function
 
     Private Shared Function GetNavigationEdgesForMap(mapName As String) As List(Of NavigationEdge)
-        Dim normalizedMap As String = If(mapName, "").Trim()
-        If Not normalizedMap.Equals("Jina Basin", StringComparison.OrdinalIgnoreCase) Then
-            Return New List(Of NavigationEdge)()
-        End If
-
+        Dim normalizedMap As String = NormalizeNavigationMapName(mapName)
         Dim edges As New List(Of NavigationEdge)()
-        edges.AddRange(CreateBidirectionalEdge("jina_town", "south_crossroad", 1.0))
-        edges.AddRange(CreateBidirectionalEdge("south_crossroad", "shambala_portal", 1.2))
-        edges.AddRange(CreateBidirectionalEdge("south_crossroad", "ferry_jina", 1.2))
-        edges.AddRange(CreateBidirectionalEdge("ferry_jina", "east_road", 1.1))
-        edges.AddRange(CreateBidirectionalEdge("east_road", "tower_silence", 1.3))
-        edges.AddRange(CreateBidirectionalEdge("tower_silence", "pamir_portal", 1.1))
-        edges.AddRange(CreateBidirectionalEdge("tower_silence", "border", 1.4))
-        edges.AddRange(CreateBidirectionalEdge("border", "farming_area", 1.0))
-        edges.AddRange(CreateBidirectionalEdge("shambala_portal", "farming_area", 1.5))
+
+        For Each graph As RecordedNavigationGraph In LoadRecordedNavigationGraphs(normalizedMap)
+            If graph IsNot Nothing AndAlso graph.Edges IsNot Nothing Then
+                edges.AddRange(graph.Edges.Where(Function(edge) edge IsNot Nothing))
+            End If
+        Next
+
         Return edges
     End Function
 
@@ -1921,6 +2466,113 @@ Public Class BotEngine
         Return If(dy >= 0, "S", "N")
     End Function
 
+    Private Shared Function DescribeTravelDirection(keyName As String) As String
+        Select Case If(keyName, "").Trim().ToUpperInvariant()
+            Case "W"
+                Return "north"
+            Case "A"
+                Return "west"
+            Case "S"
+                Return "south"
+            Case "D"
+                Return "east"
+            Case Else
+                Return keyName
+        End Select
+    End Function
+
+    Private Shared Function CardinalDirectionIndex(direction As String) As Integer
+        Select Case If(direction, "").Trim().ToUpperInvariant()
+            Case "N"
+                Return 0
+            Case "E"
+                Return 1
+            Case "S"
+                Return 2
+            Case "W"
+                Return 3
+            Case Else
+                Return -1
+        End Select
+    End Function
+
+    Private Shared Function RotateCardinalDirection(direction As String, quarterTurns As Integer) As String
+        Dim index As Integer = CardinalDirectionIndex(direction)
+        If index < 0 Then
+            Return ""
+        End If
+
+        Dim normalizedTurns As Integer = ((quarterTurns Mod 4) + 4) Mod 4
+        Dim rotated As Integer = (index + normalizedTurns) Mod 4
+        Select Case rotated
+            Case 0
+                Return "N"
+            Case 1
+                Return "E"
+            Case 2
+                Return "S"
+            Case 3
+                Return "W"
+            Case Else
+                Return ""
+        End Select
+    End Function
+
+    Private Shared Function GetDefaultDirectionForKey(keyName As String) As String
+        Select Case If(keyName, "").Trim().ToUpperInvariant()
+            Case "W"
+                Return "N"
+            Case "D"
+                Return "E"
+            Case "S"
+                Return "S"
+            Case "A"
+                Return "W"
+            Case Else
+                Return ""
+        End Select
+    End Function
+
+    Private Function GetKeyForDesiredDirection(desiredDirection As String) As String
+        Dim normalizedDesired As String = If(desiredDirection, "").Trim().ToUpperInvariant()
+        If normalizedDesired = "" Then
+            Return ""
+        End If
+
+        For Each keyName As String In New String() {"W", "A", "S", "D"}
+            Dim actualDirection As String = RotateCardinalDirection(GetDefaultDirectionForKey(keyName), _navigationRotationQuarterTurns)
+            If actualDirection.Equals(normalizedDesired, StringComparison.OrdinalIgnoreCase) Then
+                Return keyName
+            End If
+        Next
+
+        Return ""
+    End Function
+
+    Private Shared Function GetPreciseTravelBurstMs(baseBurstMs As Integer, axisDistance As Integer, Optional isSecondaryAxis As Boolean = False) As Integer
+        Dim distance As Integer = Math.Max(0, axisDistance)
+        If distance <= 1 Then
+            Return If(isSecondaryAxis, 18, 24)
+        End If
+        If distance <= 2 Then
+            Return If(isSecondaryAxis, 24, 32)
+        End If
+        If distance <= 4 Then
+            Return If(isSecondaryAxis, 32, 45)
+        End If
+        If distance <= 8 Then
+            Return If(isSecondaryAxis, 42, 60)
+        End If
+        If distance <= 15 Then
+            Return If(isSecondaryAxis, 55, 85)
+        End If
+
+        Dim maxScale As Double = If(isSecondaryAxis, 0.55, 1.0)
+        Dim minScale As Double = If(isSecondaryAxis, 0.16, 0.22)
+        Dim scaled As Integer = CInt(Math.Round(baseBurstMs * Math.Min(maxScale, Math.Max(minScale, distance / 60.0))))
+        Return Math.Max(If(isSecondaryAxis, 18, 24), scaled)
+    End Function
+
     Private Shared Function ParseHeadingAngle(heading As String) As Double
         Select Case If(heading, "").Trim().ToUpperInvariant()
             Case "N"
@@ -1967,6 +2619,22 @@ Public Class BotEngine
             degrees += 360
         End If
         Return degrees
+    End Function
+
+    Private Function IsExactNavigationNodeMatch(node As NavigationNode) As Boolean
+        If node Is Nothing Then
+            Return False
+        End If
+
+        If _lastMapCoordinateX >= 0 AndAlso _lastMapCoordinateY >= 0 AndAlso _lastMapLocalizationConfidence >= 45 Then
+            Return _lastMapCoordinateX = node.X AndAlso _lastMapCoordinateY = node.Y
+        End If
+
+        If _lastNavigationKnownX >= 0 AndAlso _lastNavigationKnownY >= 0 Then
+            Return _lastNavigationKnownX = node.X AndAlso _lastNavigationKnownY = node.Y
+        End If
+
+        Return False
     End Function
 
     Private Function TryToggleNavigationMap(cfg As BotConfig, hwnd As IntPtr, now As DateTime, actionLabel As String, expectMapOpen As Boolean) As Boolean
@@ -2084,7 +2752,7 @@ Public Class BotEngine
         _lastNavigationRecoveryCount += 1
         _lastNavigationProgressAt = now
         _lastNavigationProgressDistance = If(plan IsNot Nothing, plan.DistanceToNextWaypoint, _lastNavigationProgressDistance)
-        _lastNavigationMoveCommandAt = now.AddMilliseconds(-Math.Max(900, cfg.NavigationResampleIntervalMs))
+        _lastNavigationMoveCommandAt = now.AddMilliseconds(-Math.Max(250, cfg.NavigationResampleIntervalMs))
         _lastNavigationTravelStalled = True
         SetLastAction($"{turnKey}/S/W (travel recovery)")
         _lastNavigationTravelReason = If(plan IsNot Nothing AndAlso plan.NextWaypoint IsNot Nothing,
@@ -2103,49 +2771,40 @@ Public Class BotEngine
             Return False
         End If
 
-        Dim currentHeadingAngle As Double = ParseHeadingAngle(_lastNavigationKnownHeading)
-        Dim desiredHeadingAngle As Double = CalculateDesiredHeadingAngle(_lastNavigationKnownX, _lastNavigationKnownY, plan.NextWaypoint.X, plan.NextWaypoint.Y)
-        If Double.IsNaN(desiredHeadingAngle) Then
+        Dim dx As Integer = plan.NextWaypoint.X - _lastNavigationKnownX
+        Dim dy As Integer = plan.NextWaypoint.Y - _lastNavigationKnownY
+        If dx = 0 AndAlso dy = 0 Then
             Return False
         End If
 
-        If Double.IsNaN(currentHeadingAngle) Then
-            Dim probeBurstMs As Integer = Math.Max(100, Math.Min(220, cfg.NavigationMoveBurstMs))
-            If SendKey(hwnd, "W", probeBurstMs) Then
-                MarkKeyUsed("W")
-                SetLastAction($"W (travel probe: {plan.NextWaypoint.Label})")
-                reason = $"Probing forward to infer facing toward {plan.NextWaypoint.Label}."
-                Return True
-            End If
-            Return False
+        Dim primaryDirection As String
+        Dim primaryDistance As Integer
+        If Math.Abs(dx) >= Math.Abs(dy) Then
+            primaryDirection = If(dx >= 0, "E", "W")
+            primaryDistance = Math.Abs(dx)
+        Else
+            primaryDirection = If(dy >= 0, "S", "N")
+            primaryDistance = Math.Abs(dy)
         End If
 
-        Dim delta As Double = NormalizeAngleDelta(desiredHeadingAngle - currentHeadingAngle)
-        If Math.Abs(delta) > 28.0 Then
-            Dim turnKey As String = If(delta > 0, "D", "A")
-            Dim turnMs As Integer
-            If Math.Abs(delta) >= 120 Then
-                turnMs = 180
-            ElseIf Math.Abs(delta) >= 65 Then
-                turnMs = 120
-            Else
-                turnMs = 70
-            End If
-
-            If SendKey(hwnd, turnKey, turnMs) Then
-                MarkKeyUsed(turnKey)
-                SetLastAction($"{turnKey} (travel turn: {plan.NextWaypoint.Label})")
-                reason = $"Turning toward {plan.NextWaypoint.Label} ({Math.Round(delta, 0):0} deg)."
-                Return True
-            End If
-            Return False
+        Dim primaryKey As String = GetKeyForDesiredDirection(primaryDirection)
+        If primaryKey = "" Then
+            primaryKey = If(primaryDirection = "N", "W",
+                        If(primaryDirection = "S", "S",
+                        If(primaryDirection = "E", "D", "A")))
         End If
 
-        Dim burstMs As Integer = Math.Max(100, Math.Min(1200, cfg.NavigationMoveBurstMs))
-        If SendKey(hwnd, "W", burstMs) Then
-            MarkKeyUsed("W")
-            SetLastAction($"W (travel burst: {plan.NextWaypoint.Label})")
-            reason = $"Moving toward {plan.NextWaypoint.Label}."
+        Dim baseBurstMs As Integer = Math.Max(100, Math.Min(1200, cfg.NavigationMoveBurstMs))
+        Dim primaryBurstMs As Integer = GetPreciseTravelBurstMs(baseBurstMs, primaryDistance)
+        If SendKey(hwnd, primaryKey, primaryBurstMs) Then
+            MarkKeyUsed(primaryKey)
+            SetLastAction($"{primaryKey} (travel move: {plan.NextWaypoint.Label})")
+            _lastTravelInputKey = primaryKey
+            _lastTravelInputDesiredDirection = primaryDirection
+            _lastTravelInputPoseX = _lastNavigationKnownX
+            _lastTravelInputPoseY = _lastNavigationKnownY
+            _lastTravelInputAt = DateTime.UtcNow
+            reason = $"Moving toward {plan.NextWaypoint.Label}: want {primaryDirection}, using {primaryKey}."
             Return True
         End If
 
@@ -2178,124 +2837,47 @@ Public Class BotEngine
             Return False
         End If
 
-        Dim mapOpen As Boolean = IsNavigationMapOpen(now)
         Dim plan As NavigationPlan = BuildNavigationPlan(cfg, now, allowStaleLocalization:=True)
         _lastNavigationDistanceToWaypoint = plan.DistanceToNextWaypoint
 
         If targetWindowVisible OrElse targetValid Then
             _lastNavigationTravelReason = "Travel execution paused while a combat target is active."
-            If mapOpen AndAlso (now - _lastNavigationMapToggleAt).TotalMilliseconds >= NavigationMapToggleCooldownMs Then
-                TryToggleNavigationMap(cfg, hwnd, now, "close map for combat", expectMapOpen:=False)
-            End If
-            Return False
-        End If
-
-        If mapOpen Then
-            If (now - _lastNavigationMapToggleAt).TotalMilliseconds < NavigationMapSampleWindowMs Then
-                _lastNavigationTravelReason = "Map sampling in progress for navigation."
-                reason = _lastNavigationTravelReason
-                Return False
-            End If
-
-            If Not plan.RouteReady OrElse plan.NextWaypoint Is Nothing Then
-                _navigationAwaitingLocalization = True
-                _navigationLocalizationFailureCount = Math.Max(_navigationLocalizationFailureCount, 1)
-                _lastNavigationTravelReason = If(plan.StatusText = "", "Map is open, but route localization is still incomplete.", plan.StatusText)
-                reason = _lastNavigationTravelReason
-                Return False
-            End If
-
-            If _lastNavigationKnownX < 0 OrElse _lastNavigationKnownY < 0 Then
-                _navigationAwaitingLocalization = True
-                _navigationLocalizationFailureCount = Math.Max(_navigationLocalizationFailureCount, 1)
-                _lastNavigationTravelReason = "Map is open, but position sampling is still incomplete. Check coordinate calibration."
-                reason = _lastNavigationTravelReason
-                Return False
-            End If
-
-            If TryToggleNavigationMap(cfg, hwnd, now, "close map after sample", expectMapOpen:=False) Then
-                _lastNavigationTravelReason = "Map sample complete. Closing map to travel."
-                reason = _lastNavigationTravelReason
-                Return True
-            End If
-
-            _lastNavigationTravelReason = "Waiting to close map after navigation sample."
-            reason = _lastNavigationTravelReason
             Return False
         End If
 
         If Not plan.RouteReady OrElse plan.NextWaypoint Is Nothing Then
-            If _navigationAwaitingLocalization AndAlso now < _navigationLocalizationRetryAfter Then
-                _lastNavigationTravelReason = "Map did not localize after opening. Waiting before retry. Check map calibration."
-                reason = _lastNavigationTravelReason
-                Return False
-            End If
-
-            If _navigationAwaitingLocalization Then
-                _navigationLocalizationFailureCount += 1
-                If _navigationLocalizationFailureCount >= NavigationMapLocalizationFailureLimit Then
-                    _navigationLocalizationPaused = True
-                    _lastNavigationTravelActive = False
-                    _lastNavigationTravelReason = "Navigation paused after repeated failed map samples. Fix map coordinate calibration before retrying."
-                    reason = _lastNavigationTravelReason
-                    Return False
-                End If
-            End If
-
-            If TryToggleNavigationMap(cfg, hwnd, now, "open map for route sample", expectMapOpen:=True) Then
-                _lastNavigationTravelReason = "Opening map to localize route."
-                reason = _lastNavigationTravelReason
-                Return True
-            End If
-
-            _lastNavigationTravelReason = If(plan.StatusText = "", "Waiting for a usable navigation route.", plan.StatusText)
+            _navigationAwaitingLocalization = False
+            _navigationLocalizationRetryAfter = DateTime.MinValue
+            _lastNavigationTravelReason = If(plan.StatusText = "", "Waiting for a usable navigation route from visible map coordinates.", plan.StatusText)
             reason = _lastNavigationTravelReason
             Return False
         End If
 
         If _lastNavigationKnownX < 0 OrElse _lastNavigationKnownY < 0 Then
-            If _navigationAwaitingLocalization AndAlso now < _navigationLocalizationRetryAfter Then
-                _lastNavigationTravelReason = "Map position sample is still missing. Waiting before retry. Check coordinate calibration."
-                reason = _lastNavigationTravelReason
-                Return False
-            End If
-
-            If _navigationAwaitingLocalization Then
-                _navigationLocalizationFailureCount += 1
-                If _navigationLocalizationFailureCount >= NavigationMapLocalizationFailureLimit Then
-                    _navigationLocalizationPaused = True
-                    _lastNavigationTravelActive = False
-                    _lastNavigationTravelReason = "Navigation paused after repeated failed position samples. Fix map coordinate calibration before retrying."
-                    reason = _lastNavigationTravelReason
-                    Return False
-                End If
-            End If
-
-            If TryToggleNavigationMap(cfg, hwnd, now, "open map for position sample", expectMapOpen:=True) Then
-                _lastNavigationTravelReason = "Opening map to refresh position."
-                reason = _lastNavigationTravelReason
-                Return True
-            End If
-
-            _lastNavigationTravelReason = "Waiting for last-known map position."
+            _navigationAwaitingLocalization = False
+            _navigationLocalizationRetryAfter = DateTime.MinValue
+            _lastNavigationTravelReason = "Waiting for visible map coordinates."
             reason = _lastNavigationTravelReason
             Return False
         End If
 
-        Dim reachRadius As Integer = Math.Max(10, cfg.NavigationWaypointReachRadius)
-        If plan.Route.Count <= 1 AndAlso plan.TargetNode IsNot Nothing AndAlso plan.DistanceToTarget >= 0 AndAlso plan.DistanceToTarget <= reachRadius Then
+        If String.IsNullOrWhiteSpace(_navigationCommittedWaypointId) AndAlso plan.NextWaypoint IsNot Nothing Then
+            _navigationCommittedWaypointId = plan.NextWaypoint.Id
+            _navigationCommittedWaypointLabel = plan.NextWaypoint.Label
+        End If
+
+        If plan.TargetNode IsNot Nothing AndAlso IsExactNavigationNodeMatch(plan.TargetNode) Then
             _lastNavigationDestinationReached = True
             _lastNavigationDestinationLabel = plan.TargetNode.Label
-            _lastNavigationTravelReason = $"Destination reached: {plan.TargetNode.Label}."
+            _navigationCommittedWaypointId = ""
+            _navigationCommittedWaypointLabel = ""
+            _lastNavigationTravelReason = $"Destination reached with exact coordinate match: {plan.TargetNode.Label}."
             _lastNavigationTravelActive = False
             _lastNavigationDistanceToWaypoint = 0
             _lastNavigationTravelStalled = False
             _lastNavigationProgressWaypointId = ""
             _lastNavigationProgressDistance = -1
             _lastNavigationProgressAt = now
-            If mapOpen AndAlso (now - _lastNavigationMapToggleAt).TotalMilliseconds >= NavigationMapToggleCooldownMs Then
-                TryToggleNavigationMap(cfg, hwnd, now, "close map at destination", expectMapOpen:=False)
-            End If
             reason = _lastNavigationTravelReason
             Return False
         End If
@@ -2309,19 +2891,16 @@ Public Class BotEngine
         Else
             _lastNavigationTravelStalled = False
         End If
-        If plan.DistanceToNextWaypoint >= 0 AndAlso plan.DistanceToNextWaypoint <= reachRadius Then
-            If TryToggleNavigationMap(cfg, hwnd, now, "open map to advance route", expectMapOpen:=True) Then
-                _lastNavigationTravelReason = $"Waypoint reached: {plan.NextWaypoint.Label}. Refreshing route."
-                reason = _lastNavigationTravelReason
-                Return True
-            End If
 
-            _lastNavigationTravelReason = $"Waypoint reached: {plan.NextWaypoint.Label}. Waiting to refresh route."
+        If plan.NextWaypoint IsNot Nothing AndAlso IsExactNavigationNodeMatch(plan.NextWaypoint) Then
+            _navigationCommittedWaypointId = ""
+            _navigationCommittedWaypointLabel = ""
+            _lastNavigationTravelReason = $"Exact waypoint match: {plan.NextWaypoint.Label}. Advancing to the next node."
             reason = _lastNavigationTravelReason
             Return False
         End If
 
-        Dim resampleIntervalMs As Integer = Math.Max(900, cfg.NavigationResampleIntervalMs)
+        Dim resampleIntervalMs As Integer = Math.Max(250, cfg.NavigationResampleIntervalMs)
         Dim moveCooldownMs As Integer = Math.Max(250, Math.Min(resampleIntervalMs, cfg.NavigationMoveBurstMs + 180))
         If _lastNavigationMoveCommandAt <> DateTime.MinValue AndAlso (now - _lastNavigationMoveCommandAt).TotalMilliseconds < moveCooldownMs Then
             _lastNavigationTravelReason = $"Continuing travel toward {plan.NextWaypoint.Label}."
@@ -2330,11 +2909,7 @@ Public Class BotEngine
         End If
 
         If _lastNavigationMoveCommandAt <> DateTime.MinValue AndAlso (now - _lastNavigationMoveCommandAt).TotalMilliseconds >= resampleIntervalMs Then
-            If TryToggleNavigationMap(cfg, hwnd, now, "open map to verify progress", expectMapOpen:=True) Then
-                _lastNavigationTravelReason = $"Re-sampling route progress toward {plan.NextWaypoint.Label}."
-                reason = _lastNavigationTravelReason
-                Return True
-            End If
+            _lastNavigationTravelReason = $"Watching live map coordinates toward {plan.NextWaypoint.Label}."
         End If
 
         Dim moveReason As String = ""
@@ -3958,6 +4533,13 @@ Public Class BotEngine
             _status.NavigationRecoveryCount = _lastNavigationRecoveryCount
             _status.NavigationDestinationReached = _lastNavigationDestinationReached
             _status.NavigationDestinationLabel = _lastNavigationDestinationLabel
+            _status.RouteRecordingEnabled = _config IsNot Nothing AndAlso _config.RouteRecordingEnabled
+            _status.RouteRecordingActive = _routeRecordingCaptureActive
+            _status.RouteRecordingMapName = _routeRecordingMapName
+            _status.RouteRecordingName = _routeRecordingName
+            _status.RouteRecordingSampleCount = _routeRecordingSamples.Count
+            _status.RouteRecordingStatus = _routeRecordingStatus
+            _status.RouteRecordingLastSavedPath = _routeRecordingLastSavedPath
             _status.UpdatedAt = DateTime.UtcNow
             snapshot = CloneStatus(_status)
         End SyncLock
@@ -4005,6 +4587,13 @@ Public Class BotEngine
             .NavigationRecoveryCount = src.NavigationRecoveryCount,
             .NavigationDestinationReached = src.NavigationDestinationReached,
             .NavigationDestinationLabel = src.NavigationDestinationLabel,
+            .RouteRecordingEnabled = src.RouteRecordingEnabled,
+            .RouteRecordingActive = src.RouteRecordingActive,
+            .RouteRecordingMapName = src.RouteRecordingMapName,
+            .RouteRecordingName = src.RouteRecordingName,
+            .RouteRecordingSampleCount = src.RouteRecordingSampleCount,
+            .RouteRecordingStatus = src.RouteRecordingStatus,
+            .RouteRecordingLastSavedPath = src.RouteRecordingLastSavedPath,
             .LastAction = src.LastAction,
             .NotAttackingReason = src.NotAttackingReason,
             .ErrorMessage = src.ErrorMessage,
@@ -4605,9 +5194,24 @@ Public Class BotEngine
             Return False
         End If
 
-        ' Use keybd_event for ALT keys as games often use GetAsyncKeyState which ignores PostMessage
-        If vk = &HA4 OrElse vk = &HA5 OrElse vk = &H12 Then
-            Dim scan As Byte = CByte(NativeMethods.MapVirtualKey(CUInt(&H12), 0UI))
+        Dim usePhysicalKeyEvent As Boolean =
+            vk = &HA4 OrElse
+            vk = &HA5 OrElse
+            vk = &H12 OrElse
+            vk = &H57 OrElse
+            vk = &H41 OrElse
+            vk = &H53 OrElse
+            vk = &H44
+
+        ' Use keybd_event for ALT and movement keys because many games ignore PostMessage for them.
+        If usePhysicalKeyEvent Then
+            Dim foregroundHwnd As IntPtr = NativeMethods.GetForegroundWindow()
+            If foregroundHwnd <> hwnd Then
+                NativeMethods.SetForegroundWindow(hwnd)
+                Thread.Sleep(40)
+            End If
+
+            Dim scan As Byte = CByte(NativeMethods.MapVirtualKey(CUInt(vk), 0UI))
             Dim KEYEVENTF_EXTENDEDKEY As UInteger = &H1
             Dim KEYEVENTF_KEYUP As UInteger = &H2
             

@@ -215,9 +215,33 @@ Integrate travel with leveling behavior:
 - fight until guardrail triggers
 - return to safe node if needed
 
+### Phase 6
+
+Add route recording mode:
+
+- sample visible map coordinates while the user walks a route
+- store breadcrumb samples
+- simplify the breadcrumb trail into waypoint nodes
+- save nodes and edges as a reusable route graph for the current map
+- load saved route graphs back into route preview and travel execution
+
 ## Practical Constraint
 
 The agent will still need to navigate around paths rather than moving as a straight line.
+
+## Route Recording
+
+Route recording is the bridge between manual route creation and reusable navigation.
+
+Recommended flow:
+
+1. Enable map localization.
+2. Enable route recording mode.
+3. Walk the route once with the map coordinate readout visible.
+4. Save the recording as a named route.
+5. Reuse the generated nodes and edges in route preview and travel execution.
+
+This avoids hand-entering every waypoint and keeps the graph aligned to the real map coordinate system.
 
 So the coordinate system should define the route skeleton, while the travel controller handles local corrections between nearby path nodes.
 
