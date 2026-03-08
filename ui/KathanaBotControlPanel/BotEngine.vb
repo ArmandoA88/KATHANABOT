@@ -68,6 +68,7 @@ Public Enum LevelingAgentState
     Fighting
     Looting
     Recovering
+    Traveling
     Stuck
     GuardedStop
 End Enum
@@ -87,6 +88,19 @@ Public Class NavigationEdge
     Public Property TravelMode As String = "walk"
     Public Property Cost As Double = 1.0
     Public Property Notes As String = ""
+End Class
+
+Public Class NavigationPlan
+    Public Property MapName As String = ""
+    Public Property CurrentNode As NavigationNode = Nothing
+    Public Property StartNode As NavigationNode = Nothing
+    Public Property TargetNode As NavigationNode = Nothing
+    Public Property NextWaypoint As NavigationNode = Nothing
+    Public Property Route As List(Of NavigationNode) = New List(Of NavigationNode)()
+    Public Property DistanceToNextWaypoint As Double = -1
+    Public Property DistanceToTarget As Double = -1
+    Public Property RouteReady As Boolean
+    Public Property StatusText As String = ""
 End Class
 
 Public Class BotConfig
@@ -144,6 +158,12 @@ Public Class BotConfig
     Public Property NavigationStartNodeId As String = ""
     Public Property NavigationTargetNodeId As String = "farming_area"
     Public Property NavigationTravelPreviewEnabled As Boolean = False
+    Public Property NavigationTravelExecutionEnabled As Boolean = False
+    Public Property NavigationWaypointReachRadius As Integer = 36
+    Public Property NavigationMoveBurstMs As Integer = 350
+    Public Property NavigationResampleIntervalMs As Integer = 1800
+    Public Property NavigationStallTimeoutMs As Integer = 6500
+    Public Property NavigationRepathOnStuck As Boolean = True
     Public Property Actions As List(Of ActionRule) = New List(Of ActionRule)()
 
     Public Shared Function CreateDefault() As BotConfig
@@ -225,6 +245,14 @@ Public Class BotStatus
     Public Property NavigationRouteText As String = ""
     Public Property NavigationRouteReady As Boolean
     Public Property NavigationTravelPreviewEnabled As Boolean
+    Public Property NavigationTravelExecutionEnabled As Boolean
+    Public Property NavigationTravelActive As Boolean
+    Public Property NavigationTravelReason As String = ""
+    Public Property NavigationDistanceToWaypoint As Double = -1
+    Public Property NavigationTravelStalled As Boolean
+    Public Property NavigationRecoveryCount As Integer
+    Public Property NavigationDestinationReached As Boolean
+    Public Property NavigationDestinationLabel As String = ""
     Public Property LastAction As String = ""
     Public Property NotAttackingReason As String = ""
     Public Property ErrorMessage As String = ""
@@ -343,6 +371,11 @@ Public Class BotEngine
     Private Const MapCoordinateOcrMinIntervalMs As Integer = 900
     Private Const MapHeadingOcrMinIntervalMs As Integer = 900
     Private Const MapMarkerScanMinIntervalMs As Integer = 250
+    Private Const NavigationMapToggleCooldownMs As Integer = 450
+    Private Const NavigationMapSampleWindowMs As Integer = 950
+    Private Const NavigationKnownPoseMaxAgeMs As Integer = 15000
+    Private Const NavigationProgressImprovementThreshold As Double = 8.0
+    Private Const NavigationRecoveryCooldownMs As Integer = 1500
     Private Const MobHpTextOcrMinIntervalMs As Integer = 450
     Private Const PartyInviteOcrMinIntervalMs As Integer = 900
     Private Const UnreachableOcrMinIntervalMs As Integer = 260
@@ -428,6 +461,24 @@ Public Class BotEngine
     Private _lastNavigationNextWaypointLabel As String = ""
     Private _lastNavigationRouteText As String = ""
     Private _lastNavigationRouteReady As Boolean = False
+    Private _lastNavigationTravelActive As Boolean = False
+    Private _lastNavigationTravelReason As String = ""
+    Private _lastNavigationDistanceToWaypoint As Double = -1
+    Private _lastNavigationTravelStalled As Boolean = False
+    Private _lastNavigationRecoveryCount As Integer = 0
+    Private _lastNavigationDestinationReached As Boolean = False
+    Private _lastNavigationDestinationLabel As String = ""
+    Private _lastNavigationProgressWaypointId As String = ""
+    Private _lastNavigationProgressDistance As Double = -1
+    Private _lastNavigationProgressAt As DateTime = DateTime.MinValue
+    Private _lastNavigationRecoveryAt As DateTime = DateTime.MinValue
+    Private _lastNavigationKnownPoseAt As DateTime = DateTime.MinValue
+    Private _lastNavigationKnownX As Integer = -1
+    Private _lastNavigationKnownY As Integer = -1
+    Private _lastNavigationKnownHeading As String = ""
+    Private _lastNavigationMapToggleAt As DateTime = DateTime.MinValue
+    Private _lastNavigationMoveCommandAt As DateTime = DateTime.MinValue
+    Private _navigationMapExpectedOpen As Boolean = False
     Private ReadOnly _lootRandom As New Random()
     Private ReadOnly _lastKeyTime As New Dictionary(Of String, DateTime)(StringComparer.OrdinalIgnoreCase)
     Private _lastGoodHpPercent As Double = -1
@@ -565,6 +616,24 @@ Public Class BotEngine
             _lastNavigationNextWaypointLabel = ""
             _lastNavigationRouteText = ""
             _lastNavigationRouteReady = False
+            _lastNavigationTravelActive = False
+            _lastNavigationTravelReason = ""
+            _lastNavigationDistanceToWaypoint = -1
+            _lastNavigationTravelStalled = False
+            _lastNavigationRecoveryCount = 0
+            _lastNavigationDestinationReached = False
+            _lastNavigationDestinationLabel = ""
+            _lastNavigationProgressWaypointId = ""
+            _lastNavigationProgressDistance = -1
+            _lastNavigationProgressAt = DateTime.MinValue
+            _lastNavigationRecoveryAt = DateTime.MinValue
+            _lastNavigationKnownPoseAt = DateTime.MinValue
+            _lastNavigationKnownX = -1
+            _lastNavigationKnownY = -1
+            _lastNavigationKnownHeading = ""
+            _lastNavigationMapToggleAt = DateTime.MinValue
+            _lastNavigationMoveCommandAt = DateTime.MinValue
+            _navigationMapExpectedOpen = False
             _lastGoodHpPercent = -1
             _lastGoodMpPercent = -1
             _lastGoodMobHpPercent = -1
@@ -823,10 +892,12 @@ Public Class BotEngine
                 ReadMapHeadingIfNeeded(frame, mapHeadingRegion, now)
                 ScanMapPlayerMarkerIfNeeded(frame, mapPlayerMarkerRegion, now)
                 UpdateMapLocalizationConfidence()
-                UpdateNavigationPreview(cfg)
+                UpdateLastKnownNavigationPose(now)
+                UpdateNavigationPreview(cfg, now)
             Else
                 ClearMapLocalizationRuntime()
                 ClearNavigationPreviewRuntime()
+                ClearNavigationTravelRuntime()
             End If
             Dim targetWindowVisible As Boolean = HasTargetWindowSignal(frame, mobHpRegion, mobName, mobHpPct)
             Dim hasHighMaxHpAction As Boolean = HasHighMaxHpAttackAction(cfg)
@@ -969,8 +1040,18 @@ Public Class BotEngine
                     reason = ""
                 End If
 
+                If Not actionSent AndAlso Not targetWindowVisible Then
+                    Dim travelReason As String = ""
+                    If TryHandleNavigationTravel(cfg, hwnd, now, targetWindowVisible, targetValid, travelReason) Then
+                        actionSent = True
+                        reason = travelReason
+                    ElseIf String.IsNullOrWhiteSpace(reason) AndAlso Not String.IsNullOrWhiteSpace(travelReason) Then
+                        reason = travelReason
+                    End If
+                End If
+
                 ' Support keys can fire without blocking attack/special in the same loop.
-                Dim allowBlindAttack As Boolean = AllowBlindAttackWhenTargetMissing AndAlso (Not deniedTarget)
+                Dim allowBlindAttack As Boolean = AllowBlindAttackWhenTargetMissing AndAlso (Not deniedTarget) AndAlso (Not _lastNavigationTravelActive)
                 Dim chosen As ActionRule = ChooseAction(cfg, hpPct, mpPct, targetValid, allowBlindAttack, highMaxHpAttackActive, reason)
                 If chosen IsNot Nothing AndAlso SendKey(hwnd, chosen.KeyName, 35) Then
                     MarkKeyUsed(chosen.KeyName)
@@ -985,7 +1066,7 @@ Public Class BotEngine
                 End If
             End If
 
-            If Not targetValid AndAlso Not actionSent Then
+            If Not targetValid AndAlso Not actionSent AndAlso Not _lastNavigationTravelActive Then
                 Dim filterBlockedRetarget As Boolean = deniedTarget OrElse blacklistLockActive OrElse missingNameBlockedByFilter OrElse missingNameBlockedByPreference OrElse preferredTargetMismatch OrElse nameConfirmationBlockedByFilter
                 If _firstHitPending Then
                     If String.IsNullOrWhiteSpace(reason) Then
@@ -1318,6 +1399,16 @@ Public Class BotEngine
             If nextReason = "" Then
                 nextReason = "HP/MP is near leveling guardrails."
             End If
+        ElseIf _lastNavigationTravelActive AndAlso _lastNavigationTravelStalled Then
+            nextState = LevelingAgentState.Stuck
+            If nextReason = "" Then
+                nextReason = If(String.IsNullOrWhiteSpace(_lastNavigationTravelReason), "Navigation travel stalled.", _lastNavigationTravelReason)
+            End If
+        ElseIf _lastNavigationTravelActive AndAlso Not targetWindowVisible AndAlso Not targetValid Then
+            nextState = LevelingAgentState.Traveling
+            If nextReason = "" Then
+                nextReason = If(String.IsNullOrWhiteSpace(_lastNavigationTravelReason), "Traveling between route waypoints.", _lastNavigationTravelReason)
+            End If
         ElseIf retargeting OrElse unreachableLockActive Then
             nextState = LevelingAgentState.Stuck
             If nextReason = "" Then
@@ -1371,6 +1462,27 @@ Public Class BotEngine
         _lastNavigationNextWaypointLabel = ""
         _lastNavigationRouteText = ""
         _lastNavigationRouteReady = False
+    End Sub
+
+    Private Sub ClearNavigationTravelRuntime()
+        _lastNavigationTravelActive = False
+        _lastNavigationTravelReason = ""
+        _lastNavigationDistanceToWaypoint = -1
+        _lastNavigationTravelStalled = False
+        _lastNavigationRecoveryCount = 0
+        _lastNavigationDestinationReached = False
+        _lastNavigationDestinationLabel = ""
+        _lastNavigationProgressWaypointId = ""
+        _lastNavigationProgressDistance = -1
+        _lastNavigationProgressAt = DateTime.MinValue
+        _lastNavigationRecoveryAt = DateTime.MinValue
+        _lastNavigationKnownPoseAt = DateTime.MinValue
+        _lastNavigationKnownX = -1
+        _lastNavigationKnownY = -1
+        _lastNavigationKnownHeading = ""
+        _lastNavigationMapToggleAt = DateTime.MinValue
+        _lastNavigationMoveCommandAt = DateTime.MinValue
+        _navigationMapExpectedOpen = False
     End Sub
 
     Private Sub ReadMapCoordinateIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime)
@@ -1500,61 +1612,101 @@ Public Class BotEngine
         _lastMapLocalizationConfidence = Math.Max(0, Math.Min(100, confidence))
     End Sub
 
-    Private Sub UpdateNavigationPreview(cfg As BotConfig)
+    Private Sub UpdateLastKnownNavigationPose(now As DateTime)
+        If _lastMapCoordinateX < 0 OrElse _lastMapCoordinateY < 0 Then
+            Return
+        End If
+        If _lastMapLocalizationConfidence < 45 Then
+            Return
+        End If
+
+        _lastNavigationKnownPoseAt = now
+        _lastNavigationKnownX = _lastMapCoordinateX
+        _lastNavigationKnownY = _lastMapCoordinateY
+        If Not String.IsNullOrWhiteSpace(_lastMapHeading) Then
+            _lastNavigationKnownHeading = _lastMapHeading.Trim().ToUpperInvariant()
+        End If
+    End Sub
+
+    Private Function BuildNavigationPlan(cfg As BotConfig, now As DateTime, allowStaleLocalization As Boolean) As NavigationPlan
+        Dim plan As New NavigationPlan()
+        If cfg Is Nothing OrElse Not cfg.NavigationEnabled Then
+            plan.StatusText = "Navigation is disabled."
+            Return plan
+        End If
+
+        plan.MapName = If(String.IsNullOrWhiteSpace(cfg.NavigationMapName), "Jina Basin", cfg.NavigationMapName.Trim())
+        Dim nodes As List(Of NavigationNode) = GetNavigationNodesForMap(plan.MapName)
+        Dim edges As List(Of NavigationEdge) = GetNavigationEdgesForMap(plan.MapName)
+        If nodes.Count = 0 OrElse edges.Count = 0 Then
+            plan.StatusText = "No graph data loaded for this map."
+            Return plan
+        End If
+
+        Dim poseX As Integer = -1
+        Dim poseY As Integer = -1
+        If _lastMapCoordinateX >= 0 AndAlso _lastMapCoordinateY >= 0 AndAlso _lastMapLocalizationConfidence >= 45 Then
+            poseX = _lastMapCoordinateX
+            poseY = _lastMapCoordinateY
+        ElseIf allowStaleLocalization AndAlso _lastNavigationKnownPoseAt <> DateTime.MinValue AndAlso (now - _lastNavigationKnownPoseAt).TotalMilliseconds <= NavigationKnownPoseMaxAgeMs Then
+            poseX = _lastNavigationKnownX
+            poseY = _lastNavigationKnownY
+        End If
+
+        If poseX >= 0 AndAlso poseY >= 0 Then
+            plan.CurrentNode = FindNearestNode(nodes, poseX, poseY)
+        End If
+
+        If plan.CurrentNode IsNot Nothing Then
+            plan.StartNode = plan.CurrentNode
+        ElseIf Not String.IsNullOrWhiteSpace(cfg.NavigationStartNodeId) Then
+            plan.StartNode = FindNodeById(nodes, cfg.NavigationStartNodeId)
+        End If
+
+        plan.TargetNode = FindNodeById(nodes, cfg.NavigationTargetNodeId)
+        If plan.StartNode Is Nothing OrElse plan.TargetNode Is Nothing Then
+            plan.StatusText = "Waiting for valid start/target route nodes."
+            Return plan
+        End If
+
+        plan.Route = FindShortestRoute(nodes, edges, plan.StartNode.Id, plan.TargetNode.Id)
+        If plan.Route.Count = 0 Then
+            plan.StatusText = $"No route found from {plan.StartNode.Label} to {plan.TargetNode.Label}."
+            Return plan
+        End If
+
+        plan.NextWaypoint = If(plan.Route.Count > 1, plan.Route(1), plan.Route(0))
+        If poseX >= 0 AndAlso poseY >= 0 AndAlso plan.TargetNode IsNot Nothing Then
+            plan.DistanceToTarget = CalculateDistance(poseX, poseY, plan.TargetNode.X, plan.TargetNode.Y)
+        End If
+        If poseX >= 0 AndAlso poseY >= 0 AndAlso plan.NextWaypoint IsNot Nothing Then
+            plan.DistanceToNextWaypoint = CalculateDistance(poseX, poseY, plan.NextWaypoint.X, plan.NextWaypoint.Y)
+        End If
+        plan.RouteReady = True
+        plan.StatusText = String.Join(" -> ", plan.Route.Select(Function(node) node.Label))
+        Return plan
+    End Function
+
+    Private Sub UpdateNavigationPreview(cfg As BotConfig, now As DateTime)
         If cfg Is Nothing OrElse Not cfg.NavigationEnabled OrElse Not cfg.NavigationTravelPreviewEnabled Then
             ClearNavigationPreviewRuntime()
             Return
         End If
 
-        Dim mapName As String = If(String.IsNullOrWhiteSpace(cfg.NavigationMapName), "Jina Basin", cfg.NavigationMapName.Trim())
-        Dim nodes As List(Of NavigationNode) = GetNavigationNodesForMap(mapName)
-        Dim edges As List(Of NavigationEdge) = GetNavigationEdgesForMap(mapName)
-        If nodes.Count = 0 OrElse edges.Count = 0 Then
-            ClearNavigationPreviewRuntime()
-            _lastNavigationMapName = mapName
-            _lastNavigationRouteText = "No graph data loaded for this map."
+        Dim plan As NavigationPlan = BuildNavigationPlan(cfg, now, allowStaleLocalization:=True)
+        ClearNavigationPreviewRuntime()
+        _lastNavigationMapName = plan.MapName
+        _lastNavigationCurrentNodeId = If(plan.CurrentNode Is Nothing, "", plan.CurrentNode.Id)
+        _lastNavigationCurrentNodeLabel = If(plan.CurrentNode Is Nothing, "", plan.CurrentNode.Label)
+
+        If Not plan.RouteReady Then
+            _lastNavigationRouteText = plan.StatusText
             Return
         End If
 
-        _lastNavigationMapName = mapName
-
-        Dim currentNode As NavigationNode = Nothing
-        If _lastMapCoordinateX >= 0 AndAlso _lastMapCoordinateY >= 0 AndAlso _lastMapLocalizationConfidence >= 45 Then
-            currentNode = FindNearestNode(nodes, _lastMapCoordinateX, _lastMapCoordinateY)
-        End If
-
-        Dim startNode As NavigationNode = Nothing
-        If currentNode IsNot Nothing Then
-            startNode = currentNode
-        ElseIf Not String.IsNullOrWhiteSpace(cfg.NavigationStartNodeId) Then
-            startNode = FindNodeById(nodes, cfg.NavigationStartNodeId)
-        End If
-
-        Dim targetNode As NavigationNode = FindNodeById(nodes, cfg.NavigationTargetNodeId)
-        _lastNavigationCurrentNodeId = If(currentNode Is Nothing, "", currentNode.Id)
-        _lastNavigationCurrentNodeLabel = If(currentNode Is Nothing, "", currentNode.Label)
-
-        If startNode Is Nothing OrElse targetNode Is Nothing Then
-            _lastNavigationNextWaypointId = ""
-            _lastNavigationNextWaypointLabel = ""
-            _lastNavigationRouteText = "Waiting for valid start/target route nodes."
-            _lastNavigationRouteReady = False
-            Return
-        End If
-
-        Dim route As List(Of NavigationNode) = FindShortestRoute(nodes, edges, startNode.Id, targetNode.Id)
-        If route.Count = 0 Then
-            _lastNavigationNextWaypointId = ""
-            _lastNavigationNextWaypointLabel = ""
-            _lastNavigationRouteText = $"No route found from {startNode.Label} to {targetNode.Label}."
-            _lastNavigationRouteReady = False
-            Return
-        End If
-
-        Dim nextWaypoint As NavigationNode = If(route.Count > 1, route(1), route(0))
-        _lastNavigationNextWaypointId = If(nextWaypoint Is Nothing, "", nextWaypoint.Id)
-        _lastNavigationNextWaypointLabel = If(nextWaypoint Is Nothing, "", nextWaypoint.Label)
-        _lastNavigationRouteText = String.Join(" -> ", route.Select(Function(node) node.Label))
+        _lastNavigationNextWaypointId = If(plan.NextWaypoint Is Nothing, "", plan.NextWaypoint.Id)
+        _lastNavigationNextWaypointLabel = If(plan.NextWaypoint Is Nothing, "", plan.NextWaypoint.Label)
+        _lastNavigationRouteText = plan.StatusText
         _lastNavigationRouteReady = True
     End Sub
 
@@ -1691,6 +1843,361 @@ Public Class BotEngine
         Return path
     End Function
 
+    Private Shared Function CalculateDistance(x1 As Integer, y1 As Integer, x2 As Integer, y2 As Integer) As Double
+        Dim dx As Double = x2 - x1
+        Dim dy As Double = y2 - y1
+        Return Math.Sqrt((dx * dx) + (dy * dy))
+    End Function
+
+    Private Shared Function ParseHeadingAngle(heading As String) As Double
+        Select Case If(heading, "").Trim().ToUpperInvariant()
+            Case "N"
+                Return 0
+            Case "NE"
+                Return 45
+            Case "E"
+                Return 90
+            Case "SE"
+                Return 135
+            Case "S"
+                Return 180
+            Case "SW"
+                Return 225
+            Case "W"
+                Return 270
+            Case "NW"
+                Return 315
+            Case Else
+                Return Double.NaN
+        End Select
+    End Function
+
+    Private Shared Function NormalizeAngleDelta(delta As Double) As Double
+        While delta <= -180
+            delta += 360
+        End While
+        While delta > 180
+            delta -= 360
+        End While
+        Return delta
+    End Function
+
+    Private Shared Function CalculateDesiredHeadingAngle(fromX As Integer, fromY As Integer, toX As Integer, toY As Integer) As Double
+        Dim dx As Double = toX - fromX
+        Dim dy As Double = toY - fromY
+        If Math.Abs(dx) < Double.Epsilon AndAlso Math.Abs(dy) < Double.Epsilon Then
+            Return Double.NaN
+        End If
+
+        Dim radians As Double = Math.Atan2(dx, -dy)
+        Dim degrees As Double = radians * (180.0 / Math.PI)
+        If degrees < 0 Then
+            degrees += 360
+        End If
+        Return degrees
+    End Function
+
+    Private Function TryToggleNavigationMap(cfg As BotConfig, hwnd As IntPtr, now As DateTime, actionLabel As String, expectMapOpen As Boolean) As Boolean
+        If cfg Is Nothing OrElse hwnd = IntPtr.Zero Then
+            Return False
+        End If
+        If _lastNavigationMapToggleAt <> DateTime.MinValue AndAlso (now - _lastNavigationMapToggleAt).TotalMilliseconds < NavigationMapToggleCooldownMs Then
+            Return False
+        End If
+
+        Dim keyName As String = If(String.IsNullOrWhiteSpace(cfg.MapOpenKey), "M", cfg.MapOpenKey.Trim().ToUpperInvariant())
+        If Not SendKey(hwnd, keyName, 70) Then
+            Return False
+        End If
+
+        MarkKeyUsed(keyName)
+        SetLastAction($"{keyName} ({actionLabel})")
+        _lastNavigationMapToggleAt = now
+        _navigationMapExpectedOpen = expectMapOpen
+        Return True
+    End Function
+
+    Private Sub UpdateNavigationTravelProgress(plan As NavigationPlan, now As DateTime)
+        If plan Is Nothing OrElse Not plan.RouteReady OrElse plan.NextWaypoint Is Nothing OrElse plan.DistanceToNextWaypoint < 0 Then
+            _lastNavigationTravelStalled = False
+            Return
+        End If
+
+        If Not _lastNavigationProgressWaypointId.Equals(plan.NextWaypoint.Id, StringComparison.OrdinalIgnoreCase) Then
+            _lastNavigationProgressWaypointId = plan.NextWaypoint.Id
+            _lastNavigationProgressDistance = plan.DistanceToNextWaypoint
+            _lastNavigationProgressAt = now
+            _lastNavigationTravelStalled = False
+            Return
+        End If
+
+        If _lastNavigationProgressDistance < 0 OrElse plan.DistanceToNextWaypoint <= (_lastNavigationProgressDistance - NavigationProgressImprovementThreshold) Then
+            _lastNavigationProgressDistance = plan.DistanceToNextWaypoint
+            _lastNavigationProgressAt = now
+            _lastNavigationTravelStalled = False
+            Return
+        End If
+
+        If _lastNavigationProgressAt = DateTime.MinValue Then
+            _lastNavigationProgressAt = now
+            _lastNavigationTravelStalled = False
+            Return
+        End If
+
+        _lastNavigationTravelStalled = False
+    End Sub
+
+    Private Function IsNavigationTravelStalled(cfg As BotConfig, now As DateTime) As Boolean
+        If cfg Is Nothing OrElse Not cfg.NavigationTravelExecutionEnabled Then
+            Return False
+        End If
+        If _lastNavigationProgressAt = DateTime.MinValue OrElse String.IsNullOrWhiteSpace(_lastNavigationProgressWaypointId) Then
+            Return False
+        End If
+
+        Dim stallTimeoutMs As Integer = Math.Max(1500, cfg.NavigationStallTimeoutMs)
+        Return (now - _lastNavigationProgressAt).TotalMilliseconds >= stallTimeoutMs
+    End Function
+
+    Private Function TryRecoverNavigationTravel(cfg As BotConfig, hwnd As IntPtr, now As DateTime, plan As NavigationPlan, ByRef reason As String) As Boolean
+        reason = ""
+        If cfg Is Nothing OrElse hwnd = IntPtr.Zero Then
+            Return False
+        End If
+        If Not cfg.NavigationRepathOnStuck Then
+            _lastNavigationTravelReason = "Travel stalled, but repath on stuck is disabled."
+            reason = _lastNavigationTravelReason
+            Return False
+        End If
+        If _lastNavigationRecoveryAt <> DateTime.MinValue AndAlso (now - _lastNavigationRecoveryAt).TotalMilliseconds < NavigationRecoveryCooldownMs Then
+            _lastNavigationTravelReason = "Travel recovery cooldown active."
+            reason = _lastNavigationTravelReason
+            Return False
+        End If
+
+        ReleaseMovementKeys(hwnd)
+
+        Dim turnKey As String = If((_lastNavigationRecoveryCount Mod 2) = 0, "A", "D")
+        Dim sentAny As Boolean = False
+
+        If SendKey(hwnd, "S", 120) Then
+            MarkKeyUsed("S")
+            sentAny = True
+        End If
+        If SendKey(hwnd, turnKey, 140) Then
+            MarkKeyUsed(turnKey)
+            sentAny = True
+        End If
+        If SendKey(hwnd, "W", 150) Then
+            MarkKeyUsed("W")
+            sentAny = True
+        End If
+
+        If Not sentAny Then
+            _lastNavigationTravelReason = If(plan IsNot Nothing AndAlso plan.NextWaypoint IsNot Nothing,
+                                             $"Travel stalled near {plan.NextWaypoint.Label}, but recovery input failed.",
+                                             "Travel stalled, but recovery input failed.")
+            reason = _lastNavigationTravelReason
+            Return False
+        End If
+
+        _lastNavigationRecoveryAt = now
+        _lastNavigationRecoveryCount += 1
+        _lastNavigationProgressAt = now
+        _lastNavigationProgressDistance = If(plan IsNot Nothing, plan.DistanceToNextWaypoint, _lastNavigationProgressDistance)
+        _lastNavigationMoveCommandAt = now.AddMilliseconds(-Math.Max(900, cfg.NavigationResampleIntervalMs))
+        _lastNavigationTravelStalled = True
+        SetLastAction($"{turnKey}/S/W (travel recovery)")
+        _lastNavigationTravelReason = If(plan IsNot Nothing AndAlso plan.NextWaypoint IsNot Nothing,
+                                         $"Travel stalled near {plan.NextWaypoint.Label}. Running recovery #{_lastNavigationRecoveryCount}.",
+                                         $"Travel stalled. Running recovery #{_lastNavigationRecoveryCount}.")
+        reason = _lastNavigationTravelReason
+        Return True
+    End Function
+
+    Private Function TrySendTravelMovement(cfg As BotConfig, hwnd As IntPtr, plan As NavigationPlan, ByRef reason As String) As Boolean
+        reason = ""
+        If cfg Is Nothing OrElse hwnd = IntPtr.Zero OrElse plan Is Nothing OrElse plan.NextWaypoint Is Nothing Then
+            Return False
+        End If
+        If _lastNavigationKnownX < 0 OrElse _lastNavigationKnownY < 0 Then
+            Return False
+        End If
+
+        Dim currentHeadingAngle As Double = ParseHeadingAngle(_lastNavigationKnownHeading)
+        Dim desiredHeadingAngle As Double = CalculateDesiredHeadingAngle(_lastNavigationKnownX, _lastNavigationKnownY, plan.NextWaypoint.X, plan.NextWaypoint.Y)
+        If Double.IsNaN(currentHeadingAngle) OrElse Double.IsNaN(desiredHeadingAngle) Then
+            Return False
+        End If
+
+        Dim delta As Double = NormalizeAngleDelta(desiredHeadingAngle - currentHeadingAngle)
+        If Math.Abs(delta) > 28.0 Then
+            Dim turnKey As String = If(delta > 0, "D", "A")
+            Dim turnMs As Integer
+            If Math.Abs(delta) >= 120 Then
+                turnMs = 180
+            ElseIf Math.Abs(delta) >= 65 Then
+                turnMs = 120
+            Else
+                turnMs = 70
+            End If
+
+            If SendKey(hwnd, turnKey, turnMs) Then
+                MarkKeyUsed(turnKey)
+                SetLastAction($"{turnKey} (travel turn: {plan.NextWaypoint.Label})")
+                reason = $"Turning toward {plan.NextWaypoint.Label} ({Math.Round(delta, 0):0} deg)."
+                Return True
+            End If
+            Return False
+        End If
+
+        Dim burstMs As Integer = Math.Max(100, Math.Min(1200, cfg.NavigationMoveBurstMs))
+        If SendKey(hwnd, "W", burstMs) Then
+            MarkKeyUsed("W")
+            SetLastAction($"W (travel burst: {plan.NextWaypoint.Label})")
+            reason = $"Moving toward {plan.NextWaypoint.Label}."
+            Return True
+        End If
+
+        Return False
+    End Function
+
+    Private Function TryHandleNavigationTravel(cfg As BotConfig, hwnd As IntPtr, now As DateTime, targetWindowVisible As Boolean, targetValid As Boolean, ByRef reason As String) As Boolean
+        _lastNavigationTravelActive = False
+        _lastNavigationTravelReason = ""
+        _lastNavigationDistanceToWaypoint = -1
+        _lastNavigationTravelStalled = False
+        _lastNavigationDestinationReached = False
+        _lastNavigationDestinationLabel = ""
+        reason = ""
+
+        If cfg Is Nothing OrElse Not cfg.LevelingAgentEnabled OrElse Not cfg.NavigationEnabled OrElse Not cfg.NavigationTravelExecutionEnabled Then
+            _navigationMapExpectedOpen = False
+            Return False
+        End If
+
+        _lastNavigationTravelActive = True
+        Dim plan As NavigationPlan = BuildNavigationPlan(cfg, now, allowStaleLocalization:=True)
+        _lastNavigationDistanceToWaypoint = plan.DistanceToNextWaypoint
+
+        If targetWindowVisible OrElse targetValid Then
+            _lastNavigationTravelReason = "Travel execution paused while a combat target is active."
+            If _navigationMapExpectedOpen AndAlso (now - _lastNavigationMapToggleAt).TotalMilliseconds >= NavigationMapToggleCooldownMs Then
+                TryToggleNavigationMap(cfg, hwnd, now, "close map for combat", expectMapOpen:=False)
+            End If
+            Return False
+        End If
+
+        If _navigationMapExpectedOpen Then
+            If (now - _lastNavigationMapToggleAt).TotalMilliseconds < NavigationMapSampleWindowMs Then
+                _lastNavigationTravelReason = "Map sampling in progress for navigation."
+                reason = _lastNavigationTravelReason
+                Return False
+            End If
+
+            If TryToggleNavigationMap(cfg, hwnd, now, "close map after sample", expectMapOpen:=False) Then
+                _lastNavigationTravelReason = "Map sample complete. Closing map to travel."
+                reason = _lastNavigationTravelReason
+                Return True
+            End If
+
+            _lastNavigationTravelReason = "Waiting to close map after navigation sample."
+            reason = _lastNavigationTravelReason
+            Return False
+        End If
+
+        If Not plan.RouteReady OrElse plan.NextWaypoint Is Nothing Then
+            If TryToggleNavigationMap(cfg, hwnd, now, "open map for route sample", expectMapOpen:=True) Then
+                _lastNavigationTravelReason = "Opening map to localize route."
+                reason = _lastNavigationTravelReason
+                Return True
+            End If
+
+            _lastNavigationTravelReason = If(plan.StatusText = "", "Waiting for a usable navigation route.", plan.StatusText)
+            reason = _lastNavigationTravelReason
+            Return False
+        End If
+
+        If _lastNavigationKnownX < 0 OrElse _lastNavigationKnownY < 0 OrElse String.IsNullOrWhiteSpace(_lastNavigationKnownHeading) Then
+            If TryToggleNavigationMap(cfg, hwnd, now, "open map for pose sample", expectMapOpen:=True) Then
+                _lastNavigationTravelReason = "Opening map to refresh position and heading."
+                reason = _lastNavigationTravelReason
+                Return True
+            End If
+
+            _lastNavigationTravelReason = "Waiting for last-known position and heading."
+            reason = _lastNavigationTravelReason
+            Return False
+        End If
+
+        Dim reachRadius As Integer = Math.Max(10, cfg.NavigationWaypointReachRadius)
+        If plan.Route.Count <= 1 AndAlso plan.TargetNode IsNot Nothing AndAlso plan.DistanceToTarget >= 0 AndAlso plan.DistanceToTarget <= reachRadius Then
+            _lastNavigationDestinationReached = True
+            _lastNavigationDestinationLabel = plan.TargetNode.Label
+            _lastNavigationTravelReason = $"Destination reached: {plan.TargetNode.Label}."
+            _lastNavigationTravelActive = False
+            _lastNavigationDistanceToWaypoint = 0
+            _lastNavigationTravelStalled = False
+            _lastNavigationProgressWaypointId = ""
+            _lastNavigationProgressDistance = -1
+            _lastNavigationProgressAt = now
+            If _navigationMapExpectedOpen AndAlso (now - _lastNavigationMapToggleAt).TotalMilliseconds >= NavigationMapToggleCooldownMs Then
+                TryToggleNavigationMap(cfg, hwnd, now, "close map at destination", expectMapOpen:=False)
+            End If
+            reason = _lastNavigationTravelReason
+            Return False
+        End If
+
+        UpdateNavigationTravelProgress(plan, now)
+        If IsNavigationTravelStalled(cfg, now) Then
+            If TryRecoverNavigationTravel(cfg, hwnd, now, plan, reason) Then
+                Return True
+            End If
+            _lastNavigationTravelStalled = True
+        Else
+            _lastNavigationTravelStalled = False
+        End If
+        If plan.DistanceToNextWaypoint >= 0 AndAlso plan.DistanceToNextWaypoint <= reachRadius Then
+            If TryToggleNavigationMap(cfg, hwnd, now, "open map to advance route", expectMapOpen:=True) Then
+                _lastNavigationTravelReason = $"Waypoint reached: {plan.NextWaypoint.Label}. Refreshing route."
+                reason = _lastNavigationTravelReason
+                Return True
+            End If
+
+            _lastNavigationTravelReason = $"Waypoint reached: {plan.NextWaypoint.Label}. Waiting to refresh route."
+            reason = _lastNavigationTravelReason
+            Return False
+        End If
+
+        Dim resampleIntervalMs As Integer = Math.Max(900, cfg.NavigationResampleIntervalMs)
+        Dim moveCooldownMs As Integer = Math.Max(250, Math.Min(resampleIntervalMs, cfg.NavigationMoveBurstMs + 180))
+        If _lastNavigationMoveCommandAt <> DateTime.MinValue AndAlso (now - _lastNavigationMoveCommandAt).TotalMilliseconds < moveCooldownMs Then
+            _lastNavigationTravelReason = $"Continuing travel toward {plan.NextWaypoint.Label}."
+            reason = _lastNavigationTravelReason
+            Return False
+        End If
+
+        If _lastNavigationMoveCommandAt <> DateTime.MinValue AndAlso (now - _lastNavigationMoveCommandAt).TotalMilliseconds >= resampleIntervalMs Then
+            If TryToggleNavigationMap(cfg, hwnd, now, "open map to verify progress", expectMapOpen:=True) Then
+                _lastNavigationTravelReason = $"Re-sampling route progress toward {plan.NextWaypoint.Label}."
+                reason = _lastNavigationTravelReason
+                Return True
+            End If
+        End If
+
+        Dim moveReason As String = ""
+        If TrySendTravelMovement(cfg, hwnd, plan, moveReason) Then
+            _lastNavigationMoveCommandAt = now
+            _lastNavigationTravelReason = moveReason
+            reason = moveReason
+            Return True
+        End If
+
+        _lastNavigationTravelReason = $"Unable to issue travel movement toward {plan.NextWaypoint.Label}."
+        reason = _lastNavigationTravelReason
+        Return False
+    End Function
+
     Private Shared Function TryParseMapCoordinate(rawText As String, ByRef x As Integer, ByRef y As Integer, ByRef normalized As String, ByRef confidence As Integer) As Boolean
         x = -1
         y = -1
@@ -1708,22 +2215,24 @@ Public Class BotEngine
             Return False
         End If
 
-        Dim explicitMatch As Match = Regex.Match(normalizedRaw, "(\d{1,4})\s*[/,]\s*(\d{1,4})")
+        Dim explicitMatch As Match = Regex.Match(normalizedRaw, "(\d{3})\s*[/,]\s*(\d{3})")
         If explicitMatch.Success Then
             x = Integer.Parse(explicitMatch.Groups(1).Value)
             y = Integer.Parse(explicitMatch.Groups(2).Value)
-            normalized = $"{x}/{y}"
-            confidence = 95
+            normalized = $"{x:000}/{y:000}"
+            confidence = 99
             Return True
         End If
 
-        Dim fallbackMatch As Match = Regex.Match(normalizedRaw, "(\d{1,4})\D+(\d{1,4})")
+        Dim fallbackMatch As Match = Regex.Match(normalizedRaw, "(\d{1,3})\D+(\d{1,3})")
         If fallbackMatch.Success Then
             x = Integer.Parse(fallbackMatch.Groups(1).Value)
             y = Integer.Parse(fallbackMatch.Groups(2).Value)
-            normalized = $"{x}/{y}"
-            confidence = 70
-            Return True
+            If x >= 0 AndAlso x <= 999 AndAlso y >= 0 AndAlso y <= 999 Then
+                normalized = $"{x:000}/{y:000}"
+                confidence = 78
+                Return True
+            End If
         End If
 
         Return False
@@ -3310,6 +3819,14 @@ Public Class BotEngine
             _status.NavigationRouteText = _lastNavigationRouteText
             _status.NavigationRouteReady = _lastNavigationRouteReady
             _status.NavigationTravelPreviewEnabled = _config IsNot Nothing AndAlso _config.NavigationTravelPreviewEnabled
+            _status.NavigationTravelExecutionEnabled = _config IsNot Nothing AndAlso _config.NavigationTravelExecutionEnabled
+            _status.NavigationTravelActive = _lastNavigationTravelActive
+            _status.NavigationTravelReason = _lastNavigationTravelReason
+            _status.NavigationDistanceToWaypoint = _lastNavigationDistanceToWaypoint
+            _status.NavigationTravelStalled = _lastNavigationTravelStalled
+            _status.NavigationRecoveryCount = _lastNavigationRecoveryCount
+            _status.NavigationDestinationReached = _lastNavigationDestinationReached
+            _status.NavigationDestinationLabel = _lastNavigationDestinationLabel
             _status.UpdatedAt = DateTime.UtcNow
             snapshot = CloneStatus(_status)
         End SyncLock
@@ -3348,6 +3865,14 @@ Public Class BotEngine
             .NavigationRouteText = src.NavigationRouteText,
             .NavigationRouteReady = src.NavigationRouteReady,
             .NavigationTravelPreviewEnabled = src.NavigationTravelPreviewEnabled,
+            .NavigationTravelExecutionEnabled = src.NavigationTravelExecutionEnabled,
+            .NavigationTravelActive = src.NavigationTravelActive,
+            .NavigationTravelReason = src.NavigationTravelReason,
+            .NavigationDistanceToWaypoint = src.NavigationDistanceToWaypoint,
+            .NavigationTravelStalled = src.NavigationTravelStalled,
+            .NavigationRecoveryCount = src.NavigationRecoveryCount,
+            .NavigationDestinationReached = src.NavigationDestinationReached,
+            .NavigationDestinationLabel = src.NavigationDestinationLabel,
             .LastAction = src.LastAction,
             .NotAttackingReason = src.NotAttackingReason,
             .ErrorMessage = src.ErrorMessage,

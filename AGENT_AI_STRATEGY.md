@@ -25,6 +25,7 @@ The map appears to provide:
 - Cardinal orientation cues (`N`, `S`, `E`, `W`).
 - A player marker/current position region.
 - Named landmarks such as portals, towns, and ferry points.
+- A fixed-width coordinate readout: `3 digits for X` and `3 digits for Y`.
 
 This should be treated as a graph navigation problem:
 
@@ -126,9 +127,10 @@ Recommended approach:
 
 1. Calibrate the full map capture region.
 2. Calibrate the area where the player marker appears.
-3. Detect named landmarks and orientation markers only as supporting signals.
-4. Store normalized coordinates for important nodes.
-5. During travel, sample the map every few seconds or after a movement burst.
+3. Parse the coordinate readout as a fixed `XXX/YYY` format and normalize OCR output back to three digits.
+4. Detect named landmarks and orientation markers only as supporting signals.
+5. Store normalized coordinates for important nodes.
+6. During travel, sample the map every few seconds or after a movement burst.
 
 This keeps navigation robust even if moment-to-moment movement in the world is noisy.
 

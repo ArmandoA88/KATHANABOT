@@ -55,14 +55,21 @@ Public Class Form1
     Private chkNavigationEnabled As CheckBox
     Private txtMapOpenKey As TextBox
     Private chkTravelPreview As CheckBox
+    Private chkTravelExecute As CheckBox
     Private cboNavigationStartNode As ComboBox
     Private cboNavigationTargetNode As ComboBox
+    Private nudNavigationWaypointRadius As NumericUpDown
+    Private nudNavigationMoveBurstMs As NumericUpDown
+    Private nudNavigationResampleMs As NumericUpDown
+    Private nudNavigationStallTimeoutMs As NumericUpDown
+    Private chkNavigationRepathOnStuck As CheckBox
     Private lblLevelingState As Label
     Private lblLevelingReason As Label
     Private lblMapCoordinate As Label
     Private lblMapHeading As Label
     Private lblMapMarker As Label
     Private lblMapLocalizationConfidence As Label
+    Private lblTravelStatus As Label
     Private lblRoutePreview As Label
 
     Private lblState As Label
@@ -340,11 +347,29 @@ Public Class Form1
         If chkTravelPreview IsNot Nothing Then
             AddHandler chkTravelPreview.CheckedChanged, AddressOf LiveConfigChanged
         End If
+        If chkTravelExecute IsNot Nothing Then
+            AddHandler chkTravelExecute.CheckedChanged, AddressOf LiveConfigChanged
+        End If
         If cboNavigationStartNode IsNot Nothing Then
             AddHandler cboNavigationStartNode.SelectedIndexChanged, AddressOf LiveConfigChanged
         End If
         If cboNavigationTargetNode IsNot Nothing Then
             AddHandler cboNavigationTargetNode.SelectedIndexChanged, AddressOf LiveConfigChanged
+        End If
+        If nudNavigationWaypointRadius IsNot Nothing Then
+            AddHandler nudNavigationWaypointRadius.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If nudNavigationMoveBurstMs IsNot Nothing Then
+            AddHandler nudNavigationMoveBurstMs.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If nudNavigationResampleMs IsNot Nothing Then
+            AddHandler nudNavigationResampleMs.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If nudNavigationStallTimeoutMs IsNot Nothing Then
+            AddHandler nudNavigationStallTimeoutMs.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If chkNavigationRepathOnStuck IsNot Nothing Then
+            AddHandler chkNavigationRepathOnStuck.CheckedChanged, AddressOf LiveConfigChanged
         End If
         AddHandler dgvCombat.CellValueChanged, AddressOf LiveConfigChanged
         AddHandler dgvCombat.CellEndEdit, AddressOf LiveConfigChanged
@@ -407,11 +432,29 @@ Public Class Form1
         If chkTravelPreview IsNot Nothing Then
             AddHandler chkTravelPreview.CheckedChanged, AddressOf PersistListSettingsChanged
         End If
+        If chkTravelExecute IsNot Nothing Then
+            AddHandler chkTravelExecute.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
         If cboNavigationStartNode IsNot Nothing Then
             AddHandler cboNavigationStartNode.SelectedIndexChanged, AddressOf PersistListSettingsChanged
         End If
         If cboNavigationTargetNode IsNot Nothing Then
             AddHandler cboNavigationTargetNode.SelectedIndexChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudNavigationWaypointRadius IsNot Nothing Then
+            AddHandler nudNavigationWaypointRadius.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudNavigationMoveBurstMs IsNot Nothing Then
+            AddHandler nudNavigationMoveBurstMs.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudNavigationResampleMs IsNot Nothing Then
+            AddHandler nudNavigationResampleMs.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudNavigationStallTimeoutMs IsNot Nothing Then
+            AddHandler nudNavigationStallTimeoutMs.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If chkNavigationRepathOnStuck IsNot Nothing Then
+            AddHandler chkNavigationRepathOnStuck.CheckedChanged, AddressOf PersistListSettingsChanged
         End If
         If txtLootScanAreaPoints IsNot Nothing Then
             AddHandler txtLootScanAreaPoints.TextChanged, AddressOf PersistListSettingsChanged
@@ -848,15 +891,28 @@ Public Class Form1
 
     Private Function BuildLevelingTab() As TabPage
         Dim tab As New TabPage("Leveling") With {.BackColor = Color.FromArgb(20, 20, 20)}
-        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2, .Padding = New Padding(8)}
-        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 320.0F))
-        root.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
-        tab.Controls.Add(root)
+        Dim scrollPanel As New Panel() With {.Dock = DockStyle.Fill, .Padding = New Padding(8), .AutoScroll = True}
+        Dim root As New TableLayoutPanel() With {
+            .Dock = DockStyle.Top,
+            .AutoSize = True,
+            .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            .ColumnCount = 1,
+            .RowCount = 2,
+            .Margin = New Padding(0)
+        }
+        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+        root.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+        scrollPanel.Controls.Add(root)
+        tab.Controls.Add(scrollPanel)
 
-        Dim settingsGroup As New GroupBox() With {.Text = "Leveling Agent", .Dock = DockStyle.Fill}
-        Dim settingsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 12}
+        Dim settingsGroup As New GroupBox() With {.Text = "Leveling Agent", .Dock = DockStyle.Top, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .Padding = New Padding(10)}
+        Dim settingsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 2, .RowCount = 18}
         settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 220.0F))
         settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        For i As Integer = 0 To 17
+            settingsLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+        Next
         settingsGroup.Controls.Add(settingsLayout)
 
         chkLevelingAgent = New CheckBox() With {.Text = "Enable leveling agent", .Dock = DockStyle.Fill}
@@ -891,58 +947,78 @@ Public Class Form1
         settingsLayout.Controls.Add(chkTravelPreview, 0, 7)
         settingsLayout.SetColumnSpan(chkTravelPreview, 2)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Route Start Node", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 8)
-        cboNavigationStartNode = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList}
-        settingsLayout.Controls.Add(cboNavigationStartNode, 1, 8)
+        chkTravelExecute = New CheckBox() With {.Text = "Enable travel execution (guarded)", .Dock = DockStyle.Fill}
+        settingsLayout.Controls.Add(chkTravelExecute, 0, 8)
+        settingsLayout.SetColumnSpan(chkTravelExecute, 2)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Route Target Node", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 9)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Waypoint Radius", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 9)
+        nudNavigationWaypointRadius = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 10, .Maximum = 250, .Value = 36, .Width = 120}
+        settingsLayout.Controls.Add(nudNavigationWaypointRadius, 1, 9)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Move Burst (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 10)
+        nudNavigationMoveBurstMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 100, .Maximum = 1500, .Increment = 25, .Value = 350, .Width = 120}
+        settingsLayout.Controls.Add(nudNavigationMoveBurstMs, 1, 10)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Re-sample (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 11)
+        nudNavigationResampleMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 900, .Maximum = 10000, .Increment = 100, .Value = 1800, .Width = 120}
+        settingsLayout.Controls.Add(nudNavigationResampleMs, 1, 11)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Stall Timeout (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 12)
+        nudNavigationStallTimeoutMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1500, .Maximum = 30000, .Increment = 250, .Value = 6500, .Width = 120}
+        settingsLayout.Controls.Add(nudNavigationStallTimeoutMs, 1, 12)
+
+        chkNavigationRepathOnStuck = New CheckBox() With {.Text = "Run recovery/repath when travel stalls", .Dock = DockStyle.Fill, .Checked = True}
+        settingsLayout.Controls.Add(chkNavigationRepathOnStuck, 0, 13)
+        settingsLayout.SetColumnSpan(chkNavigationRepathOnStuck, 2)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Route Start Node", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 14)
+        cboNavigationStartNode = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList}
+        settingsLayout.Controls.Add(cboNavigationStartNode, 1, 14)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Route Target Node", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 15)
         cboNavigationTargetNode = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList}
-        settingsLayout.Controls.Add(cboNavigationTargetNode, 1, 9)
+        settingsLayout.Controls.Add(cboNavigationTargetNode, 1, 15)
 
         chkLevelingStopOnLowExp = New CheckBox() With {.Text = "Stop when EXP/hour is below threshold", .Dock = DockStyle.Fill}
-        settingsLayout.Controls.Add(chkLevelingStopOnLowExp, 0, 10)
+        settingsLayout.Controls.Add(chkLevelingStopOnLowExp, 0, 16)
         settingsLayout.SetColumnSpan(chkLevelingStopOnLowExp, 2)
-        settingsLayout.Controls.Add(New Label() With {.Text = "Min EXP/hour %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 11)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Min EXP/hour %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 17)
         nudLevelingMinExpPerHour = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0.01D, .Maximum = 100D, .DecimalPlaces = 2, .Increment = 0.05D, .Value = DefaultLevelingMinExpPerHour, .Width = 120}
-        Dim lowExpPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
+        Dim lowExpPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True}
         lowExpPanel.Controls.Add(nudLevelingMinExpPerHour)
         chkLevelingStopOnRepeatedUnreachable = New CheckBox() With {.Text = "Stop after repeated unreachable targets", .AutoSize = True, .Margin = New Padding(16, 4, 0, 0)}
         lowExpPanel.Controls.Add(chkLevelingStopOnRepeatedUnreachable)
         nudLevelingUnreachableLimit = New NumericUpDown() With {.Minimum = 1, .Maximum = 20, .Value = 4, .Width = 70, .Margin = New Padding(8, 0, 0, 0)}
         lowExpPanel.Controls.Add(nudLevelingUnreachableLimit)
-        settingsLayout.Controls.Add(lowExpPanel, 1, 11)
+        settingsLayout.Controls.Add(lowExpPanel, 1, 17)
 
-        Dim statusGroup As New GroupBox() With {.Text = "Agent Runtime", .Dock = DockStyle.Fill}
-        Dim statusLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 9, .Padding = New Padding(6)}
-        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 32.0F))
-        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 54.0F))
-        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 26.0F))
-        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 26.0F))
-        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 26.0F))
-        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 26.0F))
-        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 28.0F))
-        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 44.0F))
-        statusLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        Dim statusGroup As New GroupBox() With {.Text = "Agent Runtime", .Dock = DockStyle.Top, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .Padding = New Padding(10)}
+        Dim statusLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 1, .RowCount = 10, .Padding = New Padding(6)}
+        For i As Integer = 0 To 9
+            statusLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+        Next
         statusGroup.Controls.Add(statusLayout)
 
         lblLevelingState = New Label() With {.Text = "Agent State: Disabled", .Dock = DockStyle.Fill, .ForeColor = Color.Khaki, .Font = New Font("Segoe UI", 11.0F, FontStyle.Bold), .TextAlign = ContentAlignment.MiddleLeft}
-        lblLevelingReason = New Label() With {.Text = "Reason: Leveling agent is disabled.", .Dock = DockStyle.Fill, .ForeColor = Color.Gainsboro, .AutoSize = False}
-        lblMapCoordinate = New Label() With {.Text = "Map Coordinate: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.LightGreen}
-        lblMapHeading = New Label() With {.Text = "Map Heading: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.LightSkyBlue}
-        lblMapMarker = New Label() With {.Text = "Map Marker: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.Salmon}
-        lblMapLocalizationConfidence = New Label() With {.Text = "Localization Confidence: 0%", .Dock = DockStyle.Fill, .ForeColor = Color.Khaki}
-        lblRoutePreview = New Label() With {.Text = "Route Preview: disabled", .Dock = DockStyle.Fill, .ForeColor = Color.LightCyan}
-        Dim hintLabel As New Label() With {.Text = "Preferred mobs are a positive filter. When the list is not empty, the agent will skip non-matching targets.", .Dock = DockStyle.Fill, .ForeColor = Color.LightSkyBlue}
-        Dim guardrailLabel As New Label() With {.Text = "Phase 2 map localization reads coordinate and heading from calibrated map regions. It does not move yet; it gives you calibration feedback for future travel work.", .Dock = DockStyle.Fill, .ForeColor = Color.Silver}
+        lblLevelingReason = New Label() With {.Text = "Reason: Leveling agent is disabled.", .Dock = DockStyle.Fill, .ForeColor = Color.Gainsboro, .AutoSize = True}
+        lblMapCoordinate = New Label() With {.Text = "Map Coordinate: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.LightGreen, .AutoSize = True}
+        lblMapHeading = New Label() With {.Text = "Map Heading: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.LightSkyBlue, .AutoSize = True}
+        lblMapMarker = New Label() With {.Text = "Map Marker: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.Salmon, .AutoSize = True}
+        lblMapLocalizationConfidence = New Label() With {.Text = "Localization Confidence: 0%", .Dock = DockStyle.Fill, .ForeColor = Color.Khaki, .AutoSize = True}
+        lblTravelStatus = New Label() With {.Text = "Travel: idle", .Dock = DockStyle.Fill, .ForeColor = Color.LightSteelBlue, .AutoSize = True}
+        lblRoutePreview = New Label() With {.Text = "Route Preview: disabled", .Dock = DockStyle.Fill, .ForeColor = Color.LightCyan, .AutoSize = True}
+        Dim hintLabel As New Label() With {.Text = "Preferred mobs are a positive filter. When the list is not empty, the agent will skip non-matching targets.", .Dock = DockStyle.Fill, .ForeColor = Color.LightSkyBlue, .AutoSize = True}
+        Dim guardrailLabel As New Label() With {.Text = "Travel execution is still guarded: it samples the map, plans a waypoint route, and sends short movement bursts only when combat is idle.", .Dock = DockStyle.Fill, .ForeColor = Color.Silver, .AutoSize = True}
         statusLayout.Controls.Add(lblLevelingState, 0, 0)
         statusLayout.Controls.Add(lblLevelingReason, 0, 1)
         statusLayout.Controls.Add(lblMapCoordinate, 0, 2)
         statusLayout.Controls.Add(lblMapHeading, 0, 3)
         statusLayout.Controls.Add(lblMapMarker, 0, 4)
         statusLayout.Controls.Add(lblMapLocalizationConfidence, 0, 5)
-        statusLayout.Controls.Add(lblRoutePreview, 0, 6)
-        statusLayout.Controls.Add(hintLabel, 0, 7)
-        statusLayout.Controls.Add(guardrailLabel, 0, 8)
+        statusLayout.Controls.Add(lblTravelStatus, 0, 6)
+        statusLayout.Controls.Add(lblRoutePreview, 0, 7)
+        statusLayout.Controls.Add(hintLabel, 0, 8)
+        statusLayout.Controls.Add(guardrailLabel, 0, 9)
 
         root.Controls.Add(settingsGroup, 0, 0)
         root.Controls.Add(statusGroup, 0, 1)
@@ -2214,6 +2290,12 @@ Public Class Form1
             $"NavigationEnabled: {If(chkNavigationEnabled IsNot Nothing AndAlso chkNavigationEnabled.Checked, "True", "False")}{Environment.NewLine}" &
             $"MapOpenKey: {If(txtMapOpenKey IsNot Nothing AndAlso txtMapOpenKey.Text.Trim() <> "", txtMapOpenKey.Text.Trim().ToUpperInvariant(), DefaultMapOpenKey)}{Environment.NewLine}" &
             $"TravelPreviewEnabled: {If(chkTravelPreview IsNot Nothing AndAlso chkTravelPreview.Checked, "True", "False")}{Environment.NewLine}" &
+            $"TravelExecutionEnabled: {If(chkTravelExecute IsNot Nothing AndAlso chkTravelExecute.Checked, "True", "False")}{Environment.NewLine}" &
+            $"WaypointRadius: {If(nudNavigationWaypointRadius IsNot Nothing, nudNavigationWaypointRadius.Value.ToString(), "36")}{Environment.NewLine}" &
+            $"MoveBurstMs: {If(nudNavigationMoveBurstMs IsNot Nothing, nudNavigationMoveBurstMs.Value.ToString(), "350")}{Environment.NewLine}" &
+            $"ResampleMs: {If(nudNavigationResampleMs IsNot Nothing, nudNavigationResampleMs.Value.ToString(), "1800")}{Environment.NewLine}" &
+            $"StallTimeoutMs: {If(nudNavigationStallTimeoutMs IsNot Nothing, nudNavigationStallTimeoutMs.Value.ToString(), "6500")}{Environment.NewLine}" &
+            $"RepathOnStuck: {If(chkNavigationRepathOnStuck IsNot Nothing AndAlso chkNavigationRepathOnStuck.Checked, "True", "False")}{Environment.NewLine}" &
             $"RouteStartNode: {ExtractNavigationNodeId(If(cboNavigationStartNode IsNot Nothing, cboNavigationStartNode.SelectedItem, Nothing))}{Environment.NewLine}" &
             $"RouteTargetNode: {ExtractNavigationNodeId(If(cboNavigationTargetNode IsNot Nothing, cboNavigationTargetNode.SelectedItem, Nothing))}{Environment.NewLine}" &
             $"NtfyTopic: {GetNtfyTopicName()}{Environment.NewLine}" &
@@ -2251,6 +2333,13 @@ Public Class Form1
             $"NavigationNextWaypoint: {If(String.IsNullOrWhiteSpace(st.NavigationNextWaypointLabel), "n/a", st.NavigationNextWaypointLabel)}{Environment.NewLine}" &
             $"NavigationRouteReady: {st.NavigationRouteReady}{Environment.NewLine}" &
             $"NavigationRoute: {If(String.IsNullOrWhiteSpace(st.NavigationRouteText), "n/a", st.NavigationRouteText)}{Environment.NewLine}" &
+            $"NavigationTravelActive: {st.NavigationTravelActive}{Environment.NewLine}" &
+            $"NavigationTravelReason: {If(String.IsNullOrWhiteSpace(st.NavigationTravelReason), "n/a", st.NavigationTravelReason)}{Environment.NewLine}" &
+            $"NavigationDistanceToWaypoint: {If(st.NavigationDistanceToWaypoint < 0, "n/a", st.NavigationDistanceToWaypoint.ToString("0.0"))}{Environment.NewLine}" &
+            $"NavigationTravelStalled: {st.NavigationTravelStalled}{Environment.NewLine}" &
+            $"NavigationRecoveryCount: {st.NavigationRecoveryCount}{Environment.NewLine}" &
+            $"NavigationDestinationReached: {st.NavigationDestinationReached}{Environment.NewLine}" &
+            $"NavigationDestinationLabel: {If(String.IsNullOrWhiteSpace(st.NavigationDestinationLabel), "n/a", st.NavigationDestinationLabel)}{Environment.NewLine}" &
             $"LastAction: {st.LastAction}{Environment.NewLine}" &
              $"NotAttackingReason: {st.NotAttackingReason}{Environment.NewLine}" &
              $"Error: {st.ErrorMessage}"
@@ -2366,10 +2455,23 @@ Public Class Form1
             lblMapLocalizationConfidence.Text = $"Localization Confidence: {status.MapLocalizationConfidence}%"
             lblMapLocalizationConfidence.ForeColor = If(status.MapLocalizationConfidence >= 80, Color.LightGreen, If(status.MapLocalizationConfidence >= 50, Color.Khaki, Color.OrangeRed))
         End If
+        If lblTravelStatus IsNot Nothing Then
+            Dim travelReason As String = If(String.IsNullOrWhiteSpace(status.NavigationTravelReason), "idle", status.NavigationTravelReason)
+            Dim distanceText As String = If(status.NavigationDistanceToWaypoint < 0, "n/a", status.NavigationDistanceToWaypoint.ToString("0.0"))
+            Dim stallText As String = If(status.NavigationTravelStalled, $" | stalled x{Math.Max(1, status.NavigationRecoveryCount)}", If(status.NavigationRecoveryCount > 0, $" | recoveries {status.NavigationRecoveryCount}", ""))
+            If status.NavigationDestinationReached AndAlso Not String.IsNullOrWhiteSpace(status.NavigationDestinationLabel) Then
+                travelReason = $"destination reached: {status.NavigationDestinationLabel}"
+                distanceText = "0.0"
+            End If
+            lblTravelStatus.Text = $"Travel: {travelReason} | Dist: {distanceText}{stallText}"
+            lblTravelStatus.ForeColor = If(status.NavigationDestinationReached, Color.LightGreen, If(status.NavigationTravelStalled, Color.OrangeRed, If(status.NavigationTravelActive, Color.LightSteelBlue, Color.DimGray)))
+        End If
         If lblRoutePreview IsNot Nothing Then
             Dim routeText As String
             If Not status.NavigationTravelPreviewEnabled Then
                 routeText = "Route Preview: disabled"
+            ElseIf status.NavigationDestinationReached Then
+                routeText = $"Route Preview: destination reached{Environment.NewLine}{status.NavigationRouteText}"
             ElseIf Not status.NavigationRouteReady Then
                 routeText = "Route Preview: waiting for route"
             Else
@@ -2640,6 +2742,12 @@ Public Class Form1
         cfg.NavigationStartNodeId = ExtractNavigationNodeId(If(cboNavigationStartNode IsNot Nothing, cboNavigationStartNode.SelectedItem, Nothing))
         cfg.NavigationTargetNodeId = ExtractNavigationNodeId(If(cboNavigationTargetNode IsNot Nothing, cboNavigationTargetNode.SelectedItem, Nothing))
         cfg.NavigationTravelPreviewEnabled = (chkTravelPreview IsNot Nothing AndAlso chkTravelPreview.Checked)
+        cfg.NavigationTravelExecutionEnabled = (chkTravelExecute IsNot Nothing AndAlso chkTravelExecute.Checked)
+        cfg.NavigationWaypointReachRadius = CInt(If(nudNavigationWaypointRadius IsNot Nothing, nudNavigationWaypointRadius.Value, 36D))
+        cfg.NavigationMoveBurstMs = CInt(If(nudNavigationMoveBurstMs IsNot Nothing, nudNavigationMoveBurstMs.Value, 350D))
+        cfg.NavigationResampleIntervalMs = CInt(If(nudNavigationResampleMs IsNot Nothing, nudNavigationResampleMs.Value, 1800D))
+        cfg.NavigationStallTimeoutMs = CInt(If(nudNavigationStallTimeoutMs IsNot Nothing, nudNavigationStallTimeoutMs.Value, 6500D))
+        cfg.NavigationRepathOnStuck = (chkNavigationRepathOnStuck IsNot Nothing AndAlso chkNavigationRepathOnStuck.Checked)
         cfg.HpBar = BuildRect("hp_bar")
         cfg.MpBar = BuildRect("mp_bar")
         cfg.MobNameRect = BuildRect("mob_name_rect")
@@ -3099,6 +3207,16 @@ Public Class Form1
         End If
         If chkTravelPreview IsNot Nothing Then
             chkTravelPreview.Checked = cfg.NavigationTravelPreviewEnabled
+        End If
+        If chkTravelExecute IsNot Nothing Then
+            chkTravelExecute.Checked = cfg.NavigationTravelExecutionEnabled
+        End If
+        SetNumericControlValue(nudNavigationWaypointRadius, CDec(Math.Max(10, cfg.NavigationWaypointReachRadius)))
+        SetNumericControlValue(nudNavigationMoveBurstMs, CDec(Math.Max(100, cfg.NavigationMoveBurstMs)))
+        SetNumericControlValue(nudNavigationResampleMs, CDec(Math.Max(900, cfg.NavigationResampleIntervalMs)))
+        SetNumericControlValue(nudNavigationStallTimeoutMs, CDec(Math.Max(1500, cfg.NavigationStallTimeoutMs)))
+        If chkNavigationRepathOnStuck IsNot Nothing Then
+            chkNavigationRepathOnStuck.Checked = cfg.NavigationRepathOnStuck
         End If
         PopulateNavigationNodeCombos()
         If cboNavigationStartNode IsNot Nothing Then
