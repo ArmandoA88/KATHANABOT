@@ -400,6 +400,7 @@ Public Class BotEngine
     Public Event StatusUpdated(status As BotStatus)
     Public Event LogLine(line As String)
     Private Const AllowBlindAttackWhenTargetMissing As Boolean = False
+    Private Const RetargetExtraDelayMs As Integer = 300
     Private Const FirstHitWindowMs As Integer = 800
     Private Const BlacklistLockWindowMs As Integer = 800
     Private Const TargetNameConfirmMinGapMs As Integer = 120
@@ -418,6 +419,8 @@ Public Class BotEngine
     Private Const NavigationRecoveryCooldownMs As Integer = 1500
     Private Const RouteRecordingMinSamplesToSave As Integer = 6
     Private Const RouteRecordingMinSampleIntervalMs As Integer = 250
+    Private Const NavigationRotationConfirmationsRequired As Integer = 2
+    Private Const NavigationRotationChangeCooldownMs As Integer = 1200
     Private Const MobHpTextOcrMinIntervalMs As Integer = 450
     Private Const PartyInviteOcrMinIntervalMs As Integer = 900
     Private Const UnreachableOcrMinIntervalMs As Integer = 260
@@ -442,6 +445,8 @@ Public Class BotEngine
     Private _lastAttackAction As DateTime = DateTime.MinValue
     Private _lastMobHpSample As Double = -1
     Private _lastMobHpMovement As DateTime = DateTime.MinValue
+    Private _noDamageTargetSignature As String = ""
+    Private _noDamageAttackCount As Integer = 0
     Private _lastMobNameRead As DateTime = DateTime.MinValue
     Private _cachedMobName As String = ""
     Private _lastMobHpTextScan As DateTime = DateTime.MinValue
@@ -524,6 +529,9 @@ Public Class BotEngine
     Private _lastNavigationPreviousY As Integer = -1
     Private _lastNavigationKnownHeading As String = ""
     Private _navigationRotationQuarterTurns As Integer = 0
+    Private _navigationRotationCandidateQuarterTurns As Integer = -1
+    Private _navigationRotationCandidateCount As Integer = 0
+    Private _lastNavigationRotationChangeAt As DateTime = DateTime.MinValue
     Private _lastTravelInputKey As String = ""
     Private _lastTravelInputDesiredDirection As String = ""
     Private _lastTravelInputPoseX As Integer = -1
@@ -617,6 +625,8 @@ Public Class BotEngine
             _lastAttackAction = DateTime.MinValue
             _lastMobHpSample = -1
             _lastMobHpMovement = DateTime.MinValue
+            _noDamageTargetSignature = ""
+            _noDamageAttackCount = 0
             _lastMobNameRead = DateTime.MinValue
             _cachedMobName = ""
             _lastMobHpTextScan = DateTime.MinValue
@@ -710,6 +720,9 @@ Public Class BotEngine
             _lastNavigationPreviousY = -1
             _lastNavigationKnownHeading = ""
             _navigationRotationQuarterTurns = 0
+            _navigationRotationCandidateQuarterTurns = -1
+            _navigationRotationCandidateCount = 0
+            _lastNavigationRotationChangeAt = DateTime.MinValue
             _lastTravelInputKey = ""
             _lastTravelInputDesiredDirection = ""
             _lastTravelInputPoseX = -1
@@ -779,7 +792,7 @@ Public Class BotEngine
                 cfg = _config
             End SyncLock
             Dim loopDelayMs As Integer = Math.Max(1, cfg.LoopMs)
-            Dim retargetDelayMs As Integer = Math.Max(loopDelayMs, cfg.RetargetMs)
+            Dim retargetDelayMs As Integer = Math.Max(loopDelayMs, cfg.RetargetMs + RetargetExtraDelayMs)
             Dim noTargetStableMs As Integer = retargetDelayMs
 
             Dim hwnd As IntPtr = FindGameWindow(cfg.WindowTitle)
@@ -1109,9 +1122,14 @@ Public Class BotEngine
             End If
             Dim forcedRetarget As Boolean = False
 
-            If (Not _firstHitPending) AndAlso ShouldBypassStuckTarget(cfg, targetValid, now) Then
+            If ShouldBypassStuckTarget(cfg, targetWindowVisible, targetValid, now) Then
                 If SendKey(hwnd, "E", 35) Then
                     _lastRetarget = now
+                    _noDamageTargetSignature = ""
+                    _noDamageAttackCount = 0
+                    _firstHitPending = False
+                    _firstHitTargetSignature = ""
+                    _firstHitWindowUntil = DateTime.MinValue
                     SetLastAction("E (stuck target bypass)")
                     reason = "Stuck target bypass sent retarget."
                     forcedRetarget = True
@@ -1147,6 +1165,8 @@ Public Class BotEngine
                         _lastAttackAction = now
                         _firstHitPending = False
                         _firstHitWindowUntil = DateTime.MinValue
+                        Dim targetSignature As String = If(normMobName <> "", normMobName, If(mobName <> "", mobName, $"{mobHpPct:0.0}"))
+                        RecordAttackWithoutDamage(targetSignature)
                     End If
                 End If
             End If
@@ -1173,6 +1193,8 @@ Public Class BotEngine
                     ElseIf (now - _lastRetarget).TotalMilliseconds >= retargetDelayMs Then
                         If SendKey(hwnd, "E", 35) Then
                             _lastRetarget = now
+                            _noDamageTargetSignature = ""
+                            _noDamageAttackCount = 0
                             SetLastAction("E (retarget)")
                             If String.IsNullOrWhiteSpace(reason) Then
                                 If deniedTarget Then
@@ -1596,6 +1618,9 @@ Public Class BotEngine
         _lastNavigationPreviousY = -1
         _lastNavigationKnownHeading = ""
         _navigationRotationQuarterTurns = 0
+        _navigationRotationCandidateQuarterTurns = -1
+        _navigationRotationCandidateCount = 0
+        _lastNavigationRotationChangeAt = DateTime.MinValue
         _lastTravelInputKey = ""
         _lastTravelInputDesiredDirection = ""
         _lastTravelInputPoseX = -1
@@ -1810,7 +1835,27 @@ Public Class BotEngine
         Dim defaultIndex As Integer = CardinalDirectionIndex(defaultDirection)
         Dim actualIndex As Integer = CardinalDirectionIndex(actualDirection)
         If defaultIndex >= 0 AndAlso actualIndex >= 0 Then
-            _navigationRotationQuarterTurns = (actualIndex - defaultIndex + 4) Mod 4
+            Dim observedRotation As Integer = (actualIndex - defaultIndex + 4) Mod 4
+            If observedRotation = _navigationRotationQuarterTurns Then
+                _navigationRotationCandidateQuarterTurns = -1
+                _navigationRotationCandidateCount = 0
+            ElseIf _lastNavigationRotationChangeAt <> DateTime.MinValue AndAlso (now - _lastNavigationRotationChangeAt).TotalMilliseconds < NavigationRotationChangeCooldownMs Then
+                ' Hold the current mapping briefly so a single noisy sample does not jerk travel.
+            Else
+                If _navigationRotationCandidateQuarterTurns <> observedRotation Then
+                    _navigationRotationCandidateQuarterTurns = observedRotation
+                    _navigationRotationCandidateCount = 1
+                Else
+                    _navigationRotationCandidateCount += 1
+                End If
+
+                If _navigationRotationCandidateCount >= NavigationRotationConfirmationsRequired Then
+                    _navigationRotationQuarterTurns = observedRotation
+                    _lastNavigationRotationChangeAt = now
+                    _navigationRotationCandidateQuarterTurns = -1
+                    _navigationRotationCandidateCount = 0
+                End If
+            End If
         End If
 
         _lastNavigationKnownHeading = actualDirection
@@ -1866,11 +1911,12 @@ Public Class BotEngine
         If _lastMapCoordinateX < 0 OrElse _lastMapCoordinateY < 0 OrElse _lastMapCoordinateConfidence < 70 Then
             Return
         End If
-        If _routeRecordingLastSampleAt <> DateTime.MinValue AndAlso (now - _routeRecordingLastSampleAt).TotalMilliseconds < RouteRecordingMinSampleIntervalMs Then
+        Dim effectiveSampleIntervalMs As Integer = Math.Max(100, RouteRecordingMinSampleIntervalMs \ 2)
+        If _routeRecordingLastSampleAt <> DateTime.MinValue AndAlso (now - _routeRecordingLastSampleAt).TotalMilliseconds < effectiveSampleIntervalMs Then
             Return
         End If
 
-        Dim minDistance As Double = Math.Max(2, cfg.RouteRecordingMinSampleDistance)
+        Dim minDistance As Double = Math.Max(1, cfg.RouteRecordingMinSampleDistance / 2.0)
         If _routeRecordingSamples.Count > 0 Then
             Dim lastSample As NavigationRouteSample = _routeRecordingSamples(_routeRecordingSamples.Count - 1)
             If CalculateDistance(lastSample.X, lastSample.Y, _lastMapCoordinateX, _lastMapCoordinateY) < minDistance Then
@@ -3714,7 +3760,7 @@ Public Class BotEngine
         End If
 
         If (Not _unreachableLatched) AndAlso _unreachableConfirmCount >= UnreachableConfirmRequiredCount Then
-            Dim unreachableRetargetMs As Integer = Math.Max(1, cfg.RetargetMs)
+            Dim unreachableRetargetMs As Integer = Math.Max(1, cfg.RetargetMs + RetargetExtraDelayMs)
             Dim triggerReady As Boolean = (_lastUnreachableTrigger = DateTime.MinValue) OrElse ((now - _lastUnreachableTrigger).TotalMilliseconds >= unreachableRetargetMs)
             If triggerReady Then
                 _lastUnreachableTrigger = now
@@ -4221,6 +4267,8 @@ Public Class BotEngine
         If Not targetValid Then
             _lastMobHpSample = -1
             _lastMobHpMovement = DateTime.MinValue
+            _noDamageTargetSignature = ""
+            _noDamageAttackCount = 0
             Return
         End If
 
@@ -4234,6 +4282,7 @@ Public Class BotEngine
         If hpDrop >= 0.8 Then
             _lastMobHpSample = mobHpPct
             _lastMobHpMovement = now
+            _noDamageAttackCount = 0
             Return
         End If
 
@@ -4243,14 +4292,11 @@ Public Class BotEngine
         End If
     End Sub
 
-    Private Function ShouldBypassStuckTarget(cfg As BotConfig, targetValid As Boolean, now As DateTime) As Boolean
+    Private Function ShouldBypassStuckTarget(cfg As BotConfig, targetWindowVisible As Boolean, targetValid As Boolean, now As DateTime) As Boolean
         If Not cfg.BypassStuckTarget Then
             Return False
         End If
-        If Not targetValid Then
-            Return False
-        End If
-        If _lastAttackAction = DateTime.MinValue OrElse _lastMobHpMovement = DateTime.MinValue Then
+        If _lastAttackAction = DateTime.MinValue Then
             Return False
         End If
 
@@ -4261,14 +4307,41 @@ Public Class BotEngine
             Return False
         End If
 
+        Dim retargetCooldownMs As Integer = Math.Max(1, cfg.RetargetMs + RetargetExtraDelayMs)
+        If _noDamageAttackCount >= 3 AndAlso targetWindowVisible Then
+            Return (now - _lastRetarget).TotalMilliseconds >= retargetCooldownMs
+        End If
+
+        If Not targetValid Then
+            Return False
+        End If
+
+        If _lastMobHpMovement = DateTime.MinValue Then
+            Return False
+        End If
+
         Dim sinceHpMoveMs As Double = (now - _lastMobHpMovement).TotalMilliseconds
         If sinceHpMoveMs < stuckMs Then
             Return False
         End If
 
-        Dim retargetCooldownMs As Integer = Math.Max(1, cfg.RetargetMs)
         Return (now - _lastRetarget).TotalMilliseconds >= retargetCooldownMs
     End Function
+
+    Private Sub RecordAttackWithoutDamage(targetSignature As String)
+        Dim normalizedSignature As String = If(targetSignature, "").Trim().ToLowerInvariant()
+        If normalizedSignature = "" Then
+            normalizedSignature = "__unknown_target__"
+        End If
+
+        If Not _noDamageTargetSignature.Equals(normalizedSignature, StringComparison.OrdinalIgnoreCase) Then
+            _noDamageTargetSignature = normalizedSignature
+            _noDamageAttackCount = 1
+            Return
+        End If
+
+        _noDamageAttackCount += 1
+    End Sub
 
     Private Shared Function IsSupportRole(role As String) As Boolean
         Return role = "heal" OrElse role = "max_health" OrElse role = "mana"

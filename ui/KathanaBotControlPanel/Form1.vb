@@ -2608,18 +2608,24 @@ Public Class Form1
             Return
         End If
 
+        Dim errorText As String = If(status.ErrorMessage, "")
         Dim missingWindow As Boolean =
             status.Running AndAlso
-            ((Not status.WindowFound) OrElse status.ErrorMessage.IndexOf("window not found", StringComparison.OrdinalIgnoreCase) >= 0)
+            ((Not status.WindowFound) OrElse errorText.IndexOf("window not found", StringComparison.OrdinalIgnoreCase) >= 0)
+        Dim captureUnavailable As Boolean =
+            status.Running AndAlso
+            status.WindowFound AndAlso
+            (errorText.IndexOf("capture failed", StringComparison.OrdinalIgnoreCase) >= 0 OrElse
+             errorText.IndexOf("unable to capture", StringComparison.OrdinalIgnoreCase) >= 0)
 
-        If status.Running AndAlso IsNotificationWarmupActive() AndAlso missingWindow Then
+        If status.Running AndAlso IsNotificationWarmupActive() AndAlso (missingWindow OrElse captureUnavailable) Then
             Return
         End If
 
-        If missingWindow Then
+        If missingWindow OrElse captureUnavailable Then
             If Not _windowMissingNotificationLatched Then
                 _windowMissingNotificationLatched = True
-                SendWindowMissingPhoneAlert()
+                SendWindowMissingPhoneAlert(captureUnavailable)
             End If
             Return
         End If
@@ -3904,10 +3910,14 @@ Public Class Form1
         End If
 
         ' Only count usable (non-black / non-failed) frames toward death confirmation.
+        Dim errorText As String = If(status.ErrorMessage, "")
+        Dim captureUnavailable As Boolean =
+            errorText.IndexOf("capture failed", StringComparison.OrdinalIgnoreCase) >= 0 OrElse
+            errorText.IndexOf("unable to capture", StringComparison.OrdinalIgnoreCase) >= 0
         Dim isUsableFrame As Boolean =
             status.Running AndAlso
             status.WindowFound AndAlso
-            status.ErrorMessage = ""
+            (errorText = "" OrElse captureUnavailable)
 
         Dim isDeadHp As Boolean =
             isUsableFrame AndAlso
@@ -4077,16 +4087,20 @@ Public Class Form1
             End Function)
     End Sub
 
-    Private Sub SendWindowMissingPhoneAlert()
+    Private Sub SendWindowMissingPhoneAlert(Optional captureUnavailable As Boolean = False)
         Dim now As DateTime = DateTime.UtcNow
         If _lastWindowMissingNotification <> DateTime.MinValue AndAlso (now - _lastWindowMissingNotification).TotalSeconds < 5 Then
             Return
         End If
 
         _lastWindowMissingNotification = now
+        Dim body As String =
+            If(captureUnavailable,
+               "Game capture failed. The game may be hidden, black-screened, minimized, or the screen is unavailable.",
+               "Game window not found. The game may have crashed or been closed.")
         Task.Run(
             Async Function()
-                Dim sent As Boolean = Await SendPhoneNotificationAsync("KathanaBot Game Alert", "Game window not found. The game may have crashed or been closed.", DeathNotificationRetryCount)
+                Dim sent As Boolean = Await SendPhoneNotificationAsync("KathanaBot Game Alert", body, DeathNotificationRetryCount)
                 If Not sent Then
                     AppendLogSafe("Game-window alert failed after retries. Check ntfy topic/network.")
                 End If
