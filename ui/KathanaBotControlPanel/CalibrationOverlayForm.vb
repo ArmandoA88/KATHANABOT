@@ -110,8 +110,6 @@ Public Class CalibrationOverlayForm
         DrawRegion(e.Graphics, "party_invite_ok_rect", _currentConfig.PartyInviteOkRect, Color.FromArgb(170, 120, 220, 160), "Party OK")
         DrawRegion(e.Graphics, "map_rect", _currentConfig.MapRect, Color.FromArgb(90, 80, 180, 255), "Map")
         DrawRegion(e.Graphics, "map_coordinate_rect", _currentConfig.MapCoordinateRect, Color.FromArgb(170, 70, 255, 170), "Map Coord")
-        DrawRegion(e.Graphics, "map_player_marker_rect", _currentConfig.MapPlayerMarkerRect, Color.FromArgb(140, 255, 80, 80), "Map Marker")
-        DrawRegion(e.Graphics, "map_heading_rect", _currentConfig.MapHeadingRect, Color.FromArgb(170, 240, 240, 100), "Heading")
 
         Dim tipRect As New Rectangle(8, 8, 520, 20)
         Using b As New SolidBrush(Color.FromArgb(185, 0, 0, 0))
@@ -338,7 +336,7 @@ Public Class CalibrationOverlayForm
     End Sub
 
     Private Function HitTestRegion(pt As System.Drawing.Point) As String
-        Dim keys As String() = {"map_heading_rect", "map_player_marker_rect", "map_coordinate_rect", "map_rect", "party_invite_ok_rect", "party_invite_scan_rect", "rupiahs_rect", "prana_exp_rect", "unreachable_text_rect", "mob_hp_rect", "mob_name_rect", "mp_bar", "hp_bar"}
+        Dim keys As String() = {"map_coordinate_rect", "map_rect", "party_invite_ok_rect", "party_invite_scan_rect", "rupiahs_rect", "prana_exp_rect", "unreachable_text_rect", "mob_hp_rect", "mob_name_rect", "mp_bar", "hp_bar"}
         For Each key In keys
             Dim rect As System.Drawing.Rectangle = GetRegionRect(key)
             If GetResizeHandleRect(rect).Contains(pt) OrElse rect.Contains(pt) Then
@@ -440,10 +438,6 @@ Public Class CalibrationOverlayForm
                 Return _currentConfig.MapRect
             Case "map_coordinate_rect"
                 Return _currentConfig.MapCoordinateRect
-            Case "map_player_marker_rect"
-                Return _currentConfig.MapPlayerMarkerRect
-            Case "map_heading_rect"
-                Return _currentConfig.MapHeadingRect
             Case Else
                 Return Nothing
         End Select
@@ -473,10 +467,6 @@ Public Class CalibrationOverlayForm
                 _currentConfig.MapRect = value
             Case "map_coordinate_rect"
                 _currentConfig.MapCoordinateRect = value
-            Case "map_player_marker_rect"
-                _currentConfig.MapPlayerMarkerRect = value
-            Case "map_heading_rect"
-                _currentConfig.MapHeadingRect = value
         End Select
     End Sub
 
@@ -540,8 +530,6 @@ Public Class CalibrationOverlayForm
         cfg.PartyInviteOkRect = CloneRegion(src.PartyInviteOkRect)
         cfg.MapRect = CloneRegion(src.MapRect)
         cfg.MapCoordinateRect = CloneRegion(src.MapCoordinateRect)
-        cfg.MapPlayerMarkerRect = CloneRegion(src.MapPlayerMarkerRect)
-        cfg.MapHeadingRect = CloneRegion(src.MapHeadingRect)
         cfg.LootScanRect = CloneRegion(src.LootScanRect)
         cfg.LootScanPoints = CloneLootScanPoints(src.LootScanPoints)
         Return cfg

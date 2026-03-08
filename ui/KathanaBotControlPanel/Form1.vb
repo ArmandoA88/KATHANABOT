@@ -1322,8 +1322,6 @@ Public Class Form1
         dgvRegions.Rows.Add("party_invite_ok_rect", "463", "410", "59", "21")
         dgvRegions.Rows.Add("map_rect", "0", "0", "1024", "768")
         dgvRegions.Rows.Add("map_coordinate_rect", "6", "744", "120", "22")
-        dgvRegions.Rows.Add("map_player_marker_rect", "470", "585", "120", "120")
-        dgvRegions.Rows.Add("map_heading_rect", "968", "4", "40", "24")
         If txtLootScanAreaPoints IsNot Nothing Then
             txtLootScanAreaPoints.Text = FormatLootScanPoints(BotConfig.CreateDefaultLootScanPoints())
         End If
@@ -2326,6 +2324,7 @@ Public Class Form1
             $"MapCoordinateXY: {If(st.MapCoordinateX >= 0 AndAlso st.MapCoordinateY >= 0, st.MapCoordinateX.ToString() & "," & st.MapCoordinateY.ToString(), "n/a")}{Environment.NewLine}" &
             $"MapHeading: {If(String.IsNullOrWhiteSpace(st.MapHeading), "n/a", st.MapHeading)}{Environment.NewLine}" &
             $"MapCoordinateConfidence: {st.MapCoordinateConfidence}{Environment.NewLine}" &
+            $"MapVisible: {st.MapVisible}{Environment.NewLine}" &
             $"MapMarkerDetected: {st.MapMarkerDetected}{Environment.NewLine}" &
             $"MapMarkerXY: {If(st.MapMarkerX >= 0 AndAlso st.MapMarkerY >= 0, st.MapMarkerX.ToString() & "," & st.MapMarkerY.ToString(), "n/a")}{Environment.NewLine}" &
             $"MapLocalizationConfidence: {st.MapLocalizationConfidence}{Environment.NewLine}" &
@@ -2447,7 +2446,7 @@ Public Class Form1
             lblMapHeading.Text = $"Map Heading: {If(String.IsNullOrWhiteSpace(status.MapHeading), "n/a", status.MapHeading)}"
         End If
         If lblMapMarker IsNot Nothing Then
-            Dim markerText As String = If(status.MapMarkerDetected, $"{status.MapMarkerX},{status.MapMarkerY}", "not detected")
+            Dim markerText As String = If(status.MapMarkerDetected, $"{status.MapMarkerX}/{status.MapMarkerY} (from coordinates)", "not available")
             lblMapMarker.Text = $"Map Marker: {markerText}"
             lblMapMarker.ForeColor = If(status.MapMarkerDetected, Color.FromArgb(255, 140, 120), Color.DimGray)
         End If
@@ -2759,8 +2758,6 @@ Public Class Form1
         cfg.PartyInviteOkRect = BuildRect("party_invite_ok_rect")
         cfg.MapRect = BuildRect("map_rect")
         cfg.MapCoordinateRect = BuildRect("map_coordinate_rect")
-        cfg.MapPlayerMarkerRect = BuildRect("map_player_marker_rect")
-        cfg.MapHeadingRect = BuildRect("map_heading_rect")
         cfg.LootScanPoints = BuildLootScanPoints()
         cfg.LootScanRect = BuildLootScanBoundingRect(cfg.LootScanPoints)
         cfg.LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked)
@@ -3269,8 +3266,6 @@ Public Class Form1
         UpsertRegionRow("party_invite_ok_rect", cfg.PartyInviteOkRect)
         UpsertRegionRow("map_rect", cfg.MapRect)
         UpsertRegionRow("map_coordinate_rect", cfg.MapCoordinateRect)
-        UpsertRegionRow("map_player_marker_rect", cfg.MapPlayerMarkerRect)
-        UpsertRegionRow("map_heading_rect", cfg.MapHeadingRect)
         If txtLootScanAreaPoints IsNot Nothing Then
             Dim lootPoints As List(Of LootScanPoint) = GetEffectiveLootScanPoints(cfg)
             txtLootScanAreaPoints.Text = FormatLootScanPoints(lootPoints)

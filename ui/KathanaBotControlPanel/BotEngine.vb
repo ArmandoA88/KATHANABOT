@@ -121,8 +121,6 @@ Public Class BotConfig
     Public Property PartyInviteOkRect As RectRegion = New RectRegion(463, 410, 59, 21)
     Public Property MapRect As RectRegion = New RectRegion(0, 0, 1024, 768)
     Public Property MapCoordinateRect As RectRegion = New RectRegion(6, 744, 120, 22)
-    Public Property MapPlayerMarkerRect As RectRegion = New RectRegion(470, 585, 120, 120)
-    Public Property MapHeadingRect As RectRegion = New RectRegion(968, 4, 40, 24)
     Public Property LootScanRect As RectRegion = New RectRegion(220, 80, 584, 430)
     Public Property LootScanPoints As List(Of LootScanPoint) = CreateDefaultLootScanPoints()
     Public Property BypassHpMpLimits As Boolean = False
@@ -237,6 +235,7 @@ Public Class BotStatus
     Public Property MapMarkerX As Integer = -1
     Public Property MapMarkerY As Integer = -1
     Public Property MapLocalizationConfidence As Integer = 0
+    Public Property MapVisible As Boolean
     Public Property NavigationMapName As String = ""
     Public Property NavigationCurrentNodeId As String = ""
     Public Property NavigationCurrentNodeLabel As String = ""
@@ -369,10 +368,11 @@ Public Class BotEngine
     Private Const ExpOcrMinIntervalMs As Integer = 900
     Private Const RupiahsOcrMinIntervalMs As Integer = 900
     Private Const MapCoordinateOcrMinIntervalMs As Integer = 900
-    Private Const MapHeadingOcrMinIntervalMs As Integer = 900
     Private Const MapMarkerScanMinIntervalMs As Integer = 250
     Private Const NavigationMapToggleCooldownMs As Integer = 450
     Private Const NavigationMapSampleWindowMs As Integer = 950
+    Private Const NavigationMapLocalizationRetryDelayMs As Integer = 5000
+    Private Const NavigationMapLocalizationFailureLimit As Integer = 2
     Private Const NavigationKnownPoseMaxAgeMs As Integer = 15000
     Private Const NavigationProgressImprovementThreshold As Double = 8.0
     Private Const NavigationRecoveryCooldownMs As Integer = 1500
@@ -447,13 +447,12 @@ Public Class BotEngine
     Private _lastMapCoordinateX As Integer = -1
     Private _lastMapCoordinateY As Integer = -1
     Private _lastMapCoordinateConfidence As Integer = 0
-    Private _lastMapHeadingOcrAt As DateTime = DateTime.MinValue
-    Private _lastMapHeading As String = ""
     Private _lastMapMarkerScanAt As DateTime = DateTime.MinValue
     Private _lastMapMarkerDetected As Boolean = False
     Private _lastMapMarkerX As Integer = -1
     Private _lastMapMarkerY As Integer = -1
     Private _lastMapLocalizationConfidence As Integer = 0
+    Private _lastMapVisible As Boolean = False
     Private _lastNavigationMapName As String = ""
     Private _lastNavigationCurrentNodeId As String = ""
     Private _lastNavigationCurrentNodeLabel As String = ""
@@ -475,10 +474,16 @@ Public Class BotEngine
     Private _lastNavigationKnownPoseAt As DateTime = DateTime.MinValue
     Private _lastNavigationKnownX As Integer = -1
     Private _lastNavigationKnownY As Integer = -1
+    Private _lastNavigationPreviousX As Integer = -1
+    Private _lastNavigationPreviousY As Integer = -1
     Private _lastNavigationKnownHeading As String = ""
     Private _lastNavigationMapToggleAt As DateTime = DateTime.MinValue
     Private _lastNavigationMoveCommandAt As DateTime = DateTime.MinValue
     Private _navigationMapExpectedOpen As Boolean = False
+    Private _navigationAwaitingLocalization As Boolean = False
+    Private _navigationLocalizationRetryAfter As DateTime = DateTime.MinValue
+    Private _navigationLocalizationFailureCount As Integer = 0
+    Private _navigationLocalizationPaused As Boolean = False
     Private ReadOnly _lootRandom As New Random()
     Private ReadOnly _lastKeyTime As New Dictionary(Of String, DateTime)(StringComparer.OrdinalIgnoreCase)
     Private _lastGoodHpPercent As Double = -1
@@ -602,13 +607,16 @@ Public Class BotEngine
             _lastMapCoordinateX = -1
             _lastMapCoordinateY = -1
             _lastMapCoordinateConfidence = 0
-            _lastMapHeadingOcrAt = DateTime.MinValue
-            _lastMapHeading = ""
             _lastMapMarkerScanAt = DateTime.MinValue
             _lastMapMarkerDetected = False
             _lastMapMarkerX = -1
             _lastMapMarkerY = -1
             _lastMapLocalizationConfidence = 0
+            _lastMapVisible = False
+            _navigationAwaitingLocalization = False
+            _navigationLocalizationRetryAfter = DateTime.MinValue
+            _navigationLocalizationFailureCount = 0
+            _navigationLocalizationPaused = False
             _lastNavigationMapName = ""
             _lastNavigationCurrentNodeId = ""
             _lastNavigationCurrentNodeLabel = ""
@@ -630,6 +638,8 @@ Public Class BotEngine
             _lastNavigationKnownPoseAt = DateTime.MinValue
             _lastNavigationKnownX = -1
             _lastNavigationKnownY = -1
+            _lastNavigationPreviousX = -1
+            _lastNavigationPreviousY = -1
             _lastNavigationKnownHeading = ""
             _lastNavigationMapToggleAt = DateTime.MinValue
             _lastNavigationMoveCommandAt = DateTime.MinValue
@@ -748,9 +758,7 @@ Public Class BotEngine
             Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
             Dim mapRegion As New RectRegion(0, 0, 1, 1)
             Dim mapCoordinateRegion As New RectRegion(0, 0, 1, 1)
-            Dim mapPlayerMarkerRegion As New RectRegion(0, 0, 1, 1)
-            Dim mapHeadingRegion As New RectRegion(0, 0, 1, 1)
-            ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, mapRegion, mapCoordinateRegion, mapPlayerMarkerRegion, mapHeadingRegion)
+            ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, mapRegion, mapCoordinateRegion)
             Dim lootScanPolygon As List(Of DrawingPoint) = ResolveLootScanPolygon(cfg, frame.Width, frame.Height)
 
             Dim hpPct As Double = ComputeBarPercent(frame, hpRegion, True)
@@ -769,7 +777,7 @@ Public Class BotEngine
                         Exit For
                     End If
 
-                    ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, mapRegion, mapCoordinateRegion, mapPlayerMarkerRegion, mapHeadingRegion)
+                    ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, mapRegion, mapCoordinateRegion)
                     lootScanPolygon = ResolveLootScanPolygon(cfg, frame.Width, frame.Height)
                     hpPct = ComputeBarPercent(frame, hpRegion, True)
                     mpPct = ComputeBarPercent(frame, mpRegion, False)
@@ -889,9 +897,9 @@ Public Class BotEngine
             Dim rupiahsPerHour As Double = UpdateRupiahsRate(rupiahsTotal, now)
             If cfg.NavigationEnabled Then
                 ReadMapCoordinateIfNeeded(frame, mapCoordinateRegion, now)
-                ReadMapHeadingIfNeeded(frame, mapHeadingRegion, now)
-                ScanMapPlayerMarkerIfNeeded(frame, mapPlayerMarkerRegion, now)
+                ScanMapPlayerMarkerIfNeeded(now)
                 UpdateMapLocalizationConfidence()
+                UpdateMapVisibleState()
                 UpdateLastKnownNavigationPose(now)
                 UpdateNavigationPreview(cfg, now)
             Else
@@ -1180,6 +1188,19 @@ Public Class BotEngine
         Return False
     End Function
 
+    Private Function IsSuspiciousSingleResourceZero(currentPct As Double, lastGoodPct As Double, companionPct As Double, lastGoodCompanionPct As Double) As Boolean
+        If currentPct > 0.25 Then
+            Return False
+        End If
+        If lastGoodPct < 5.0 Then
+            Return False
+        End If
+
+        Dim companionLooksHealthy As Boolean = companionPct >= 3.0
+        Dim companionLooksStable As Boolean = lastGoodCompanionPct >= 0 AndAlso Math.Abs(companionPct - lastGoodCompanionPct) <= 35.0
+        Return companionLooksHealthy OrElse companionLooksStable
+    End Function
+
     Private Shared Function IsHudRegionVeryDark(frame As Bitmap, region As RectRegion) As Boolean
         Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
         If rect.Width <= 0 OrElse rect.Height <= 0 Then
@@ -1216,6 +1237,12 @@ Public Class BotEngine
     Private Sub ApplyVisionStabilityFilter(ByRef hpPct As Double, ByRef mpPct As Double, ByRef mobHpPct As Double, ByRef mobName As String, captureGlitch As Boolean)
         Dim hasBaseline As Boolean = _lastGoodHpPercent >= 0 AndAlso _lastGoodMpPercent >= 0
         Dim bothNearZero As Boolean = hpPct <= 0.25 AndAlso mpPct <= 0.25
+        Dim suspiciousSingleHpZero As Boolean =
+            hasBaseline AndAlso
+            IsSuspiciousSingleResourceZero(hpPct, _lastGoodHpPercent, mpPct, _lastGoodMpPercent)
+        Dim suspiciousSingleMpZero As Boolean =
+            hasBaseline AndAlso
+            IsSuspiciousSingleResourceZero(mpPct, _lastGoodMpPercent, hpPct, _lastGoodHpPercent)
         If bothNearZero Then
             _zeroPairConfirmCount += 1
         Else
@@ -1228,7 +1255,7 @@ Public Class BotEngine
             (_lastGoodHpPercent >= 5.0 OrElse _lastGoodMpPercent >= 5.0) AndAlso
             _zeroPairConfirmCount < 12
 
-        If captureGlitch OrElse suspiciousZeroSpike Then
+        If captureGlitch OrElse suspiciousZeroSpike OrElse suspiciousSingleHpZero OrElse suspiciousSingleMpZero Then
             _zeroSpikeHoldCount += 1
             If hasBaseline Then
                 hpPct = _lastGoodHpPercent
@@ -1445,13 +1472,16 @@ Public Class BotEngine
         _lastMapCoordinateX = -1
         _lastMapCoordinateY = -1
         _lastMapCoordinateConfidence = 0
-        _lastMapHeadingOcrAt = DateTime.MinValue
-        _lastMapHeading = ""
         _lastMapMarkerScanAt = DateTime.MinValue
         _lastMapMarkerDetected = False
         _lastMapMarkerX = -1
         _lastMapMarkerY = -1
         _lastMapLocalizationConfidence = 0
+        _lastMapVisible = False
+        _navigationAwaitingLocalization = False
+        _navigationLocalizationRetryAfter = DateTime.MinValue
+        _navigationLocalizationFailureCount = 0
+        _navigationLocalizationPaused = False
     End Sub
 
     Private Sub ClearNavigationPreviewRuntime()
@@ -1479,10 +1509,16 @@ Public Class BotEngine
         _lastNavigationKnownPoseAt = DateTime.MinValue
         _lastNavigationKnownX = -1
         _lastNavigationKnownY = -1
+        _lastNavigationPreviousX = -1
+        _lastNavigationPreviousY = -1
         _lastNavigationKnownHeading = ""
         _lastNavigationMapToggleAt = DateTime.MinValue
         _lastNavigationMoveCommandAt = DateTime.MinValue
         _navigationMapExpectedOpen = False
+        _navigationAwaitingLocalization = False
+        _navigationLocalizationRetryAfter = DateTime.MinValue
+        _navigationLocalizationFailureCount = 0
+        _navigationLocalizationPaused = False
     End Sub
 
     Private Sub ReadMapCoordinateIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime)
@@ -1513,7 +1549,7 @@ Public Class BotEngine
                 g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
             End Using
 
-            Dim rawText As String = OcrReader.ReadScreenText(crop)
+            Dim rawText As String = ReadMapCoordinateTextForOcr(crop)
             Dim x As Integer = -1
             Dim y As Integer = -1
             Dim confidence As Integer = 0
@@ -1532,34 +1568,48 @@ Public Class BotEngine
         End Using
     End Sub
 
-    Private Sub ReadMapHeadingIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime)
-        If _lastMapHeadingOcrAt <> DateTime.MinValue AndAlso (now - _lastMapHeadingOcrAt).TotalMilliseconds < MapHeadingOcrMinIntervalMs Then
-            Return
+    Private Shared Function ReadMapCoordinateTextForOcr(crop As Bitmap) As String
+        If crop Is Nothing Then
+            Return ""
         End If
 
-        _lastMapHeadingOcrAt = now
-        If frame Is Nothing OrElse region Is Nothing Then
-            _lastMapHeading = ""
-            Return
-        End If
-
-        Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
-        If rect.Width <= 0 OrElse rect.Height <= 0 Then
-            _lastMapHeading = ""
-            Return
-        End If
-
-        Using crop As New Bitmap(Math.Max(1, rect.Width), Math.Max(1, rect.Height), PixelFormat.Format24bppRgb)
-            Using g As Graphics = Graphics.FromImage(crop)
-                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
+        Using enlarged As New Bitmap(Math.Max(1, crop.Width * 3), Math.Max(1, crop.Height * 3), PixelFormat.Format24bppRgb)
+            Using g As Graphics = Graphics.FromImage(enlarged)
+                g.Clear(Color.Black)
+                g.InterpolationMode = InterpolationMode.NearestNeighbor
+                g.PixelOffsetMode = PixelOffsetMode.Half
+                g.DrawImage(crop, New Rectangle(0, 0, enlarged.Width, enlarged.Height), New Rectangle(0, 0, crop.Width, crop.Height), GraphicsUnit.Pixel)
             End Using
 
-            Dim rawText As String = OcrReader.ReadScreenText(crop)
-            _lastMapHeading = ParseMapHeading(rawText)
-        End Using
-    End Sub
+            Dim rawText As String = OcrReader.ReadScreenText(enlarged)
+            If Regex.IsMatch(If(rawText, ""), "\d{3}\s*[/,]\s*\d{3}") Then
+                Return rawText
+            End If
 
-    Private Sub ScanMapPlayerMarkerIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime)
+            Using thresholded As New Bitmap(enlarged.Width, enlarged.Height, PixelFormat.Format24bppRgb)
+                For y As Integer = 0 To enlarged.Height - 1
+                    For x As Integer = 0 To enlarged.Width - 1
+                        Dim px As Color = enlarged.GetPixel(x, y)
+                        Dim luma As Integer = (CInt(px.R) * 30 + CInt(px.G) * 59 + CInt(px.B) * 11) \ 100
+                        thresholded.SetPixel(x, y, If(luma >= 140, Color.White, Color.Black))
+                    Next
+                Next
+
+                Dim thresholdText As String = OcrReader.ReadScreenText(thresholded)
+                If Regex.IsMatch(If(thresholdText, ""), "\d{3}\s*[/,]\s*\d{3}") Then
+                    Return thresholdText
+                End If
+
+                If String.IsNullOrWhiteSpace(rawText) Then
+                    Return thresholdText
+                End If
+
+                Return rawText
+            End Using
+        End Using
+    End Function
+
+    Private Sub ScanMapPlayerMarkerIfNeeded(now As DateTime)
         If _lastMapMarkerScanAt <> DateTime.MinValue AndAlso (now - _lastMapMarkerScanAt).TotalMilliseconds < MapMarkerScanMinIntervalMs Then
             Return
         End If
@@ -1569,48 +1619,46 @@ Public Class BotEngine
         _lastMapMarkerX = -1
         _lastMapMarkerY = -1
 
-        If frame Is Nothing OrElse region Is Nothing Then
+        If _lastMapCoordinateX < 0 OrElse _lastMapCoordinateY < 0 Then
             Return
         End If
 
-        Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
-        If rect.Width <= 0 OrElse rect.Height <= 0 Then
+        If _lastMapCoordinateConfidence < 70 Then
             Return
         End If
 
-        Dim hitCount As Integer = 0
-        Dim totalX As Long = 0
-        Dim totalY As Long = 0
-
-        For y As Integer = rect.Top To rect.Bottom - 1
-            For x As Integer = rect.Left To rect.Right - 1
-                Dim c As Color = frame.GetPixel(x, y)
-                If IsMapMarkerColor(c) Then
-                    hitCount += 1
-                    totalX += x - rect.Left
-                    totalY += y - rect.Top
-                End If
-            Next
-        Next
-
-        If hitCount >= 8 Then
-            _lastMapMarkerDetected = True
-            _lastMapMarkerX = CInt(Math.Round(totalX / Math.Max(1.0, CDbl(hitCount))))
-            _lastMapMarkerY = CInt(Math.Round(totalY / Math.Max(1.0, CDbl(hitCount))))
-        End If
+        ' Marker state is derived from the parsed XXX/YYY map coordinates.
+        _lastMapMarkerDetected = True
+        _lastMapMarkerX = _lastMapCoordinateX
+        _lastMapMarkerY = _lastMapCoordinateY
     End Sub
 
     Private Sub UpdateMapLocalizationConfidence()
         Dim confidence As Integer = 0
-        confidence += Math.Max(0, Math.Min(60, _lastMapCoordinateConfidence))
-        If _lastMapHeading <> "" Then
-            confidence += 15
-        End If
-        If _lastMapMarkerDetected Then
-            confidence += 25
-        End If
+        confidence += Math.Max(0, Math.Min(100, _lastMapCoordinateConfidence))
         _lastMapLocalizationConfidence = Math.Max(0, Math.Min(100, confidence))
     End Sub
+
+    Private Sub UpdateMapVisibleState()
+        Dim strongCoordinate As Boolean = _lastMapCoordinateConfidence >= 70 AndAlso _lastMapCoordinateX >= 0 AndAlso _lastMapCoordinateY >= 0
+        _lastMapVisible = strongCoordinate OrElse (_lastMapLocalizationConfidence >= 80)
+    End Sub
+
+    Private Function IsNavigationMapOpen(now As DateTime) As Boolean
+        If _lastMapVisible Then
+            _navigationMapExpectedOpen = True
+            Return True
+        End If
+
+        If _navigationMapExpectedOpen Then
+            If _lastNavigationMapToggleAt <> DateTime.MinValue AndAlso (now - _lastNavigationMapToggleAt).TotalMilliseconds < NavigationMapSampleWindowMs Then
+                Return True
+            End If
+            _navigationMapExpectedOpen = False
+        End If
+
+        Return False
+    End Function
 
     Private Sub UpdateLastKnownNavigationPose(now As DateTime)
         If _lastMapCoordinateX < 0 OrElse _lastMapCoordinateY < 0 Then
@@ -1620,12 +1668,22 @@ Public Class BotEngine
             Return
         End If
 
+        If _lastNavigationKnownX >= 0 AndAlso _lastNavigationKnownY >= 0 Then
+            _lastNavigationPreviousX = _lastNavigationKnownX
+            _lastNavigationPreviousY = _lastNavigationKnownY
+            Dim inferredHeading As String = InferHeadingFromCoordinateDelta(_lastNavigationKnownX, _lastNavigationKnownY, _lastMapCoordinateX, _lastMapCoordinateY)
+            If Not String.IsNullOrWhiteSpace(inferredHeading) Then
+                _lastNavigationKnownHeading = inferredHeading
+            End If
+        End If
+
         _lastNavigationKnownPoseAt = now
         _lastNavigationKnownX = _lastMapCoordinateX
         _lastNavigationKnownY = _lastMapCoordinateY
-        If Not String.IsNullOrWhiteSpace(_lastMapHeading) Then
-            _lastNavigationKnownHeading = _lastMapHeading.Trim().ToUpperInvariant()
-        End If
+        _navigationAwaitingLocalization = False
+        _navigationLocalizationRetryAfter = DateTime.MinValue
+        _navigationLocalizationFailureCount = 0
+        _navigationLocalizationPaused = False
     End Sub
 
     Private Function BuildNavigationPlan(cfg As BotConfig, now As DateTime, allowStaleLocalization As Boolean) As NavigationPlan
@@ -1849,6 +1907,20 @@ Public Class BotEngine
         Return Math.Sqrt((dx * dx) + (dy * dy))
     End Function
 
+    Private Shared Function InferHeadingFromCoordinateDelta(fromX As Integer, fromY As Integer, toX As Integer, toY As Integer) As String
+        Dim dx As Integer = toX - fromX
+        Dim dy As Integer = toY - fromY
+        If dx = 0 AndAlso dy = 0 Then
+            Return ""
+        End If
+
+        If Math.Abs(dx) >= Math.Abs(dy) Then
+            Return If(dx >= 0, "E", "W")
+        End If
+
+        Return If(dy >= 0, "S", "N")
+    End Function
+
     Private Shared Function ParseHeadingAngle(heading As String) As Double
         Select Case If(heading, "").Trim().ToUpperInvariant()
             Case "N"
@@ -1914,6 +1986,13 @@ Public Class BotEngine
         SetLastAction($"{keyName} ({actionLabel})")
         _lastNavigationMapToggleAt = now
         _navigationMapExpectedOpen = expectMapOpen
+        If expectMapOpen Then
+            _navigationAwaitingLocalization = True
+            _navigationLocalizationRetryAfter = now.AddMilliseconds(NavigationMapLocalizationRetryDelayMs)
+        Else
+            _navigationAwaitingLocalization = False
+            _navigationLocalizationRetryAfter = DateTime.MinValue
+        End If
         Return True
     End Function
 
@@ -2026,7 +2105,18 @@ Public Class BotEngine
 
         Dim currentHeadingAngle As Double = ParseHeadingAngle(_lastNavigationKnownHeading)
         Dim desiredHeadingAngle As Double = CalculateDesiredHeadingAngle(_lastNavigationKnownX, _lastNavigationKnownY, plan.NextWaypoint.X, plan.NextWaypoint.Y)
-        If Double.IsNaN(currentHeadingAngle) OrElse Double.IsNaN(desiredHeadingAngle) Then
+        If Double.IsNaN(desiredHeadingAngle) Then
+            Return False
+        End If
+
+        If Double.IsNaN(currentHeadingAngle) Then
+            Dim probeBurstMs As Integer = Math.Max(100, Math.Min(220, cfg.NavigationMoveBurstMs))
+            If SendKey(hwnd, "W", probeBurstMs) Then
+                MarkKeyUsed("W")
+                SetLastAction($"W (travel probe: {plan.NextWaypoint.Label})")
+                reason = $"Probing forward to infer facing toward {plan.NextWaypoint.Label}."
+                Return True
+            End If
             Return False
         End If
 
@@ -2073,24 +2163,52 @@ Public Class BotEngine
 
         If cfg Is Nothing OrElse Not cfg.LevelingAgentEnabled OrElse Not cfg.NavigationEnabled OrElse Not cfg.NavigationTravelExecutionEnabled Then
             _navigationMapExpectedOpen = False
+            _navigationAwaitingLocalization = False
+            _navigationLocalizationRetryAfter = DateTime.MinValue
+            _navigationLocalizationFailureCount = 0
+            _navigationLocalizationPaused = False
             Return False
         End If
 
         _lastNavigationTravelActive = True
+        If _navigationLocalizationPaused Then
+            _lastNavigationTravelActive = False
+            _lastNavigationTravelReason = "Navigation paused: map localization failed repeatedly. Recalibrate the map coordinate region."
+            reason = _lastNavigationTravelReason
+            Return False
+        End If
+
+        Dim mapOpen As Boolean = IsNavigationMapOpen(now)
         Dim plan As NavigationPlan = BuildNavigationPlan(cfg, now, allowStaleLocalization:=True)
         _lastNavigationDistanceToWaypoint = plan.DistanceToNextWaypoint
 
         If targetWindowVisible OrElse targetValid Then
             _lastNavigationTravelReason = "Travel execution paused while a combat target is active."
-            If _navigationMapExpectedOpen AndAlso (now - _lastNavigationMapToggleAt).TotalMilliseconds >= NavigationMapToggleCooldownMs Then
+            If mapOpen AndAlso (now - _lastNavigationMapToggleAt).TotalMilliseconds >= NavigationMapToggleCooldownMs Then
                 TryToggleNavigationMap(cfg, hwnd, now, "close map for combat", expectMapOpen:=False)
             End If
             Return False
         End If
 
-        If _navigationMapExpectedOpen Then
+        If mapOpen Then
             If (now - _lastNavigationMapToggleAt).TotalMilliseconds < NavigationMapSampleWindowMs Then
                 _lastNavigationTravelReason = "Map sampling in progress for navigation."
+                reason = _lastNavigationTravelReason
+                Return False
+            End If
+
+            If Not plan.RouteReady OrElse plan.NextWaypoint Is Nothing Then
+                _navigationAwaitingLocalization = True
+                _navigationLocalizationFailureCount = Math.Max(_navigationLocalizationFailureCount, 1)
+                _lastNavigationTravelReason = If(plan.StatusText = "", "Map is open, but route localization is still incomplete.", plan.StatusText)
+                reason = _lastNavigationTravelReason
+                Return False
+            End If
+
+            If _lastNavigationKnownX < 0 OrElse _lastNavigationKnownY < 0 Then
+                _navigationAwaitingLocalization = True
+                _navigationLocalizationFailureCount = Math.Max(_navigationLocalizationFailureCount, 1)
+                _lastNavigationTravelReason = "Map is open, but position sampling is still incomplete. Check coordinate calibration."
                 reason = _lastNavigationTravelReason
                 Return False
             End If
@@ -2107,6 +2225,23 @@ Public Class BotEngine
         End If
 
         If Not plan.RouteReady OrElse plan.NextWaypoint Is Nothing Then
+            If _navigationAwaitingLocalization AndAlso now < _navigationLocalizationRetryAfter Then
+                _lastNavigationTravelReason = "Map did not localize after opening. Waiting before retry. Check map calibration."
+                reason = _lastNavigationTravelReason
+                Return False
+            End If
+
+            If _navigationAwaitingLocalization Then
+                _navigationLocalizationFailureCount += 1
+                If _navigationLocalizationFailureCount >= NavigationMapLocalizationFailureLimit Then
+                    _navigationLocalizationPaused = True
+                    _lastNavigationTravelActive = False
+                    _lastNavigationTravelReason = "Navigation paused after repeated failed map samples. Fix map coordinate calibration before retrying."
+                    reason = _lastNavigationTravelReason
+                    Return False
+                End If
+            End If
+
             If TryToggleNavigationMap(cfg, hwnd, now, "open map for route sample", expectMapOpen:=True) Then
                 _lastNavigationTravelReason = "Opening map to localize route."
                 reason = _lastNavigationTravelReason
@@ -2118,14 +2253,31 @@ Public Class BotEngine
             Return False
         End If
 
-        If _lastNavigationKnownX < 0 OrElse _lastNavigationKnownY < 0 OrElse String.IsNullOrWhiteSpace(_lastNavigationKnownHeading) Then
-            If TryToggleNavigationMap(cfg, hwnd, now, "open map for pose sample", expectMapOpen:=True) Then
-                _lastNavigationTravelReason = "Opening map to refresh position and heading."
+        If _lastNavigationKnownX < 0 OrElse _lastNavigationKnownY < 0 Then
+            If _navigationAwaitingLocalization AndAlso now < _navigationLocalizationRetryAfter Then
+                _lastNavigationTravelReason = "Map position sample is still missing. Waiting before retry. Check coordinate calibration."
+                reason = _lastNavigationTravelReason
+                Return False
+            End If
+
+            If _navigationAwaitingLocalization Then
+                _navigationLocalizationFailureCount += 1
+                If _navigationLocalizationFailureCount >= NavigationMapLocalizationFailureLimit Then
+                    _navigationLocalizationPaused = True
+                    _lastNavigationTravelActive = False
+                    _lastNavigationTravelReason = "Navigation paused after repeated failed position samples. Fix map coordinate calibration before retrying."
+                    reason = _lastNavigationTravelReason
+                    Return False
+                End If
+            End If
+
+            If TryToggleNavigationMap(cfg, hwnd, now, "open map for position sample", expectMapOpen:=True) Then
+                _lastNavigationTravelReason = "Opening map to refresh position."
                 reason = _lastNavigationTravelReason
                 Return True
             End If
 
-            _lastNavigationTravelReason = "Waiting for last-known position and heading."
+            _lastNavigationTravelReason = "Waiting for last-known map position."
             reason = _lastNavigationTravelReason
             Return False
         End If
@@ -2141,7 +2293,7 @@ Public Class BotEngine
             _lastNavigationProgressWaypointId = ""
             _lastNavigationProgressDistance = -1
             _lastNavigationProgressAt = now
-            If _navigationMapExpectedOpen AndAlso (now - _lastNavigationMapToggleAt).TotalMilliseconds >= NavigationMapToggleCooldownMs Then
+            If mapOpen AndAlso (now - _lastNavigationMapToggleAt).TotalMilliseconds >= NavigationMapToggleCooldownMs Then
                 TryToggleNavigationMap(cfg, hwnd, now, "close map at destination", expectMapOpen:=False)
             End If
             reason = _lastNavigationTravelReason
@@ -2236,26 +2388,6 @@ Public Class BotEngine
         End If
 
         Return False
-    End Function
-
-    Private Shared Function ParseMapHeading(rawText As String) As String
-        If String.IsNullOrWhiteSpace(rawText) Then
-            Return ""
-        End If
-
-        Dim normalized As String = Regex.Replace(rawText.ToUpperInvariant(), "[^NSEW]", "")
-        If normalized = "" Then
-            Return ""
-        End If
-
-        Dim directions As String() = {"NW", "NE", "SW", "SE", "N", "S", "E", "W"}
-        For Each direction As String In directions
-            If normalized.Contains(direction, StringComparison.Ordinal) Then
-                Return direction
-            End If
-        Next
-
-        Return ""
     End Function
 
     Private Shared Function IsMapMarkerColor(c As Color) As Boolean
@@ -2541,9 +2673,7 @@ Public Class BotEngine
             Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
             Dim mapRegion As New RectRegion(0, 0, 1, 1)
             Dim mapCoordinateRegion As New RectRegion(0, 0, 1, 1)
-            Dim mapPlayerMarkerRegion As New RectRegion(0, 0, 1, 1)
-            Dim mapHeadingRegion As New RectRegion(0, 0, 1, 1)
-            ResolveVisionRegions(cfg, verifyFrame.Width, verifyFrame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, mapRegion, mapCoordinateRegion, mapPlayerMarkerRegion, mapHeadingRegion)
+            ResolveVisionRegions(cfg, verifyFrame.Width, verifyFrame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, mapRegion, mapCoordinateRegion)
 
             Dim selectedName As String = ReadMobNameIfNeeded(verifyFrame, mobNameRegion, DateTime.UtcNow, True)
             If IsAllowedLootName(selectedName, cfg.LootAllowedNames, cfg.LootNameMatchThresholdPercent) Then
@@ -3805,12 +3935,13 @@ Public Class BotEngine
             _status.MapCoordinateText = _lastMapCoordinateText
             _status.MapCoordinateX = _lastMapCoordinateX
             _status.MapCoordinateY = _lastMapCoordinateY
-            _status.MapHeading = _lastMapHeading
+            _status.MapHeading = If(String.IsNullOrWhiteSpace(_lastNavigationKnownHeading), "", $"{_lastNavigationKnownHeading} (from coordinates)")
             _status.MapCoordinateConfidence = _lastMapCoordinateConfidence
             _status.MapMarkerDetected = _lastMapMarkerDetected
             _status.MapMarkerX = _lastMapMarkerX
             _status.MapMarkerY = _lastMapMarkerY
             _status.MapLocalizationConfidence = _lastMapLocalizationConfidence
+            _status.MapVisible = _lastMapVisible
             _status.NavigationMapName = _lastNavigationMapName
             _status.NavigationCurrentNodeId = _lastNavigationCurrentNodeId
             _status.NavigationCurrentNodeLabel = _lastNavigationCurrentNodeLabel
@@ -3857,6 +3988,7 @@ Public Class BotEngine
             .MapMarkerX = src.MapMarkerX,
             .MapMarkerY = src.MapMarkerY,
             .MapLocalizationConfidence = src.MapLocalizationConfidence,
+            .MapVisible = src.MapVisible,
             .NavigationMapName = src.NavigationMapName,
             .NavigationCurrentNodeId = src.NavigationCurrentNodeId,
             .NavigationCurrentNodeLabel = src.NavigationCurrentNodeLabel,
@@ -4291,7 +4423,7 @@ Public Class BotEngine
         Return colored / CDbl(total)
     End Function
 
-    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef unreachableTextRect As RectRegion, ByRef pranaExpRect As RectRegion, ByRef rupiahsRect As RectRegion, ByRef partyInviteScanRect As RectRegion, ByRef partyInviteOkRect As RectRegion, ByRef mapRect As RectRegion, ByRef mapCoordinateRect As RectRegion, ByRef mapPlayerMarkerRect As RectRegion, ByRef mapHeadingRect As RectRegion)
+    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef unreachableTextRect As RectRegion, ByRef pranaExpRect As RectRegion, ByRef rupiahsRect As RectRegion, ByRef partyInviteScanRect As RectRegion, ByRef partyInviteOkRect As RectRegion, ByRef mapRect As RectRegion, ByRef mapCoordinateRect As RectRegion)
         hpBar = CloneRegion(cfg.HpBar)
         mpBar = CloneRegion(cfg.MpBar)
         mobNameRect = CloneRegion(cfg.MobNameRect)
@@ -4303,8 +4435,6 @@ Public Class BotEngine
         partyInviteOkRect = CloneRegion(cfg.PartyInviteOkRect)
         mapRect = CloneRegion(cfg.MapRect)
         mapCoordinateRect = CloneRegion(cfg.MapCoordinateRect)
-        mapPlayerMarkerRect = CloneRegion(cfg.MapPlayerMarkerRect)
-        mapHeadingRect = CloneRegion(cfg.MapHeadingRect)
 
         If frameWidth <= 0 OrElse frameHeight <= 0 Then
             Exit Sub
@@ -4329,8 +4459,6 @@ Public Class BotEngine
         partyInviteOkRect = ScaleRegionLeftTop(cfg.PartyInviteOkRect, sx, sy)
         mapRect = ScaleRegionLeftTop(cfg.MapRect, sx, sy)
         mapCoordinateRect = ScaleRegionLeftTop(cfg.MapCoordinateRect, sx, sy)
-        mapPlayerMarkerRect = ScaleRegionLeftTop(cfg.MapPlayerMarkerRect, sx, sy)
-        mapHeadingRect = ScaleRegionRightTop(cfg.MapHeadingRect, sx, sy, frameWidth)
     End Sub
 
     Private Shared Function ResolveLootScanPolygon(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer) As List(Of DrawingPoint)
@@ -4360,8 +4488,6 @@ Public Class BotEngine
                SameRegion(cfg.PartyInviteOkRect, New RectRegion(463, 410, 59, 21)) AndAlso
                SameRegion(cfg.MapRect, New RectRegion(0, 0, 1024, 768)) AndAlso
                SameRegion(cfg.MapCoordinateRect, New RectRegion(6, 744, 120, 22)) AndAlso
-               SameRegion(cfg.MapPlayerMarkerRect, New RectRegion(470, 585, 120, 120)) AndAlso
-               SameRegion(cfg.MapHeadingRect, New RectRegion(968, 4, 40, 24)) AndAlso
                SameLootScanPolygon(cfg.LootScanPoints, BotConfig.CreateDefaultLootScanPoints())
     End Function
 
