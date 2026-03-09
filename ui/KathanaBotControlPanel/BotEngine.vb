@@ -408,7 +408,6 @@ Public Class BotEngine
     Public Event StatusUpdated(status As BotStatus)
     Public Event LogLine(line As String)
     Private Const AllowBlindAttackWhenTargetMissing As Boolean = False
-    Private Const RetargetExtraDelayMs As Integer = 300
     Private Const FirstHitWindowMs As Integer = 800
     Private Const BlacklistLockWindowMs As Integer = 800
     Private Const TargetNameConfirmMinGapMs As Integer = 120
@@ -435,6 +434,8 @@ Public Class BotEngine
     Private Const UnreachableConfirmWindowMs As Integer = 900
     Private Const UnreachableConfirmRequiredCount As Integer = 2
     Private Const UnreachableClearRequiredCount As Integer = 2
+    Private Const SustainedSingleZeroConfirmRequiredCount As Integer = 6
+    Private Const RetargetBufferMs As Integer = 500
     Private Const BaseClientWidth As Integer = 1024
     Private Const BaseClientHeight As Integer = 768
 
@@ -573,6 +574,8 @@ Public Class BotEngine
     Private _lastGoodMobName As String = ""
     Private _zeroSpikeHoldCount As Integer = 0
     Private _zeroPairConfirmCount As Integer = 0
+    Private _singleHpZeroConfirmCount As Integer = 0
+    Private _singleMpZeroConfirmCount As Integer = 0
     Private _lastRightAltAt As DateTime = DateTime.MinValue
     Private _agentState As LevelingAgentState = LevelingAgentState.Disabled
     Private _agentReason As String = ""
@@ -755,6 +758,8 @@ Public Class BotEngine
             _lastGoodMobName = ""
             _zeroSpikeHoldCount = 0
             _zeroPairConfirmCount = 0
+            _singleHpZeroConfirmCount = 0
+            _singleMpZeroConfirmCount = 0
             _lastRightAltAt = DateTime.MinValue
             _agentState = If(_config.LevelingAgentEnabled, LevelingAgentState.Searching, LevelingAgentState.Disabled)
             _agentReason = ""
@@ -808,7 +813,7 @@ Public Class BotEngine
                 cfg = _config
             End SyncLock
             Dim loopDelayMs As Integer = Math.Max(1, cfg.LoopMs)
-            Dim retargetDelayMs As Integer = Math.Max(loopDelayMs, cfg.RetargetMs + RetargetExtraDelayMs)
+            Dim retargetDelayMs As Integer = GetRetargetCooldownMs(cfg, loopDelayMs)
             Dim noTargetStableMs As Integer = retargetDelayMs
 
             Dim hwnd As IntPtr = FindGameWindow(cfg.WindowTitle)
@@ -1367,6 +1372,29 @@ Public Class BotEngine
         Dim suspiciousSingleMpZero As Boolean =
             hasBaseline AndAlso
             IsSuspiciousSingleResourceZero(mpPct, _lastGoodMpPercent, hpPct, _lastGoodHpPercent)
+
+        If suspiciousSingleHpZero Then
+            _singleHpZeroConfirmCount += 1
+        Else
+            _singleHpZeroConfirmCount = 0
+        End If
+
+        If suspiciousSingleMpZero Then
+            _singleMpZeroConfirmCount += 1
+        Else
+            _singleMpZeroConfirmCount = 0
+        End If
+
+        Dim sustainedSingleHpZero As Boolean = _singleHpZeroConfirmCount >= SustainedSingleZeroConfirmRequiredCount
+        Dim sustainedSingleMpZero As Boolean = _singleMpZeroConfirmCount >= SustainedSingleZeroConfirmRequiredCount
+
+        If sustainedSingleHpZero Then
+            suspiciousSingleHpZero = False
+        End If
+        If sustainedSingleMpZero Then
+            suspiciousSingleMpZero = False
+        End If
+
         If bothNearZero Then
             _zeroPairConfirmCount += 1
         Else
@@ -3369,7 +3397,7 @@ Public Class BotEngine
             Return
         End If
 
-        If _lastRetarget <> DateTime.MinValue AndAlso (now - _lastRetarget).TotalMilliseconds < 320 Then
+        If _lastRetarget <> DateTime.MinValue AndAlso (now - _lastRetarget).TotalMilliseconds < GetRetargetCooldownMs(cfg, 1) Then
             Return
         End If
 
@@ -3866,7 +3894,7 @@ Public Class BotEngine
         End If
 
         If (Not _unreachableLatched) AndAlso _unreachableConfirmCount >= UnreachableConfirmRequiredCount Then
-            Dim unreachableRetargetMs As Integer = Math.Max(1, cfg.RetargetMs + RetargetExtraDelayMs)
+            Dim unreachableRetargetMs As Integer = GetRetargetCooldownMs(cfg, 1)
             Dim triggerReady As Boolean = (_lastUnreachableTrigger = DateTime.MinValue) OrElse ((now - _lastUnreachableTrigger).TotalMilliseconds >= unreachableRetargetMs)
             If triggerReady Then
                 _lastUnreachableTrigger = now
@@ -4369,6 +4397,13 @@ Public Class BotEngine
         Return cleaned
     End Function
 
+    Private Shared Function GetRetargetCooldownMs(cfg As BotConfig, Optional minimumMs As Integer = 1) As Integer
+        If cfg Is Nothing Then
+            Return Math.Max(minimumMs, 1) + RetargetBufferMs
+        End If
+        Return Math.Max(Math.Max(1, cfg.RetargetMs), minimumMs) + RetargetBufferMs
+    End Function
+
     Private Sub TrackMobHpMovement(targetValid As Boolean, mobHpPct As Double, now As DateTime)
         If Not targetValid Then
             _lastMobHpSample = -1
@@ -4413,7 +4448,7 @@ Public Class BotEngine
             Return False
         End If
 
-        Dim retargetCooldownMs As Integer = Math.Max(1, cfg.RetargetMs + RetargetExtraDelayMs)
+        Dim retargetCooldownMs As Integer = GetRetargetCooldownMs(cfg, 1)
         If _noDamageAttackCount >= 3 AndAlso targetWindowVisible Then
             Return (now - _lastRetarget).TotalMilliseconds >= retargetCooldownMs
         End If
