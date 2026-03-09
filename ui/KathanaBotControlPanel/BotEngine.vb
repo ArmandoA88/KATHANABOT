@@ -146,6 +146,7 @@ Public Class BotConfig
     Public Property PartyInviteOkRect As RectRegion = New RectRegion(463, 410, 59, 21)
     Public Property MapRect As RectRegion = New RectRegion(0, 0, 1024, 768)
     Public Property MapCoordinateRect As RectRegion = New RectRegion(6, 744, 120, 22)
+    Public Property ChatRect As RectRegion = New RectRegion(18, 548, 430, 144)
     Public Property LootScanRect As RectRegion = New RectRegion(220, 80, 584, 430)
     Public Property LootScanPoints As List(Of LootScanPoint) = CreateDefaultLootScanPoints()
     Public Property BypassHpMpLimits As Boolean = False
@@ -191,6 +192,11 @@ Public Class BotConfig
     Public Property RouteRecordingName As String = "jina_route"
     Public Property RouteRecordingMinSampleDistance As Integer = 8
     Public Property RouteRecordingMinNodeSpacing As Integer = 28
+    Public Property ChatTranslationEnabled As Boolean = False
+    Public Property ChatTranslationOverlayEnabled As Boolean = True
+    Public Property ChatTranslationTargetLanguage As String = "en"
+    Public Property ChatTranslationScanIntervalMs As Integer = 700
+    Public Property ChatTranslationMaxLines As Integer = 6
     Public Property Actions As List(Of ActionRule) = New List(Of ActionRule)()
 
     Public Shared Function CreateDefault() As BotConfig
@@ -258,6 +264,8 @@ Public Class BotStatus
     Public Property MapCoordinateText As String = ""
     Public Property MapCoordinateX As Integer = -1
     Public Property MapCoordinateY As Integer = -1
+    Public Property ChatOcrText As String = ""
+    Public Property ChatOcrUpdatedAt As DateTime = DateTime.MinValue
     Public Property MapHeading As String = ""
     Public Property MapCoordinateConfidence As Integer = 0
     Public Property MapMarkerDetected As Boolean
@@ -498,6 +506,10 @@ Public Class BotEngine
     Private _lastMapCoordinateX As Integer = -1
     Private _lastMapCoordinateY As Integer = -1
     Private _lastMapCoordinateConfidence As Integer = 0
+    Private _lastChatOcrAt As DateTime = DateTime.MinValue
+    Private _lastChatOcrText As String = ""
+    Private _lastChatOcrNormalized As String = ""
+    Private _lastChatOcrUpdatedAt As DateTime = DateTime.MinValue
     Private _lastMapMarkerScanAt As DateTime = DateTime.MinValue
     Private _lastMapMarkerDetected As Boolean = False
     Private _lastMapMarkerX As Integer = -1
@@ -678,6 +690,10 @@ Public Class BotEngine
             _lastMapCoordinateX = -1
             _lastMapCoordinateY = -1
             _lastMapCoordinateConfidence = 0
+            _lastChatOcrAt = DateTime.MinValue
+            _lastChatOcrText = ""
+            _lastChatOcrNormalized = ""
+            _lastChatOcrUpdatedAt = DateTime.MinValue
             _lastMapMarkerScanAt = DateTime.MinValue
             _lastMapMarkerDetected = False
             _lastMapMarkerX = -1
@@ -798,6 +814,7 @@ Public Class BotEngine
             Dim hwnd As IntPtr = FindGameWindow(cfg.WindowTitle)
             If hwnd = IntPtr.Zero Then
                 ClearMapLocalizationRuntime()
+                ClearChatTranslationRuntime()
                 UpdateLevelingAgentState(cfg, LevelingAgentState.Searching, "Game window not found.")
                 SetStatus(Sub(s)
                               s.WindowFound = False
@@ -822,6 +839,7 @@ Public Class BotEngine
             Dim frame As Bitmap = CaptureClient(hwnd)
             If frame Is Nothing Then
                 ClearMapLocalizationRuntime()
+                ClearChatTranslationRuntime()
                 UpdateLevelingAgentState(cfg, LevelingAgentState.Searching, "Unable to capture game client.")
                 SetStatus(Sub(s)
                               s.WindowFound = True
@@ -847,7 +865,8 @@ Public Class BotEngine
             Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
             Dim mapRegion As New RectRegion(0, 0, 1, 1)
             Dim mapCoordinateRegion As New RectRegion(0, 0, 1, 1)
-            ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, mapRegion, mapCoordinateRegion)
+            Dim chatRegion As New RectRegion(0, 0, 1, 1)
+            ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, mapRegion, mapCoordinateRegion, chatRegion)
             Dim lootScanPolygon As List(Of DrawingPoint) = ResolveLootScanPolygon(cfg, frame.Width, frame.Height)
 
             Dim hpPct As Double = ComputeBarPercent(frame, hpRegion, True)
@@ -866,7 +885,7 @@ Public Class BotEngine
                         Exit For
                     End If
 
-                    ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, mapRegion, mapCoordinateRegion)
+                    ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, mapRegion, mapCoordinateRegion, chatRegion)
                     lootScanPolygon = ResolveLootScanPolygon(cfg, frame.Width, frame.Height)
                     hpPct = ComputeBarPercent(frame, hpRegion, True)
                     mpPct = ComputeBarPercent(frame, mpRegion, False)
@@ -881,6 +900,7 @@ Public Class BotEngine
 
                 If frame Is Nothing Then
                     ClearMapLocalizationRuntime()
+                    ClearChatTranslationRuntime()
                     UpdateLevelingAgentState(cfg, LevelingAgentState.Searching, "Unable to capture game client.")
                     SetStatus(Sub(s)
                                   s.WindowFound = True
@@ -996,6 +1016,11 @@ Public Class BotEngine
                 ClearMapLocalizationRuntime()
                 ClearNavigationPreviewRuntime()
                 ClearNavigationTravelRuntime()
+            End If
+            If cfg.ChatTranslationEnabled Then
+                ReadChatTextIfNeeded(frame, chatRegion, cfg, now)
+            Else
+                ClearChatTranslationRuntime()
             End If
             Dim targetWindowVisible As Boolean = HasTargetWindowSignal(frame, mobHpRegion, mobName, mobHpPct)
             Dim hasHighMaxHpAction As Boolean = HasHighMaxHpAttackAction(cfg)
@@ -1723,6 +1748,86 @@ Public Class BotEngine
                 Return rawText
             End Using
         End Using
+    End Function
+
+    Private Sub ReadChatTextIfNeeded(frame As Bitmap, region As RectRegion, cfg As BotConfig, now As DateTime)
+        Dim minIntervalMs As Integer = Math.Max(250, If(cfg?.ChatTranslationScanIntervalMs, 700))
+        If _lastChatOcrAt <> DateTime.MinValue AndAlso (now - _lastChatOcrAt).TotalMilliseconds < minIntervalMs Then
+            Return
+        End If
+
+        _lastChatOcrAt = now
+        If frame Is Nothing OrElse region Is Nothing Then
+            ClearChatTranslationRuntime()
+            Return
+        End If
+
+        Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then
+            ClearChatTranslationRuntime()
+            Return
+        End If
+
+        Using crop As New Bitmap(Math.Max(1, rect.Width), Math.Max(1, rect.Height), PixelFormat.Format24bppRgb)
+            Using g As Graphics = Graphics.FromImage(crop)
+                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
+            End Using
+
+            Using enlarged As New Bitmap(Math.Max(1, crop.Width * 2), Math.Max(1, crop.Height * 2), PixelFormat.Format24bppRgb)
+                Using g As Graphics = Graphics.FromImage(enlarged)
+                    g.Clear(Color.Black)
+                    g.InterpolationMode = InterpolationMode.NearestNeighbor
+                    g.PixelOffsetMode = PixelOffsetMode.Half
+                    g.DrawImage(crop, New Rectangle(0, 0, enlarged.Width, enlarged.Height), New Rectangle(0, 0, crop.Width, crop.Height), GraphicsUnit.Pixel)
+                End Using
+
+                Dim rawText As String = OcrReader.ReadScreenText(enlarged)
+                Dim normalized As String = NormalizeChatOcrText(rawText)
+                If normalized = "" Then
+                    _lastChatOcrText = ""
+                    _lastChatOcrNormalized = ""
+                    Return
+                End If
+
+                If _lastChatOcrNormalized.Equals(normalized, StringComparison.Ordinal) Then
+                    Return
+                End If
+
+                _lastChatOcrText = normalized
+                _lastChatOcrNormalized = normalized
+                _lastChatOcrUpdatedAt = now
+            End Using
+        End Using
+    End Sub
+
+    Private Sub ClearChatTranslationRuntime()
+        _lastChatOcrText = ""
+        _lastChatOcrNormalized = ""
+        _lastChatOcrUpdatedAt = DateTime.MinValue
+    End Sub
+
+    Private Shared Function NormalizeChatOcrText(rawText As String) As String
+        Dim cleanedLines As New List(Of String)()
+        Dim source As String = If(rawText, "")
+        For Each rawLine As String In source.Replace(vbCrLf, vbLf).Replace(vbCr, vbLf).Split({vbLf}, StringSplitOptions.RemoveEmptyEntries)
+            Dim line As String = Regex.Replace(rawLine, "\s+", " ").Trim()
+            If line.Length < 2 Then
+                Continue For
+            End If
+            cleanedLines.Add(line)
+        Next
+
+        Dim deduped As New List(Of String)()
+        Dim previous As String = ""
+        For Each line As String In cleanedLines
+            If previous.Equals(line, StringComparison.OrdinalIgnoreCase) Then
+                Continue For
+            End If
+            deduped.Add(line)
+            previous = line
+        Next
+
+        Return String.Join(Environment.NewLine, deduped.Take(8))
     End Function
 
     Private Sub ScanMapPlayerMarkerIfNeeded(now As DateTime)
@@ -3294,7 +3399,8 @@ Public Class BotEngine
             Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
             Dim mapRegion As New RectRegion(0, 0, 1, 1)
             Dim mapCoordinateRegion As New RectRegion(0, 0, 1, 1)
-            ResolveVisionRegions(cfg, verifyFrame.Width, verifyFrame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, mapRegion, mapCoordinateRegion)
+            Dim chatRegion As New RectRegion(0, 0, 1, 1)
+            ResolveVisionRegions(cfg, verifyFrame.Width, verifyFrame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, mapRegion, mapCoordinateRegion, chatRegion)
 
             Dim selectedName As String = ReadMobNameIfNeeded(verifyFrame, mobNameRegion, DateTime.UtcNow, True)
             If IsAllowedLootName(selectedName, cfg.LootAllowedNames, cfg.LootNameMatchThresholdPercent) Then
@@ -3684,7 +3790,7 @@ Public Class BotEngine
             If keyName = "" Then
                 Continue For
             End If
-            If Not SendKey(hwnd, keyName, 20) Then
+            If Not SendKey(hwnd, keyName, 20, True) Then
                 Return typedAny
             End If
             typedAny = True
@@ -4583,6 +4689,8 @@ Public Class BotEngine
             _status.MapCoordinateText = _lastMapCoordinateText
             _status.MapCoordinateX = _lastMapCoordinateX
             _status.MapCoordinateY = _lastMapCoordinateY
+            _status.ChatOcrText = _lastChatOcrText
+            _status.ChatOcrUpdatedAt = _lastChatOcrUpdatedAt
             _status.MapHeading = If(String.IsNullOrWhiteSpace(_lastNavigationKnownHeading), "", $"{_lastNavigationKnownHeading} (from coordinates)")
             _status.MapCoordinateConfidence = _lastMapCoordinateConfidence
             _status.MapMarkerDetected = _lastMapMarkerDetected
@@ -4637,6 +4745,8 @@ Public Class BotEngine
             .MapCoordinateText = src.MapCoordinateText,
             .MapCoordinateX = src.MapCoordinateX,
             .MapCoordinateY = src.MapCoordinateY,
+            .ChatOcrText = src.ChatOcrText,
+            .ChatOcrUpdatedAt = src.ChatOcrUpdatedAt,
             .MapHeading = src.MapHeading,
             .MapCoordinateConfidence = src.MapCoordinateConfidence,
             .MapMarkerDetected = src.MapMarkerDetected,
@@ -5085,7 +5195,7 @@ Public Class BotEngine
         Return colored / CDbl(total)
     End Function
 
-    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef unreachableTextRect As RectRegion, ByRef pranaExpRect As RectRegion, ByRef rupiahsRect As RectRegion, ByRef partyInviteScanRect As RectRegion, ByRef partyInviteOkRect As RectRegion, ByRef mapRect As RectRegion, ByRef mapCoordinateRect As RectRegion)
+    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef unreachableTextRect As RectRegion, ByRef pranaExpRect As RectRegion, ByRef rupiahsRect As RectRegion, ByRef partyInviteScanRect As RectRegion, ByRef partyInviteOkRect As RectRegion, ByRef mapRect As RectRegion, ByRef mapCoordinateRect As RectRegion, ByRef chatRect As RectRegion)
         hpBar = CloneRegion(cfg.HpBar)
         mpBar = CloneRegion(cfg.MpBar)
         mobNameRect = CloneRegion(cfg.MobNameRect)
@@ -5097,6 +5207,7 @@ Public Class BotEngine
         partyInviteOkRect = CloneRegion(cfg.PartyInviteOkRect)
         mapRect = CloneRegion(cfg.MapRect)
         mapCoordinateRect = CloneRegion(cfg.MapCoordinateRect)
+        chatRect = CloneRegion(cfg.ChatRect)
 
         If frameWidth <= 0 OrElse frameHeight <= 0 Then
             Exit Sub
@@ -5121,6 +5232,7 @@ Public Class BotEngine
         partyInviteOkRect = ScaleRegionLeftTop(cfg.PartyInviteOkRect, sx, sy)
         mapRect = ScaleRegionLeftTop(cfg.MapRect, sx, sy)
         mapCoordinateRect = ScaleRegionLeftTop(cfg.MapCoordinateRect, sx, sy)
+        chatRect = ScaleRegionLeftTop(cfg.ChatRect, sx, sy)
     End Sub
 
     Private Shared Function ResolveLootScanPolygon(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer) As List(Of DrawingPoint)
@@ -5150,6 +5262,7 @@ Public Class BotEngine
                SameRegion(cfg.PartyInviteOkRect, New RectRegion(463, 410, 59, 21)) AndAlso
                SameRegion(cfg.MapRect, New RectRegion(0, 0, 1024, 768)) AndAlso
                SameRegion(cfg.MapCoordinateRect, New RectRegion(6, 744, 120, 22)) AndAlso
+               SameRegion(cfg.ChatRect, New RectRegion(18, 548, 430, 144)) AndAlso
                SameLootScanPolygon(cfg.LootScanPoints, BotConfig.CreateDefaultLootScanPoints())
     End Function
 
@@ -5257,7 +5370,7 @@ Public Class BotEngine
     Friend Shared Sub keybd_event(bVk As Byte, bScan As Byte, dwFlags As UInteger, dwExtraInfo As UIntPtr)
     End Sub
 
-    Public Shared Function SendKey(hwnd As IntPtr, keyName As String, pressMs As Integer) As Boolean
+    Public Shared Function SendKey(hwnd As IntPtr, keyName As String, pressMs As Integer, Optional forceBackgroundPost As Boolean = False) As Boolean
         If hwnd = IntPtr.Zero Then
             Return False
         End If
@@ -5277,7 +5390,7 @@ Public Class BotEngine
             vk = &H44
 
         ' Use keybd_event for ALT and movement keys because many games ignore PostMessage for them.
-        If usePhysicalKeyEvent Then
+        If usePhysicalKeyEvent AndAlso Not forceBackgroundPost Then
             Dim foregroundHwnd As IntPtr = NativeMethods.GetForegroundWindow()
             If foregroundHwnd <> hwnd Then
                 NativeMethods.SetForegroundWindow(hwnd)

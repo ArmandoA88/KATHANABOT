@@ -110,6 +110,7 @@ Public Class CalibrationOverlayForm
         DrawRegion(e.Graphics, "party_invite_ok_rect", _currentConfig.PartyInviteOkRect, Color.FromArgb(170, 120, 220, 160), "Party OK")
         DrawRegion(e.Graphics, "map_rect", _currentConfig.MapRect, Color.FromArgb(90, 80, 180, 255), "Map")
         DrawRegion(e.Graphics, "map_coordinate_rect", _currentConfig.MapCoordinateRect, Color.FromArgb(170, 70, 255, 170), "Map Coord")
+        DrawRegion(e.Graphics, "chat_rect", _currentConfig.ChatRect, Color.FromArgb(170, 255, 200, 110), "Chat")
 
         Dim tipRect As New Rectangle(8, 8, 520, 20)
         Using b As New SolidBrush(Color.FromArgb(185, 0, 0, 0))
@@ -336,7 +337,7 @@ Public Class CalibrationOverlayForm
     End Sub
 
     Private Function HitTestRegion(pt As System.Drawing.Point) As String
-        Dim keys As String() = {"map_coordinate_rect", "map_rect", "party_invite_ok_rect", "party_invite_scan_rect", "rupiahs_rect", "prana_exp_rect", "unreachable_text_rect", "mob_hp_rect", "mob_name_rect", "mp_bar", "hp_bar"}
+        Dim keys As String() = {"chat_rect", "map_coordinate_rect", "map_rect", "party_invite_ok_rect", "party_invite_scan_rect", "rupiahs_rect", "prana_exp_rect", "unreachable_text_rect", "mob_hp_rect", "mob_name_rect", "mp_bar", "hp_bar"}
         For Each key In keys
             Dim rect As System.Drawing.Rectangle = GetRegionRect(key)
             If GetResizeHandleRect(rect).Contains(pt) OrElse rect.Contains(pt) Then
@@ -438,6 +439,8 @@ Public Class CalibrationOverlayForm
                 Return _currentConfig.MapRect
             Case "map_coordinate_rect"
                 Return _currentConfig.MapCoordinateRect
+            Case "chat_rect"
+                Return _currentConfig.ChatRect
             Case Else
                 Return Nothing
         End Select
@@ -467,6 +470,8 @@ Public Class CalibrationOverlayForm
                 _currentConfig.MapRect = value
             Case "map_coordinate_rect"
                 _currentConfig.MapCoordinateRect = value
+            Case "chat_rect"
+                _currentConfig.ChatRect = value
         End Select
     End Sub
 

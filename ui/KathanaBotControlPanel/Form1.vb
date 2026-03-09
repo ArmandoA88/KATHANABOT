@@ -2,6 +2,7 @@
 Imports System.Net.Http
 Imports System.Runtime.InteropServices
 Imports System.Text
+Imports System.Text.RegularExpressions
 Imports System.Text.Json
 Imports System.Threading
 Imports System.Threading.Tasks
@@ -29,6 +30,12 @@ Public Class Form1
     Private btnOverlayToggle As Button
     Private dgvRegions As DataGridView
     Private txtLootScanAreaPoints As TextBox
+    Private chkChatTranslationEnabled As CheckBox
+    Private chkChatTranslationOverlay As CheckBox
+    Private txtChatTargetLanguage As TextBox
+    Private nudChatScanMs As NumericUpDown
+    Private nudChatMaxLines As NumericUpDown
+    Private lblChatTranslationStatus As Label
     Private picSnapshot As PictureBox
     Private pnlWindowFrame As Panel
     Private btnPickLootRejectPoint As Button
@@ -99,6 +106,7 @@ Public Class Form1
         Private btnPartyAsk As Button
     Private btnLootScanner As Button
     Private txtItemNtfyTopic As TextBox
+    Private txtStatsNtfyTopic As TextBox
     Private btnHelp As Button
     Private nudPartyAskSeconds As NumericUpDown
     Private txtPartyAskText As TextBox
@@ -113,6 +121,7 @@ Public Class Form1
     Private nudStuckTargetMs As NumericUpDown
     Private nudLootNameMatchThreshold As NumericUpDown
     Private nudAlarmVolume As NumericUpDown
+    Private nudStatsNtfyIntervalMinutes As NumericUpDown
     Private txtNtfyTopic As TextBox
 
     Private _lastAction As String = ""
@@ -127,9 +136,11 @@ Public Class Form1
         Private _partyAskEnabled As Boolean = False
     Private _lootScannerEnabled As Boolean = True
     Private _overlayForm As CalibrationOverlayForm
+    Private _chatTranslationOverlayForm As ChatTranslationOverlayForm
     Private _autoStarted As Boolean = False
     Private _alarmVolumePercent As Integer = 85
     Private _hpZeroAlarmActive As Boolean = False
+    Private _lastStatsNotificationUtc As DateTime = DateTime.MinValue
     Private _hpZeroPending As Boolean = False
     Private _hpAlarmCts As CancellationTokenSource = Nothing
     Private _hpAlarmTask As Task = Nothing
@@ -166,6 +177,12 @@ Public Class Form1
     Private ReadOnly _baseBackColors As New Dictionary(Of Control, Color)()
     Private ReadOnly _gridThemeSnapshots As New Dictionary(Of DataGridView, GridThemeSnapshot)()
     Private ReadOnly _keyActionEvents As New List(Of KeyActionEvent)()
+    Private ReadOnly _chatTranslator As New TranslationService()
+    Private ReadOnly _chatTranslationLock As New SemaphoreSlim(1, 1)
+    Private ReadOnly _chatSeenLineKeys As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+    Private ReadOnly _chatSeenLineOrder As New Queue(Of String)()
+    Private ReadOnly _chatOverlayEntries As New List(Of ChatOverlayLine)()
+    Private _lastChatOcrText As String = ""
 
     Private Class GridThemeSnapshot
         Public Property BackgroundColor As Color
@@ -218,6 +235,8 @@ Public Class Form1
         Public Property LootScannerEnabled As Boolean = True
         Public Property ItemNtfyTopic As String = "add"
         Public Property NtfyTopic As String = ""
+        Public Property StatsNtfyTopic As String = ""
+        Public Property StatsNtfyIntervalMinutes As Decimal = 30D
         Public Property AutoPotHpPercent As Decimal = 80D
         Public Property AutoPotMpPercent As Decimal = 35D
         Public Property AlarmVolumePercent As Integer = 85
@@ -290,8 +309,29 @@ Public Class Form1
         If txtNtfyTopic IsNot Nothing Then
             AddHandler txtNtfyTopic.TextChanged, AddressOf LiveConfigChanged
         End If
+        If txtStatsNtfyTopic IsNot Nothing Then
+            AddHandler txtStatsNtfyTopic.TextChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudStatsNtfyIntervalMinutes IsNot Nothing Then
+            AddHandler nudStatsNtfyIntervalMinutes.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
         If txtLootScanAreaPoints IsNot Nothing Then
             AddHandler txtLootScanAreaPoints.TextChanged, AddressOf LiveConfigChanged
+        End If
+        If chkChatTranslationEnabled IsNot Nothing Then
+            AddHandler chkChatTranslationEnabled.CheckedChanged, AddressOf LiveConfigChanged
+        End If
+        If chkChatTranslationOverlay IsNot Nothing Then
+            AddHandler chkChatTranslationOverlay.CheckedChanged, AddressOf LiveConfigChanged
+        End If
+        If txtChatTargetLanguage IsNot Nothing Then
+            AddHandler txtChatTargetLanguage.TextChanged, AddressOf LiveConfigChanged
+        End If
+        If nudChatScanMs IsNot Nothing Then
+            AddHandler nudChatScanMs.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If nudChatMaxLines IsNot Nothing Then
+            AddHandler nudChatMaxLines.ValueChanged, AddressOf LiveConfigChanged
         End If
         AddHandler nudLoopMs.ValueChanged, AddressOf LiveConfigChanged
         AddHandler nudRetargetMs.ValueChanged, AddressOf LiveConfigChanged
@@ -390,6 +430,21 @@ Public Class Form1
         AddHandler dgvCombat.CellEndEdit, AddressOf LiveConfigChanged
         AddHandler dgvRegions.CellValueChanged, AddressOf LiveConfigChanged
         AddHandler dgvRegions.CellEndEdit, AddressOf LiveConfigChanged
+        If chkChatTranslationEnabled IsNot Nothing Then
+            AddHandler chkChatTranslationEnabled.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
+        If chkChatTranslationOverlay IsNot Nothing Then
+            AddHandler chkChatTranslationOverlay.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
+        If txtChatTargetLanguage IsNot Nothing Then
+            AddHandler txtChatTargetLanguage.TextChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudChatScanMs IsNot Nothing Then
+            AddHandler nudChatScanMs.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudChatMaxLines IsNot Nothing Then
+            AddHandler nudChatMaxLines.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
         AddHandler chkMonsterFilter.CheckedChanged, AddressOf PersistListSettingsChanged
         AddHandler chkLootPickup.CheckedChanged, AddressOf PersistListSettingsChanged
         AddHandler nudLootPickupSeconds.ValueChanged, AddressOf PersistListSettingsChanged
@@ -582,11 +637,11 @@ Public Class Form1
         tab.Controls.Add(root)
 
         Dim left As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
-        left.RowStyles.Add(New RowStyle(SizeType.Absolute, 260.0F))
+        left.RowStyles.Add(New RowStyle(SizeType.Absolute, 380.0F))
         left.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
 
         Dim generalGroup As New GroupBox() With {.Text = "Vision + Window Setup", .Dock = DockStyle.Fill}
-        Dim generalLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 4, .RowCount = 5}
+        Dim generalLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 4, .RowCount = 9}
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 130.0F))
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 130.0F))
@@ -635,6 +690,35 @@ Public Class Form1
         Dim hint As New Label() With {.Text = "Mob HP Presence % = minimum red-fill detected in Mob HP bar. For high max HP special, make mob_hp_rect include the HP numbers and assign a Combat Skill row role to high_max_hp.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.LightGreen}
         generalLayout.Controls.Add(hint, 0, 4)
         generalLayout.SetColumnSpan(hint, 4)
+
+        chkChatTranslationEnabled = New CheckBox() With {.Text = "Enable chat translation OCR", .Dock = DockStyle.Fill}
+        generalLayout.Controls.Add(chkChatTranslationEnabled, 0, 5)
+        generalLayout.SetColumnSpan(chkChatTranslationEnabled, 2)
+
+        chkChatTranslationOverlay = New CheckBox() With {.Text = "Show translated overlay", .Dock = DockStyle.Fill, .Checked = True}
+        generalLayout.Controls.Add(chkChatTranslationOverlay, 2, 5)
+        generalLayout.SetColumnSpan(chkChatTranslationOverlay, 2)
+
+        generalLayout.Controls.Add(New Label() With {.Text = "Target Lang", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 6)
+        txtChatTargetLanguage = New TextBox() With {.Dock = DockStyle.Fill, .Text = "en"}
+        generalLayout.Controls.Add(txtChatTargetLanguage, 1, 6)
+
+        generalLayout.Controls.Add(New Label() With {.Text = "Chat Scan (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 2, 6)
+        nudChatScanMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 250, .Maximum = 5000, .Value = 700}
+        generalLayout.Controls.Add(nudChatScanMs, 3, 6)
+
+        generalLayout.Controls.Add(New Label() With {.Text = "Overlay Lines", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 7)
+        nudChatMaxLines = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 1, .Maximum = 12, .Value = 6}
+        generalLayout.Controls.Add(nudChatMaxLines, 1, 7)
+
+        lblChatTranslationStatus = New Label() With {
+            .Text = "Chat Translation: idle. Calibrate chat_rect in Regions, then keep the chat window visible.",
+            .Dock = DockStyle.Fill,
+            .ForeColor = Color.LightSteelBlue,
+            .TextAlign = ContentAlignment.MiddleLeft
+        }
+        generalLayout.Controls.Add(lblChatTranslationStatus, 0, 8)
+        generalLayout.SetColumnSpan(lblChatTranslationStatus, 4)
 
         generalGroup.Controls.Add(generalLayout)
         left.Controls.Add(generalGroup, 0, 0)
@@ -781,9 +865,11 @@ Public Class Form1
         thresholdsGroup.Controls.Add(thresholdsLayout)
 
         Dim notifyGroup As New GroupBox() With {.Text = "Notifications + Loot Matching", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
-        Dim notifyLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 5}
+        Dim notifyLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 7}
         notifyLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 180.0F))
         notifyLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
+        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
         notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
         notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
         notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
@@ -798,27 +884,36 @@ Public Class Form1
         txtItemNtfyTopic = New TextBox() With {.Dock = DockStyle.Fill, .Text = ""}
         notifyLayout.Controls.Add(txtItemNtfyTopic, 1, 1)
 
-        notifyLayout.Controls.Add(New Label() With {.Text = "Loot Name Match %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
+        notifyLayout.Controls.Add(New Label() With {.Text = "ntfy Channel (Stats)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
+        txtStatsNtfyTopic = New TextBox() With {.Dock = DockStyle.Fill, .Text = ""}
+        notifyLayout.Controls.Add(txtStatsNtfyTopic, 1, 2)
+
+        notifyLayout.Controls.Add(New Label() With {.Text = "Stats Interval (min)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 3)
+        nudStatsNtfyIntervalMinutes = New NumericUpDown() With {.Minimum = 1D, .Maximum = 1440D, .DecimalPlaces = 0, .Value = 30D, .Dock = DockStyle.Left, .Width = 100}
+        notifyLayout.Controls.Add(nudStatsNtfyIntervalMinutes, 1, 3)
+
+        notifyLayout.Controls.Add(New Label() With {.Text = "Loot Name Match %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 4)
         nudLootNameMatchThreshold = New NumericUpDown() With {.Minimum = 50, .Maximum = 100, .Value = DefaultLootNameMatchThresholdPercent, .Dock = DockStyle.Fill}
-        notifyLayout.Controls.Add(nudLootNameMatchThreshold, 1, 2)
+        notifyLayout.Controls.Add(nudLootNameMatchThreshold, 1, 4)
 
         Dim note As New Label() With {
             .Text = "Loot Name Match % controls fuzzy OCR matching for Loot Filter names. Use a higher value for stricter matching and a lower value when OCR is inconsistent." & Environment.NewLine &
-                    "Use role 'max_health' in Combat Skills if you want the max-health potion threshold controlled here. HP alarm only triggers at HP=0.",
+                    "Use role 'max_health' in Combat Skills if you want the max-health potion threshold controlled here. HP alarm only triggers at HP=0." & Environment.NewLine &
+                    "Stats alerts send Prana/EXP %, EXP/hr, Rupiahs total, and Rupiahs/hr on the interval you choose while the bot is running.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.TopLeft
         }
-        notifyLayout.Controls.Add(note, 0, 3)
+        notifyLayout.Controls.Add(note, 0, 5)
         notifyLayout.SetColumnSpan(note, 2)
 
         Dim notifyFoot As New Label() With {
-            .Text = "Item alerts use the item channel; death/window alerts use the global channel.",
+            .Text = "Item alerts use the item channel; death/window alerts use the global channel; periodic stats use the stats channel.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.Gray,
             .TextAlign = ContentAlignment.MiddleLeft
         }
-        notifyLayout.Controls.Add(notifyFoot, 0, 4)
+        notifyLayout.Controls.Add(notifyFoot, 0, 6)
         notifyLayout.SetColumnSpan(notifyFoot, 2)
         notifyGroup.Controls.Add(notifyLayout)
 
@@ -1386,6 +1481,7 @@ Public Class Form1
         dgvRegions.Rows.Add("party_invite_ok_rect", "463", "410", "59", "21")
         dgvRegions.Rows.Add("map_rect", "0", "0", "1024", "768")
         dgvRegions.Rows.Add("map_coordinate_rect", "6", "744", "120", "22")
+        dgvRegions.Rows.Add("chat_rect", "18", "548", "430", "144")
         If txtLootScanAreaPoints IsNot Nothing Then
             txtLootScanAreaPoints.Text = FormatLootScanPoints(BotConfig.CreateDefaultLootScanPoints())
         End If
@@ -2332,6 +2428,7 @@ Public Class Form1
     Private Sub UiTimerTick(sender As Object, e As EventArgs)
         PushLiveConfig()
         Dim st As BotStatus = _engine.GetStatus()
+        HandlePeriodicStatsNotification(st)
         txtDiagnostics.Text =
             $"Running: {st.Running}{Environment.NewLine}" &
             $"BypassHpMpLimits: {_bypassHpMpLimits}{Environment.NewLine}" &
@@ -2349,6 +2446,11 @@ Public Class Form1
             $"LevelingMinExpPerHour%: {If(nudLevelingMinExpPerHour IsNot Nothing, nudLevelingMinExpPerHour.Value.ToString("0.00"), DefaultLevelingMinExpPerHour.ToString("0.00"))}{Environment.NewLine}" &
             $"LevelingStopOnRepeatedUnreachable: {If(chkLevelingStopOnRepeatedUnreachable IsNot Nothing AndAlso chkLevelingStopOnRepeatedUnreachable.Checked, "True", "False")}{Environment.NewLine}" &
             $"LevelingUnreachableLimit: {If(nudLevelingUnreachableLimit IsNot Nothing, nudLevelingUnreachableLimit.Value.ToString(), "4")}{Environment.NewLine}" &
+            $"ChatTranslationEnabled: {If(chkChatTranslationEnabled IsNot Nothing AndAlso chkChatTranslationEnabled.Checked, "True", "False")}{Environment.NewLine}" &
+            $"ChatTranslationOverlay: {If(chkChatTranslationOverlay IsNot Nothing AndAlso chkChatTranslationOverlay.Checked, "True", "False")}{Environment.NewLine}" &
+            $"ChatTargetLanguage: {If(txtChatTargetLanguage IsNot Nothing, txtChatTargetLanguage.Text.Trim(), "en")}{Environment.NewLine}" &
+            $"ChatScanMs: {If(nudChatScanMs IsNot Nothing, nudChatScanMs.Value.ToString(), "700")}{Environment.NewLine}" &
+            $"ChatMaxLines: {If(nudChatMaxLines IsNot Nothing, nudChatMaxLines.Value.ToString(), "6")}{Environment.NewLine}" &
             $"NavigationEnabled: {If(chkNavigationEnabled IsNot Nothing AndAlso chkNavigationEnabled.Checked, "True", "False")}{Environment.NewLine}" &
             $"MapOpenKey: {If(txtMapOpenKey IsNot Nothing AndAlso txtMapOpenKey.Text.Trim() <> "", txtMapOpenKey.Text.Trim().ToUpperInvariant(), DefaultMapOpenKey)}{Environment.NewLine}" &
             $"TravelPreviewEnabled: {If(chkTravelPreview IsNot Nothing AndAlso chkTravelPreview.Checked, "True", "False")}{Environment.NewLine}" &
@@ -2369,6 +2471,9 @@ Public Class Form1
             $"RouteRecordingStatus: {If(String.IsNullOrWhiteSpace(st.RouteRecordingStatus), "n/a", st.RouteRecordingStatus)}{Environment.NewLine}" &
             $"RouteRecordingLastSavedPath: {If(String.IsNullOrWhiteSpace(st.RouteRecordingLastSavedPath), "n/a", st.RouteRecordingLastSavedPath)}{Environment.NewLine}" &
             $"NtfyTopic: {GetNtfyTopicName()}{Environment.NewLine}" &
+            $"StatsNtfyTopic: {GetStatsNtfyTopicName()}{Environment.NewLine}" &
+            $"StatsNtfyIntervalMinutes: {GetStatsNotificationIntervalMinutes()}{Environment.NewLine}" &
+            $"LastStatsNtfyUtc: {If(_lastStatsNotificationUtc = DateTime.MinValue, "n/a", _lastStatsNotificationUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"))}{Environment.NewLine}" &
             $"LootPickupEnabled: {If(chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked, "True", "False")}{Environment.NewLine}" &
             $"LootPickupIntervalSec: {If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value.ToString(), "4")}{Environment.NewLine}" &
             $"LootNameMatchThreshold%: {If(nudLootNameMatchThreshold IsNot Nothing, nudLootNameMatchThreshold.Value.ToString(), DefaultLootNameMatchThresholdPercent.ToString())}{Environment.NewLine}" &
@@ -2392,6 +2497,8 @@ Public Class Form1
             $"AgentState: {st.AgentState}{Environment.NewLine}" &
             $"AgentReason: {st.AgentReason}{Environment.NewLine}" &
             $"AgentGuardrailTriggered: {st.AgentGuardrailTriggered}{Environment.NewLine}" &
+            $"ChatOcrUpdatedAt: {If(st.ChatOcrUpdatedAt = DateTime.MinValue, "n/a", st.ChatOcrUpdatedAt.ToLocalTime().ToString("HH:mm:ss"))}{Environment.NewLine}" &
+            $"ChatOcrText: {If(String.IsNullOrWhiteSpace(st.ChatOcrText), "n/a", st.ChatOcrText.Replace(Environment.NewLine, " | "))}{Environment.NewLine}" &
             $"MapCoordinateText: {If(String.IsNullOrWhiteSpace(st.MapCoordinateText), "n/a", st.MapCoordinateText)}{Environment.NewLine}" &
             $"MapCoordinateXY: {If(st.MapCoordinateX >= 0 AndAlso st.MapCoordinateY >= 0, st.MapCoordinateX.ToString() & "," & st.MapCoordinateY.ToString(), "n/a")}{Environment.NewLine}" &
             $"MapHeading: {If(String.IsNullOrWhiteSpace(st.MapHeading), "n/a", st.MapHeading)}{Environment.NewLine}" &
@@ -2558,6 +2665,22 @@ Public Class Form1
             lblRouteRecording.Text = $"Route Recording: {recordingText}"
             lblRouteRecording.ForeColor = If(status.RouteRecordingActive, Color.Plum, If(status.RouteRecordingSampleCount >= 1, Color.LightPink, Color.DimGray))
         End If
+        If lblChatTranslationStatus IsNot Nothing Then
+            Dim chatState As String
+            If chkChatTranslationEnabled Is Nothing OrElse Not chkChatTranslationEnabled.Checked Then
+                chatState = "Chat Translation: disabled."
+                lblChatTranslationStatus.ForeColor = Color.DimGray
+            ElseIf String.IsNullOrWhiteSpace(status.ChatOcrText) Then
+                chatState = "Chat Translation: waiting for readable chat text in chat_rect."
+                lblChatTranslationStatus.ForeColor = Color.Khaki
+            Else
+                Dim lineCount As Integer = status.ChatOcrText.Split({Environment.NewLine}, StringSplitOptions.RemoveEmptyEntries).Length
+                chatState = $"Chat Translation: OCR captured {lineCount} line(s)."
+                lblChatTranslationStatus.ForeColor = Color.LightGreen
+            End If
+            lblChatTranslationStatus.Text = chatState
+        End If
+        HandleChatTranslation(status)
         UpdateAttackButtonAppearance(status.Running)
         HandleHpZeroAlarm(status)
         HandleWindowMissingAlarm(status)
@@ -2592,6 +2715,151 @@ Public Class Form1
             AppendLog($"Leveling agent: {status.AgentState}{If(String.IsNullOrWhiteSpace(status.AgentReason), "", " - " & status.AgentReason)}")
             _lastAgentState = agentStateText
         End If
+    End Sub
+
+    Private Sub HandleChatTranslation(status As BotStatus)
+        Dim translationEnabled As Boolean = (chkChatTranslationEnabled IsNot Nothing AndAlso chkChatTranslationEnabled.Checked)
+        Dim overlayEnabled As Boolean = (chkChatTranslationOverlay IsNot Nothing AndAlso chkChatTranslationOverlay.Checked)
+        If Not translationEnabled Then
+            _lastChatOcrText = ""
+            _chatSeenLineKeys.Clear()
+            _chatSeenLineOrder.Clear()
+            _chatOverlayEntries.Clear()
+            HideChatTranslationOverlay()
+            Return
+        End If
+
+        UpdateChatTranslationOverlayVisibility(overlayEnabled)
+
+        Dim rawText As String = If(status.ChatOcrText, "").Trim()
+        If rawText = "" OrElse rawText.Equals(_lastChatOcrText, StringComparison.Ordinal) Then
+            RefreshChatTranslationOverlayContent()
+            Return
+        End If
+
+        _lastChatOcrText = rawText
+        Dim targetLanguage As String = If(txtChatTargetLanguage IsNot Nothing AndAlso txtChatTargetLanguage.Text.Trim() <> "", txtChatTargetLanguage.Text.Trim().ToLowerInvariant(), "en")
+        Dim lines As List(Of String) = ParseChatOcrLines(rawText)
+        For Each line As String In lines
+            Dim key As String = NormalizeChatLineKey(line)
+            If key = "" OrElse _chatSeenLineKeys.Contains(key) Then
+                Continue For
+            End If
+
+            _chatSeenLineKeys.Add(key)
+            _chatSeenLineOrder.Enqueue(key)
+            While _chatSeenLineOrder.Count > 80
+                Dim expired As String = _chatSeenLineOrder.Dequeue()
+                _chatSeenLineKeys.Remove(expired)
+            End While
+
+            QueueChatTranslation(line, targetLanguage)
+        Next
+    End Sub
+
+    Private Shared Function ParseChatOcrLines(rawText As String) As List(Of String)
+        Dim results As New List(Of String)()
+        For Each rawLine As String In If(rawText, "").Replace(vbCrLf, vbLf).Replace(vbCr, vbLf).Split({vbLf}, StringSplitOptions.RemoveEmptyEntries)
+            Dim cleaned As String = Regex.Replace(rawLine, "\s+", " ").Trim()
+            If cleaned.Length < 2 Then
+                Continue For
+            End If
+            results.Add(cleaned)
+        Next
+        Return results
+    End Function
+
+    Private Shared Function NormalizeChatLineKey(line As String) As String
+        Return Regex.Replace(If(line, "").Trim().ToLowerInvariant(), "\s+", " ")
+    End Function
+
+    Private Sub QueueChatTranslation(sourceLine As String, targetLanguage As String)
+        Dim lineCopy As String = If(sourceLine, "").Trim()
+        If lineCopy = "" Then
+            Return
+        End If
+
+        Task.Run(
+            Async Function()
+                Await _chatTranslationLock.WaitAsync()
+                Try
+                    Dim translated As String = Await _chatTranslator.TranslateTextAsync(lineCopy, targetLanguage)
+                    If String.IsNullOrWhiteSpace(translated) Then
+                        translated = lineCopy
+                    End If
+
+                    If IsDisposed Then
+                        Return
+                    End If
+
+                    BeginInvoke(
+                        New Action(
+                            Sub()
+                                AddTranslatedChatEntry(lineCopy, translated)
+                            End Sub))
+                Catch ex As Exception
+                    If Not IsDisposed Then
+                        BeginInvoke(New Action(Of String)(AddressOf AppendLogSafe), "Chat translation failed: " & ex.Message)
+                    End If
+                Finally
+                    _chatTranslationLock.Release()
+                End Try
+            End Function)
+    End Sub
+
+    Private Sub AddTranslatedChatEntry(sourceText As String, translatedText As String)
+        Dim entry As New ChatOverlayLine With {
+            .SourceText = sourceText,
+            .TranslatedText = translatedText,
+            .CreatedAtUtc = DateTime.UtcNow
+        }
+
+        _chatOverlayEntries.Add(entry)
+        Dim maxEntries As Integer = Math.Max(1, CInt(If(nudChatMaxLines IsNot Nothing, nudChatMaxLines.Value, 6D)) * 4)
+        While _chatOverlayEntries.Count > maxEntries
+            _chatOverlayEntries.RemoveAt(0)
+        End While
+
+        RefreshChatTranslationOverlayContent()
+    End Sub
+
+    Private Sub UpdateChatTranslationOverlayVisibility(overlayEnabled As Boolean)
+        If Not overlayEnabled Then
+            HideChatTranslationOverlay()
+            Return
+        End If
+
+        If _chatTranslationOverlayForm Is Nothing OrElse _chatTranslationOverlayForm.IsDisposed Then
+            _chatTranslationOverlayForm = New ChatTranslationOverlayForm(Function() BuildConfig())
+        End If
+
+        RefreshChatTranslationOverlayContent()
+    End Sub
+
+    Private Sub RefreshChatTranslationOverlayContent()
+        If _chatTranslationOverlayForm Is Nothing OrElse _chatTranslationOverlayForm.IsDisposed Then
+            Return
+        End If
+
+        Dim maxLines As Integer = Math.Max(1, CInt(If(nudChatMaxLines IsNot Nothing, nudChatMaxLines.Value, 6D)))
+        Dim visibleEntries As List(Of ChatOverlayLine) = _chatOverlayEntries.
+            Skip(Math.Max(0, _chatOverlayEntries.Count - maxLines)).
+            Select(Function(entry) New ChatOverlayLine With {
+                .SourceText = entry.SourceText,
+                .TranslatedText = entry.TranslatedText,
+                .CreatedAtUtc = entry.CreatedAtUtc
+            }).
+            ToList()
+
+        _chatTranslationOverlayForm.UpdateContent(visibleEntries, chkChatTranslationOverlay IsNot Nothing AndAlso chkChatTranslationOverlay.Checked)
+    End Sub
+
+    Private Sub HideChatTranslationOverlay()
+        If _chatTranslationOverlayForm Is Nothing OrElse _chatTranslationOverlayForm.IsDisposed Then
+            Return
+        End If
+
+        _chatTranslationOverlayForm.UpdateContent(New List(Of ChatOverlayLine)(), False)
     End Sub
 
     Private Sub BeginNotificationWarmup()
@@ -2840,6 +3108,11 @@ Public Class Form1
         cfg.NavigationResampleIntervalMs = CInt(If(nudNavigationResampleMs IsNot Nothing, nudNavigationResampleMs.Value, 1800D))
         cfg.NavigationStallTimeoutMs = CInt(If(nudNavigationStallTimeoutMs IsNot Nothing, nudNavigationStallTimeoutMs.Value, 6500D))
         cfg.NavigationRepathOnStuck = (chkNavigationRepathOnStuck IsNot Nothing AndAlso chkNavigationRepathOnStuck.Checked)
+        cfg.ChatTranslationEnabled = (chkChatTranslationEnabled IsNot Nothing AndAlso chkChatTranslationEnabled.Checked)
+        cfg.ChatTranslationOverlayEnabled = (chkChatTranslationOverlay IsNot Nothing AndAlso chkChatTranslationOverlay.Checked)
+        cfg.ChatTranslationTargetLanguage = If(txtChatTargetLanguage IsNot Nothing AndAlso txtChatTargetLanguage.Text.Trim() <> "", txtChatTargetLanguage.Text.Trim().ToLowerInvariant(), "en")
+        cfg.ChatTranslationScanIntervalMs = CInt(If(nudChatScanMs IsNot Nothing, nudChatScanMs.Value, 700D))
+        cfg.ChatTranslationMaxLines = CInt(If(nudChatMaxLines IsNot Nothing, nudChatMaxLines.Value, 6D))
         cfg.HpBar = BuildRect("hp_bar")
         cfg.MpBar = BuildRect("mp_bar")
         cfg.MobNameRect = BuildRect("mob_name_rect")
@@ -2851,6 +3124,7 @@ Public Class Form1
         cfg.PartyInviteOkRect = BuildRect("party_invite_ok_rect")
         cfg.MapRect = BuildRect("map_rect")
         cfg.MapCoordinateRect = BuildRect("map_coordinate_rect")
+        cfg.ChatRect = BuildRect("chat_rect")
         cfg.LootScanPoints = BuildLootScanPoints()
         cfg.LootScanRect = BuildLootScanBoundingRect(cfg.LootScanPoints)
         cfg.LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked)
@@ -3293,6 +3567,13 @@ Public Class Form1
             If txtItemNtfyTopic IsNot Nothing Then
                 txtItemNtfyTopic.Text = If(state.ItemNtfyTopic, "").Trim()
             End If
+            If txtStatsNtfyTopic IsNot Nothing Then
+                txtStatsNtfyTopic.Text = If(state.StatsNtfyTopic, "").Trim()
+            End If
+            If nudStatsNtfyIntervalMinutes IsNot Nothing Then
+                Dim boundedStatsInterval As Decimal = Math.Max(nudStatsNtfyIntervalMinutes.Minimum, Math.Min(nudStatsNtfyIntervalMinutes.Maximum, state.StatsNtfyIntervalMinutes))
+                nudStatsNtfyIntervalMinutes.Value = boundedStatsInterval
+            End If
             If nudAutoPotHp IsNot Nothing Then
                 Dim boundedAutoHp As Decimal = Math.Max(nudAutoPotHp.Minimum, Math.Min(nudAutoPotHp.Maximum, state.AutoPotHpPercent))
                 nudAutoPotHp.Value = boundedAutoHp
@@ -3356,6 +3637,8 @@ Public Class Form1
                 .LootScannerEnabled = _lootScannerEnabled,
                 .NtfyTopic = If(txtNtfyTopic IsNot Nothing, txtNtfyTopic.Text.Trim(), ""),
                 .ItemNtfyTopic = If(txtItemNtfyTopic IsNot Nothing, txtItemNtfyTopic.Text.Trim(), ""),
+                .StatsNtfyTopic = If(txtStatsNtfyTopic IsNot Nothing, txtStatsNtfyTopic.Text.Trim(), ""),
+                .StatsNtfyIntervalMinutes = If(nudStatsNtfyIntervalMinutes IsNot Nothing, nudStatsNtfyIntervalMinutes.Value, 30D),
                 .AutoPotHpPercent = If(nudAutoPotHp IsNot Nothing, nudAutoPotHp.Value, 80D),
                 .AutoPotMpPercent = If(nudAutoPotMp IsNot Nothing, nudAutoPotMp.Value, 35D),
                 .AlarmVolumePercent = CInt(If(nudAlarmVolume IsNot Nothing, nudAlarmVolume.Value, CDec(_alarmVolumePercent))),
@@ -3462,6 +3745,17 @@ Public Class Form1
         If chkNavigationRepathOnStuck IsNot Nothing Then
             chkNavigationRepathOnStuck.Checked = cfg.NavigationRepathOnStuck
         End If
+        If chkChatTranslationEnabled IsNot Nothing Then
+            chkChatTranslationEnabled.Checked = cfg.ChatTranslationEnabled
+        End If
+        If chkChatTranslationOverlay IsNot Nothing Then
+            chkChatTranslationOverlay.Checked = cfg.ChatTranslationOverlayEnabled
+        End If
+        If txtChatTargetLanguage IsNot Nothing Then
+            txtChatTargetLanguage.Text = If(String.IsNullOrWhiteSpace(cfg.ChatTranslationTargetLanguage), "en", cfg.ChatTranslationTargetLanguage.Trim().ToLowerInvariant())
+        End If
+        SetNumericControlValue(nudChatScanMs, CDec(Math.Max(250, cfg.ChatTranslationScanIntervalMs)))
+        SetNumericControlValue(nudChatMaxLines, CDec(Math.Max(1, cfg.ChatTranslationMaxLines)))
         PopulateNavigationNodeCombos()
         If cboNavigationStartNode IsNot Nothing Then
             cboNavigationStartNode.SelectedIndex = 0
@@ -3505,6 +3799,7 @@ Public Class Form1
         UpsertRegionRow("party_invite_ok_rect", cfg.PartyInviteOkRect)
         UpsertRegionRow("map_rect", cfg.MapRect)
         UpsertRegionRow("map_coordinate_rect", cfg.MapCoordinateRect)
+        UpsertRegionRow("chat_rect", cfg.ChatRect)
         If txtLootScanAreaPoints IsNot Nothing Then
             Dim lootPoints As List(Of LootScanPoint) = GetEffectiveLootScanPoints(cfg)
             txtLootScanAreaPoints.Text = FormatLootScanPoints(lootPoints)
@@ -4123,29 +4418,102 @@ Public Class Form1
         Return cleaned
     End Function
 
-    Private Async Function SendPhoneNotificationAsync(title As String, body As String, Optional maxAttempts As Integer = 1) As Task(Of Boolean)
+    Private Function GetStatsNtfyTopicName() As String
+        Dim raw As String = ""
+        If txtStatsNtfyTopic IsNot Nothing Then
+            raw = txtStatsNtfyTopic.Text.Trim()
+        End If
+        If raw = "" Then
+            Return ""
+        End If
+
+        Return raw.Replace(" ", "").Trim("/"c)
+    End Function
+
+    Private Function FormatExpRateForNotification(status As BotStatus) As String
+        If status Is Nothing OrElse status.ExpPerHour < 0 Then
+            Return "Calculating (1m)"
+        End If
+        Return status.ExpPerHour.ToString("0.00") & "%/hr"
+    End Function
+
+    Private Function FormatRupiahsRateForNotification(status As BotStatus) As String
+        If status Is Nothing OrElse status.RupiahsPerHour < 0 Then
+            Return "Calculating (1m)"
+        End If
+        Return status.RupiahsPerHour.ToString("N0") & "/hr"
+    End Function
+
+    Private Function GetStatsNotificationIntervalMinutes() As Integer
+        If nudStatsNtfyIntervalMinutes Is Nothing Then
+            Return 30
+        End If
+        Return Math.Max(1, CInt(Math.Truncate(nudStatsNtfyIntervalMinutes.Value)))
+    End Function
+
+    Private Sub HandlePeriodicStatsNotification(status As BotStatus)
+        Dim topic As String = GetStatsNtfyTopicName()
+        If topic = "" OrElse status Is Nothing Then
+            Return
+        End If
+
+        If Not status.Running OrElse Not status.WindowFound OrElse IsNotificationWarmupActive() Then
+            Return
+        End If
+
+        If _lastStatsNotificationUtc = DateTime.MinValue Then
+            _lastStatsNotificationUtc = DateTime.UtcNow
+            Return
+        End If
+
+        Dim intervalMinutes As Integer = GetStatsNotificationIntervalMinutes()
+        Dim nextAllowedUtc As DateTime = _lastStatsNotificationUtc.AddMinutes(intervalMinutes)
+        If DateTime.UtcNow < nextAllowedUtc Then
+            Return
+        End If
+
+        Dim body As String =
+            $"Prana/EXP: {status.ExpPercent:0.00}% | Rate: {FormatExpRateForNotification(status)}{Environment.NewLine}" &
+            $"Rupiahs: {If(status.RupiahsTotal >= 0, status.RupiahsTotal.ToString("N0"), "n/a")} | Rate: {FormatRupiahsRateForNotification(status)}"
+
+        _lastStatsNotificationUtc = DateTime.UtcNow
+        Task.Run(
+            Async Function()
+                Dim sent As Boolean = Await SendPhoneNotificationToTopicAsync($"KathanaBot {intervalMinutes}m Stats", body, topic, 1, "default", "chart_with_upwards_trend,moneybag")
+                If sent Then
+                    AppendLogSafe($"{intervalMinutes}-minute stats sent to ntfy topic '{topic}'.")
+                Else
+                    AppendLogSafe($"{intervalMinutes}-minute stats alert failed for ntfy topic '{topic}'.")
+                End If
+            End Function)
+    End Sub
+
+    Private Async Function SendPhoneNotificationToTopicAsync(title As String, body As String, topic As String, Optional maxAttempts As Integer = 1, Optional priority As String = "urgent", Optional tags As String = "warning,gamepad") As Task(Of Boolean)
+        Dim cleanedTopic As String = If(topic, "").Trim()
+        If cleanedTopic = "" Then
+            Return False
+        End If
+
         Dim attempts As Integer = Math.Max(1, maxAttempts)
-        Dim topic As String = GetNtfyTopicName()
-        Dim url As String = $"https://ntfy.sh/{Uri.EscapeDataString(topic)}"
+        Dim url As String = $"https://ntfy.sh/{Uri.EscapeDataString(cleanedTopic)}"
 
         For attempt As Integer = 1 To attempts
             Try
                 Using request As New HttpRequestMessage(HttpMethod.Post, url)
                     request.Content = New StringContent(body, Encoding.UTF8, "text/plain")
                     request.Headers.Add("Title", title)
-                    request.Headers.Add("Priority", "urgent")
-                    request.Headers.Add("Tags", "warning,gamepad")
+                    request.Headers.Add("Priority", priority)
+                    request.Headers.Add("Tags", tags)
 
                     Dim response As HttpResponseMessage = Await NtfyClient.SendAsync(request)
                     If response.IsSuccessStatusCode Then
-                        AppendLogSafe($"Phone alert sent to ntfy topic '{topic}'.")
                         Return True
                     End If
 
-                    AppendLogSafe($"Phone alert failed ({CInt(response.StatusCode)}) for topic '{topic}' (attempt {attempt}/{attempts}).")
+                    AppendLogSafe($"Phone alert failed ({CInt(response.StatusCode)}) for topic '{cleanedTopic}' (attempt {attempt}/{attempts}).")
                 End Using
             Catch ex As Exception
-                AppendLogSafe($"Phone alert failed (attempt {attempt}/{attempts}): {ex.Message}")
+                AppendLogSafe($"Phone alert failed (attempt {attempt}/{attempts}) for topic '{cleanedTopic}': {ex.Message}")
             End Try
 
             If attempt < attempts Then
@@ -4154,6 +4522,15 @@ Public Class Form1
         Next
 
         Return False
+    End Function
+
+    Private Async Function SendPhoneNotificationAsync(title As String, body As String, Optional maxAttempts As Integer = 1) As Task(Of Boolean)
+        Dim topic As String = GetNtfyTopicName()
+        Dim sent As Boolean = Await SendPhoneNotificationToTopicAsync(title, body, topic, maxAttempts)
+        If sent Then
+            AppendLogSafe($"Phone alert sent to ntfy topic '{topic}'.")
+        End If
+        Return sent
     End Function
 
     Private Sub PlayAlarmPulse(volumePercent As Integer)
