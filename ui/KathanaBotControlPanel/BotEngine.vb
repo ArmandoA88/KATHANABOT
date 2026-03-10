@@ -435,7 +435,7 @@ Public Class BotEngine
     Private Const UnreachableConfirmRequiredCount As Integer = 2
     Private Const UnreachableClearRequiredCount As Integer = 2
     Private Const SustainedSingleZeroConfirmRequiredCount As Integer = 6
-    Private Const RetargetBufferMs As Integer = 500
+    Private Const RetargetBufferMs As Integer = 300
     Private Const BaseClientWidth As Integer = 1024
     Private Const BaseClientHeight As Integer = 768
 
