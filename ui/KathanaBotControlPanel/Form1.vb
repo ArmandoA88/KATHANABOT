@@ -284,6 +284,9 @@ Public Class Form1
 
     Public Sub New()
         InitializeComponent()
+        Me.DoubleBuffered = True
+        SetStyle(ControlStyles.AllPaintingInWmPaint Or ControlStyles.OptimizedDoubleBuffer Or ControlStyles.UserPaint, True)
+        UpdateStyles()
         BuildUi()
         SeedDefaults()
         LoadPersistedListState()
@@ -1626,7 +1629,11 @@ Public Class Form1
         PushLiveConfig()
         Dim bmp As Bitmap = _engine.CaptureSnapshot()
         If bmp Is Nothing Then
-            AppendLog("Snapshot failed. Window not found or capture failed.")
+            If _engine.IsRunning() Then
+                AppendLog("Snapshot unavailable yet. Wait for the next Vision loop frame.")
+            Else
+                AppendLog("Snapshot failed. Window not found or capture failed.")
+            End If
             Return
         End If
 
@@ -2191,7 +2198,7 @@ Public Class Form1
             "- OCR para party/ress y click de auto-aceptar.",
             "- Auto comando add con cooldown y pausa si ya esta en party.",
             "- Escaneo de loot con coincidencia OCR difusa configurable (Loot Name Match %), rechazo por click o tecla.",
-            "- Snapshot periodico cada ~15 minutos.",
+            "- Solo usa la captura del Vision loop; no guarda screenshots automaticos extra.",
             "- Lectura OCR de Prana/EXP y calculo de tasa por hora.",
             "",
             "17) PERSISTENCIA",

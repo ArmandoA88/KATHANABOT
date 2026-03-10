@@ -440,6 +440,7 @@ Public Class BotEngine
     Private Const BaseClientHeight As Integer = 768
 
     Private ReadOnly _sync As New Object()
+    Private ReadOnly _frameSync As New Object()
     Private Shared ReadOnly NavigationRouteStorageRoot As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel", "navigation_routes")
     Private Shared ReadOnly NavigationRouteJsonOptions As New JsonSerializerOptions With {.WriteIndented = True}
     Private Shared ReadOnly _recordedGraphCache As New Dictionary(Of String, List(Of RecordedNavigationGraph))(StringComparer.OrdinalIgnoreCase)
@@ -462,8 +463,10 @@ Public Class BotEngine
     Private _mobHpTextOcrTask As Task(Of String) = Nothing
     Private _lastMobHpText As String = ""
     Private _lastMobDetectedMaxHp As Integer = -1
-    Private _lastPeriodicSnapshot As DateTime = DateTime.MinValue
+    Private _latestLoopFrame As Bitmap = Nothing
+    Private _latestLoopFrameCapturedAt As DateTime = DateTime.MinValue
     Private _lastLootPickup As DateTime = DateTime.MinValue
+    Private _pendingLootPickupVerifyAt As DateTime = DateTime.MinValue
     Private _firstHitPending As Boolean = False
     Private _firstHitTargetSignature As String = ""
     Private _firstHitWindowUntil As DateTime = DateTime.MinValue
@@ -577,6 +580,9 @@ Public Class BotEngine
     Private _singleHpZeroConfirmCount As Integer = 0
     Private _singleMpZeroConfirmCount As Integer = 0
     Private _lastRightAltAt As DateTime = DateTime.MinValue
+    Private _lootScannerCapturePending As Boolean = False
+    Private _lootScannerCaptureRequestedAt As DateTime = DateTime.MinValue
+    Private _lootScannerAltHeld As Boolean = False
     Private _agentState As LevelingAgentState = LevelingAgentState.Disabled
     Private _agentReason As String = ""
     Private _agentGuardrailTriggered As Boolean = False
@@ -648,8 +654,8 @@ Public Class BotEngine
             _mobHpTextOcrTask = Nothing
             _lastMobHpText = ""
             _lastMobDetectedMaxHp = -1
-            _lastPeriodicSnapshot = DateTime.MinValue
             _lastLootPickup = DateTime.MinValue
+            _pendingLootPickupVerifyAt = DateTime.MinValue
             _firstHitPending = False
             _firstHitTargetSignature = ""
             _firstHitWindowUntil = DateTime.MinValue
@@ -761,12 +767,16 @@ Public Class BotEngine
             _singleHpZeroConfirmCount = 0
             _singleMpZeroConfirmCount = 0
             _lastRightAltAt = DateTime.MinValue
+            _lootScannerCapturePending = False
+            _lootScannerCaptureRequestedAt = DateTime.MinValue
+            _lootScannerAltHeld = False
             _agentState = If(_config.LevelingAgentEnabled, LevelingAgentState.Searching, LevelingAgentState.Disabled)
             _agentReason = ""
             _agentGuardrailTriggered = False
             _agentUnreachableEvents = 0
             _task = Task.Run(Sub() LoopAsync(_cts.Token).GetAwaiter().GetResult())
         End SyncLock
+        ClearLatestLoopFrame()
         RaiseEvent LogLine("Bot loop started.")
     End Sub
 
@@ -788,15 +798,31 @@ Public Class BotEngine
 
         SyncLock _sync
             _status.Running = False
+            _lootScannerCapturePending = False
+            _lootScannerCaptureRequestedAt = DateTime.MinValue
+            _lootScannerAltHeld = False
+            _pendingLootPickupVerifyAt = DateTime.MinValue
         End SyncLock
+        ReleaseLootScannerAltKey()
+        ClearLatestLoopFrame()
         RaiseEvent LogLine("Bot loop stopped.")
     End Sub
 
     Public Function CaptureSnapshot() As Bitmap
         Dim cfg As BotConfig
+        Dim running As Boolean
         SyncLock _sync
             cfg = _config
+            running = _status.Running
         End SyncLock
+
+        If running Then
+            Dim cachedFrame As Bitmap = GetLatestLoopFrameClone(Math.Max(200, cfg.LoopMs * 3))
+            If cachedFrame IsNot Nothing Then
+                Return cachedFrame
+            End If
+            Return Nothing
+        End If
 
         Dim hwnd As IntPtr = FindGameWindow(cfg.WindowTitle)
         If hwnd = IntPtr.Zero Then
@@ -805,6 +831,51 @@ Public Class BotEngine
 
         Return CaptureClient(hwnd)
     End Function
+
+    Private Sub ReplaceLatestLoopFrame(frame As Bitmap)
+        If frame Is Nothing Then
+            ClearLatestLoopFrame()
+            Return
+        End If
+
+        Dim frameClone As Bitmap = DirectCast(frame.Clone(), Bitmap)
+        Dim oldFrame As Bitmap = Nothing
+        SyncLock _frameSync
+            oldFrame = _latestLoopFrame
+            _latestLoopFrame = frameClone
+            _latestLoopFrameCapturedAt = DateTime.UtcNow
+        End SyncLock
+
+        If oldFrame IsNot Nothing Then
+            oldFrame.Dispose()
+        End If
+    End Sub
+
+    Private Function GetLatestLoopFrameClone(Optional maxAgeMs As Integer = -1) As Bitmap
+        SyncLock _frameSync
+            If _latestLoopFrame Is Nothing Then
+                Return Nothing
+            End If
+            If maxAgeMs >= 0 AndAlso _latestLoopFrameCapturedAt <> DateTime.MinValue AndAlso
+                (DateTime.UtcNow - _latestLoopFrameCapturedAt).TotalMilliseconds > maxAgeMs Then
+                Return Nothing
+            End If
+            Return DirectCast(_latestLoopFrame.Clone(), Bitmap)
+        End SyncLock
+    End Function
+
+    Private Sub ClearLatestLoopFrame()
+        Dim oldFrame As Bitmap = Nothing
+        SyncLock _frameSync
+            oldFrame = _latestLoopFrame
+            _latestLoopFrame = Nothing
+            _latestLoopFrameCapturedAt = DateTime.MinValue
+        End SyncLock
+
+        If oldFrame IsNot Nothing Then
+            oldFrame.Dispose()
+        End If
+    End Sub
 
     Private Async Function LoopAsync(token As CancellationToken) As Task
         While Not token.IsCancellationRequested
@@ -818,6 +889,8 @@ Public Class BotEngine
 
             Dim hwnd As IntPtr = FindGameWindow(cfg.WindowTitle)
             If hwnd = IntPtr.Zero Then
+                ClearLatestLoopFrame()
+                ReleaseLootScannerAltKey()
                 ClearMapLocalizationRuntime()
                 ClearChatTranslationRuntime()
                 UpdateLevelingAgentState(cfg, LevelingAgentState.Searching, "Game window not found.")
@@ -843,6 +916,8 @@ Public Class BotEngine
 
             Dim frame As Bitmap = CaptureClient(hwnd)
             If frame Is Nothing Then
+                ClearLatestLoopFrame()
+                ReleaseLootScannerAltKey()
                 ClearMapLocalizationRuntime()
                 ClearChatTranslationRuntime()
                 UpdateLevelingAgentState(cfg, LevelingAgentState.Searching, "Unable to capture game client.")
@@ -858,6 +933,7 @@ Public Class BotEngine
                 Await Task.Delay(loopDelayMs, token)
                 Continue While
             End If
+            ReplaceLatestLoopFrame(frame)
 
             Dim hpRegion As New RectRegion(0, 0, 1, 1)
             Dim mpRegion As New RectRegion(0, 0, 1, 1)
@@ -881,118 +957,13 @@ Public Class BotEngine
             Dim rupiahsTotal As Long = ReadRupiahsTotal(frame, rupiahsRegion)
             Dim captureGlitch As Boolean = IsLikelyVisionCaptureGlitch(frame, hpRegion, mpRegion, hpPct, mpPct)
 
-            If captureGlitch Then
-                For retry As Integer = 1 To 2
-                    frame.Dispose()
-                    Thread.Sleep(loopDelayMs)
-                    frame = CaptureClient(hwnd)
-                    If frame Is Nothing Then
-                        Exit For
-                    End If
-
-                    ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, mapRegion, mapCoordinateRegion, chatRegion)
-                    lootScanPolygon = ResolveLootScanPolygon(cfg, frame.Width, frame.Height)
-                    hpPct = ComputeBarPercent(frame, hpRegion, True)
-                    mpPct = ComputeBarPercent(frame, mpRegion, False)
-                    mobHpPct = ComputeBarPercent(frame, mobHpRegion, True)
-                    expPct = ReadPranaExpPercent(frame, pranaExpRegion)
-                    rupiahsTotal = ReadRupiahsTotal(frame, rupiahsRegion)
-                    captureGlitch = IsLikelyVisionCaptureGlitch(frame, hpRegion, mpRegion, hpPct, mpPct)
-                    If Not captureGlitch Then
-                        Exit For
-                    End If
-                Next
-
-                If frame Is Nothing Then
-                    ClearMapLocalizationRuntime()
-                    ClearChatTranslationRuntime()
-                    UpdateLevelingAgentState(cfg, LevelingAgentState.Searching, "Unable to capture game client.")
-                    SetStatus(Sub(s)
-                                  s.WindowFound = True
-                                  s.NotAttackingReason = "Capture failed."
-                                  s.ErrorMessage = "Unable to capture game client."
-                              End Sub)
-                    Await Task.Delay(loopDelayMs, token)
-                    Continue While
-                End If
-            End If
-
             Dim now As DateTime = DateTime.UtcNow
             Dim activeHwnd As IntPtr = NativeMethods.GetForegroundWindow()
-            If cfg.LootScannerEnabled AndAlso activeHwnd = hwnd AndAlso (now - _lastRightAltAt).TotalMilliseconds >= 10000 Then
-                _lastRightAltAt = now
-                Dim scan As Byte = CByte(NativeMethods.MapVirtualKey(CUInt(&H12), 0UI))
-                Dim KEYEVENTF_EXTENDEDKEY As UInteger = &H1
-                Dim KEYEVENTF_KEYUP As UInteger = &H2
-                
-                Try
-                    keybd_event(&HA5, scan, KEYEVENTF_EXTENDEDKEY, UIntPtr.Zero)
-                    Thread.Sleep(150)
-                    
-                    Dim altFrame As Bitmap = CaptureClient(hwnd)
-                    
-                    Thread.Sleep(250)
-                    keybd_event(&HA5, scan, KEYEVENTF_EXTENDEDKEY Or KEYEVENTF_KEYUP, UIntPtr.Zero)
-                    
-                    SetLastAction("RMENU (scan items)")
-                    RaiseEvent LogLine("Auto right-alt scan (400ms).")
-                    
-                    If altFrame IsNot Nothing Then
-                        Dim allowedNames As List(Of String) = If(cfg.LootAllowedNames, New List(Of String)()).ToList()
-                        Dim lootMatchThresholdPercent As Integer = ClampLootMatchThresholdPercent(cfg.LootNameMatchThresholdPercent)
-                        Dim lootScanPolygonCopy As List(Of DrawingPoint) = ClonePointList(lootScanPolygon)
-                        Task.Run(Sub()
-                            Dim scanFrame As Bitmap = altFrame
-                            Dim lootScanFrame As Bitmap = Nothing
-                            Try
-                                lootScanFrame = CropBitmapToPolygon(scanFrame, lootScanPolygonCopy)
-                                If lootScanFrame Is Nothing Then
-                                    lootScanFrame = DirectCast(scanFrame.Clone(), Bitmap)
-                                End If
-
-                                Dim ocrText As String = OcrReader.ReadScreenText(lootScanFrame)
-                                
-                                If Not String.IsNullOrWhiteSpace(ocrText) AndAlso allowedNames IsNot Nothing Then
-                                    Dim matchedItem As String = ""
-                                    If TryFindAllowedLootMatch(ocrText, allowedNames, lootMatchThresholdPercent, matchedItem) Then
-                                        SaveLootScannerSnapshot(lootScanFrame, matchedItem, DateTime.UtcNow)
-                                        System.Media.SystemSounds.Exclamation.Play()
-                                        Console.Beep(800, 1000)
-                                        Console.Beep(800, 1000)
-                                        RaiseEvent LogLine($"LOOT ALARM: Found {matchedItem} (fuzzy {lootMatchThresholdPercent}%).")
-
-                                        Dim topic As String = cfg.ItemNtfyTopic
-                                        If Not String.IsNullOrWhiteSpace(topic) Then
-                                            Task.Run(Async Function()
-                                                Try
-                                                    Using client As New System.Net.Http.HttpClient()
-                                                        Dim request As New System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, "https://ntfy.sh/" & Uri.EscapeDataString(topic))
-                                                        request.Content = New System.Net.Http.StringContent("Found important item: " & matchedItem)
-                                                        request.Headers.Add("Title", "KathanaBot Loot Finder")
-                                                        Await client.SendAsync(request)
-                                                    End Using
-                                                Catch ex As Exception
-                                                    RaiseEvent LogLine("Item Ntfy send failed: " & ex.Message)
-                                                End Try
-                                            End Function)
-                                        End If
-                                    End If
-                                End If
-                            Catch ex As Exception
-                                RaiseEvent LogLine("Loot scanner processing failed: " & ex.Message)
-                            Finally
-                                If lootScanFrame IsNot Nothing Then
-                                    lootScanFrame.Dispose()
-                                End If
-                                scanFrame.Dispose()
-                            End Try
-                        End Sub)
-                    End If
-                Catch
-                End Try
+            TryHandlePendingLootScannerCapture(cfg, hwnd, activeHwnd, frame, lootScanPolygon, now)
+            TryHandlePendingLootPickupVerification(cfg, hwnd, frame, now, mobNameRegion)
+            If cfg.LootScannerEnabled AndAlso activeHwnd = hwnd AndAlso (Not _lootScannerCapturePending) AndAlso (now - _lastRightAltAt).TotalMilliseconds >= 10000 Then
+                BeginLootScannerCapture(now)
             End If
-
-            SavePeriodicSnapshot(frame, now)
             Dim monsterFilterActive As Boolean = (cfg.DeniedMobs IsNot Nothing AndAlso cfg.DeniedMobs.Count > 0)
             Dim targetWindowSignalNoName As Boolean = HasTargetWindowSignal(frame, mobHpRegion, "", mobHpPct)
             Dim shouldReadMobName As Boolean = targetWindowSignalNoName OrElse (mobHpPct >= Math.Max(0.6, cfg.MobHpPresenceThreshold * 0.7))
@@ -1296,7 +1267,193 @@ Public Class BotEngine
 
             Await Task.Delay(loopDelayMs, token)
         End While
+
+        ReleaseLootScannerAltKey()
+        ClearLatestLoopFrame()
     End Function
+
+    Private Sub BeginLootScannerCapture(now As DateTime)
+        Dim scan As Byte = CByte(NativeMethods.MapVirtualKey(CUInt(&H12), 0UI))
+        Dim KEYEVENTF_EXTENDEDKEY As UInteger = &H1
+
+        Try
+            keybd_event(&HA5, scan, KEYEVENTF_EXTENDEDKEY, UIntPtr.Zero)
+            _lootScannerCapturePending = True
+            _lootScannerCaptureRequestedAt = now
+            _lootScannerAltHeld = True
+            _lastRightAltAt = now
+        Catch
+            ReleaseLootScannerAltKey()
+        End Try
+    End Sub
+
+    Private Sub TryHandlePendingLootScannerCapture(cfg As BotConfig, hwnd As IntPtr, activeHwnd As IntPtr, frame As Bitmap, lootScanPolygon As List(Of DrawingPoint), now As DateTime)
+        If Not _lootScannerCapturePending Then
+            Return
+        End If
+
+        If frame Is Nothing OrElse hwnd = IntPtr.Zero Then
+            Return
+        End If
+
+        If activeHwnd <> hwnd Then
+            If _lootScannerCaptureRequestedAt <> DateTime.MinValue AndAlso (now - _lootScannerCaptureRequestedAt).TotalMilliseconds >= 500 Then
+                ReleaseLootScannerAltKey()
+                _lootScannerCapturePending = False
+                _lootScannerCaptureRequestedAt = DateTime.MinValue
+            End If
+            Return
+        End If
+
+        Dim loopMs As Integer = 80
+        If cfg IsNot Nothing Then
+            loopMs = Math.Max(20, cfg.LoopMs)
+        End If
+        If _lootScannerCaptureRequestedAt <> DateTime.MinValue AndAlso (now - _lootScannerCaptureRequestedAt).TotalMilliseconds < loopMs Then
+            Return
+        End If
+
+        Dim frameClone As Bitmap = DirectCast(frame.Clone(), Bitmap)
+        Dim allowedNames As List(Of String) = If(cfg.LootAllowedNames, New List(Of String)()).ToList()
+        Dim lootMatchThresholdPercent As Integer = ClampLootMatchThresholdPercent(cfg.LootNameMatchThresholdPercent)
+        Dim lootScanPolygonCopy As List(Of DrawingPoint) = ClonePointList(lootScanPolygon)
+        Dim topic As String = If(cfg.ItemNtfyTopic, "")
+
+        Task.Run(Sub()
+            Dim scanFrame As Bitmap = frameClone
+            Dim lootScanFrame As Bitmap = Nothing
+            Try
+                lootScanFrame = CropBitmapToPolygon(scanFrame, lootScanPolygonCopy)
+                If lootScanFrame Is Nothing Then
+                    lootScanFrame = DirectCast(scanFrame.Clone(), Bitmap)
+                End If
+
+                Dim ocrText As String = OcrReader.ReadScreenText(lootScanFrame)
+                If Not String.IsNullOrWhiteSpace(ocrText) AndAlso allowedNames IsNot Nothing Then
+                    Dim matchedItem As String = ""
+                    If TryFindAllowedLootMatch(ocrText, allowedNames, lootMatchThresholdPercent, matchedItem) Then
+                        System.Media.SystemSounds.Exclamation.Play()
+                        Console.Beep(800, 1000)
+                        Console.Beep(800, 1000)
+                        RaiseEvent LogLine($"LOOT ALARM: Found {matchedItem} (fuzzy {lootMatchThresholdPercent}%).")
+
+                        If Not String.IsNullOrWhiteSpace(topic) Then
+                            Task.Run(Async Function()
+                                Try
+                                    Using client As New System.Net.Http.HttpClient()
+                                        Dim request As New System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, "https://ntfy.sh/" & Uri.EscapeDataString(topic))
+                                        request.Content = New System.Net.Http.StringContent("Found important item: " & matchedItem)
+                                        request.Headers.Add("Title", "KathanaBot Loot Finder")
+                                        Await client.SendAsync(request)
+                                    End Using
+                                Catch ex As Exception
+                                    RaiseEvent LogLine("Item Ntfy send failed: " & ex.Message)
+                                End Try
+                            End Function)
+                        End If
+                    End If
+                End If
+            Catch ex As Exception
+                RaiseEvent LogLine("Loot scanner processing failed: " & ex.Message)
+            Finally
+                If lootScanFrame IsNot Nothing Then
+                    lootScanFrame.Dispose()
+                End If
+                scanFrame.Dispose()
+            End Try
+        End Sub)
+
+        SetLastAction("RMENU (scan items)")
+        RaiseEvent LogLine("Auto right-alt scan processed from vision loop frame.")
+        ReleaseLootScannerAltKey()
+        _lootScannerCapturePending = False
+        _lootScannerCaptureRequestedAt = DateTime.MinValue
+    End Sub
+
+    Private Sub ReleaseLootScannerAltKey()
+        If Not _lootScannerAltHeld Then
+            Return
+        End If
+
+        Dim scan As Byte = CByte(NativeMethods.MapVirtualKey(CUInt(&H12), 0UI))
+        Dim KEYEVENTF_EXTENDEDKEY As UInteger = &H1
+        Dim KEYEVENTF_KEYUP As UInteger = &H2
+
+        Try
+            keybd_event(&HA5, scan, KEYEVENTF_EXTENDEDKEY Or KEYEVENTF_KEYUP, UIntPtr.Zero)
+        Catch
+        Finally
+            _lootScannerAltHeld = False
+        End Try
+    End Sub
+
+    Private Sub TryHandlePendingLootPickupVerification(cfg As BotConfig, hwnd As IntPtr, frame As Bitmap, now As DateTime, mobNameRegion As RectRegion)
+        If _pendingLootPickupVerifyAt = DateTime.MinValue OrElse now < _pendingLootPickupVerifyAt Then
+            Return
+        End If
+
+        _pendingLootPickupVerifyAt = DateTime.MinValue
+        If frame Is Nothing OrElse hwnd = IntPtr.Zero Then
+            RaiseEvent LogLine("Loot scan skipped: vision loop frame unavailable.")
+            Return
+        End If
+
+        Try
+            Dim selectedName As String = ReadMobNameIfNeeded(frame, mobNameRegion, now, True)
+            If IsAllowedLootName(selectedName, cfg.LootAllowedNames, cfg.LootNameMatchThresholdPercent) Then
+                SetLastAction($"F (loot accepted: {If(String.IsNullOrWhiteSpace(selectedName), "unknown", selectedName)})")
+                Return
+            End If
+
+            Dim rejectedName As String = If(String.IsNullOrWhiteSpace(selectedName), "unknown", selectedName)
+            Dim rejectContext As String = $"loot rejected: {rejectedName}"
+            Dim preStopSent As Boolean = TrySendStopAction(cfg, hwnd, rejectContext & " (pre-stop)", includeMovementFallback:=True)
+            Dim clickSent As Boolean = False
+            Dim rejectHandled As Boolean = False
+
+            If cfg.LootRejectClickEnabled AndAlso cfg.LootRejectPointX >= 0 AndAlso cfg.LootRejectPointY >= 0 Then
+                Dim clickX As Integer = Math.Max(0, Math.Min(frame.Width - 1, cfg.LootRejectPointX))
+                Dim clickY As Integer = Math.Max(0, Math.Min(frame.Height - 1, cfg.LootRejectPointY))
+                For i As Integer = 1 To 2
+                    If ClickClientPoint(hwnd, clickX, clickY, 0, 0) Then
+                        clickSent = True
+                    End If
+                    Thread.Sleep(8)
+                Next
+                If clickSent Then
+                    SetLastAction($"Click loot reject ({clickX},{clickY})")
+                End If
+            End If
+
+            rejectHandled = TrySendStopAction(cfg, hwnd, rejectContext, includeMovementFallback:=False)
+
+            If Not rejectHandled Then
+                Dim stopSent As Boolean = False
+                For i As Integer = 1 To 2
+                    If SendKey(hwnd, "S", 50) Then
+                        stopSent = True
+                        MarkKeyUsed("S")
+                    End If
+                    Thread.Sleep(25)
+                Next
+
+                If stopSent Then
+                    SetLastAction($"S (loot reject: {rejectedName})")
+                    rejectHandled = True
+                End If
+            End If
+
+            If Not rejectHandled Then
+                rejectHandled = TrySendStopAction(cfg, hwnd, rejectContext, includeMovementFallback:=True)
+            End If
+
+            If Not (rejectHandled OrElse preStopSent OrElse clickSent) Then
+                RaiseEvent LogLine($"Loot rejected ({rejectedName}) and cancel action failed to send.")
+            End If
+        Catch ex As Exception
+            RaiseEvent LogLine("Loot scan error: " & ex.Message)
+        End Try
+    End Sub
 
     Private Function IsLikelyVisionCaptureGlitch(frame As Bitmap, hpRegion As RectRegion, mpRegion As RectRegion, hpPct As Double, mpPct As Double) As Boolean
         If frame Is Nothing Then
@@ -1431,55 +1588,6 @@ Public Class BotEngine
             _lastGoodMobName = mobName
         End If
     End Sub
-
-    Private Sub SavePeriodicSnapshot(frame As Bitmap, now As DateTime)
-        If frame Is Nothing Then
-            Return
-        End If
-        If _lastPeriodicSnapshot <> DateTime.MinValue AndAlso (now - _lastPeriodicSnapshot).TotalMinutes < 15 Then
-            Return
-        End If
-
-        _lastPeriodicSnapshot = now
-        Try
-            Dim galleryDir As String = GetSnapshotRootDirectory()
-            Directory.CreateDirectory(galleryDir)
-
-            Dim fileName As String = $"kathana_{now:yyyyMMdd_HHmmss}.png"
-            Dim fullPath As String = Path.Combine(galleryDir, fileName)
-            frame.Save(fullPath, ImageFormat.Png)
-            RaiseEvent LogLine("Snapshot saved: " & fullPath)
-        Catch ex As Exception
-            RaiseEvent LogLine("Snapshot save failed: " & ex.Message)
-        End Try
-    End Sub
-
-    Private Sub SaveLootScannerSnapshot(frame As Bitmap, detectedItemName As String, now As DateTime)
-        If frame Is Nothing Then
-            Return
-        End If
-
-        Try
-            Dim scannerDir As String = GetLootScannerSnapshotDirectory()
-            Directory.CreateDirectory(scannerDir)
-
-            Dim safeItemName As String = SanitizeFileNameSegment(detectedItemName)
-            If safeItemName = "" Then
-                safeItemName = "detected_item"
-            End If
-
-            Dim fileName As String = $"{safeItemName}_{now:yyyyMMdd_HHmmss_fff}.png"
-            Dim fullPath As String = Path.Combine(scannerDir, fileName)
-            frame.Save(fullPath, ImageFormat.Png)
-            RaiseEvent LogLine("Loot scanner snapshot saved: " & fullPath)
-        Catch ex As Exception
-            RaiseEvent LogLine("Loot scanner snapshot save failed: " & ex.Message)
-        End Try
-    End Sub
-
-    Private Shared Function GetLootScannerSnapshotDirectory() As String
-        Return Path.Combine(GetApplicationRootDirectory(), "item scanner pics")
-    End Function
 
     Private Sub UpdateLevelingAgentState(cfg As BotConfig, state As LevelingAgentState, reason As String, Optional guardrailTriggered As Boolean = False)
         SyncLock _sync
@@ -3159,18 +3267,6 @@ Public Class BotEngine
         Return (redHue AndAlso redDominant) OrElse (yellowHue AndAlso yellowDominant)
     End Function
 
-    Private Shared Function GetSnapshotRootDirectory() As String
-        Dim picturesRoot As String = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures)
-        If String.IsNullOrWhiteSpace(picturesRoot) Then
-            picturesRoot = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)
-        End If
-        Return Path.Combine(picturesRoot, "KathanaBot")
-    End Function
-
-    Private Shared Function GetApplicationRootDirectory() As String
-        Return Path.GetFullPath(AppContext.BaseDirectory)
-    End Function
-
     Private Shared Function CropBitmapToPolygon(frame As Bitmap, points As List(Of DrawingPoint)) As Bitmap
         If frame Is Nothing OrElse points Is Nothing OrElse points.Count < 3 Then
             Return Nothing
@@ -3202,31 +3298,6 @@ Public Class BotEngine
             End Using
         End Using
         Return result
-    End Function
-
-    Private Shared Function SanitizeFileNameSegment(value As String) As String
-        Dim raw As String = If(value, "").Trim()
-        If raw = "" Then
-            Return ""
-        End If
-
-        Dim invalidChars As Char() = Path.GetInvalidFileNameChars()
-        Dim sb As New StringBuilder(raw.Length)
-        For Each ch As Char In raw
-            If invalidChars.Contains(ch) OrElse Char.IsControl(ch) Then
-                sb.Append("_"c)
-            ElseIf Char.IsWhiteSpace(ch) Then
-                sb.Append("_"c)
-            Else
-                sb.Append(ch)
-            End If
-        Next
-
-        Dim sanitized As String = Regex.Replace(sb.ToString(), "_{2,}", "_").Trim("_"c, "."c, " "c)
-        If sanitized.Length > 80 Then
-            sanitized = sanitized.Substring(0, 80).Trim("_"c, "."c, " "c)
-        End If
-        Return sanitized
     End Function
 
     Private Function ReadMobNameIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime, Optional forceRefresh As Boolean = False) As String
@@ -3407,86 +3478,7 @@ Public Class BotEngine
         End If
 
         RaiseEvent LogLine("Loot scan sent (F).")
-        Thread.Sleep(Math.Max(120, cfg.LootPickupVerifyDelayMs))
-
-        Dim verifyFrame As Bitmap = CaptureClient(hwnd)
-        If verifyFrame Is Nothing Then
-            RaiseEvent LogLine("Loot scan skipped: capture failed.")
-            Return
-        End If
-
-        Try
-            Dim hpRegion As New RectRegion(0, 0, 1, 1)
-            Dim mpRegion As New RectRegion(0, 0, 1, 1)
-            Dim mobNameRegion As New RectRegion(0, 0, 1, 1)
-            Dim mobHpRegion As New RectRegion(0, 0, 1, 1)
-            Dim unreachableTextRegion As New RectRegion(0, 0, 1, 1)
-            Dim pranaExpRegion As New RectRegion(0, 0, 1, 1)
-            Dim rupiahsRegion As New RectRegion(0, 0, 1, 1)
-            Dim partyInviteScanRegion As New RectRegion(0, 0, 1, 1)
-            Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
-            Dim mapRegion As New RectRegion(0, 0, 1, 1)
-            Dim mapCoordinateRegion As New RectRegion(0, 0, 1, 1)
-            Dim chatRegion As New RectRegion(0, 0, 1, 1)
-            ResolveVisionRegions(cfg, verifyFrame.Width, verifyFrame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, mapRegion, mapCoordinateRegion, chatRegion)
-
-            Dim selectedName As String = ReadMobNameIfNeeded(verifyFrame, mobNameRegion, DateTime.UtcNow, True)
-            If IsAllowedLootName(selectedName, cfg.LootAllowedNames, cfg.LootNameMatchThresholdPercent) Then
-                SetLastAction($"F (loot accepted: {If(String.IsNullOrWhiteSpace(selectedName), "unknown", selectedName)})")
-                Thread.Sleep(700)
-                Return
-            End If
-
-            Dim rejectedName As String = If(String.IsNullOrWhiteSpace(selectedName), "unknown", selectedName)
-            Dim rejectContext As String = $"loot rejected: {rejectedName}"
-            Dim preStopSent As Boolean = TrySendStopAction(cfg, hwnd, rejectContext & " (pre-stop)", includeMovementFallback:=True)
-            Dim clickSent As Boolean = False
-            Dim rejectHandled As Boolean = False
-
-            If cfg.LootRejectClickEnabled AndAlso cfg.LootRejectPointX >= 0 AndAlso cfg.LootRejectPointY >= 0 Then
-                Dim clickX As Integer = Math.Max(0, Math.Min(verifyFrame.Width - 1, cfg.LootRejectPointX))
-                Dim clickY As Integer = Math.Max(0, Math.Min(verifyFrame.Height - 1, cfg.LootRejectPointY))
-                For i As Integer = 1 To 2
-                    If ClickClientPoint(hwnd, clickX, clickY, 0, 0) Then
-                        clickSent = True
-                    End If
-                    Thread.Sleep(8)
-                Next
-                If clickSent Then
-                    SetLastAction($"Click loot reject ({clickX},{clickY})")
-                End If
-            End If
-
-            rejectHandled = TrySendStopAction(cfg, hwnd, rejectContext, includeMovementFallback:=False)
-
-            If Not rejectHandled Then
-                Dim stopSent As Boolean = False
-                For i As Integer = 1 To 2
-                    If SendKey(hwnd, "S", 50) Then
-                        stopSent = True
-                        MarkKeyUsed("S")
-                    End If
-                    Thread.Sleep(25)
-                Next
-
-                If stopSent Then
-                    SetLastAction($"S (loot reject: {rejectedName})")
-                    rejectHandled = True
-                End If
-            End If
-
-            If Not rejectHandled Then
-                rejectHandled = TrySendStopAction(cfg, hwnd, rejectContext, includeMovementFallback:=True)
-            End If
-
-            If Not (rejectHandled OrElse preStopSent OrElse clickSent) Then
-                RaiseEvent LogLine($"Loot rejected ({rejectedName}) and cancel action failed to send.")
-            End If
-        Catch ex As Exception
-            RaiseEvent LogLine("Loot scan error: " & ex.Message)
-        Finally
-            verifyFrame.Dispose()
-        End Try
+        _pendingLootPickupVerifyAt = now.AddMilliseconds(Math.Max(120, cfg.LootPickupVerifyDelayMs))
     End Sub
 
     Private Function ReadPranaExpPercent(frame As Bitmap, pranaExpRegion As RectRegion) As Double
