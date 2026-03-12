@@ -32,7 +32,7 @@ Public Class Form1
     Private txtLootScanAreaPoints As TextBox
     Private chkChatTranslationEnabled As CheckBox
     Private chkChatTranslationOverlay As CheckBox
-    Private txtChatTargetLanguage As TextBox
+    Private cboChatTargetLanguage As ComboBox
     Private nudChatScanMs As NumericUpDown
     Private nudChatMaxLines As NumericUpDown
     Private lblChatTranslationStatus As Label
@@ -41,6 +41,20 @@ Public Class Form1
     Private btnPickLootRejectPoint As Button
     Private btnClearLootRejectPoint As Button
     Private lblLootRejectPoint As Label
+
+    Private NotInheritable Class ChatLanguageOption
+        Public Property Label As String
+        Public Property Code As String
+
+        Public Sub New(label As String, code As String)
+            Me.Label = label
+            Me.Code = code
+        End Sub
+
+        Public Overrides Function ToString() As String
+            Return Label
+        End Function
+    End Class
 
     Private dgvCombat As DataGridView
     Private chkMonsterFilter As CheckBox
@@ -327,8 +341,8 @@ Public Class Form1
         If chkChatTranslationOverlay IsNot Nothing Then
             AddHandler chkChatTranslationOverlay.CheckedChanged, AddressOf LiveConfigChanged
         End If
-        If txtChatTargetLanguage IsNot Nothing Then
-            AddHandler txtChatTargetLanguage.TextChanged, AddressOf LiveConfigChanged
+        If cboChatTargetLanguage IsNot Nothing Then
+            AddHandler cboChatTargetLanguage.SelectedIndexChanged, AddressOf LiveConfigChanged
         End If
         If nudChatScanMs IsNot Nothing Then
             AddHandler nudChatScanMs.ValueChanged, AddressOf LiveConfigChanged
@@ -439,8 +453,8 @@ Public Class Form1
         If chkChatTranslationOverlay IsNot Nothing Then
             AddHandler chkChatTranslationOverlay.CheckedChanged, AddressOf PersistListSettingsChanged
         End If
-        If txtChatTargetLanguage IsNot Nothing Then
-            AddHandler txtChatTargetLanguage.TextChanged, AddressOf PersistListSettingsChanged
+        If cboChatTargetLanguage IsNot Nothing Then
+            AddHandler cboChatTargetLanguage.SelectedIndexChanged, AddressOf PersistListSettingsChanged
         End If
         If nudChatScanMs IsNot Nothing Then
             AddHandler nudChatScanMs.ValueChanged, AddressOf PersistListSettingsChanged
@@ -703,8 +717,14 @@ Public Class Form1
         generalLayout.SetColumnSpan(chkChatTranslationOverlay, 2)
 
         generalLayout.Controls.Add(New Label() With {.Text = "Target Lang", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 6)
-        txtChatTargetLanguage = New TextBox() With {.Dock = DockStyle.Fill, .Text = "en"}
-        generalLayout.Controls.Add(txtChatTargetLanguage, 1, 6)
+        cboChatTargetLanguage = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList}
+        cboChatTargetLanguage.DisplayMember = NameOf(ChatLanguageOption.Label)
+        cboChatTargetLanguage.ValueMember = NameOf(ChatLanguageOption.Code)
+        cboChatTargetLanguage.Items.Add(New ChatLanguageOption("English", "en"))
+        cboChatTargetLanguage.Items.Add(New ChatLanguageOption("Espanol", "es"))
+        cboChatTargetLanguage.Items.Add(New ChatLanguageOption("Filipino", "tl"))
+        SelectChatTargetLanguage("en")
+        generalLayout.Controls.Add(cboChatTargetLanguage, 1, 6)
 
         generalLayout.Controls.Add(New Label() With {.Text = "Chat Scan (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 2, 6)
         nudChatScanMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 250, .Maximum = 5000, .Value = 700}
@@ -2455,7 +2475,7 @@ Public Class Form1
             $"LevelingUnreachableLimit: {If(nudLevelingUnreachableLimit IsNot Nothing, nudLevelingUnreachableLimit.Value.ToString(), "4")}{Environment.NewLine}" &
             $"ChatTranslationEnabled: {If(chkChatTranslationEnabled IsNot Nothing AndAlso chkChatTranslationEnabled.Checked, "True", "False")}{Environment.NewLine}" &
             $"ChatTranslationOverlay: {If(chkChatTranslationOverlay IsNot Nothing AndAlso chkChatTranslationOverlay.Checked, "True", "False")}{Environment.NewLine}" &
-            $"ChatTargetLanguage: {If(txtChatTargetLanguage IsNot Nothing, txtChatTargetLanguage.Text.Trim(), "en")}{Environment.NewLine}" &
+            $"ChatTargetLanguage: {GetSelectedChatTargetLanguageCode()}{Environment.NewLine}" &
             $"ChatScanMs: {If(nudChatScanMs IsNot Nothing, nudChatScanMs.Value.ToString(), "700")}{Environment.NewLine}" &
             $"ChatMaxLines: {If(nudChatMaxLines IsNot Nothing, nudChatMaxLines.Value.ToString(), "6")}{Environment.NewLine}" &
             $"NavigationEnabled: {If(chkNavigationEnabled IsNot Nothing AndAlso chkNavigationEnabled.Checked, "True", "False")}{Environment.NewLine}" &
@@ -2745,7 +2765,7 @@ Public Class Form1
         End If
 
         _lastChatOcrText = rawText
-        Dim targetLanguage As String = If(txtChatTargetLanguage IsNot Nothing AndAlso txtChatTargetLanguage.Text.Trim() <> "", txtChatTargetLanguage.Text.Trim().ToLowerInvariant(), "en")
+        Dim targetLanguage As String = GetSelectedChatTargetLanguageCode()
         Dim lines As List(Of String) = ParseChatOcrLines(rawText)
         For Each line As String In lines
             Dim key As String = NormalizeChatLineKey(line)
@@ -2780,6 +2800,119 @@ Public Class Form1
         Return Regex.Replace(If(line, "").Trim().ToLowerInvariant(), "\s+", " ")
     End Function
 
+    Private Shared Function NormalizeChatTargetLanguageCode(raw As String) As String
+        Dim cleaned As String = Regex.Replace(If(raw, "").Trim().ToLowerInvariant(), "[^a-z]", "")
+        Select Case cleaned
+            Case "es", "spanish", "espanol"
+                Return "es"
+            Case "tl", "fil", "filipino", "tagalog", "philipino"
+                Return "tl"
+            Case Else
+                Return "en"
+        End Select
+    End Function
+
+    Private Function GetSelectedChatTargetLanguageCode() As String
+        If cboChatTargetLanguage Is Nothing Then
+            Return "en"
+        End If
+
+        Dim selected As ChatLanguageOption = TryCast(cboChatTargetLanguage.SelectedItem, ChatLanguageOption)
+        If selected IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(selected.Code) Then
+            Return selected.Code
+        End If
+
+        If cboChatTargetLanguage.SelectedValue IsNot Nothing Then
+            Return NormalizeChatTargetLanguageCode(cboChatTargetLanguage.SelectedValue.ToString())
+        End If
+
+        Return "en"
+    End Function
+
+    Private Sub SelectChatTargetLanguage(raw As String)
+        If cboChatTargetLanguage Is Nothing Then
+            Return
+        End If
+
+        Dim targetCode As String = NormalizeChatTargetLanguageCode(raw)
+        For i As Integer = 0 To cboChatTargetLanguage.Items.Count - 1
+            Dim optionItem As ChatLanguageOption = TryCast(cboChatTargetLanguage.Items(i), ChatLanguageOption)
+            If optionItem IsNot Nothing AndAlso optionItem.Code.Equals(targetCode, StringComparison.OrdinalIgnoreCase) Then
+                cboChatTargetLanguage.SelectedIndex = i
+                Exit Sub
+            End If
+        Next
+
+        If cboChatTargetLanguage.Items.Count > 0 Then
+            cboChatTargetLanguage.SelectedIndex = 0
+        End If
+    End Sub
+
+    Private Async Function TranslateChatLineAsync(sourceLine As String, targetLanguage As String) As Task(Of String)
+        Dim lineText As String = If(sourceLine, "")
+        If String.IsNullOrWhiteSpace(lineText) Then
+            Return ""
+        End If
+
+        Dim colonIndex As Integer = lineText.IndexOf(":"c)
+        If colonIndex > 0 Then
+            Dim prefix As String = lineText.Substring(0, colonIndex + 1)
+            Dim messageText As String = lineText.Substring(colonIndex + 1)
+            Dim translatedMessage As String = Await TranslateChatMessageBodyAsync(messageText, targetLanguage)
+            Return prefix & translatedMessage
+        End If
+
+        Return Await TranslateChatMessageBodyAsync(lineText, targetLanguage)
+    End Function
+
+    Private Async Function TranslateChatMessageBodyAsync(messageText As String, targetLanguage As String) As Task(Of String)
+        Dim rawText As String = If(messageText, "")
+        If rawText = "" Then
+            Return ""
+        End If
+
+        Dim leadingWhitespace As String = Regex.Match(rawText, "^\s*").Value
+        Dim trailingWhitespace As String = Regex.Match(rawText, "\s*$").Value
+        Dim coreText As String = rawText.Trim()
+        If coreText = "" Then
+            Return rawText
+        End If
+
+        Dim matches As MatchCollection = Regex.Matches(coreText, "\[[^\]]*\]|[^\[]+")
+        Dim parts As New List(Of String)()
+        For Each piece As Match In matches
+            Dim value As String = piece.Value
+            If value.StartsWith("[", StringComparison.Ordinal) AndAlso value.EndsWith("]", StringComparison.Ordinal) Then
+                parts.Add(value)
+            Else
+                parts.Add(Await TranslateChatSegmentAsync(value, targetLanguage))
+            End If
+        Next
+
+        Return leadingWhitespace & String.Concat(parts) & trailingWhitespace
+    End Function
+
+    Private Async Function TranslateChatSegmentAsync(segment As String, targetLanguage As String) As Task(Of String)
+        Dim rawSegment As String = If(segment, "")
+        If rawSegment = "" Then
+            Return ""
+        End If
+
+        Dim leadingWhitespace As String = Regex.Match(rawSegment, "^\s*").Value
+        Dim trailingWhitespace As String = Regex.Match(rawSegment, "\s*$").Value
+        Dim coreText As String = rawSegment.Trim()
+        If coreText = "" Then
+            Return rawSegment
+        End If
+
+        Dim translated As String = Await _chatTranslator.TranslateTextAsync(coreText, targetLanguage)
+        If String.IsNullOrWhiteSpace(translated) Then
+            translated = coreText
+        End If
+
+        Return leadingWhitespace & translated.Trim() & trailingWhitespace
+    End Function
+
     Private Sub QueueChatTranslation(sourceLine As String, targetLanguage As String)
         Dim lineCopy As String = If(sourceLine, "").Trim()
         If lineCopy = "" Then
@@ -2790,7 +2923,7 @@ Public Class Form1
             Async Function()
                 Await _chatTranslationLock.WaitAsync()
                 Try
-                    Dim translated As String = Await _chatTranslator.TranslateTextAsync(lineCopy, targetLanguage)
+                    Dim translated As String = Await TranslateChatLineAsync(lineCopy, targetLanguage)
                     If String.IsNullOrWhiteSpace(translated) Then
                         translated = lineCopy
                     End If
@@ -3117,7 +3250,7 @@ Public Class Form1
         cfg.NavigationRepathOnStuck = (chkNavigationRepathOnStuck IsNot Nothing AndAlso chkNavigationRepathOnStuck.Checked)
         cfg.ChatTranslationEnabled = (chkChatTranslationEnabled IsNot Nothing AndAlso chkChatTranslationEnabled.Checked)
         cfg.ChatTranslationOverlayEnabled = (chkChatTranslationOverlay IsNot Nothing AndAlso chkChatTranslationOverlay.Checked)
-        cfg.ChatTranslationTargetLanguage = If(txtChatTargetLanguage IsNot Nothing AndAlso txtChatTargetLanguage.Text.Trim() <> "", txtChatTargetLanguage.Text.Trim().ToLowerInvariant(), "en")
+        cfg.ChatTranslationTargetLanguage = GetSelectedChatTargetLanguageCode()
         cfg.ChatTranslationScanIntervalMs = CInt(If(nudChatScanMs IsNot Nothing, nudChatScanMs.Value, 700D))
         cfg.ChatTranslationMaxLines = CInt(If(nudChatMaxLines IsNot Nothing, nudChatMaxLines.Value, 6D))
         cfg.HpBar = BuildRect("hp_bar")
@@ -3758,8 +3891,8 @@ Public Class Form1
         If chkChatTranslationOverlay IsNot Nothing Then
             chkChatTranslationOverlay.Checked = cfg.ChatTranslationOverlayEnabled
         End If
-        If txtChatTargetLanguage IsNot Nothing Then
-            txtChatTargetLanguage.Text = If(String.IsNullOrWhiteSpace(cfg.ChatTranslationTargetLanguage), "en", cfg.ChatTranslationTargetLanguage.Trim().ToLowerInvariant())
+        If cboChatTargetLanguage IsNot Nothing Then
+            SelectChatTargetLanguage(cfg.ChatTranslationTargetLanguage)
         End If
         SetNumericControlValue(nudChatScanMs, CDec(Math.Max(250, cfg.ChatTranslationScanIntervalMs)))
         SetNumericControlValue(nudChatMaxLines, CDec(Math.Max(1, cfg.ChatTranslationMaxLines)))

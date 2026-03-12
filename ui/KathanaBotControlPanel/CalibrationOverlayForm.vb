@@ -535,6 +535,7 @@ Public Class CalibrationOverlayForm
         cfg.PartyInviteOkRect = CloneRegion(src.PartyInviteOkRect)
         cfg.MapRect = CloneRegion(src.MapRect)
         cfg.MapCoordinateRect = CloneRegion(src.MapCoordinateRect)
+        cfg.ChatRect = CloneRegion(src.ChatRect)
         cfg.LootScanRect = CloneRegion(src.LootScanRect)
         cfg.LootScanPoints = CloneLootScanPoints(src.LootScanPoints)
         Return cfg

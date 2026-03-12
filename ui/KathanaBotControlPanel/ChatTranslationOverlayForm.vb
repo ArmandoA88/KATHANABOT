@@ -116,23 +116,18 @@ Public Class ChatTranslationOverlayForm
         Dim y As Integer = padding
         Dim textWidth As Integer = Math.Max(60, ClientSize.Width - (padding * 2))
 
-        Using translatedFont As New Font("Segoe UI Semibold", 11.0F, FontStyle.Bold),
-              sourceFont As New Font("Segoe UI", 8.5F, FontStyle.Regular),
+        Using translatedFont As New Font("Segoe UI Semibold", 9.0F, FontStyle.Bold),
               translatedBrush As New SolidBrush(Color.FromArgb(255, 244, 235, 170)),
-              sourceBrush As New SolidBrush(Color.FromArgb(230, 210, 210, 210)),
               panelBrush As New SolidBrush(Color.FromArgb(150, 5, 5, 5))
 
             For Each entry As ChatOverlayLine In _entries
                 Dim translatedSize As Size = TextRenderer.MeasureText(e.Graphics, entry.TranslatedText, translatedFont, New Size(textWidth, 0), TextFormatFlags.WordBreak)
-                Dim sourceSize As Size = TextRenderer.MeasureText(e.Graphics, entry.SourceText, sourceFont, New Size(textWidth, 0), TextFormatFlags.WordBreak)
-                Dim blockHeight As Integer = translatedSize.Height + sourceSize.Height + 12
+                Dim blockHeight As Integer = translatedSize.Height + 8
                 Dim blockRect As New Rectangle(padding, y, textWidth, blockHeight)
                 e.Graphics.FillRectangle(panelBrush, blockRect)
 
-                Dim translatedRect As New Rectangle(blockRect.X + 6, blockRect.Y + 4, blockRect.Width - 12, translatedSize.Height + 4)
-                Dim sourceRect As New Rectangle(blockRect.X + 6, translatedRect.Bottom, blockRect.Width - 12, sourceSize.Height + 2)
+                Dim translatedRect As New Rectangle(blockRect.X + 6, blockRect.Y + 3, blockRect.Width - 12, translatedSize.Height + 2)
                 TextRenderer.DrawText(e.Graphics, entry.TranslatedText, translatedFont, translatedRect, translatedBrush.Color, TextFormatFlags.WordBreak)
-                TextRenderer.DrawText(e.Graphics, entry.SourceText, sourceFont, sourceRect, sourceBrush.Color, TextFormatFlags.WordBreak)
 
                 y += blockHeight + 6
                 If y >= ClientSize.Height Then

@@ -49,10 +49,16 @@ Public Class TranslationService
         End If
 
         cleaned = New String(cleaned.Where(Function(ch) Char.IsLetter(ch) OrElse ch = "-"c).ToArray())
-        If cleaned = "" Then
-            Return "en"
-        End If
-        Return cleaned
+        Select Case cleaned
+            Case "es", "spanish", "espanol"
+                Return "es"
+            Case "tl", "fil", "filipino", "tagalog", "philipino"
+                Return "tl"
+            Case "", "en", "english"
+                Return "en"
+            Case Else
+                Return cleaned
+        End Select
     End Function
 
     Private Shared Function ParseTranslatedText(payload As String) As String
