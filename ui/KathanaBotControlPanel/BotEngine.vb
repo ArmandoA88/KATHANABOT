@@ -132,6 +132,7 @@ Public Class BotConfig
     Public Property WindowTitle As String = "Kathana - The Coming of the Dark Ages"
     Public Property LoopMs As Integer = 80
     Public Property RetargetMs As Integer = 550
+    Public Property ForcedRetargetMs As Integer = 550
     Public Property MobHpPresenceThreshold As Double = 1.0
     Public Property HighMaxHpSpecialEnabled As Boolean = False
     Public Property HighMaxHpThreshold As Integer = 2000
@@ -449,7 +450,8 @@ Public Class BotEngine
     Private _status As New BotStatus()
     Private _cts As CancellationTokenSource
     Private _task As Task
-    Private _lastRetarget As DateTime = DateTime.MinValue
+    Private _lastNormalRetarget As DateTime = DateTime.MinValue
+    Private _lastForcedRetarget As DateTime = DateTime.MinValue
     Private _lastTargetWindowSeen As DateTime = DateTime.MinValue
     Private _noTargetBeganAt As DateTime = DateTime.MinValue
     Private _lastAttackAction As DateTime = DateTime.MinValue
@@ -640,7 +642,8 @@ Public Class BotEngine
             _cts = New CancellationTokenSource()
             _status.Running = True
             _status.ErrorMessage = ""
-            _lastRetarget = DateTime.MinValue
+            _lastNormalRetarget = DateTime.MinValue
+            _lastForcedRetarget = DateTime.MinValue
             _lastTargetWindowSeen = DateTime.MinValue
             _noTargetBeganAt = DateTime.MinValue
             _lastAttackAction = DateTime.MinValue
@@ -1124,14 +1127,12 @@ Public Class BotEngine
             Dim forcedRetarget As Boolean = False
 
             If ShouldBypassStuckTarget(cfg, targetWindowVisible, targetValid, now) Then
-                If SendKey(hwnd, "E", 35) Then
-                    _lastRetarget = now
+                If TrySendRetargetKey(hwnd, cfg, now, "E (stuck target bypass)", forced:=True) Then
                     _noDamageTargetSignature = ""
                     _noDamageAttackCount = 0
                     _firstHitPending = False
                     _firstHitTargetSignature = ""
                     _firstHitWindowUntil = DateTime.MinValue
-                    SetLastAction("E (stuck target bypass)")
                     reason = "Stuck target bypass sent retarget."
                     forcedRetarget = True
                 End If
@@ -1191,12 +1192,10 @@ Public Class BotEngine
                         If String.IsNullOrWhiteSpace(reason) Then
                             reason = $"No target not stable yet. Waiting {noTargetStableMs}ms."
                         End If
-                    ElseIf (now - _lastRetarget).TotalMilliseconds >= retargetDelayMs Then
-                        If SendKey(hwnd, "E", 35) Then
-                            _lastRetarget = now
+                    ElseIf (_lastNormalRetarget = DateTime.MinValue) OrElse (now - _lastNormalRetarget).TotalMilliseconds >= retargetDelayMs Then
+                        If TrySendRetargetKey(hwnd, cfg, now, "E (retarget)", forced:=False) Then
                             _noDamageTargetSignature = ""
                             _noDamageAttackCount = 0
-                            SetLastAction("E (retarget)")
                             If String.IsNullOrWhiteSpace(reason) Then
                                 If deniedTarget Then
                                     reason = $"Monster filter blocked target '{If(String.IsNullOrWhiteSpace(mobName), "unknown", mobName)}'. Retarget key sent."
@@ -3468,7 +3467,8 @@ Public Class BotEngine
             Return
         End If
 
-        If _lastRetarget <> DateTime.MinValue AndAlso (now - _lastRetarget).TotalMilliseconds < GetRetargetCooldownMs(cfg, 1) Then
+        Dim lastAnyRetarget As DateTime = GetLatestRetargetAt()
+        If lastAnyRetarget <> DateTime.MinValue AndAlso (now - lastAnyRetarget).TotalMilliseconds < Math.Min(GetRetargetCooldownMs(cfg, 1, forced:=False), GetRetargetCooldownMs(cfg, 1, forced:=True)) Then
             Return
         End If
 
@@ -3886,7 +3886,7 @@ Public Class BotEngine
         End If
 
         If (Not _unreachableLatched) AndAlso _unreachableConfirmCount >= UnreachableConfirmRequiredCount Then
-            Dim unreachableRetargetMs As Integer = GetRetargetCooldownMs(cfg, 1)
+            Dim unreachableRetargetMs As Integer = GetRetargetCooldownMs(cfg, 1, forced:=True)
             Dim triggerReady As Boolean = (_lastUnreachableTrigger = DateTime.MinValue) OrElse ((now - _lastUnreachableTrigger).TotalMilliseconds >= unreachableRetargetMs)
             If triggerReady Then
                 _lastUnreachableTrigger = now
@@ -3905,9 +3905,7 @@ Public Class BotEngine
                 _nameConfirmLastSampleAt = DateTime.MinValue
                 _nameConfirmLastReadProcessedAt = DateTime.MinValue
 
-                If SendKey(hwnd, "E", 35) Then
-                    _lastRetarget = now
-                    SetLastAction("E (unreachable target)")
+                If TrySendRetargetKey(hwnd, cfg, now, "E (unreachable target)", forced:=True) Then
                     RaiseEvent LogLine("Unreachable target detected by OCR. Forced retarget.")
                     Return True
                 End If
@@ -4389,11 +4387,46 @@ Public Class BotEngine
         Return cleaned
     End Function
 
-    Private Shared Function GetRetargetCooldownMs(cfg As BotConfig, Optional minimumMs As Integer = 1) As Integer
+    Private Shared Function GetRetargetCooldownMs(cfg As BotConfig, Optional minimumMs As Integer = 1, Optional forced As Boolean = False) As Integer
         If cfg Is Nothing Then
             Return Math.Max(minimumMs, 1) + RetargetBufferMs
         End If
-        Return Math.Max(Math.Max(1, cfg.RetargetMs), minimumMs) + RetargetBufferMs
+        Dim configuredMs As Integer = If(forced, cfg.ForcedRetargetMs, cfg.RetargetMs)
+        Return Math.Max(Math.Max(1, configuredMs), minimumMs) + RetargetBufferMs
+    End Function
+
+    Private Function TrySendRetargetKey(hwnd As IntPtr, cfg As BotConfig, now As DateTime, actionText As String, Optional forced As Boolean = False) As Boolean
+        If hwnd = IntPtr.Zero Then
+            Return False
+        End If
+
+        Dim cooldownMs As Integer = GetRetargetCooldownMs(cfg, 1, forced)
+        Dim lastRetargetAt As DateTime = If(forced, _lastForcedRetarget, _lastNormalRetarget)
+        If lastRetargetAt <> DateTime.MinValue AndAlso (now - lastRetargetAt).TotalMilliseconds < cooldownMs Then
+            Return False
+        End If
+
+        If forced Then
+            _lastForcedRetarget = now
+        Else
+            _lastNormalRetarget = now
+        End If
+        If SendKey(hwnd, "E", 35) Then
+            SetLastAction(actionText)
+            Return True
+        End If
+
+        Return False
+    End Function
+
+    Private Function GetLatestRetargetAt() As DateTime
+        If _lastNormalRetarget = DateTime.MinValue Then
+            Return _lastForcedRetarget
+        End If
+        If _lastForcedRetarget = DateTime.MinValue Then
+            Return _lastNormalRetarget
+        End If
+        Return If(_lastNormalRetarget >= _lastForcedRetarget, _lastNormalRetarget, _lastForcedRetarget)
     End Function
 
     Private Sub TrackMobHpMovement(targetValid As Boolean, mobHpPct As Double, now As DateTime)
@@ -4435,14 +4468,14 @@ Public Class BotEngine
 
         Dim stuckMs As Integer = Math.Max(1, cfg.StuckTargetMs)
         Dim sinceAttackMs As Double = (now - _lastAttackAction).TotalMilliseconds
-        Dim staleAttackWindowMs As Integer = Math.Max(stuckMs * 5, Math.Max(1, cfg.RetargetMs) * 6)
+        Dim staleAttackWindowMs As Integer = Math.Max(stuckMs * 5, Math.Max(1, cfg.ForcedRetargetMs) * 6)
         If sinceAttackMs > staleAttackWindowMs Then
             Return False
         End If
 
-        Dim retargetCooldownMs As Integer = GetRetargetCooldownMs(cfg, 1)
+        Dim retargetCooldownMs As Integer = GetRetargetCooldownMs(cfg, 1, forced:=True)
         If _noDamageAttackCount >= 3 AndAlso targetWindowVisible Then
-            Return (now - _lastRetarget).TotalMilliseconds >= retargetCooldownMs
+            Return (_lastForcedRetarget = DateTime.MinValue) OrElse (now - _lastForcedRetarget).TotalMilliseconds >= retargetCooldownMs
         End If
 
         If Not targetValid Then
@@ -4458,7 +4491,7 @@ Public Class BotEngine
             Return False
         End If
 
-        Return (now - _lastRetarget).TotalMilliseconds >= retargetCooldownMs
+        Return (_lastForcedRetarget = DateTime.MinValue) OrElse (now - _lastForcedRetarget).TotalMilliseconds >= retargetCooldownMs
     End Function
 
     Private Sub RecordAttackWithoutDamage(targetSignature As String)
@@ -4620,7 +4653,7 @@ Public Class BotEngine
         End If
 
         If SendKey(hwnd, "E", 35) Then
-            _lastRetarget = DateTime.UtcNow
+            _lastNormalRetarget = DateTime.UtcNow
             SetLastAction("E (manual retarget)")
             Return True
         End If

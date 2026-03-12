@@ -22,6 +22,7 @@ Public Class Form1
     Private txtWindowTitle As TextBox
     Private nudLoopMs As NumericUpDown
     Private nudRetargetMs As NumericUpDown
+    Private nudForcedRetargetMs As NumericUpDown
     Private nudMobHpThreshold As NumericUpDown
     Private chkHighMaxHpSpecial As CheckBox
     Private nudHighMaxHpThreshold As NumericUpDown
@@ -352,6 +353,9 @@ Public Class Form1
         End If
         AddHandler nudLoopMs.ValueChanged, AddressOf LiveConfigChanged
         AddHandler nudRetargetMs.ValueChanged, AddressOf LiveConfigChanged
+        If nudForcedRetargetMs IsNot Nothing Then
+            AddHandler nudForcedRetargetMs.ValueChanged, AddressOf LiveConfigChanged
+        End If
         AddHandler nudMobHpThreshold.ValueChanged, AddressOf LiveConfigChanged
         If chkHighMaxHpSpecial IsNot Nothing Then
             AddHandler chkHighMaxHpSpecial.CheckedChanged, AddressOf LiveConfigChanged
@@ -470,6 +474,9 @@ Public Class Form1
         End If
         If nudHighMaxHpThreshold IsNot Nothing Then
             AddHandler nudHighMaxHpThreshold.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudForcedRetargetMs IsNot Nothing Then
+            AddHandler nudForcedRetargetMs.ValueChanged, AddressOf PersistListSettingsChanged
         End If
         If nudStuckTargetMs IsNot Nothing Then
             AddHandler nudStuckTargetMs.ValueChanged, AddressOf PersistListSettingsChanged
@@ -658,7 +665,7 @@ Public Class Form1
         left.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
 
         Dim generalGroup As New GroupBox() With {.Text = "Vision + Window Setup", .Dock = DockStyle.Fill}
-        Dim generalLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 4, .RowCount = 9}
+        Dim generalLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 4, .RowCount = 10}
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 130.0F))
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 130.0F))
@@ -673,7 +680,7 @@ Public Class Form1
         nudLoopMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 20, .Maximum = 1000, .Value = 80}
         generalLayout.Controls.Add(nudLoopMs, 1, 1)
 
-        generalLayout.Controls.Add(New Label() With {.Text = "Retarget (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 2, 1)
+        generalLayout.Controls.Add(New Label() With {.Text = "Normal Retarget (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 2, 1)
         nudRetargetMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 100, .Maximum = 5000, .Value = 550}
         generalLayout.Controls.Add(nudRetargetMs, 3, 1)
 
@@ -681,19 +688,23 @@ Public Class Form1
         nudMobHpThreshold = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 0.1D, .Maximum = 100, .DecimalPlaces = 1, .Increment = 0.1D, .Value = 1.0D}
         generalLayout.Controls.Add(nudMobHpThreshold, 1, 2)
 
+        generalLayout.Controls.Add(New Label() With {.Text = "Forced Retarget (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 2, 2)
+        nudForcedRetargetMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 100, .Maximum = 5000, .Value = 550}
+        generalLayout.Controls.Add(nudForcedRetargetMs, 3, 2)
+
         btnOverlayToggle = New Button() With {.Text = "Show Overlay", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(70, 70, 70), .ForeColor = Color.White}
         AddHandler btnOverlayToggle.Click, AddressOf ToggleOverlayClicked
-        generalLayout.Controls.Add(btnOverlayToggle, 2, 2)
+        generalLayout.Controls.Add(btnOverlayToggle, 2, 3)
 
         Dim btnCaptureSnapshot As New Button() With {.Text = "Capture Snapshot", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(30, 80, 120), .ForeColor = Color.White}
         AddHandler btnCaptureSnapshot.Click, AddressOf SnapshotClicked
-        generalLayout.Controls.Add(btnCaptureSnapshot, 3, 2)
+        generalLayout.Controls.Add(btnCaptureSnapshot, 3, 3)
 
         chkHighMaxHpSpecial = New CheckBox() With {.Text = "Use special key on high max HP mobs", .Dock = DockStyle.Fill}
-        generalLayout.Controls.Add(chkHighMaxHpSpecial, 0, 3)
+        generalLayout.Controls.Add(chkHighMaxHpSpecial, 0, 4)
         generalLayout.SetColumnSpan(chkHighMaxHpSpecial, 2)
 
-        generalLayout.Controls.Add(New Label() With {.Text = "Max HP >=", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 2, 3)
+        generalLayout.Controls.Add(New Label() With {.Text = "Max HP >=", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 2, 4)
         nudHighMaxHpThreshold = New NumericUpDown() With {
             .Dock = DockStyle.Fill,
             .Minimum = 100,
@@ -702,21 +713,21 @@ Public Class Form1
             .ThousandsSeparator = True,
             .Value = 2000
         }
-        generalLayout.Controls.Add(nudHighMaxHpThreshold, 3, 3)
+        generalLayout.Controls.Add(nudHighMaxHpThreshold, 3, 4)
 
         Dim hint As New Label() With {.Text = "Mob HP Presence % = minimum red-fill detected in Mob HP bar. For high max HP special, make mob_hp_rect include the HP numbers and assign a Combat Skill row role to high_max_hp.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.LightGreen}
-        generalLayout.Controls.Add(hint, 0, 4)
+        generalLayout.Controls.Add(hint, 0, 5)
         generalLayout.SetColumnSpan(hint, 4)
 
         chkChatTranslationEnabled = New CheckBox() With {.Text = "Enable chat translation OCR", .Dock = DockStyle.Fill}
-        generalLayout.Controls.Add(chkChatTranslationEnabled, 0, 5)
+        generalLayout.Controls.Add(chkChatTranslationEnabled, 0, 6)
         generalLayout.SetColumnSpan(chkChatTranslationEnabled, 2)
 
         chkChatTranslationOverlay = New CheckBox() With {.Text = "Show translated overlay", .Dock = DockStyle.Fill, .Checked = True}
-        generalLayout.Controls.Add(chkChatTranslationOverlay, 2, 5)
+        generalLayout.Controls.Add(chkChatTranslationOverlay, 2, 6)
         generalLayout.SetColumnSpan(chkChatTranslationOverlay, 2)
 
-        generalLayout.Controls.Add(New Label() With {.Text = "Target Lang", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 6)
+        generalLayout.Controls.Add(New Label() With {.Text = "Target Lang", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 7)
         cboChatTargetLanguage = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList}
         cboChatTargetLanguage.DisplayMember = NameOf(ChatLanguageOption.Label)
         cboChatTargetLanguage.ValueMember = NameOf(ChatLanguageOption.Code)
@@ -724,15 +735,15 @@ Public Class Form1
         cboChatTargetLanguage.Items.Add(New ChatLanguageOption("Espanol", "es"))
         cboChatTargetLanguage.Items.Add(New ChatLanguageOption("Filipino", "tl"))
         SelectChatTargetLanguage("en")
-        generalLayout.Controls.Add(cboChatTargetLanguage, 1, 6)
+        generalLayout.Controls.Add(cboChatTargetLanguage, 1, 7)
 
-        generalLayout.Controls.Add(New Label() With {.Text = "Chat Scan (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 2, 6)
+        generalLayout.Controls.Add(New Label() With {.Text = "Chat Scan (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 2, 7)
         nudChatScanMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 250, .Maximum = 5000, .Value = 700}
-        generalLayout.Controls.Add(nudChatScanMs, 3, 6)
+        generalLayout.Controls.Add(nudChatScanMs, 3, 7)
 
-        generalLayout.Controls.Add(New Label() With {.Text = "Overlay Lines", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 7)
+        generalLayout.Controls.Add(New Label() With {.Text = "Overlay Lines", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 8)
         nudChatMaxLines = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 1, .Maximum = 12, .Value = 6}
-        generalLayout.Controls.Add(nudChatMaxLines, 1, 7)
+        generalLayout.Controls.Add(nudChatMaxLines, 1, 8)
 
         lblChatTranslationStatus = New Label() With {
             .Text = "Chat Translation: idle. Calibrate chat_rect in Regions, then keep the chat window visible.",
@@ -740,7 +751,7 @@ Public Class Form1
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.MiddleLeft
         }
-        generalLayout.Controls.Add(lblChatTranslationStatus, 0, 8)
+        generalLayout.Controls.Add(lblChatTranslationStatus, 0, 9)
         generalLayout.SetColumnSpan(lblChatTranslationStatus, 4)
 
         generalGroup.Controls.Add(generalLayout)
@@ -1513,6 +1524,9 @@ Public Class Form1
         End If
         nudMobHpThreshold.Value = 1.0D
         nudRetargetMs.Value = 550D
+        If nudForcedRetargetMs IsNot Nothing Then
+            nudForcedRetargetMs.Value = 550D
+        End If
 
         Dim keyIndex As Integer = 1
         For Each key In PrimaryKeys
@@ -3211,6 +3225,7 @@ Public Class Form1
         cfg.WindowTitle = txtWindowTitle.Text.Trim()
         cfg.LoopMs = CInt(nudLoopMs.Value)
         cfg.RetargetMs = CInt(nudRetargetMs.Value)
+        cfg.ForcedRetargetMs = CInt(If(nudForcedRetargetMs IsNot Nothing, nudForcedRetargetMs.Value, nudRetargetMs.Value))
         cfg.StuckTargetMs = CInt(If(nudStuckTargetMs IsNot Nothing, nudStuckTargetMs.Value, 2200D))
         cfg.MobHpPresenceThreshold = CDbl(nudMobHpThreshold.Value)
         cfg.HighMaxHpSpecialEnabled = (chkHighMaxHpSpecial IsNot Nothing AndAlso chkHighMaxHpSpecial.Checked)
@@ -3807,6 +3822,7 @@ Public Class Form1
         End If
         SetNumericControlValue(nudLoopMs, cfg.LoopMs)
         SetNumericControlValue(nudRetargetMs, cfg.RetargetMs)
+        SetNumericControlValue(nudForcedRetargetMs, If(cfg.ForcedRetargetMs > 0, cfg.ForcedRetargetMs, cfg.RetargetMs))
         SetNumericControlValue(nudStuckTargetMs, cfg.StuckTargetMs)
         SetNumericControlValue(nudMobHpThreshold, CDec(cfg.MobHpPresenceThreshold))
         If chkHighMaxHpSpecial IsNot Nothing Then
