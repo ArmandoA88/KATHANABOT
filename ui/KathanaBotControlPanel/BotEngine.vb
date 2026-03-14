@@ -145,6 +145,7 @@ Public Class BotConfig
     Public Property RupiahsRect As RectRegion = New RectRegion(560, 745, 110, 21)
     Public Property PartyInviteScanRect As RectRegion = New RectRegion(349, 318, 328, 124)
     Public Property PartyInviteOkRect As RectRegion = New RectRegion(463, 410, 59, 21)
+    Public Property PartyListRect As RectRegion = New RectRegion(0, 24, 168, 244)
     Public Property MapRect As RectRegion = New RectRegion(0, 0, 1024, 768)
     Public Property MapCoordinateRect As RectRegion = New RectRegion(6, 744, 120, 22)
     Public Property ChatRect As RectRegion = New RectRegion(18, 548, 430, 144)
@@ -260,6 +261,9 @@ Public Class BotStatus
     Public Property ExpPerHour As Double = -1
     Public Property RupiahsTotal As Long = -1
     Public Property RupiahsPerHour As Double = -1
+    Public Property PartySize As Integer
+    Public Property PartyAliveCount As Integer
+    Public Property PartyAllAlive As Boolean
     Public Property MobName As String = ""
     Public Property TargetValid As Boolean
     Public Property MapCoordinateText As String = ""
@@ -431,6 +435,7 @@ Public Class BotEngine
     Private Const NavigationRotationChangeCooldownMs As Integer = 1200
     Private Const MobHpTextOcrMinIntervalMs As Integer = 450
     Private Const PartyInviteOcrMinIntervalMs As Integer = 900
+    Private Const PartyListScanMinIntervalMs As Integer = 700
     Private Const UnreachableOcrMinIntervalMs As Integer = 260
     Private Const UnreachableConfirmWindowMs As Integer = 900
     Private Const UnreachableConfirmRequiredCount As Integer = 2
@@ -439,6 +444,8 @@ Public Class BotEngine
     Private Const RetargetBufferMs As Integer = 300
     Private Const BaseClientWidth As Integer = 1024
     Private Const BaseClientHeight As Integer = 768
+    Private Const MaxPartyMembers As Integer = 7
+    Private Const PartyListMergeGapRows As Integer = 4
 
     Private ReadOnly _sync As New Object()
     Private ReadOnly _frameSync As New Object()
@@ -486,6 +493,10 @@ Public Class BotEngine
     Private _partyAskSuppressedInParty As Boolean = False
     Private _partyAskWasEnabled As Boolean = False
     Private _partyAskPauseLogged As Boolean = False
+    Private _lastPartyListScanAt As DateTime = DateTime.MinValue
+    Private _lastPartySize As Integer = 0
+    Private _lastPartyAliveCount As Integer = 0
+    Private _lastPartyAllAlive As Boolean = False
     Private _lastUnreachableScan As DateTime = DateTime.MinValue
     Private _unreachableOcrTask As Task(Of String) = Nothing
     Private _lastUnreachableCandidate As String = ""
@@ -676,6 +687,10 @@ Public Class BotEngine
             _partyAskSuppressedInParty = False
             _partyAskWasEnabled = False
             _partyAskPauseLogged = False
+            _lastPartyListScanAt = DateTime.MinValue
+            _lastPartySize = 0
+            _lastPartyAliveCount = 0
+            _lastPartyAllAlive = False
             _lastUnreachableScan = DateTime.MinValue
             _unreachableOcrTask = Nothing
             _lastUnreachableCandidate = ""
@@ -896,6 +911,7 @@ Public Class BotEngine
                 ReleaseLootScannerAltKey()
                 ClearMapLocalizationRuntime()
                 ClearChatTranslationRuntime()
+                ClearPartyListRuntimeState()
                 UpdateLevelingAgentState(cfg, LevelingAgentState.Searching, "Game window not found.")
                 SetStatus(Sub(s)
                               s.WindowFound = False
@@ -923,6 +939,7 @@ Public Class BotEngine
                 ReleaseLootScannerAltKey()
                 ClearMapLocalizationRuntime()
                 ClearChatTranslationRuntime()
+                ClearPartyListRuntimeState()
                 UpdateLevelingAgentState(cfg, LevelingAgentState.Searching, "Unable to capture game client.")
                 SetStatus(Sub(s)
                               s.WindowFound = True
@@ -947,10 +964,11 @@ Public Class BotEngine
             Dim rupiahsRegion As New RectRegion(0, 0, 1, 1)
             Dim partyInviteScanRegion As New RectRegion(0, 0, 1, 1)
             Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
+            Dim partyListRegion As New RectRegion(0, 0, 1, 1)
             Dim mapRegion As New RectRegion(0, 0, 1, 1)
             Dim mapCoordinateRegion As New RectRegion(0, 0, 1, 1)
             Dim chatRegion As New RectRegion(0, 0, 1, 1)
-            ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, mapRegion, mapCoordinateRegion, chatRegion)
+            ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, partyListRegion, mapRegion, mapCoordinateRegion, chatRegion)
             Dim lootScanPolygon As List(Of DrawingPoint) = ResolveLootScanPolygon(cfg, frame.Width, frame.Height)
 
             Dim hpPct As Double = ComputeBarPercent(frame, hpRegion, True)
@@ -1001,6 +1019,7 @@ Public Class BotEngine
             Else
                 ClearChatTranslationRuntime()
             End If
+            ReadPartyListIfNeeded(frame, partyListRegion, now)
             Dim targetWindowVisible As Boolean = HasTargetWindowSignal(frame, mobHpRegion, mobName, mobHpPct)
             Dim hasHighMaxHpAction As Boolean = HasHighMaxHpAttackAction(cfg)
             Dim mobMaxHp As Integer = UpdateMobMaxHpTracking(cfg, frame, mobHpRegion, targetWindowVisible, mobHpPct, now)
@@ -1797,6 +1816,28 @@ Public Class BotEngine
         _navigationLocalizationPaused = False
     End Sub
 
+    Private Structure PartyListSummary
+        Public Property Size As Integer
+        Public Property AliveCount As Integer
+        Public Property AllAlive As Boolean
+    End Structure
+
+    Private Structure PartyListSegmentInfo
+        Public Property Top As Integer
+        Public Property Bottom As Integer
+        Public Property NamePixelCount As Integer
+        Public Property RedPixelCount As Integer
+        Public Property BluePixelCount As Integer
+        Public Property MaxRedRowPixels As Integer
+        Public Property MaxBlueRowPixels As Integer
+
+        Public ReadOnly Property Height As Integer
+            Get
+                Return Math.Max(0, Bottom - Top + 1)
+            End Get
+        End Property
+    End Structure
+
     Private Sub ReadMapCoordinateIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime)
         If _lastMapCoordinateOcrAt <> DateTime.MinValue AndAlso (now - _lastMapCoordinateOcrAt).TotalMilliseconds < MapCoordinateOcrMinIntervalMs Then
             Return
@@ -1940,6 +1981,189 @@ Public Class BotEngine
         _lastChatOcrNormalized = ""
         _lastChatOcrUpdatedAt = DateTime.MinValue
     End Sub
+
+    Private Sub ReadPartyListIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime)
+        If _lastPartyListScanAt <> DateTime.MinValue AndAlso (now - _lastPartyListScanAt).TotalMilliseconds < PartyListScanMinIntervalMs Then
+            Return
+        End If
+
+        _lastPartyListScanAt = now
+        If frame Is Nothing OrElse region Is Nothing Then
+            ClearPartyListRuntimeState()
+            Return
+        End If
+
+        Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
+        If rect.Width < 40 OrElse rect.Height < 20 Then
+            ClearPartyListRuntimeState()
+            Return
+        End If
+
+        Using crop As New Bitmap(Math.Max(1, rect.Width), Math.Max(1, rect.Height), PixelFormat.Format24bppRgb)
+            Using g As Graphics = Graphics.FromImage(crop)
+                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
+            End Using
+
+            Dim summary As PartyListSummary = AnalyzePartyListVisuals(crop)
+            _lastPartySize = summary.Size
+            _lastPartyAliveCount = summary.AliveCount
+            _lastPartyAllAlive = summary.AllAlive
+        End Using
+    End Sub
+
+    Private Sub ClearPartyListRuntimeState()
+        _lastPartySize = 0
+        _lastPartyAliveCount = 0
+        _lastPartyAllAlive = False
+    End Sub
+
+    Private Shared Function AnalyzePartyListVisuals(crop As Bitmap) As PartyListSummary
+        Dim summary As New PartyListSummary With {
+            .Size = 0,
+            .AliveCount = 0,
+            .AllAlive = False
+        }
+        If crop Is Nothing OrElse crop.Width <= 0 OrElse crop.Height <= 0 Then
+            Return summary
+        End If
+
+        Dim rowName(crop.Height - 1) As Integer
+        Dim rowRed(crop.Height - 1) As Integer
+        Dim rowBlue(crop.Height - 1) As Integer
+        Dim rowContent(crop.Height - 1) As Integer
+
+        For y As Integer = 0 To crop.Height - 1
+            Dim nameCount As Integer = 0
+            Dim redCount As Integer = 0
+            Dim blueCount As Integer = 0
+            For x As Integer = 0 To crop.Width - 1
+                Dim px As Color = crop.GetPixel(x, y)
+                If IsPartyHpBarPixel(px) Then
+                    redCount += 1
+                ElseIf IsPartyMpBarPixel(px) Then
+                    blueCount += 1
+                ElseIf IsPartyNameTextPixel(px) Then
+                    nameCount += 1
+                End If
+            Next
+
+            rowName(y) = nameCount
+            rowRed(y) = redCount
+            rowBlue(y) = blueCount
+            rowContent(y) = nameCount + redCount + blueCount
+        Next
+
+        Dim activeThreshold As Integer = Math.Max(6, CInt(Math.Ceiling(crop.Width * 0.035R)))
+        Dim segments As New List(Of PartyListSegmentInfo)()
+        Dim currentTop As Integer = -1
+        For y As Integer = 0 To crop.Height - 1
+            If rowContent(y) >= activeThreshold Then
+                If currentTop < 0 Then
+                    currentTop = y
+                End If
+            ElseIf currentTop >= 0 Then
+                segments.Add(BuildPartyListSegmentInfo(currentTop, y - 1, rowName, rowRed, rowBlue))
+                currentTop = -1
+            End If
+        Next
+
+        If currentTop >= 0 Then
+            segments.Add(BuildPartyListSegmentInfo(currentTop, crop.Height - 1, rowName, rowRed, rowBlue))
+        End If
+
+        Dim merged As List(Of PartyListSegmentInfo) = MergePartyListSegments(segments, rowName, rowRed, rowBlue)
+        Dim members As List(Of PartyListSegmentInfo) =
+            merged.
+                Where(Function(segment) IsLikelyPartyMemberSegment(segment, crop.Width)).
+                OrderBy(Function(segment) segment.Top).
+                Take(MaxPartyMembers).
+                ToList()
+
+        summary.Size = members.Count
+        Dim aliveRowThreshold As Integer = Math.Max(16, CInt(Math.Ceiling(crop.Width * 0.2R)))
+        summary.AliveCount = members.Where(Function(segment) segment.MaxRedRowPixels >= aliveRowThreshold).Count()
+        summary.AllAlive = summary.Size > 0 AndAlso summary.AliveCount >= summary.Size
+        Return summary
+    End Function
+
+    Private Shared Function BuildPartyListSegmentInfo(top As Integer, bottom As Integer, rowName() As Integer, rowRed() As Integer, rowBlue() As Integer) As PartyListSegmentInfo
+        Dim info As New PartyListSegmentInfo With {
+            .Top = Math.Max(0, top),
+            .Bottom = Math.Max(0, bottom)
+        }
+
+        For y As Integer = info.Top To info.Bottom
+            info.NamePixelCount += rowName(y)
+            info.RedPixelCount += rowRed(y)
+            info.BluePixelCount += rowBlue(y)
+            info.MaxRedRowPixels = Math.Max(info.MaxRedRowPixels, rowRed(y))
+            info.MaxBlueRowPixels = Math.Max(info.MaxBlueRowPixels, rowBlue(y))
+        Next
+
+        Return info
+    End Function
+
+    Private Shared Function MergePartyListSegments(segments As List(Of PartyListSegmentInfo), rowName() As Integer, rowRed() As Integer, rowBlue() As Integer) As List(Of PartyListSegmentInfo)
+        Dim ordered As List(Of PartyListSegmentInfo) = If(segments, New List(Of PartyListSegmentInfo)()).
+            OrderBy(Function(segment) segment.Top).
+            ToList()
+        If ordered.Count <= 1 Then
+            Return ordered
+        End If
+
+        Dim merged As New List(Of PartyListSegmentInfo)()
+        Dim current As PartyListSegmentInfo = ordered(0)
+        For i As Integer = 1 To ordered.Count - 1
+            Dim nextSegment As PartyListSegmentInfo = ordered(i)
+            Dim gap As Integer = nextSegment.Top - current.Bottom - 1
+            If gap <= PartyListMergeGapRows Then
+                current = BuildPartyListSegmentInfo(current.Top, nextSegment.Bottom, rowName, rowRed, rowBlue)
+            Else
+                merged.Add(current)
+                current = nextSegment
+            End If
+        Next
+
+        merged.Add(current)
+        Return merged
+    End Function
+
+    Private Shared Function IsLikelyPartyMemberSegment(segment As PartyListSegmentInfo, width As Integer) As Boolean
+        If segment.Height < 4 Then
+            Return False
+        End If
+
+        Dim minBarRowPixels As Integer = Math.Max(14, CInt(Math.Ceiling(width * 0.18R)))
+        If segment.MaxRedRowPixels >= minBarRowPixels OrElse segment.MaxBlueRowPixels >= minBarRowPixels Then
+            Return True
+        End If
+
+        Dim minNamePixels As Integer = Math.Max(28, width)
+        Return segment.NamePixelCount >= minNamePixels AndAlso segment.Height >= 5
+    End Function
+
+    Private Shared Function IsPartyNameTextPixel(px As Color) As Boolean
+        Dim luma As Integer = (CInt(px.R) * 30 + CInt(px.G) * 59 + CInt(px.B) * 11) \ 100
+        Dim maxChannel As Integer = Math.Max(px.R, Math.Max(px.G, px.B))
+        Dim minChannel As Integer = Math.Min(px.R, Math.Min(px.G, px.B))
+        If luma < 140 OrElse maxChannel < 170 Then
+            Return False
+        End If
+
+        If IsPartyHpBarPixel(px) OrElse IsPartyMpBarPixel(px) Then
+            Return False
+        End If
+
+        Return (px.R >= 155 AndAlso px.G >= 135) OrElse (maxChannel - minChannel <= 90)
+    End Function
+
+    Private Shared Function IsPartyHpBarPixel(px As Color) As Boolean
+        Return px.R >= 120 AndAlso px.R >= (px.G + 35) AndAlso px.R >= (px.B + 45)
+    End Function
+
+    Private Shared Function IsPartyMpBarPixel(px As Color) As Boolean
+        Return px.B >= 115 AndAlso px.B >= (px.R + 20) AndAlso px.B >= (px.G + 15)
+    End Function
 
     Private Shared Function NormalizeChatOcrText(rawText As String) As String
         Dim cleanedLines As New List(Of String)()
@@ -4781,6 +5005,9 @@ Public Class BotEngine
             _status.RouteRecordingSampleCount = _routeRecordingSamples.Count
             _status.RouteRecordingStatus = _routeRecordingStatus
             _status.RouteRecordingLastSavedPath = _routeRecordingLastSavedPath
+            _status.PartySize = _lastPartySize
+            _status.PartyAliveCount = _lastPartyAliveCount
+            _status.PartyAllAlive = _lastPartyAllAlive
             _status.UpdatedAt = DateTime.UtcNow
             snapshot = CloneStatus(_status)
         End SyncLock
@@ -4800,6 +5027,9 @@ Public Class BotEngine
             .ExpPerHour = src.ExpPerHour,
             .RupiahsTotal = src.RupiahsTotal,
             .RupiahsPerHour = src.RupiahsPerHour,
+            .PartySize = src.PartySize,
+            .PartyAliveCount = src.PartyAliveCount,
+            .PartyAllAlive = src.PartyAllAlive,
             .MobName = src.MobName,
             .TargetValid = src.TargetValid,
             .MapCoordinateText = src.MapCoordinateText,
@@ -5255,7 +5485,7 @@ Public Class BotEngine
         Return colored / CDbl(total)
     End Function
 
-    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef unreachableTextRect As RectRegion, ByRef pranaExpRect As RectRegion, ByRef rupiahsRect As RectRegion, ByRef partyInviteScanRect As RectRegion, ByRef partyInviteOkRect As RectRegion, ByRef mapRect As RectRegion, ByRef mapCoordinateRect As RectRegion, ByRef chatRect As RectRegion)
+    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef unreachableTextRect As RectRegion, ByRef pranaExpRect As RectRegion, ByRef rupiahsRect As RectRegion, ByRef partyInviteScanRect As RectRegion, ByRef partyInviteOkRect As RectRegion, ByRef partyListRect As RectRegion, ByRef mapRect As RectRegion, ByRef mapCoordinateRect As RectRegion, ByRef chatRect As RectRegion)
         hpBar = CloneRegion(cfg.HpBar)
         mpBar = CloneRegion(cfg.MpBar)
         mobNameRect = CloneRegion(cfg.MobNameRect)
@@ -5265,6 +5495,7 @@ Public Class BotEngine
         rupiahsRect = CloneRegion(cfg.RupiahsRect)
         partyInviteScanRect = CloneRegion(cfg.PartyInviteScanRect)
         partyInviteOkRect = CloneRegion(cfg.PartyInviteOkRect)
+        partyListRect = CloneRegion(cfg.PartyListRect)
         mapRect = CloneRegion(cfg.MapRect)
         mapCoordinateRect = CloneRegion(cfg.MapCoordinateRect)
         chatRect = CloneRegion(cfg.ChatRect)
@@ -5290,6 +5521,7 @@ Public Class BotEngine
         rupiahsRect = ScaleRegionLeftTop(cfg.RupiahsRect, sx, sy)
         partyInviteScanRect = ScaleRegionLeftTop(cfg.PartyInviteScanRect, sx, sy)
         partyInviteOkRect = ScaleRegionLeftTop(cfg.PartyInviteOkRect, sx, sy)
+        partyListRect = ScaleRegionLeftTop(cfg.PartyListRect, sx, sy)
         mapRect = ScaleRegionLeftTop(cfg.MapRect, sx, sy)
         mapCoordinateRect = ScaleRegionLeftTop(cfg.MapCoordinateRect, sx, sy)
         chatRect = ScaleRegionLeftTop(cfg.ChatRect, sx, sy)
@@ -5320,6 +5552,7 @@ Public Class BotEngine
                SameRegion(cfg.RupiahsRect, New RectRegion(560, 745, 110, 21)) AndAlso
                SameRegion(cfg.PartyInviteScanRect, New RectRegion(349, 318, 328, 124)) AndAlso
                SameRegion(cfg.PartyInviteOkRect, New RectRegion(463, 410, 59, 21)) AndAlso
+               SameRegion(cfg.PartyListRect, New RectRegion(0, 24, 168, 244)) AndAlso
                SameRegion(cfg.MapRect, New RectRegion(0, 0, 1024, 768)) AndAlso
                SameRegion(cfg.MapCoordinateRect, New RectRegion(6, 744, 120, 22)) AndAlso
                SameRegion(cfg.ChatRect, New RectRegion(18, 548, 430, 144)) AndAlso

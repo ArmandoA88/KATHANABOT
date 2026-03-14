@@ -1513,6 +1513,7 @@ Public Class Form1
         dgvRegions.Rows.Add("rupiahs_rect", "560", "745", "110", "21")
         dgvRegions.Rows.Add("party_invite_scan_rect", "349", "318", "328", "124")
         dgvRegions.Rows.Add("party_invite_ok_rect", "463", "410", "59", "21")
+        dgvRegions.Rows.Add("party_list_rect", "0", "24", "168", "244")
         dgvRegions.Rows.Add("map_rect", "0", "0", "1024", "768")
         dgvRegions.Rows.Add("map_coordinate_rect", "6", "744", "120", "22")
         dgvRegions.Rows.Add("chat_rect", "18", "548", "430", "144")
@@ -2066,7 +2067,7 @@ Public Class Form1
             "",
             "7) VISION TAB - CALIBRATION REGIONS",
             "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, unreachable_text_rect,",
-            "  prana_exp_rect, rupiahs_rect, party_invite_scan_rect, party_invite_ok_rect.",
+            "  prana_exp_rect, rupiahs_rect, party_invite_scan_rect, party_invite_ok_rect, party_list_rect.",
             "- Loot Scan Area uses 4 freeform points: x,y | x,y | x,y | x,y.",
             "- You can edit coordinates directly in grid or through overlay.",
             "",
@@ -2185,7 +2186,7 @@ Public Class Form1
             "",
             "7) REGIONES DE CALIBRACION",
             "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, unreachable_text_rect,",
-            "  prana_exp_rect, rupiahs_rect, party_invite_scan_rect, party_invite_ok_rect.",
+            "  prana_exp_rect, rupiahs_rect, party_invite_scan_rect, party_invite_ok_rect, party_list_rect.",
             "- Loot Scan Area usa 4 puntos libres: x,y | x,y | x,y | x,y.",
             "- Puedes editar coordenadas en tabla o con overlay.",
             "",
@@ -2298,7 +2299,7 @@ Public Class Form1
             "",
             "7) CALIBRATION REGIONS",
             "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, unreachable_text_rect,",
-            "  prana_exp_rect, rupiahs_rect, party_invite_scan_rect, party_invite_ok_rect.",
+            "  prana_exp_rect, rupiahs_rect, party_invite_scan_rect, party_invite_ok_rect, party_list_rect.",
             "- Loot Scan Area ay 4 na freeform points: x,y | x,y | x,y | x,y.",
             "- Puwedeng i-edit sa grid o sa overlay.",
             "",
@@ -3277,6 +3278,7 @@ Public Class Form1
         cfg.RupiahsRect = BuildRect("rupiahs_rect")
         cfg.PartyInviteScanRect = BuildRect("party_invite_scan_rect")
         cfg.PartyInviteOkRect = BuildRect("party_invite_ok_rect")
+        cfg.PartyListRect = BuildRect("party_list_rect")
         cfg.MapRect = BuildRect("map_rect")
         cfg.MapCoordinateRect = BuildRect("map_coordinate_rect")
         cfg.ChatRect = BuildRect("chat_rect")
@@ -3953,6 +3955,7 @@ Public Class Form1
         UpsertRegionRow("rupiahs_rect", cfg.RupiahsRect)
         UpsertRegionRow("party_invite_scan_rect", cfg.PartyInviteScanRect)
         UpsertRegionRow("party_invite_ok_rect", cfg.PartyInviteOkRect)
+        UpsertRegionRow("party_list_rect", cfg.PartyListRect)
         UpsertRegionRow("map_rect", cfg.MapRect)
         UpsertRegionRow("map_coordinate_rect", cfg.MapCoordinateRect)
         UpsertRegionRow("chat_rect", cfg.ChatRect)
@@ -4600,6 +4603,16 @@ Public Class Form1
         Return status.RupiahsPerHour.ToString("N0") & "/hr"
     End Function
 
+    Private Function FormatPartyForNotification(status As BotStatus) As String
+        If status Is Nothing OrElse status.PartySize <= 0 Then
+            Return "0 member(s) | Alive: 0/0 | All alive: n/a"
+        End If
+
+        Dim aliveCount As Integer = Math.Max(0, Math.Min(status.PartyAliveCount, status.PartySize))
+        Dim allAliveText As String = If(status.PartyAllAlive, "Yes", "No")
+        Return $"{status.PartySize} member(s) | Alive: {aliveCount}/{status.PartySize} | All alive: {allAliveText}"
+    End Function
+
     Private Function GetStatsNotificationIntervalMinutes() As Integer
         If nudStatsNtfyIntervalMinutes Is Nothing Then
             Return 30
@@ -4630,7 +4643,8 @@ Public Class Form1
 
         Dim body As String =
             $"Prana/EXP: {status.ExpPercent:0.00}% | Rate: {FormatExpRateForNotification(status)}{Environment.NewLine}" &
-            $"Rupiahs: {If(status.RupiahsTotal >= 0, status.RupiahsTotal.ToString("N0"), "n/a")} | Rate: {FormatRupiahsRateForNotification(status)}"
+            $"Rupiahs: {If(status.RupiahsTotal >= 0, status.RupiahsTotal.ToString("N0"), "n/a")} | Rate: {FormatRupiahsRateForNotification(status)}{Environment.NewLine}" &
+            $"Party: {FormatPartyForNotification(status)}"
 
         _lastStatsNotificationUtc = DateTime.UtcNow
         Task.Run(
