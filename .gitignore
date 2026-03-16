@@ -19,3 +19,21 @@ KathanaBotControlPanel.deps.json
 KathanaBotControlPanel.runtimeconfig.json
 KathanaBotControlPanel.pdb
 KathanaBotControlPanel - Copy*.exe
+KathanaBotControlPanel - Copy*.dll
+KathanaBotControlPanel.deps - Copy*.json
+KathanaBotControlPanel.runtimeconfig - Copy*.json
+
+# Standalone/self-contained publish artifacts
+KathanaBotControlPanel-standalone*.exe
+publish-standalone/
+
+# Root-level runtime/publish binaries
+Accessibility.dll
+Microsoft*.dll
+System*.dll
+WindowsBase.dll
+WinRT.Runtime*.dll
+clr*.dll
+mscor*.dll
+msquic.dll
+netstandard.dll
