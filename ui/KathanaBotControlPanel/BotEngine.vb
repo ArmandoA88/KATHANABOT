@@ -9,6 +9,7 @@ Imports System.Runtime.InteropServices
 Imports System.Text.RegularExpressions
 Imports System.Text
 Imports System.Text.Json
+Imports System.Text.Json.Serialization
 Imports System.Threading
 Imports System.Threading.Tasks
 Imports DrawingPoint = System.Drawing.Point
@@ -129,12 +130,19 @@ Public Class RecordedNavigationRouteInfo
 End Class
 
 Public Class BotConfig
-    Public Property WindowTitle As String = "Kathana - The Coming of the Dark Ages"
+    Public Property WindowTitle As String = "Kathana   The Coming of the Dark Ages"
+    <JsonIgnore>
+    Public Property SelectedWindowHandle As IntPtr = IntPtr.Zero
+    Public Property LiteModeEnabled As Boolean = False
+    Public Property LiteHpCheckPointX As Integer = -1
+    Public Property LiteHpCheckPointY As Integer = -1
+    Public Property LiteMpCheckPointX As Integer = -1
+    Public Property LiteMpCheckPointY As Integer = -1
     Public Property LoopMs As Integer = 80
     Public Property RetargetMs As Integer = 550
     Public Property ForcedRetargetMs As Integer = 550
     Public Property MobHpPresenceThreshold As Double = 1.0
-    Public Property HighMaxHpSpecialEnabled As Boolean = False
+    Public Property HighMaxHpSpecialEnabled As Boolean = True
     Public Property HighMaxHpThreshold As Integer = 2000
     Public Property HpBar As RectRegion = New RectRegion(11, 25, 151, 11)
     Public Property MpBar As RectRegion = New RectRegion(3, 40, 161, 11)
@@ -316,6 +324,7 @@ Friend Module NativeMethods
     Friend Const PW_CLIENTONLY As UInteger = 1UI
     Friend Const PW_RENDERFULLCONTENT As UInteger = 2UI
     Friend Const CAPTUREBLT As CopyPixelOperation = CType(&H40000000, CopyPixelOperation)
+    Friend Const GA_ROOT As UInteger = 2UI
     Friend Const WM_KEYDOWN As Integer = &H100
     Friend Const WM_KEYUP As Integer = &H101
     Friend Const WM_MOUSEMOVE As Integer = &H200
@@ -385,6 +394,22 @@ Friend Module NativeMethods
     Friend Function ClientToScreen(hWnd As IntPtr, ByRef lpPoint As POINT) As Boolean
     End Function
 
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function ScreenToClient(hWnd As IntPtr, ByRef lpPoint As POINT) As Boolean
+    End Function
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function GetCursorPos(ByRef lpPoint As POINT) As Boolean
+    End Function
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function WindowFromPoint(pt As POINT) As IntPtr
+    End Function
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function GetAncestor(hWnd As IntPtr, gaFlags As UInteger) As IntPtr
+    End Function
+
 
 
     <DllImport("user32.dll", SetLastError:=True)>
@@ -401,6 +426,18 @@ Friend Module NativeMethods
 
     <DllImport("user32.dll", SetLastError:=True)>
     Friend Function PrintWindow(hwnd As IntPtr, hdcBlt As IntPtr, nFlags As UInteger) As Boolean
+    End Function
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function GetDC(hWnd As IntPtr) As IntPtr
+    End Function
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function ReleaseDC(hWnd As IntPtr, hDC As IntPtr) As Integer
+    End Function
+
+    <DllImport("gdi32.dll", SetLastError:=True)>
+    Friend Function GetPixel(hdc As IntPtr, nXPos As Integer, nYPos As Integer) As UInteger
     End Function
 
 
@@ -857,7 +894,7 @@ Public Class BotEngine
             Return Nothing
         End If
 
-        Dim hwnd As IntPtr = FindGameWindow(cfg.WindowTitle)
+        Dim hwnd As IntPtr = ResolveGameWindow(cfg)
         If hwnd = IntPtr.Zero Then
             Return Nothing
         End If
@@ -920,7 +957,7 @@ Public Class BotEngine
             Dim retargetDelayMs As Integer = GetRetargetCooldownMs(cfg, loopDelayMs)
             Dim noTargetStableMs As Integer = retargetDelayMs
 
-            Dim hwnd As IntPtr = FindGameWindow(cfg.WindowTitle)
+            Dim hwnd As IntPtr = ResolveGameWindow(cfg)
             If hwnd = IntPtr.Zero Then
                 ClearLatestLoopFrame()
                 ReleaseLootScannerAltKey()
@@ -943,6 +980,120 @@ Public Class BotEngine
                               s.TargetValid = False
                               s.NotAttackingReason = "Window not found."
                               s.ErrorMessage = "Game window not found."
+                          End Sub)
+                Await Task.Delay(loopDelayMs, token)
+                Continue While
+            End If
+
+            If cfg.LiteModeEnabled Then
+                ClearLatestLoopFrame()
+
+                Dim clientRect As NativeMethods.RECT
+                If Not NativeMethods.GetClientRect(hwnd, clientRect) Then
+                    SetStatus(Sub(s)
+                                  s.WindowFound = True
+                                  s.HpPercent = 0
+                                  s.MpPercent = 0
+                                  s.TargetValid = False
+                                  s.NotAttackingReason = "Lite HP/MP scan failed."
+                                  s.ErrorMessage = "Unable to read Lite bar coordinates."
+                              End Sub)
+                    Await Task.Delay(loopDelayMs, token)
+                    Continue While
+                End If
+
+                Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
+                Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
+                Dim liteHpRegion As New RectRegion(0, 0, 1, 1)
+                Dim liteMpRegion As New RectRegion(0, 0, 1, 1)
+                Dim liteMobNameRegion As New RectRegion(0, 0, 1, 1)
+                Dim liteMobHpRegion As New RectRegion(0, 0, 1, 1)
+                Dim liteUnreachableTextRegion As New RectRegion(0, 0, 1, 1)
+                Dim litePranaExpRegion As New RectRegion(0, 0, 1, 1)
+                Dim liteRupiahsRegion As New RectRegion(0, 0, 1, 1)
+                Dim litePartyInviteScanRegion As New RectRegion(0, 0, 1, 1)
+                Dim litePartyInviteOkRegion As New RectRegion(0, 0, 1, 1)
+                Dim litePartyListRegion As New RectRegion(0, 0, 1, 1)
+                Dim liteMapRegion As New RectRegion(0, 0, 1, 1)
+                Dim liteMapCoordinateRegion As New RectRegion(0, 0, 1, 1)
+                Dim liteChatRegion As New RectRegion(0, 0, 1, 1)
+                ResolveVisionRegions(cfg, clientWidth, clientHeight, liteHpRegion, liteMpRegion, liteMobNameRegion, liteMobHpRegion, liteUnreachableTextRegion, litePranaExpRegion, liteRupiahsRegion, litePartyInviteScanRegion, litePartyInviteOkRegion, litePartyListRegion, liteMapRegion, liteMapCoordinateRegion, liteChatRegion)
+
+                Dim hasLiteHpPoint As Boolean = cfg.LiteHpCheckPointX >= 0 AndAlso cfg.LiteHpCheckPointY >= 0
+                Dim hasLiteMpPoint As Boolean = cfg.LiteMpCheckPointX >= 0 AndAlso cfg.LiteMpCheckPointY >= 0
+                Dim hpScanOk As Boolean = False
+                Dim mpScanOk As Boolean = False
+                Dim liteHpPct As Double = If(hasLiteHpPoint, 0, 100)
+                Dim liteMpPct As Double = If(hasLiteMpPoint, 0, 100)
+
+                If hasLiteHpPoint Then
+                    liteHpPct = ComputeClientPotionPointPercent(hwnd, cfg.LiteHpCheckPointX, cfg.LiteHpCheckPointY, True, hpScanOk)
+                End If
+
+                If hasLiteMpPoint Then
+                    liteMpPct = ComputeClientPotionPointPercent(hwnd, cfg.LiteMpCheckPointX, cfg.LiteMpCheckPointY, False, mpScanOk)
+                End If
+
+                Dim liteAttackHpPct As Double = If(hpScanOk, liteHpPct, 100.0)
+                Dim liteAttackMpPct As Double = If(mpScanOk, liteMpPct, 100.0)
+                Dim liteCaptureGlitch As Boolean = (hasLiteHpPoint AndAlso Not hpScanOk) OrElse (hasLiteMpPoint AndAlso Not mpScanOk)
+                ApplyVisionStabilityFilter(liteAttackHpPct, liteAttackMpPct, 0, "", liteCaptureGlitch)
+
+                Dim liteReason As String = ""
+                Dim liteActionSent As Boolean = False
+                If hpScanOk OrElse mpScanOk Then
+                    liteActionSent = TrySendSupportActions(cfg, hwnd, liteHpPct, liteMpPct)
+                End If
+
+                If Not liteActionSent Then
+                    Dim liteBurst As List(Of ActionRule) = ChooseAttackBurstActions(cfg, liteAttackHpPct, liteAttackMpPct, True, True, False, liteReason)
+                    If liteBurst.Count > 0 Then
+                        Dim sentKeys As New List(Of String)()
+                        For Each attackAction As ActionRule In liteBurst
+                            If sentKeys.Count > 0 Then
+                                Thread.Sleep(AttackBurstGapMs)
+                            End If
+
+                            If Not SendKey(hwnd, attackAction.KeyName, FastKeyPressMs) Then
+                                Continue For
+                            End If
+
+                            MarkKeyUsed(attackAction.KeyName)
+                            sentKeys.Add(attackAction.KeyName)
+                            _lastAttackAction = DateTime.UtcNow
+                        Next
+
+                        If sentKeys.Count > 0 Then
+                            SetLastAction(If(sentKeys.Count = 1, $"{sentKeys(0)} ({liteBurst(0).Role})", $"{String.Join("/", sentKeys)} (lite burst)"))
+                            liteActionSent = True
+                            liteReason = ""
+                        End If
+                    End If
+                End If
+
+                Dim liteScanWarning As String = ""
+                If hasLiteHpPoint AndAlso Not hpScanOk Then
+                    liteScanWarning = "Unable to read Lite HP AutoPots point."
+                End If
+                If hasLiteMpPoint AndAlso Not mpScanOk Then
+                    liteScanWarning = If(liteScanWarning = "", "Unable to read Lite Mana AutoPots point.", "Unable to read Lite HP and Mana AutoPots points.")
+                End If
+
+                SetStatus(Sub(s)
+                              s.WindowFound = True
+                              s.HpPercent = Math.Round(liteAttackHpPct, 1)
+                              s.MpPercent = Math.Round(liteAttackMpPct, 1)
+                              s.MobHpPercent = 0
+                              s.MobMaxHp = -1
+                              s.MobHpText = ""
+                              s.ExpPercent = 0
+                              s.ExpPerHour = -1
+                              s.RupiahsTotal = -1
+                              s.RupiahsPerHour = -1
+                              s.MobName = ""
+                              s.TargetValid = True
+                              s.NotAttackingReason = If(liteActionSent, "", If(String.IsNullOrWhiteSpace(liteReason), "No enabled Lite action is ready.", liteReason))
+                              s.ErrorMessage = liteScanWarning
                           End Sub)
                 Await Task.Delay(loopDelayMs, token)
                 Continue While
@@ -4894,20 +5045,23 @@ Public Class BotEngine
     End Function
 
     Public Function HardStopMovement(windowTitle As String, Optional context As String = "manual hard stop") As Boolean
-        Dim title As String = If(windowTitle, "").Trim()
-        If title = "" Then
-            Return False
-        End If
-
-        Dim hwnd As IntPtr = FindGameWindow(title)
-        If hwnd = IntPtr.Zero Then
-            Return False
-        End If
-
         Dim cfg As BotConfig
         SyncLock _sync
             cfg = _config
         End SyncLock
+
+        Dim hwnd As IntPtr = ResolveGameWindow(cfg)
+        If hwnd = IntPtr.Zero Then
+            Dim title As String = If(windowTitle, "").Trim()
+            If title = "" Then
+                Return False
+            End If
+            hwnd = FindGameWindow(title)
+            If hwnd = IntPtr.Zero Then
+                Return False
+            End If
+        End If
+
         Return TrySendStopAction(cfg, hwnd, context)
     End Function
 
@@ -5137,6 +5291,27 @@ Public Class BotEngine
         }
     End Function
 
+    Private Shared Function ResolveGameWindow(cfg As BotConfig) As IntPtr
+        If cfg Is Nothing Then
+            Return IntPtr.Zero
+        End If
+
+        If cfg.SelectedWindowHandle <> IntPtr.Zero Then
+            Dim rc As NativeMethods.RECT
+            If NativeMethods.IsWindowVisible(cfg.SelectedWindowHandle) AndAlso
+               Not NativeMethods.IsIconic(cfg.SelectedWindowHandle) AndAlso
+               NativeMethods.GetClientRect(cfg.SelectedWindowHandle, rc) Then
+                Dim width As Integer = Math.Max(0, rc.Right - rc.Left)
+                Dim height As Integer = Math.Max(0, rc.Bottom - rc.Top)
+                If width > 0 AndAlso height > 0 Then
+                    Return cfg.SelectedWindowHandle
+                End If
+            End If
+        End If
+
+        Return FindGameWindow(cfg.WindowTitle)
+    End Function
+
     Public Shared Function FindGameWindow(windowTitle As String) As IntPtr
         If String.IsNullOrWhiteSpace(windowTitle) Then
             Return IntPtr.Zero
@@ -5260,6 +5435,109 @@ Public Class BotEngine
         Catch
             bmp.Dispose()
             Return Nothing
+        End Try
+    End Function
+
+    Public Shared Function CaptureClientRegion(hwnd As IntPtr, region As RectRegion) As Bitmap
+        If hwnd = IntPtr.Zero OrElse region Is Nothing Then
+            Return Nothing
+        End If
+
+        Dim rc As NativeMethods.RECT
+        If Not NativeMethods.GetClientRect(hwnd, rc) Then
+            Return Nothing
+        End If
+
+        Dim clientWidth As Integer = Math.Max(1, rc.Right - rc.Left)
+        Dim clientHeight As Integer = Math.Max(1, rc.Bottom - rc.Top)
+        Dim clamped As Rectangle = region.Clamp(clientWidth, clientHeight)
+        If clamped.Width <= 0 OrElse clamped.Height <= 0 Then
+            Return Nothing
+        End If
+
+        Dim pt As New NativeMethods.POINT With {.X = 0, .Y = 0}
+        If Not NativeMethods.ClientToScreen(hwnd, pt) Then
+            Return Nothing
+        End If
+
+        Dim bmp As New Bitmap(clamped.Width, clamped.Height, PixelFormat.Format24bppRgb)
+        Try
+            Using g As Graphics = Graphics.FromImage(bmp)
+                g.CopyFromScreen(pt.X + clamped.X, pt.Y + clamped.Y, 0, 0, New Size(clamped.Width, clamped.Height), CopyPixelOperation.SourceCopy Or NativeMethods.CAPTUREBLT)
+            End Using
+            Return bmp
+        Catch
+            bmp.Dispose()
+            Return Nothing
+        End Try
+    End Function
+
+    Private Shared Function ComputeClientBarPercent(hwnd As IntPtr, region As RectRegion, isHp As Boolean, ByRef success As Boolean) As Double
+        success = False
+        Dim bmp As Bitmap = CaptureClientRegion(hwnd, region)
+        If bmp Is Nothing Then
+            Return 0
+        End If
+
+        Try
+            success = True
+            Return ComputeBarPercent(bmp, New RectRegion(0, 0, bmp.Width, bmp.Height), isHp)
+        Finally
+            bmp.Dispose()
+        End Try
+    End Function
+
+    Private Shared Function ComputeClientPotionPointPercent(hwnd As IntPtr, clientX As Integer, clientY As Integer, isHp As Boolean, ByRef success As Boolean) As Double
+        success = False
+        If hwnd = IntPtr.Zero Then
+            Return 0
+        End If
+
+        Dim clientRect As NativeMethods.RECT
+        If Not NativeMethods.GetClientRect(hwnd, clientRect) Then
+            Return 0
+        End If
+
+        Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
+        Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
+        If clientX < 0 OrElse clientY < 0 OrElse clientX >= clientWidth OrElse clientY >= clientHeight Then
+            Return 0
+        End If
+
+        Dim hdc As IntPtr = NativeMethods.GetDC(hwnd)
+        If hdc = IntPtr.Zero Then
+            Return 0
+        End If
+
+        Try
+            Dim matches As Integer = 0
+            Dim validSamples As Integer = 0
+            For y As Integer = Math.Max(0, clientY - 3) To Math.Min(clientHeight - 1, clientY + 3)
+                For x As Integer = Math.Max(0, clientX - 3) To Math.Min(clientWidth - 1, clientX + 3)
+                    Dim colorRef As UInteger = NativeMethods.GetPixel(hdc, x, y)
+                    If colorRef = &HFFFFFFFFUI Then
+                        Continue For
+                    End If
+
+                    validSamples += 1
+                    Dim px As Color = Color.FromArgb(
+                        CInt(colorRef And &HFFUI),
+                        CInt((colorRef >> 8) And &HFFUI),
+                        CInt((colorRef >> 16) And &HFFUI))
+                    If If(isHp, IsHpColor(px), IsMpColor(px)) Then
+                        matches += 1
+                    End If
+                Next
+            Next
+
+            If validSamples <= 0 Then
+                Return 0
+            End If
+
+            success = True
+            Return If(matches >= Math.Max(2, CInt(Math.Ceiling(validSamples * 0.12))), 100.0, 0.0)
+        Finally
+            NativeMethods.ReleaseDC(hwnd, hdc)
         End Try
     End Function
 

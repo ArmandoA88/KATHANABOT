@@ -13,11 +13,49 @@ Imports System.Diagnostics
 Public Class Form1
     Private Shared ReadOnly PrimaryKeys As String() = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"}
     Private Shared ReadOnly FunctionKeys As String() = {"F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10"}
+    Private Shared ReadOnly LitePrimarySkillKeys As String() = {"1", "2", "3", "4", "5", "6", "7", "8"}
+    Private Shared ReadOnly LiteSecondarySkillKeys As String() = {"F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10"}
     Private Shared ReadOnly CustomCombatDefaultKeys As String() = {"F11", "F12", "F13"}
+    Private Shared ReadOnly DefaultGameWindowTitle As String = "Kathana   The Coming of the Dark Ages"
+    Private Shared ReadOnly PreferredProcessWindowTitle As String = "Kathana - The Coming of the Dark Ages"
+    Private Shared ReadOnly LiteWindowSize As New Size(920, 660)
+    Private Shared ReadOnly FullWindowSize As New Size(1450, 900)
 
-    Private ReadOnly _engine As New BotEngine()
+    Private _edition As BotEdition = BotEdition.Full
+    Private ReadOnly _fullEngine As New BotEngine()
+    Private ReadOnly _liteEngine As New BotEngine()
     Private ReadOnly _uiTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _enterToggleTimer As New System.Windows.Forms.Timer()
+    Private ReadOnly _liteActionEnabledChecks As New Dictionary(Of String, CheckBox)(StringComparer.OrdinalIgnoreCase)
+    Private ReadOnly _liteActionCooldownInputs As New Dictionary(Of String, NumericUpDown)(StringComparer.OrdinalIgnoreCase)
+    Private _liteSyncInProgress As Boolean = False
+    Private chkLiteBasicAttack As CheckBox
+    Private nudLiteBasicAttack As NumericUpDown
+    Private chkLiteMage As CheckBox
+    Private nudLiteMage As NumericUpDown
+    Private chkLitePick As CheckBox
+    Private nudLitePick As NumericUpDown
+    Private lstLiteProcessWindows As ListBox
+    Private txtLiteProcessRename As TextBox
+    Private btnLiteAttack As Button
+    Private btnLiteStop As Button
+    Private lblLiteRunState As Label
+    Private lblLiteShortcutHint As Label
+    Private lblLiteActiveMode As Label
+    Private lblLiteState As Label
+    Private lblLiteSystem As Label
+    Private lblLiteHp As Label
+    Private lblLiteMp As Label
+    Private chkLiteAutoPots As CheckBox
+    Private btnLiteSelectHpLevel As Button
+    Private btnLiteSelectMpLevel As Button
+    Private btnLiteAutoPotHelp As Button
+    Private lblLiteHpPoint As Label
+    Private lblLiteMpPoint As Label
+    Private txtLiteAutoPotHelp As TextBox
+    Private _mainTabs As TabControl
+    Private _liteTab As TabPage
+    Private _combatTab As TabPage
 
     Private txtWindowTitle As TextBox
     Private nudLoopMs As NumericUpDown
@@ -105,6 +143,7 @@ Public Class Form1
     Private lblState As Label
     Private lblSystem As Label
     Private lblRunState As Label
+    Private lblFullEdition As Label
     Private lblShortcutHint As Label
     Private lblHp As Label
     Private lblMp As Label
@@ -172,10 +211,18 @@ Public Class Form1
     Private _isPickingLootRejectPoint As Boolean = False
     Private _lootRejectPointX As Integer = -1
     Private _lootRejectPointY As Integer = -1
+    Private _liteAutoPotHpPointX As Integer = -1
+    Private _liteAutoPotHpPointY As Integer = -1
+    Private _liteAutoPotMpPointX As Integer = -1
+    Private _liteAutoPotMpPointY As Integer = -1
+    Private _pendingLitePointCapture As LitePointCaptureKind = LitePointCaptureKind.None
+    Private _liteRightMouseWasDown As Boolean = False
     Private _themeSnapshotCaptured As Boolean = False
     Private _lastUiTintActive As Boolean = False
     Private _lastUiTintColorArgb As Integer = Integer.MinValue
     Private _lastUiTintBlend As Double = -1.0
+    Private _fullStatus As New BotStatus()
+    Private _liteStatus As New BotStatus()
     Private Const HpZeroAlarmGraceMs As Integer = 60000
     Private Const DeadZeroThreshold As Double = 0.1
     Private Const DeadRecoverThreshold As Double = 2.0
@@ -236,6 +283,18 @@ Public Class Form1
         End Function
     End Class
 
+    Private Enum LitePointCaptureKind
+        None
+        Hp
+        Mp
+    End Enum
+
+    Private Class PersistedAppState
+        Public Property WindowTitle As String = DefaultGameWindowTitle
+        Public Property Full As PersistedListState = New PersistedListState()
+        Public Property Lite As PersistedLiteState = New PersistedLiteState()
+    End Class
+
     Private Class PersistedListState
         Public Property MonsterFilterEnabled As Boolean = True
         Public Property LootPickupEnabled As Boolean = False
@@ -260,6 +319,17 @@ Public Class Form1
         Public Property MonsterNames As List(Of String) = New List(Of String)()
         Public Property LootNames As List(Of String) = New List(Of String)()
         Public Property CombatActions As List(Of PersistedCombatAction) = New List(Of PersistedCombatAction)()
+    End Class
+
+    Private Class PersistedLiteState
+        Public Property AutoPotsEnabled As Boolean = False
+        Public Property HpPointEnabled As Boolean = False
+        Public Property HpPointX As Integer = -1
+        Public Property HpPointY As Integer = -1
+        Public Property MpPointEnabled As Boolean = False
+        Public Property MpPointX As Integer = -1
+        Public Property MpPointY As Integer = -1
+        Public Property Actions As List(Of PersistedCombatAction) = New List(Of PersistedCombatAction)()
     End Class
 
     Private Class PersistedCombatAction
@@ -311,8 +381,10 @@ Public Class Form1
         CaptureThemeSnapshot(Me)
         _themeSnapshotCaptured = True
 
-        AddHandler _engine.StatusUpdated, AddressOf OnEngineStatusUpdated
-        AddHandler _engine.LogLine, AddressOf OnEngineLogLine
+        AddHandler _fullEngine.StatusUpdated, Sub(status As BotStatus) OnEngineStatusUpdated(BotEdition.Full, status)
+        AddHandler _liteEngine.StatusUpdated, Sub(status As BotStatus) OnEngineStatusUpdated(BotEdition.Lite, status)
+        AddHandler _fullEngine.LogLine, Sub(line As String) OnEngineLogLine(BotEdition.Full, line)
+        AddHandler _liteEngine.LogLine, Sub(line As String) OnEngineLogLine(BotEdition.Lite, line)
 
         _uiTimer.Interval = 1000
         AddHandler _uiTimer.Tick, AddressOf UiTimerTick
@@ -321,6 +393,9 @@ Public Class Form1
         _enterToggleTimer.Interval = 45
         AddHandler _enterToggleTimer.Tick, AddressOf EnterToggleTimerTick
         _enterToggleTimer.Start()
+
+        UpdateEditionUiState(False)
+        PushLiveConfig()
     End Sub
 
     Private Sub SetupLiveConfigBindings()
@@ -453,6 +528,8 @@ Public Class Form1
         End If
         AddHandler dgvCombat.CellValueChanged, AddressOf LiveConfigChanged
         AddHandler dgvCombat.CellEndEdit, AddressOf LiveConfigChanged
+        AddHandler dgvCombat.CellValueChanged, AddressOf PersistListSettingsChanged
+        AddHandler dgvCombat.CellEndEdit, AddressOf PersistListSettingsChanged
         AddHandler dgvRegions.CellValueChanged, AddressOf LiveConfigChanged
         AddHandler dgvRegions.CellEndEdit, AddressOf LiveConfigChanged
         If chkChatTranslationEnabled IsNot Nothing Then
@@ -603,12 +680,20 @@ Public Class Form1
         End If
 
         Try
-            _engine.UpdateConfig(BuildConfig())
+            _fullEngine.UpdateConfig(BuildFullConfig())
+        Catch
+        End Try
+        Try
+            _liteEngine.UpdateConfig(BuildLiteConfig())
         Catch
         End Try
     End Sub
 
     Private Sub BuildUi()
+        BuildFullUi()
+    End Sub
+
+    Private Sub BuildFullUi()
         Text = "KATHANA GAMEBOT"
         Width = 1450
         Height = 900
@@ -622,8 +707,9 @@ Public Class Form1
         }
         Controls.Add(pnlWindowFrame)
 
-        Dim tabs As New TabControl() With {.Dock = DockStyle.Fill, .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold)}
-        pnlWindowFrame.Controls.Add(tabs)
+        _mainTabs = New TabControl() With {.Dock = DockStyle.Fill, .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold)}
+        AddHandler _mainTabs.SelectedIndexChanged, AddressOf MainTabsSelectedIndexChanged
+        pnlWindowFrame.Controls.Add(_mainTabs)
 
         pnlHealthBanner = New Panel() With {
             .Dock = DockStyle.Top,
@@ -633,11 +719,543 @@ Public Class Form1
         pnlWindowFrame.Controls.Add(pnlHealthBanner)
         pnlHealthBanner.BringToFront()
 
-        tabs.TabPages.Add(BuildCombatTab())
-        tabs.TabPages.Add(BuildVisionTab())
-        tabs.TabPages.Add(BuildAutoPotTab())
-        tabs.TabPages.Add(BuildLevelingTab())
-        tabs.TabPages.Add(BuildDiagnosticsTab())
+        _liteTab = BuildLiteTab()
+        _combatTab = BuildCombatTab()
+        _mainTabs.TabPages.Add(_liteTab)
+        _mainTabs.TabPages.Add(_combatTab)
+        _mainTabs.TabPages.Add(BuildVisionTab())
+        _mainTabs.TabPages.Add(BuildAutoPotTab())
+        _mainTabs.TabPages.Add(BuildLevelingTab())
+        _mainTabs.TabPages.Add(BuildDiagnosticsTab())
+        _mainTabs.SelectedTab = _combatTab
+    End Sub
+
+    Private Function BuildLiteTab() As TabPage
+        Dim tab As New TabPage("Lite") With {
+            .BackColor = Color.FromArgb(238, 238, 238),
+            .ForeColor = Color.FromArgb(45, 45, 45),
+            .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular),
+            .Tag = "lite-scope"
+        }
+        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2, .Padding = New Padding(10), .Tag = "lite-scope"}
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 48.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        tab.Controls.Add(root)
+
+        Dim banner As New Panel() With {.Dock = DockStyle.Fill, .BackColor = Color.FromArgb(251, 251, 251), .Padding = New Padding(12, 6, 12, 6), .Tag = "lite-scope"}
+        Dim lblEdition As New Label() With {
+            .Dock = DockStyle.Left,
+            .Width = 340,
+            .Text = "KathanaBot Lite Version",
+            .Font = New Font("Segoe UI", 9.5F, FontStyle.Bold),
+            .ForeColor = Color.FromArgb(46, 72, 102),
+            .TextAlign = ContentAlignment.MiddleLeft
+        }
+        lblLiteActiveMode = New Label() With {
+            .Dock = DockStyle.Fill,
+            .Text = "ACTIVE BOT: NONE",
+            .ForeColor = Color.FromArgb(140, 70, 120),
+            .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular),
+            .TextAlign = ContentAlignment.MiddleRight
+        }
+        banner.Controls.Add(lblLiteActiveMode)
+        banner.Controls.Add(lblEdition)
+        root.Controls.Add(banner, 0, 0)
+
+        Dim content As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1}
+        content.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 250.0F))
+        content.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        root.Controls.Add(content, 0, 1)
+
+        content.Controls.Add(BuildLiteProcessPanel(), 0, 0)
+        content.Controls.Add(BuildLiteMainPanel(), 1, 0)
+        Return tab
+    End Function
+
+    Private Function IsLiteModeActive() As Boolean
+        Return _edition = BotEdition.Lite
+    End Function
+
+    Private Sub MainTabsSelectedIndexChanged(sender As Object, e As EventArgs)
+        UpdateEditionUiState(True)
+    End Sub
+
+    Private Sub UpdateEditionUiState(logChange As Boolean)
+        Dim previousEdition As BotEdition = _edition
+        If _mainTabs IsNot Nothing AndAlso _liteTab IsNot Nothing AndAlso _mainTabs.SelectedTab Is _liteTab Then
+            _edition = BotEdition.Lite
+        Else
+            _edition = BotEdition.Full
+        End If
+
+        If _edition = BotEdition.Lite Then
+            Text = "KATHANA GAMEBOT - LITE ACTIVE"
+        Else
+            Text = "KATHANA GAMEBOT - FULL ACTIVE"
+        End If
+
+        If WindowState = FormWindowState.Normal Then
+            Size = If(_edition = BotEdition.Lite, LiteWindowSize, FullWindowSize)
+        End If
+
+        UpdateAttackButtonAppearance(False)
+
+        If logChange AndAlso previousEdition <> _edition Then
+            AppendLog($"Edition tab switched to {_edition}. Running bot remains unchanged until Start is pressed.")
+        End If
+    End Sub
+
+    Private Function BuildLiteProcessPanel() As Control
+        Dim panel As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 4, .Padding = New Padding(0, 0, 10, 0), .Tag = "lite-scope"}
+        panel.RowStyles.Add(New RowStyle(SizeType.Percent, 58.0F))
+        panel.RowStyles.Add(New RowStyle(SizeType.Absolute, 88.0F))
+        panel.RowStyles.Add(New RowStyle(SizeType.Absolute, 74.0F))
+        panel.RowStyles.Add(New RowStyle(SizeType.Absolute, 74.0F))
+
+        Dim processGroup As New GroupBox() With {.Text = "Process List", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(251, 251, 251), .Padding = New Padding(10), .Tag = "lite-scope"}
+        Dim processLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 5, .Tag = "lite-scope"}
+        processLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        processLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 32.0F))
+        processLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 20.0F))
+        processLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 28.0F))
+        processLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 32.0F))
+        processGroup.Controls.Add(processLayout)
+
+        lstLiteProcessWindows = New ListBox() With {
+            .Dock = DockStyle.Fill,
+            .IntegralHeight = False,
+            .BackColor = Color.White,
+            .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular),
+            .Tag = "lite-scope"
+        }
+        AddHandler lstLiteProcessWindows.SelectedIndexChanged, AddressOf ProcessSelectionChanged
+        processLayout.Controls.Add(lstLiteProcessWindows, 0, 0)
+
+        Dim btnRefresh As New Button() With {.Text = "Update", .Dock = DockStyle.Fill, .BackColor = Color.White, .ForeColor = Color.FromArgb(55, 55, 55), .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular)}
+        AddHandler btnRefresh.Click, AddressOf RefreshProcessListClicked
+        processLayout.Controls.Add(btnRefresh, 0, 1)
+
+        processLayout.Controls.Add(New Label() With {.Text = "Rename Process", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular)}, 0, 2)
+
+        txtLiteProcessRename = New TextBox() With {.Dock = DockStyle.Fill, .BackColor = Color.White, .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}
+        processLayout.Controls.Add(txtLiteProcessRename, 0, 3)
+
+        Dim btnApply As New Button() With {.Text = "Apply", .Dock = DockStyle.Fill, .BackColor = Color.White, .ForeColor = Color.FromArgb(55, 55, 55), .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular)}
+        AddHandler btnApply.Click, AddressOf ApplyProcessRenameClicked
+        processLayout.Controls.Add(btnApply, 0, 4)
+
+        Dim presetGroup As New GroupBox() With {.Text = "Preset", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(251, 251, 251), .Padding = New Padding(10)}
+        Dim presetLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2}
+        presetLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
+        presetLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
+        Dim btnSave As New Button() With {.Text = "Save", .Dock = DockStyle.Fill, .BackColor = Color.White, .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular)}
+        Dim btnLoad As New Button() With {.Text = "Load", .Dock = DockStyle.Fill, .BackColor = Color.White, .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular)}
+        AddHandler btnSave.Click, AddressOf SaveClicked
+        AddHandler btnLoad.Click, AddressOf LoadPresetClicked
+        presetLayout.Controls.Add(btnSave, 0, 0)
+        presetLayout.Controls.Add(btnLoad, 1, 0)
+        presetGroup.Controls.Add(presetLayout)
+
+        Dim modeGroup As New GroupBox() With {.Text = "Version", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(251, 251, 251), .Padding = New Padding(10)}
+        Dim modeLabel As New Label() With {
+            .Dock = DockStyle.Fill,
+            .Text = "Lite and Full keep separate settings." & Environment.NewLine &
+                    "Switching tabs does not stop Full." & Environment.NewLine &
+                    "Starting Lite will stop Full first.",
+            .ForeColor = Color.FromArgb(150, 78, 118),
+            .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular),
+            .TextAlign = ContentAlignment.MiddleLeft
+        }
+        modeGroup.Controls.Add(modeLabel)
+
+        Dim statusGroup As New GroupBox() With {.Text = "Selected Window", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(251, 251, 251), .Padding = New Padding(10)}
+        Dim statusLabel As New Label() With {
+            .Dock = DockStyle.Fill,
+            .Text = "Select the Tantra window here. Lite only uses the process list plus the character HP/MP bars.",
+            .ForeColor = Color.FromArgb(90, 90, 90),
+            .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular),
+            .TextAlign = ContentAlignment.MiddleLeft
+        }
+        statusGroup.Controls.Add(statusLabel)
+
+        panel.Controls.Add(processGroup, 0, 0)
+        panel.Controls.Add(presetGroup, 0, 1)
+        panel.Controls.Add(modeGroup, 0, 2)
+        panel.Controls.Add(statusGroup, 0, 3)
+
+        Return panel
+    End Function
+
+    Private Function BuildLiteMainPanel() As Control
+        Dim panel As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 4, .Tag = "lite-scope"}
+        panel.RowStyles.Add(New RowStyle(SizeType.Absolute, 104.0F))
+        panel.RowStyles.Add(New RowStyle(SizeType.Absolute, 86.0F))
+        panel.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        panel.RowStyles.Add(New RowStyle(SizeType.Absolute, 28.0F))
+
+        Dim topRow As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .Tag = "lite-scope"}
+        topRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 76.0F))
+        topRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 24.0F))
+
+        Dim modesGroup As New GroupBox() With {.Text = "Attack Modes", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(251, 251, 251), .Padding = New Padding(10), .Tag = "lite-scope"}
+        Dim modesLayout As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Tag = "lite-scope"}
+        modesLayout.Controls.Add(BuildLiteModePanel("Basic Attack", "E", "bullseye", chkLiteBasicAttack, nudLiteBasicAttack, Color.FromArgb(212, 170, 88)))
+        modesLayout.Controls.Add(BuildLiteModePanel("Mage", "R", "runner", chkLiteMage, nudLiteMage, Color.FromArgb(88, 138, 210)))
+        modesLayout.Controls.Add(BuildLiteModePanel("Pick", "F", "loot", chkLitePick, nudLitePick, Color.FromArgb(228, 176, 77)))
+        modesGroup.Controls.Add(modesLayout)
+
+        Dim commandGroup As New GroupBox() With {.Text = "Control", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(251, 251, 251), .Padding = New Padding(10), .Tag = "lite-scope"}
+        Dim commandLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 2, .Tag = "lite-scope"}
+        commandLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
+        commandLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
+        commandLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 28.0F))
+        commandLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        lblLiteRunState = New Label() With {.Text = "LITE BOT PAUSED", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleCenter, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White, .Font = New Font("Segoe UI", 8.25F, FontStyle.Bold), .Tag = "lite-scope"}
+        btnLiteAttack = New Button() With {.Text = "Start", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(40, 180, 80), .ForeColor = Color.White, .Font = New Font("Segoe UI", 8.0F, FontStyle.Bold), .Tag = "lite-scope"}
+        btnLiteStop = New Button() With {.Text = "Stop", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(220, 70, 55), .ForeColor = Color.White, .Font = New Font("Segoe UI", 8.0F, FontStyle.Bold), .Tag = "lite-scope"}
+        AddHandler btnLiteAttack.Click, AddressOf StartClicked
+        AddHandler btnLiteStop.Click, AddressOf StopClicked
+        commandLayout.Controls.Add(lblLiteRunState, 0, 0)
+        commandLayout.SetColumnSpan(lblLiteRunState, 2)
+        commandLayout.Controls.Add(btnLiteAttack, 0, 1)
+        commandLayout.Controls.Add(btnLiteStop, 1, 1)
+        commandGroup.Controls.Add(commandLayout)
+
+        topRow.Controls.Add(modesGroup, 0, 0)
+        topRow.Controls.Add(commandGroup, 1, 0)
+
+        Dim statusGroup As New GroupBox() With {.Text = "Status", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(251, 251, 251), .Padding = New Padding(10), .Tag = "lite-scope"}
+        Dim statusLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 4, .Tag = "lite-scope"}
+        statusLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
+        statusLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
+        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 18.0F))
+        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 18.0F))
+        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 18.0F))
+        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 18.0F))
+        lblLiteShortcutHint = New Label() With {.Text = "Ctrl+Shift -> Start selected tab", .Dock = DockStyle.Fill, .ForeColor = Color.FromArgb(187, 88, 138), .TextAlign = ContentAlignment.MiddleLeft, .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}
+        lblLiteState = New Label() With {.Text = "Status: Lite is ready.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}
+        lblLiteSystem = New Label() With {.Text = "Lite Active: False", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}
+        lblLiteHp = New Label() With {.Text = "HP%: 0.0", .Dock = DockStyle.Fill, .ForeColor = Color.LimeGreen, .TextAlign = ContentAlignment.MiddleLeft, .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}
+        lblLiteMp = New Label() With {.Text = "MP%: 0.0", .Dock = DockStyle.Fill, .ForeColor = Color.DeepSkyBlue, .TextAlign = ContentAlignment.MiddleLeft, .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}
+        statusLayout.Controls.Add(lblLiteShortcutHint, 0, 0)
+        statusLayout.Controls.Add(lblLiteState, 1, 0)
+        statusLayout.Controls.Add(lblLiteSystem, 0, 1)
+        statusLayout.Controls.Add(New Label() With {.Text = "Lite checks selected HP/MP points only.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.FromArgb(90, 90, 90), .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}, 1, 1)
+        statusLayout.Controls.Add(lblLiteHp, 0, 2)
+        statusLayout.Controls.Add(lblLiteMp, 1, 2)
+        statusLayout.Controls.Add(New Label() With {.Text = "Selected process controls Lite key send.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.FromArgb(90, 90, 90), .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular), .Tag = "lite-scope"}, 0, 3)
+        statusGroup.Controls.Add(statusLayout)
+
+        Dim lowerArea As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1, .Tag = "lite-scope"}
+        lowerArea.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 66.0F))
+        lowerArea.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 34.0F))
+
+        Dim skillArea As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2, .Tag = "lite-scope"}
+        skillArea.RowStyles.Add(New RowStyle(SizeType.Percent, 50.0F))
+        skillArea.RowStyles.Add(New RowStyle(SizeType.Percent, 50.0F))
+        skillArea.Controls.Add(BuildLiteSkillGroup("Primary Skills", LitePrimarySkillKeys, Color.FromArgb(141, 112, 71)), 0, 0)
+        skillArea.Controls.Add(BuildLiteSkillGroup("Secondary Skills", LiteSecondarySkillKeys, Color.FromArgb(111, 123, 140)), 0, 1)
+        lowerArea.Controls.Add(skillArea, 0, 0)
+        lowerArea.Controls.Add(BuildLiteAutoPotsGroup(), 1, 0)
+
+        Dim foot As New Label() With {
+            .Dock = DockStyle.Fill,
+            .Text = "Lite uses E / R / F plus the Lite skill timers only. Potions use key 9 for Heal and key 0 for Mana (Tantra slot 10).",
+            .ForeColor = Color.FromArgb(120, 120, 120),
+            .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular),
+            .TextAlign = ContentAlignment.MiddleLeft,
+            .Tag = "lite-scope"
+        }
+
+        panel.Controls.Add(topRow, 0, 0)
+        panel.Controls.Add(statusGroup, 0, 1)
+        panel.Controls.Add(lowerArea, 0, 2)
+        panel.Controls.Add(foot, 0, 3)
+        Return panel
+    End Function
+
+    Private Function BuildLiteModePanel(title As String, keyName As String, iconKind As String, ByRef check As CheckBox, ByRef input As NumericUpDown, accentColor As Color) As Control
+        Dim panel As New Panel() With {.Width = 142, .Height = 66, .BackColor = Color.White, .Margin = New Padding(3, 0, 5, 0), .Tag = "lite-scope"}
+        Dim titleLabel As New Label() With {.Left = 8, .Top = 4, .Width = 126, .Height = 15, .Text = $"{title} ({keyName})", .Font = New Font("Segoe UI", 7.75F, FontStyle.Bold), .ForeColor = Color.FromArgb(55, 55, 55), .Tag = "lite-scope"}
+        Dim localInput As New NumericUpDown() With {.Left = 8, .Top = 20, .Width = 42, .Minimum = 1D, .Maximum = 99D, .DecimalPlaces = 0, .Increment = 1D, .Value = 1D, .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular), .Tag = "lite-scope"}
+        Dim colorSwatch As New Panel() With {.Left = 8, .Top = 40, .Width = 126, .Height = 20, .BackColor = accentColor, .Tag = "lite-scope"}
+        Dim iconPanel As Panel = BuildLiteIconPanel(iconKind)
+        iconPanel.Left = 58
+        iconPanel.Top = 2
+        Dim localCheck As New CheckBox() With {.Left = 4, .Top = 2, .Width = 18, .Height = 18, .Checked = False, .BackColor = accentColor, .Tag = "lite-scope"}
+        Dim keyLabel As New Label() With {.Left = 108, .Top = 2, .Width = 24, .Height = 18, .Text = keyName, .ForeColor = Color.White, .Font = New Font("Segoe UI", 8.0F, FontStyle.Bold), .TextAlign = ContentAlignment.MiddleCenter, .BackColor = Color.Transparent, .Tag = "lite-scope"}
+        colorSwatch.Controls.Add(localCheck)
+        colorSwatch.Controls.Add(iconPanel)
+        colorSwatch.Controls.Add(keyLabel)
+        panel.Controls.Add(titleLabel)
+        panel.Controls.Add(localInput)
+        panel.Controls.Add(colorSwatch)
+
+        RegisterLiteActionControl(keyName, localCheck, localInput)
+        check = localCheck
+        input = localInput
+        Return panel
+    End Function
+
+    Private Function BuildLiteAutoPotsGroup() As Control
+        Dim group As New GroupBox() With {.Text = "AutoPots", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(251, 251, 251), .Padding = New Padding(8), .Font = New Font("Segoe UI", 8.0F, FontStyle.Bold), .Tag = "lite-scope"}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 8, .Tag = "lite-scope"}
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 24.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 28.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 28.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 20.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 20.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 22.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 28.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+
+        chkLiteAutoPots = New CheckBox() With {.Text = "Enable AutoPots", .Dock = DockStyle.Fill, .Checked = False, .Font = New Font("Segoe UI", 8.0F, FontStyle.Bold), .Tag = "lite-scope"}
+        AddHandler chkLiteAutoPots.CheckedChanged,
+            Sub()
+                UpdateLiteAutoPotUi()
+                PushLiveConfig()
+                SavePersistedListState(False)
+            End Sub
+        layout.Controls.Add(chkLiteAutoPots, 0, 0)
+
+        btnLiteSelectHpLevel = New Button() With {.Text = "Select HP Level", .Dock = DockStyle.Fill, .BackColor = Color.White, .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}
+        AddHandler btnLiteSelectHpLevel.Click, Sub(_s As Object, _e As EventArgs) BeginLitePointCapture(LitePointCaptureKind.Hp)
+        layout.Controls.Add(btnLiteSelectHpLevel, 0, 1)
+
+        btnLiteSelectMpLevel = New Button() With {.Text = "Select Mana level", .Dock = DockStyle.Fill, .BackColor = Color.White, .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}
+        AddHandler btnLiteSelectMpLevel.Click, Sub(_s As Object, _e As EventArgs) BeginLitePointCapture(LitePointCaptureKind.Mp)
+        layout.Controls.Add(btnLiteSelectMpLevel, 0, 2)
+
+        lblLiteHpPoint = New Label() With {.Text = "HP X/Y: not set", .Dock = DockStyle.Fill, .ForeColor = Color.FromArgb(65, 65, 65), .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular), .Tag = "lite-scope"}
+        layout.Controls.Add(lblLiteHpPoint, 0, 3)
+
+        lblLiteMpPoint = New Label() With {.Text = "MP X/Y: not set", .Dock = DockStyle.Fill, .ForeColor = Color.FromArgb(65, 65, 65), .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular), .Tag = "lite-scope"}
+        layout.Controls.Add(lblLiteMpPoint, 0, 4)
+
+        layout.Controls.Add(New Label() With {.Text = "Potion keys: 9 = Heal, 0 = Mana (Tantra slot 10).", .Dock = DockStyle.Fill, .ForeColor = Color.FromArgb(160, 82, 82), .Font = New Font("Segoe UI", 7.75F, FontStyle.Bold), .Tag = "lite-scope"}, 0, 5)
+
+        btnLiteAutoPotHelp = New Button() With {.Text = "Help", .Dock = DockStyle.Left, .Width = 72, .BackColor = Color.White, .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}
+        AddHandler btnLiteAutoPotHelp.Click,
+            Sub()
+                txtLiteAutoPotHelp.Visible = Not txtLiteAutoPotHelp.Visible
+                btnLiteAutoPotHelp.Text = If(txtLiteAutoPotHelp.Visible, "Hide Help", "Help")
+            End Sub
+        layout.Controls.Add(btnLiteAutoPotHelp, 0, 6)
+
+        txtLiteAutoPotHelp = New TextBox() With {
+            .Dock = DockStyle.Fill,
+            .Multiline = True,
+            .ReadOnly = True,
+            .Visible = False,
+            .BackColor = Color.White,
+            .ForeColor = Color.FromArgb(70, 70, 70),
+            .BorderStyle = BorderStyle.FixedSingle,
+            .Font = New Font("Segoe UI", 7.5F, FontStyle.Regular),
+            .Text = "EN: Click Select HP Level or Select Mana Level. The app redirects to Tantra. Make sure HP and Mana are full before taking the sample so Lite can learn the bar colors to compare later. RIGHT click the exact HP or MP point where you want the potion to trigger. Lite checks whether red is still present on the HP point and whether blue is still present on the MP point. If the color is missing, it uses potion key 9 for Heal or key 0 for Mana (Tantra slot 10)." & Environment.NewLine & Environment.NewLine &
+                    "ES: Haz clic en Select HP Level o Select Mana Level. La app te redirige a Tantra. Asegurate de que el HP y el Mana esten llenos antes de tomar la muestra para que Lite aprenda los colores de la barra y los compare despues. Haz clic DERECHO en el punto exacto del HP o MP donde quieres que se active la pocion. Lite revisa si todavia hay rojo en el punto de HP y si todavia hay azul en el punto de MP. Si el color no esta, usa la tecla 9 para Heal o la tecla 0 para Mana (slot 10 de Tantra).",
+            .Tag = "lite-scope"
+        }
+        layout.Controls.Add(txtLiteAutoPotHelp, 0, 7)
+
+        group.Controls.Add(layout)
+        Return group
+    End Function
+
+    Private Function BuildLiteIconPanel(iconKind As String) As Panel
+        Dim iconPanel As New Panel() With {.Width = 22, .Height = 18, .BackColor = Color.Transparent, .Tag = "lite-scope"}
+        AddHandler iconPanel.Paint,
+            Sub(_sender As Object, e As PaintEventArgs)
+                e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias
+                Using pen As New Pen(Color.White, 1.6F)
+                    Select Case iconKind
+                        Case "bullseye"
+                            e.Graphics.DrawEllipse(pen, 3, 2, 12, 12)
+                            e.Graphics.DrawEllipse(pen, 6, 5, 6, 6)
+                            e.Graphics.DrawLine(pen, 9, 0, 9, 4)
+                            e.Graphics.DrawLine(pen, 9, 12, 9, 16)
+                            e.Graphics.DrawLine(pen, 1, 8, 5, 8)
+                            e.Graphics.DrawLine(pen, 13, 8, 17, 8)
+                        Case "runner"
+                            e.Graphics.DrawEllipse(pen, 8, 1, 4, 4)
+                            e.Graphics.DrawLine(pen, 10, 5, 8, 10)
+                            e.Graphics.DrawLine(pen, 8, 10, 4, 12)
+                            e.Graphics.DrawLine(pen, 8, 10, 13, 11)
+                            e.Graphics.DrawLine(pen, 8, 7, 4, 8)
+                            e.Graphics.DrawLine(pen, 9, 7, 14, 5)
+                        Case "loot"
+                            e.Graphics.DrawLine(pen, 4, 13, 10, 4)
+                            e.Graphics.DrawLine(pen, 10, 4, 15, 6)
+                            e.Graphics.DrawLine(pen, 10, 4, 14, 1)
+                            e.Graphics.DrawLine(pen, 9, 5, 6, 2)
+                        Case Else
+                            e.Graphics.DrawRectangle(pen, 4, 3, 10, 10)
+                    End Select
+                End Using
+            End Sub
+        Return iconPanel
+    End Function
+
+    Private Function BuildLiteSkillGroup(title As String, keys As IEnumerable(Of String), accentColor As Color) As Control
+        Dim group As New GroupBox() With {.Text = title, .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(251, 251, 251), .Padding = New Padding(8), .Font = New Font("Segoe UI", 8.0F, FontStyle.Bold)}
+        Dim flow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .AutoScroll = True}
+        For Each keyName As String In keys
+            flow.Controls.Add(BuildLiteSkillSlot(keyName, accentColor))
+        Next
+        group.Controls.Add(flow)
+        Return group
+    End Function
+
+    Private Function BuildLiteSkillSlot(keyName As String, accentColor As Color) As Control
+        Dim panel As New Panel() With {.Width = 56, .Height = 74, .BackColor = Color.White, .Margin = New Padding(2), .Tag = "lite-scope"}
+        Dim input As New NumericUpDown() With {.Left = 10, .Top = 6, .Width = 36, .Minimum = 1D, .Maximum = 99D, .DecimalPlaces = 0, .Increment = 1D, .Value = 1D, .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular), .Tag = "lite-scope"}
+        Dim frame As New Panel() With {.Left = 10, .Top = 34, .Width = 36, .Height = 28, .BackColor = accentColor, .Tag = "lite-scope"}
+        Dim enabledCheck As New CheckBox() With {
+            .Width = 16,
+            .Height = 16,
+            .Left = 1,
+            .Top = 1,
+            .Checked = False,
+            .BackColor = accentColor,
+            .ForeColor = Color.White,
+            .Tag = "lite-scope"
+        }
+        Dim keyLabel As New Label() With {.Left = 0, .Top = 12, .Width = 36, .Height = 14, .Text = keyName, .TextAlign = ContentAlignment.MiddleCenter, .ForeColor = Color.White, .Font = New Font("Segoe UI", 6.75F, FontStyle.Bold), .BackColor = Color.Transparent, .Tag = "lite-scope"}
+        panel.Controls.Add(input)
+        panel.Controls.Add(frame)
+        frame.Controls.Add(keyLabel)
+        frame.Controls.Add(enabledCheck)
+
+        RegisterLiteActionControl(keyName, enabledCheck, input)
+        Return panel
+    End Function
+
+    Private Sub RegisterLiteActionControl(keyName As String, enabledCheck As CheckBox, input As NumericUpDown)
+        _liteActionEnabledChecks(keyName) = enabledCheck
+        _liteActionCooldownInputs(keyName) = input
+        AddHandler enabledCheck.CheckedChanged, Sub() LiteActionChanged(keyName)
+        AddHandler input.ValueChanged, Sub() LiteActionChanged(keyName)
+    End Sub
+
+    Private Sub LiteActionChanged(_keyName As String)
+        If _liteSyncInProgress Then
+            Return
+        End If
+
+        PushLiveConfig()
+        SavePersistedListState(False)
+    End Sub
+
+    Private Shared Function GetLiteDefaultRole(keyName As String) As String
+        If keyName.Equals("R", StringComparison.OrdinalIgnoreCase) OrElse
+           keyName.Equals("F", StringComparison.OrdinalIgnoreCase) OrElse
+           keyName.StartsWith("F", StringComparison.OrdinalIgnoreCase) Then
+            Return "special"
+        End If
+
+        Return "attack"
+    End Function
+
+    Private Sub ApplyLiteDefaults()
+        _liteSyncInProgress = True
+        Try
+            For Each entry In _liteActionEnabledChecks
+                entry.Value.Checked = False
+            Next
+            For Each entry In _liteActionCooldownInputs
+                entry.Value.Value = Math.Max(entry.Value.Minimum, Math.Min(entry.Value.Maximum, 1D))
+            Next
+            If chkLiteAutoPots IsNot Nothing Then
+                chkLiteAutoPots.Checked = False
+            End If
+            _liteAutoPotHpPointX = -1
+            _liteAutoPotHpPointY = -1
+            _liteAutoPotMpPointX = -1
+            _liteAutoPotMpPointY = -1
+            _pendingLitePointCapture = LitePointCaptureKind.None
+            UpdateLiteAutoPotUi()
+        Finally
+            _liteSyncInProgress = False
+        End Try
+    End Sub
+
+    Private Function GetPersistedLiteActions() As List(Of PersistedCombatAction)
+        Dim actions As New List(Of PersistedCombatAction)()
+        For Each keyName As String In GetLiteActionKeys()
+            If Not _liteActionEnabledChecks.ContainsKey(keyName) OrElse Not _liteActionCooldownInputs.ContainsKey(keyName) Then
+                Continue For
+            End If
+
+            actions.Add(New PersistedCombatAction With {
+                .ActionKey = keyName,
+                .Enabled = _liteActionEnabledChecks(keyName).Checked,
+                .Role = GetLiteDefaultRole(keyName),
+                .Priority = 10 + actions.Count,
+                .CooldownSec = Math.Max(1.0, CDbl(_liteActionCooldownInputs(keyName).Value)),
+                .TriggerPercent = 1,
+                .MinHpPercent = 1,
+                .MinMpPercent = 1
+            })
+        Next
+        Return actions
+    End Function
+
+    Private Sub ApplyPersistedLiteActions(actions As List(Of PersistedCombatAction))
+        ApplyLiteDefaults()
+        If actions Is Nothing OrElse actions.Count = 0 Then
+            Return
+        End If
+
+        Dim keyed As New Dictionary(Of String, PersistedCombatAction)(StringComparer.OrdinalIgnoreCase)
+        For Each action As PersistedCombatAction In actions
+            If action Is Nothing OrElse String.IsNullOrWhiteSpace(action.ActionKey) Then
+                Continue For
+            End If
+            keyed(action.ActionKey.Trim()) = action
+        Next
+
+        _liteSyncInProgress = True
+        Try
+            For Each keyName As String In GetLiteActionKeys()
+                If Not keyed.ContainsKey(keyName) OrElse Not _liteActionEnabledChecks.ContainsKey(keyName) OrElse Not _liteActionCooldownInputs.ContainsKey(keyName) Then
+                    Continue For
+                End If
+
+                Dim action As PersistedCombatAction = keyed(keyName)
+                _liteActionEnabledChecks(keyName).Checked = action.Enabled
+                Dim bounded As Decimal = CDec(Math.Max(1, Math.Round(action.CooldownSec, MidpointRounding.AwayFromZero)))
+                _liteActionCooldownInputs(keyName).Value = Math.Max(_liteActionCooldownInputs(keyName).Minimum, Math.Min(_liteActionCooldownInputs(keyName).Maximum, bounded))
+            Next
+        Finally
+            _liteSyncInProgress = False
+        End Try
+    End Sub
+
+    Private Function GetLiteActionKeys() As List(Of String)
+        Dim keys As New List(Of String) From {"E", "R", "F"}
+        keys.AddRange(LitePrimarySkillKeys)
+        keys.AddRange(LiteSecondarySkillKeys)
+        Return keys
+    End Function
+
+    Private Sub UpdateLiteAutoPotUi()
+        If lblLiteHpPoint IsNot Nothing Then
+            lblLiteHpPoint.Text = If(_liteAutoPotHpPointX >= 0 AndAlso _liteAutoPotHpPointY >= 0, $"HP X/Y: {_liteAutoPotHpPointX}, {_liteAutoPotHpPointY}", "HP X/Y: not set")
+        End If
+        If lblLiteMpPoint IsNot Nothing Then
+            lblLiteMpPoint.Text = If(_liteAutoPotMpPointX >= 0 AndAlso _liteAutoPotMpPointY >= 0, $"MP X/Y: {_liteAutoPotMpPointX}, {_liteAutoPotMpPointY}", "MP X/Y: not set")
+        End If
+        If btnLiteSelectHpLevel IsNot Nothing Then
+            btnLiteSelectHpLevel.Text = If(_pendingLitePointCapture = LitePointCaptureKind.Hp, "RIGHT click HP bar...", "Select HP Level")
+        End If
+        If btnLiteSelectMpLevel IsNot Nothing Then
+            btnLiteSelectMpLevel.Text = If(_pendingLitePointCapture = LitePointCaptureKind.Mp, "RIGHT click Mana bar...", "Select Mana level")
+        End If
+    End Sub
+
+    Private Sub LoadPresetClicked(sender As Object, e As EventArgs)
+        LoadPersistedListState()
+        PushLiveConfig()
+        AppendLog("Preset loaded from disk.")
     End Sub
 
     Private Function BuildCombatTab() As TabPage
@@ -1329,9 +1947,19 @@ Public Class Form1
 
     Private Function BuildCenterControlPanel() As Panel
         Dim panel As New Panel() With {.Dock = DockStyle.Fill, .Padding = New Padding(12), .AutoScroll = True}
+        lblFullEdition = New Label() With {
+            .Text = "FULL VERSION",
+            .Top = 0,
+            .Left = 8,
+            .Width = 210,
+            .Height = 24,
+            .ForeColor = Color.FromArgb(80, 170, 255),
+            .Font = New Font("Segoe UI", 9.0F, FontStyle.Bold),
+            .TextAlign = ContentAlignment.MiddleLeft
+        }
         lblRunState = New Label() With {
             .Text = "BOT PAUSED",
-            .Top = 10,
+            .Top = 28,
             .Left = 8,
             .Width = 210,
             .Height = 30,
@@ -1342,50 +1970,50 @@ Public Class Form1
         }
         lblShortcutHint = New Label() With {
             .Text = "Shortcut: Ctrl+Shift -> Pause / Resume",
-            .Top = 44,
+            .Top = 62,
             .Left = 8,
             .Width = 280,
             .Height = 28,
             .ForeColor = Color.Gold,
             .TextAlign = ContentAlignment.MiddleLeft
         }
-        lblState = New Label() With {.Text = "Status: Searching for target...", .Top = 76, .Left = 8, .Width = 300, .Height = 22}
-        lblSystem = New Label() With {.Text = "System Active: False", .Top = 104, .Left = 8, .Width = 260, .Height = 22, .ForeColor = Color.LightGreen}
-        lblHp = New Label() With {.Text = "HP%: 0", .Top = 132, .Left = 8, .Width = 120, .Height = 22, .ForeColor = Color.LimeGreen}
-        lblMp = New Label() With {.Text = "MP%: 0", .Top = 132, .Left = 136, .Width = 120, .Height = 22, .ForeColor = Color.DeepSkyBlue}
-        lblMobName = New Label() With {.Text = "Mob: (none)", .Top = 156, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.LightSkyBlue}
-        lblExpRate = New Label() With {.Text = "Prana/EXP: 0.00% | Rate: Calculating (1m)", .Top = 178, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.Khaki}
-        lblRupiahsRate = New Label() With {.Text = "Rupiahs: n/a | Rate: Calculating (1m)", .Top = 200, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.Gold}
-        btnAttack = New Button() With {.Text = "Attack", .Top = 234, .Left = 8, .Width = 210, .Height = 42, .BackColor = Color.FromArgb(40, 180, 80), .ForeColor = Color.White}
-        btnSaveSettings = New Button() With {.Text = "Save Settings", .Top = 288, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(55, 55, 55), .ForeColor = Color.White}
-        btnStopBot = New Button() With {.Text = "Stop Bot", .Top = 338, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(20, 130, 210), .ForeColor = Color.White}
-        btnBypassLimits = New Button() With {.Text = "Ignore Skill Min HP/MP: OFF", .Top = 388, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
+        lblState = New Label() With {.Text = "Status: Searching for target...", .Top = 94, .Left = 8, .Width = 300, .Height = 22}
+        lblSystem = New Label() With {.Text = "System Active: False", .Top = 122, .Left = 8, .Width = 260, .Height = 22, .ForeColor = Color.LightGreen}
+        lblHp = New Label() With {.Text = "HP%: 0", .Top = 150, .Left = 8, .Width = 120, .Height = 22, .ForeColor = Color.LimeGreen}
+        lblMp = New Label() With {.Text = "MP%: 0", .Top = 150, .Left = 136, .Width = 120, .Height = 22, .ForeColor = Color.DeepSkyBlue}
+        lblMobName = New Label() With {.Text = "Mob: (none)", .Top = 174, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.LightSkyBlue}
+        lblExpRate = New Label() With {.Text = "Prana/EXP: 0.00% | Rate: Calculating (1m)", .Top = 196, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.Khaki}
+        lblRupiahsRate = New Label() With {.Text = "Rupiahs: n/a | Rate: Calculating (1m)", .Top = 218, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.Gold}
+        btnAttack = New Button() With {.Text = "Attack", .Top = 252, .Left = 8, .Width = 210, .Height = 42, .BackColor = Color.FromArgb(40, 180, 80), .ForeColor = Color.White}
+        btnSaveSettings = New Button() With {.Text = "Save Settings", .Top = 306, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(55, 55, 55), .ForeColor = Color.White}
+        btnStopBot = New Button() With {.Text = "Stop Bot", .Top = 356, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(20, 130, 210), .ForeColor = Color.White}
+        btnBypassLimits = New Button() With {.Text = "Ignore Skill Min HP/MP: OFF", .Top = 406, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
         btnBypassStuck = New Button() With {
             .Text = If(_bypassStuckTarget, "Auto Retarget If Stuck: ON", "Auto Retarget If Stuck: OFF"),
-            .Top = 438,
+            .Top = 456,
             .Left = 8,
             .Width = 210,
             .Height = 38,
             .BackColor = If(_bypassStuckTarget, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
             .ForeColor = Color.White
         }
-        btnRetargetNow = New Button() With {.Text = "Retarget Now (E)", .Top = 488, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
+        btnRetargetNow = New Button() With {.Text = "Retarget Now (E)", .Top = 506, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
         btnPartyAutoAccept = New Button() With {
             .Text = If(_partyAutoAccept, "Auto Accept Party/Ress: ON", "Auto Accept Party/Ress: OFF"),
-            .Top = 538,
+            .Top = 556,
             .Left = 8,
             .Width = 210,
             .Height = 38,
             .BackColor = If(_partyAutoAccept, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
             .ForeColor = Color.White
         }
-        Dim lblPartyAskEvery As New Label() With {.Text = "Ask Party Every (sec)", .Top = 584, .Left = 8, .Width = 210, .Height = 22}
-        nudPartyAskSeconds = New NumericUpDown() With {.Top = 606, .Left = 8, .Width = 210, .Height = 28, .Minimum = 5, .Maximum = 600, .Value = 30}
-        Dim lblPartyAskText As New Label() With {.Text = "Auto Ask Party Text", .Top = 640, .Left = 8, .Width = 210, .Height = 22}
-        txtPartyAskText = New TextBox() With {.Top = 662, .Left = 8, .Width = 210, .Height = 28, .Text = DefaultPartyAskCommand}
+        Dim lblPartyAskEvery As New Label() With {.Text = "Ask Party Every (sec)", .Top = 602, .Left = 8, .Width = 210, .Height = 22}
+        nudPartyAskSeconds = New NumericUpDown() With {.Top = 624, .Left = 8, .Width = 210, .Height = 28, .Minimum = 5, .Maximum = 600, .Value = 30}
+        Dim lblPartyAskText As New Label() With {.Text = "Auto Ask Party Text", .Top = 658, .Left = 8, .Width = 210, .Height = 22}
+        txtPartyAskText = New TextBox() With {.Top = 680, .Left = 8, .Width = 210, .Height = 28, .Text = DefaultPartyAskCommand}
         btnPartyAsk = New Button() With {
             .Text = If(_partyAskEnabled, "Auto Ask Party (add): ON", "Auto Ask Party (add): OFF"),
-            .Top = 696,
+            .Top = 714,
             .Left = 8,
             .Width = 210,
             .Height = 38,
@@ -1394,7 +2022,7 @@ Public Class Form1
         }
         btnLootScanner = New Button() With {
             .Text = If(_lootScannerEnabled, "Loot Scanner (Alt): ON", "Loot Scanner (Alt): OFF"),
-            .Top = 746,
+            .Top = 764,
             .Left = 8,
             .Width = 210,
             .Height = 38,
@@ -1403,7 +2031,7 @@ Public Class Form1
         }
         btnHelp = New Button() With {
             .Text = "Help (EN/ES/FIL)",
-            .Top = 796,
+            .Top = 814,
             .Left = 8,
             .Width = 210,
             .Height = 38,
@@ -1421,6 +2049,7 @@ Public Class Form1
         AddHandler btnLootScanner.Click, AddressOf ToggleLootScannerClicked
         AddHandler txtPartyAskText.TextChanged, AddressOf PartyAskTextChanged
         AddHandler btnHelp.Click, AddressOf HelpClicked
+        panel.Controls.Add(lblFullEdition)
         panel.Controls.Add(lblRunState)
         panel.Controls.Add(lblShortcutHint)
         panel.Controls.Add(lblState)
@@ -1524,7 +2153,7 @@ Public Class Form1
     End Function
 
     Private Sub SeedDefaults()
-        txtWindowTitle.Text = "Kathana - The Coming of the Dark Ages"
+        txtWindowTitle.Text = DefaultGameWindowTitle
         dgvRegions.Rows.Add("hp_bar", "11", "25", "151", "11")
         dgvRegions.Rows.Add("mp_bar", "3", "40", "161", "11")
         dgvRegions.Rows.Add("mob_name_rect", "860", "711", "162", "23")
@@ -1549,34 +2178,35 @@ Public Class Form1
         If nudForcedRetargetMs IsNot Nothing Then
             nudForcedRetargetMs.Value = 550D
         End If
+        If chkHighMaxHpSpecial IsNot Nothing Then
+            chkHighMaxHpSpecial.Checked = True
+        End If
 
         Dim keyIndex As Integer = 1
+        dgvCombat.Rows.Clear()
+        _partyAutoAccept = False
+        _partyAskEnabled = False
+        _lootScannerEnabled = False
         For Each key In PrimaryKeys
-            Dim enabled As Boolean = (key = "1" OrElse key = "2" OrElse key = "6")
-            Dim role As String = If(key = "6", "heal", "attack")
-            Dim trigger As Integer = If(key = "6", 80, 40)
-            Dim cooldown As String
-            If key = "1" Then
-                cooldown = "0.6"
-            ElseIf key = "2" Then
-                cooldown = "0.45"
-            Else
-                cooldown = "1.0"
-            End If
-            dgvCombat.Rows.Add(enabled, key, cooldown, role, keyIndex * 10, trigger, 1, 1)
+            dgvCombat.Rows.Add(False, key, "1", "attack", keyIndex * 10, 1, 1, 1)
             keyIndex += 1
         Next
         For Each key In FunctionKeys
-            dgvCombat.Rows.Add(False, key, "1.0", "special", keyIndex * 10, 40, 1, 1)
+            dgvCombat.Rows.Add(False, key, "1", "special", keyIndex * 10, 1, 1, 1)
             keyIndex += 1
         Next
         For i As Integer = 0 To CustomCombatDefaultKeys.Length - 1
             Dim customKey As String = CustomCombatDefaultKeys(i)
-            dgvCombat.Rows.Add(False, customKey, "1.0", "special", keyIndex * 10, 40, 1, 1)
+            dgvCombat.Rows.Add(False, customKey, "1", "special", keyIndex * 10, 1, 1, 1)
             Dim customRow As DataGridViewRow = dgvCombat.Rows(dgvCombat.Rows.Count - 1)
             customRow.Cells("Key").ReadOnly = False
             keyIndex += 1
         Next
+        chkLootPickup.Checked = False
+        nudLootPickupSeconds.Value = 1D
+        nudAutoPotHp.Value = 1D
+        nudAutoPotMp.Value = 1D
+        nudAlarmVolume.Value = 1D
         If Not MonsterExists("avara kara") Then
             lstMonsterFilter.Items.Add("avara kara")
         End If
@@ -1593,6 +2223,7 @@ Public Class Form1
         UpdateAttackButtonAppearance(False)
         UpdatePromptAutoAcceptButton()
         UpdatePartyAskButton()
+        ApplyLiteDefaults()
         UpdateLootRejectPointUi()
         RefreshKeyActionSummary()
         AppendLog("UI loaded. No API required.")
@@ -1606,8 +2237,48 @@ Public Class Form1
         AppendLog("Settings saved (engine + disk).")
     End Sub
 
-    Private Sub StartClicked(sender As Object, e As EventArgs)
-        If _overlayForm IsNot Nothing AndAlso Not _overlayForm.IsDisposed Then
+    Private Function ResolveTargetEdition(sender As Object) As BotEdition
+        If sender Is btnLiteAttack OrElse sender Is btnLiteStop Then
+            Return BotEdition.Lite
+        End If
+        Return If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full)
+    End Function
+
+    Private Function GetEngineForEdition(edition As BotEdition) As BotEngine
+        Return If(edition = BotEdition.Lite, _liteEngine, _fullEngine)
+    End Function
+
+    Private Function GetStatusForEdition(edition As BotEdition) As BotStatus
+        Return If(edition = BotEdition.Lite, _liteStatus, _fullStatus)
+    End Function
+
+    Private Function GetRunningEdition() As BotEdition?
+        If _liteEngine.IsRunning() Then
+            Return BotEdition.Lite
+        End If
+        If _fullEngine.IsRunning() Then
+            Return BotEdition.Full
+        End If
+        Return Nothing
+    End Function
+
+    Private Function IsEditionRunning(edition As BotEdition) As Boolean
+        Return GetEngineForEdition(edition).IsRunning()
+    End Function
+
+    Private Sub StartEdition(edition As BotEdition, autoStart As Boolean)
+        Dim otherEdition As BotEdition = If(edition = BotEdition.Lite, BotEdition.Full, BotEdition.Lite)
+        If IsEditionRunning(otherEdition) Then
+            StopEdition(otherEdition, False, $"starting {edition.ToString().ToLowerInvariant()}")
+        End If
+
+        Dim engine As BotEngine = GetEngineForEdition(edition)
+        If engine.IsRunning() Then
+            UpdateAttackButtonAppearance(False)
+            Return
+        End If
+
+        If edition = BotEdition.Full AndAlso _overlayForm IsNot Nothing AndAlso Not _overlayForm.IsDisposed Then
             _overlayForm.Close()
             _overlayForm = Nothing
             btnOverlayToggle.Text = "Show Overlay"
@@ -1615,11 +2286,40 @@ Public Class Form1
         End If
 
         SavePersistedListState(False)
-        ResetHpZeroAlarmState("Alarm state reset for bot start.")
-        BeginNotificationWarmup()
+        If edition = BotEdition.Full Then
+            ResetHpZeroAlarmState("Alarm state reset for bot start.")
+            BeginNotificationWarmup()
+        End If
         PushLiveConfig()
-        _engine.Start()
-        UpdateAttackButtonAppearance(True)
+        engine.Start()
+        UpdateAttackButtonAppearance(False)
+        If autoStart Then
+            AppendLog($"Auto-start on launch enabled for {edition}.")
+        End If
+    End Sub
+
+    Private Sub StopEdition(edition As BotEdition, triggeredByButton As Boolean, context As String)
+        Dim engine As BotEngine = GetEngineForEdition(edition)
+        Dim hardStopSent As Boolean = engine.HardStopMovement(txtWindowTitle.Text.Trim(), context)
+        If triggeredByButton Then
+            If hardStopSent Then
+                AppendLog($"Hard stop macro sent for {edition} ({context}).")
+            Else
+                AppendLog($"Hard stop macro not sent for {edition} ({context}).")
+            End If
+        End If
+
+        engine.Stop()
+        If edition = BotEdition.Full Then
+            _notificationWarmupUntilUtc = DateTime.MinValue
+            ApplyHealthUiTint(100.0, False)
+            ResetHpZeroAlarmState("Alarm state reset for bot stop.")
+        End If
+        UpdateAttackButtonAppearance(False)
+    End Sub
+
+    Private Sub StartClicked(sender As Object, e As EventArgs)
+        StartEdition(ResolveTargetEdition(sender), False)
     End Sub
 
     Private Sub AutoStartOnLaunch()
@@ -1627,16 +2327,10 @@ Public Class Form1
             Return
         End If
         _autoStarted = True
-        If _engine.IsRunning() Then
+        If _fullEngine.IsRunning() OrElse _liteEngine.IsRunning() Then
             Return
         End If
-        SavePersistedListState(False)
-        ResetHpZeroAlarmState("Alarm state reset for bot start.")
-        BeginNotificationWarmup()
-        PushLiveConfig()
-        _engine.Start()
-        UpdateAttackButtonAppearance(True)
-        AppendLog("Auto-start on launch enabled.")
+        StartEdition(BotEdition.Full, True)
     End Sub
 
     Protected Overrides Sub OnShown(e As EventArgs)
@@ -1646,17 +2340,14 @@ Public Class Form1
     End Sub
 
     Private Sub StopClicked(sender As Object, e As EventArgs)
-        Dim hardStopSent As Boolean = _engine.HardStopMovement(txtWindowTitle.Text.Trim(), "stop button")
-        If hardStopSent Then
-            AppendLog("Hard stop macro sent (movement key-up + stop key burst).")
-        Else
-            AppendLog("Hard stop macro not sent (window not found or input blocked).")
+        Dim targetEdition As BotEdition = ResolveTargetEdition(sender)
+        If sender Is Nothing Then
+            Dim runningEdition As BotEdition? = GetRunningEdition()
+            If runningEdition.HasValue Then
+                targetEdition = runningEdition.Value
+            End If
         End If
-        _engine.Stop()
-        _notificationWarmupUntilUtc = DateTime.MinValue
-        ApplyHealthUiTint(100.0, False)
-        ResetHpZeroAlarmState("Alarm state reset for bot stop.")
-        UpdateAttackButtonAppearance(False)
+        StopEdition(targetEdition, True, "stop button")
     End Sub
 
     Private Sub CommitPendingGridEdits()
@@ -1683,9 +2374,9 @@ Public Class Form1
 
     Private Sub SnapshotClicked(sender As Object, e As EventArgs)
         PushLiveConfig()
-        Dim bmp As Bitmap = _engine.CaptureSnapshot()
+        Dim bmp As Bitmap = _fullEngine.CaptureSnapshot()
         If bmp Is Nothing Then
-            If _engine.IsRunning() Then
+            If _fullEngine.IsRunning() Then
                 AppendLog("Snapshot unavailable yet. Wait for the next Vision loop frame.")
             Else
                 AppendLog("Snapshot failed. Window not found or capture failed.")
@@ -1805,28 +2496,38 @@ Public Class Form1
     End Sub
 
     Private Sub ProcessSelectionChanged(sender As Object, e As EventArgs)
-        Dim selected As ProcessWindowEntry = TryCast(lstProcessWindows.SelectedItem, ProcessWindowEntry)
+        Dim sourceList As ListBox = TryCast(sender, ListBox)
+        Dim selected As ProcessWindowEntry = Nothing
+        If sourceList IsNot Nothing Then
+            selected = TryCast(sourceList.SelectedItem, ProcessWindowEntry)
+        End If
+        If selected Is Nothing Then
+            selected = GetSelectedProcessWindow()
+        End If
         If selected Is Nothing Then
             Return
         End If
 
+        If txtWindowTitle IsNot Nothing AndAlso Not txtWindowTitle.IsDisposed AndAlso String.IsNullOrWhiteSpace(txtWindowTitle.Text) Then
+            txtWindowTitle.Text = selected.WindowTitle
+        End If
         If txtProcessRename IsNot Nothing AndAlso Not txtProcessRename.IsDisposed Then
             txtProcessRename.Text = selected.WindowTitle
         End If
+        If txtLiteProcessRename IsNot Nothing AndAlso Not txtLiteProcessRename.IsDisposed Then
+            txtLiteProcessRename.Text = selected.WindowTitle
+        End If
+        SyncProcessSelectionAcrossLists(selected.MainWindowHandle)
     End Sub
 
     Private Sub ApplyProcessRenameClicked(sender As Object, e As EventArgs)
-        If lstProcessWindows Is Nothing OrElse lstProcessWindows.IsDisposed Then
-            Return
-        End If
-
-        Dim selected As ProcessWindowEntry = TryCast(lstProcessWindows.SelectedItem, ProcessWindowEntry)
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindow()
         If selected Is Nothing Then
             AppendLog("Rename failed: select a process window first.")
             Return
         End If
 
-        Dim newTitle As String = If(txtProcessRename IsNot Nothing, txtProcessRename.Text, "").Trim()
+        Dim newTitle As String = GetProcessRenameText()
         If newTitle = "" Then
             AppendLog("Rename failed: title cannot be empty.")
             Return
@@ -1835,6 +2536,12 @@ Public Class Form1
         If SetWindowText(selected.MainWindowHandle, newTitle) Then
             AppendLog($"Window renamed for PID {selected.ProcessId}: '{newTitle}'.")
             txtWindowTitle.Text = newTitle
+            If txtProcessRename IsNot Nothing Then
+                txtProcessRename.Text = newTitle
+            End If
+            If txtLiteProcessRename IsNot Nothing Then
+                txtLiteProcessRename.Text = newTitle
+            End If
             RefreshProcessWindowList(False, selected.MainWindowHandle)
             Return
         End If
@@ -1844,13 +2551,13 @@ Public Class Form1
     End Sub
 
     Private Sub RefreshProcessWindowList(logResult As Boolean, preferredHandle As IntPtr)
-        If lstProcessWindows Is Nothing OrElse lstProcessWindows.IsDisposed Then
+        If (lstProcessWindows Is Nothing OrElse lstProcessWindows.IsDisposed) AndAlso (lstLiteProcessWindows Is Nothing OrElse lstLiteProcessWindows.IsDisposed) Then
             Return
         End If
 
         Dim rememberedHandle As IntPtr = preferredHandle
         If rememberedHandle = IntPtr.Zero Then
-            Dim existing As ProcessWindowEntry = TryCast(lstProcessWindows.SelectedItem, ProcessWindowEntry)
+            Dim existing As ProcessWindowEntry = GetSelectedProcessWindow()
             If existing IsNot Nothing Then
                 rememberedHandle = existing.MainWindowHandle
             End If
@@ -1891,11 +2598,24 @@ Public Class Form1
                 Return a.ProcessId.CompareTo(b.ProcessId)
             End Function)
 
-        lstProcessWindows.BeginUpdate()
+        PopulateProcessListBox(lstProcessWindows, entries, rememberedHandle)
+        PopulateProcessListBox(lstLiteProcessWindows, entries, rememberedHandle)
+
+        If logResult Then
+            AppendLog($"Process list updated. Found {entries.Count} windows.")
+        End If
+    End Sub
+
+    Private Sub PopulateProcessListBox(listBox As ListBox, entries As List(Of ProcessWindowEntry), rememberedHandle As IntPtr)
+        If listBox Is Nothing OrElse listBox.IsDisposed Then
+            Return
+        End If
+
+        listBox.BeginUpdate()
         Try
-            lstProcessWindows.Items.Clear()
+            listBox.Items.Clear()
             For Each entry As ProcessWindowEntry In entries
-                lstProcessWindows.Items.Add(entry)
+                listBox.Items.Add(entry)
             Next
 
             If entries.Count > 0 Then
@@ -1910,18 +2630,193 @@ Public Class Form1
                 End If
 
                 If targetIndex < 0 Then
+                    For i As Integer = 0 To entries.Count - 1
+                        If IsPreferredKathanaWindowTitle(entries(i).WindowTitle) Then
+                            targetIndex = i
+                            Exit For
+                        End If
+                    Next
+                End If
+
+                If targetIndex < 0 Then
                     targetIndex = 0
                 End If
-                lstProcessWindows.SelectedIndex = targetIndex
+                listBox.SelectedIndex = targetIndex
             End If
         Finally
-            lstProcessWindows.EndUpdate()
+            listBox.EndUpdate()
         End Try
-
-        If logResult Then
-            AppendLog($"Process list updated. Found {entries.Count} windows.")
-        End If
     End Sub
+
+    Private Function GetSelectedProcessWindowForEdition(edition As BotEdition) As ProcessWindowEntry
+        Dim selected As ProcessWindowEntry = Nothing
+        If edition = BotEdition.Lite Then
+            If lstLiteProcessWindows IsNot Nothing Then
+                selected = TryCast(lstLiteProcessWindows.SelectedItem, ProcessWindowEntry)
+            End If
+            If selected Is Nothing AndAlso lstProcessWindows IsNot Nothing Then
+                selected = TryCast(lstProcessWindows.SelectedItem, ProcessWindowEntry)
+            End If
+        Else
+            If lstProcessWindows IsNot Nothing Then
+                selected = TryCast(lstProcessWindows.SelectedItem, ProcessWindowEntry)
+            End If
+            If selected Is Nothing AndAlso lstLiteProcessWindows IsNot Nothing Then
+                selected = TryCast(lstLiteProcessWindows.SelectedItem, ProcessWindowEntry)
+            End If
+        End If
+        If selected IsNot Nothing Then
+            Return selected
+        End If
+        If lstProcessWindows IsNot Nothing Then
+            selected = TryCast(lstProcessWindows.SelectedItem, ProcessWindowEntry)
+        End If
+        If selected Is Nothing AndAlso lstLiteProcessWindows IsNot Nothing Then
+            selected = TryCast(lstLiteProcessWindows.SelectedItem, ProcessWindowEntry)
+        End If
+        Return selected
+    End Function
+
+    Private Function GetSelectedProcessWindow() As ProcessWindowEntry
+        Return GetSelectedProcessWindowForEdition(If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full))
+    End Function
+
+    Private Shared Function IsPreferredKathanaWindowTitle(title As String) As Boolean
+        Dim value As String = If(title, "").Trim()
+        If value = "" Then
+            Return False
+        End If
+
+        Return value.Equals(PreferredProcessWindowTitle, StringComparison.OrdinalIgnoreCase) OrElse
+               value.Equals(DefaultGameWindowTitle, StringComparison.OrdinalIgnoreCase) OrElse
+               value.IndexOf("The Coming of the Dark Ages", StringComparison.OrdinalIgnoreCase) >= 0
+    End Function
+
+    Private Function GetProcessRenameText() As String
+        Dim preferred As String = If(IsLiteModeActive(), If(txtLiteProcessRename IsNot Nothing, txtLiteProcessRename.Text, ""), If(txtProcessRename IsNot Nothing, txtProcessRename.Text, ""))
+        preferred = preferred.Trim()
+        If preferred <> "" Then
+            Return preferred
+        End If
+        If txtProcessRename IsNot Nothing Then
+            preferred = txtProcessRename.Text.Trim()
+            If preferred <> "" Then
+                Return preferred
+            End If
+        End If
+        If txtLiteProcessRename IsNot Nothing Then
+            Return txtLiteProcessRename.Text.Trim()
+        End If
+        Return ""
+    End Function
+
+    Private Sub SyncProcessSelectionAcrossLists(handle As IntPtr)
+        If handle = IntPtr.Zero Then
+            Return
+        End If
+        SyncProcessSelectionInList(lstProcessWindows, handle)
+        SyncProcessSelectionInList(lstLiteProcessWindows, handle)
+    End Sub
+
+    Private Sub SyncProcessSelectionInList(listBox As ListBox, handle As IntPtr)
+        If listBox Is Nothing OrElse listBox.IsDisposed Then
+            Return
+        End If
+        For i As Integer = 0 To listBox.Items.Count - 1
+            Dim entry As ProcessWindowEntry = TryCast(listBox.Items(i), ProcessWindowEntry)
+            If entry IsNot Nothing AndAlso entry.MainWindowHandle = handle Then
+                If listBox.SelectedIndex <> i Then
+                    listBox.SelectedIndex = i
+                End If
+                Exit For
+            End If
+        Next
+    End Sub
+
+    Private Sub BeginLitePointCapture(kind As LitePointCaptureKind)
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindow()
+        If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
+            AppendLog("Lite AutoPots: select a process window first.")
+            Return
+        End If
+
+        _pendingLitePointCapture = kind
+        _liteRightMouseWasDown = False
+        UpdateLiteAutoPotUi()
+        AppendLog($"Lite AutoPots: switching to Tantra. Make sure HP and Mana are full, then RIGHT click the {(If(kind = LitePointCaptureKind.Hp, "HP", "Mana"))} bar where the potion should be used.")
+        AppendLog("Lite AutoPots: click inside the bar where there are no numbers or letters so Lite can sample the full bar color, then keep the HP window in the same place.")
+        NativeMethods.SetForegroundWindow(selected.MainWindowHandle)
+    End Sub
+
+    Private Sub HandlePendingLitePointCapture()
+        If _pendingLitePointCapture = LitePointCaptureKind.None Then
+            Return
+        End If
+
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindow()
+        If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
+            Return
+        End If
+
+        Dim rightDown As Boolean = (GetAsyncKeyState(CInt(Keys.RButton)) And &H8000S) <> 0
+        If rightDown AndAlso Not _liteRightMouseWasDown Then
+            Dim screenPoint As NativeMethods.POINT
+            If NativeMethods.GetCursorPos(screenPoint) Then
+                Dim hoveredWindow As IntPtr = NativeMethods.WindowFromPoint(screenPoint)
+                Dim hoveredRoot As IntPtr = If(hoveredWindow <> IntPtr.Zero, NativeMethods.GetAncestor(hoveredWindow, NativeMethods.GA_ROOT), IntPtr.Zero)
+                If hoveredRoot <> selected.MainWindowHandle Then
+                    _liteRightMouseWasDown = rightDown
+                    Return
+                End If
+
+                Dim clientPoint As NativeMethods.POINT = screenPoint
+                If NativeMethods.ScreenToClient(selected.MainWindowHandle, clientPoint) Then
+                    Dim clientRect As NativeMethods.RECT
+                    If Not NativeMethods.GetClientRect(selected.MainWindowHandle, clientRect) Then
+                        _liteRightMouseWasDown = rightDown
+                        Return
+                    End If
+
+                    Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
+                    Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
+                    If clientPoint.X < 0 OrElse clientPoint.Y < 0 OrElse clientPoint.X >= clientWidth OrElse clientPoint.Y >= clientHeight Then
+                        AppendLog("Lite AutoPots: right click must be inside the selected Tantra window.")
+                        _liteRightMouseWasDown = rightDown
+                        Return
+                    End If
+
+                    If _pendingLitePointCapture = LitePointCaptureKind.Hp Then
+                        _liteAutoPotHpPointX = Math.Max(0, clientPoint.X)
+                        _liteAutoPotHpPointY = Math.Max(0, clientPoint.Y)
+                        AppendLog($"Lite AutoPots: HP point saved at {_liteAutoPotHpPointX}, {_liteAutoPotHpPointY}.")
+                    ElseIf _pendingLitePointCapture = LitePointCaptureKind.Mp Then
+                        _liteAutoPotMpPointX = Math.Max(0, clientPoint.X)
+                        _liteAutoPotMpPointY = Math.Max(0, clientPoint.Y)
+                        AppendLog($"Lite AutoPots: Mana point saved at {_liteAutoPotMpPointX}, {_liteAutoPotMpPointY}.")
+                    End If
+                    _pendingLitePointCapture = LitePointCaptureKind.None
+                    UpdateLiteAutoPotUi()
+                    PushLiveConfig()
+                    SavePersistedListState(False)
+                End If
+            End If
+        End If
+        _liteRightMouseWasDown = rightDown
+    End Sub
+
+    Private Shared Function GetLiteAutoPotTriggerPercent(barRegion As RectRegion, pointX As Integer) As Integer
+        If barRegion Is Nothing OrElse pointX < 0 OrElse barRegion.W <= 0 Then
+            Return 0
+        End If
+
+        Dim relativeX As Integer = Math.Max(0, Math.Min(barRegion.W, pointX - barRegion.X))
+        If relativeX <= 0 Then
+            Return 1
+        End If
+
+        Dim pct As Integer = CInt(Math.Round((relativeX / CDbl(Math.Max(1, barRegion.W))) * 100.0, MidpointRounding.AwayFromZero))
+        Return Math.Min(99, Math.Max(1, pct))
+    End Function
 
     Private Sub ToggleBypassLimitsClicked(sender As Object, e As EventArgs)
         _bypassHpMpLimits = Not _bypassHpMpLimits
@@ -2392,7 +3287,7 @@ Public Class Form1
             Return
         End If
 
-        If _engine.ManualRetarget(title) Then
+        If _fullEngine.ManualRetarget(title) Then
             AppendLog("Manual retarget requested (E sent).")
         Else
             AppendLog("Manual retarget failed: game window not found.")
@@ -2490,8 +3385,11 @@ Public Class Form1
 
     Private Sub UiTimerTick(sender As Object, e As EventArgs)
         PushLiveConfig()
-        Dim st As BotStatus = _engine.GetStatus()
-        HandlePeriodicStatsNotification(st)
+        Dim st As BotStatus = GetStatusForEdition(_edition)
+        HandlePendingLitePointCapture()
+        If _fullEngine.IsRunning() Then
+            HandlePeriodicStatsNotification(_fullStatus)
+        End If
         txtDiagnostics.Text =
             $"Running: {st.Running}{Environment.NewLine}" &
             $"BypassHpMpLimits: {_bypassHpMpLimits}{Environment.NewLine}" &
@@ -2595,6 +3493,7 @@ Public Class Form1
             HandleCtrlShiftTogglePress()
         End If
         _ctrlShiftWasDown = comboDown
+        HandlePendingLitePointCapture()
     End Sub
 
     Private Sub HandleCtrlShiftTogglePress()
@@ -2602,12 +3501,14 @@ Public Class Form1
             Return
         End If
 
-        If _engine.IsRunning() Then
-            StopClicked(Nothing, EventArgs.Empty)
-            AppendLog("Ctrl+Shift toggle: bot paused.")
+        Dim runningEdition As BotEdition? = GetRunningEdition()
+        If runningEdition.HasValue Then
+            StopEdition(runningEdition.Value, False, "ctrl+shift toggle")
+            AppendLog($"Ctrl+Shift toggle: {runningEdition.Value} bot paused.")
         Else
-            StartClicked(Nothing, EventArgs.Empty)
-            AppendLog("Ctrl+Shift toggle: bot resumed.")
+            Dim selectedEdition As BotEdition = If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full)
+            StartEdition(selectedEdition, False)
+            AppendLog($"Ctrl+Shift toggle: {selectedEdition} bot resumed.")
         End If
     End Sub
 
@@ -2643,9 +3544,9 @@ Public Class Form1
         Return ContainsFocus
     End Function
 
-    Private Sub OnEngineStatusUpdated(status As BotStatus)
+    Private Sub OnEngineStatusUpdated(edition As BotEdition, status As BotStatus)
         If InvokeRequired Then
-            BeginInvoke(New Action(Of BotStatus)(AddressOf OnEngineStatusUpdated), status)
+            BeginInvoke(New Action(Of BotEdition, BotStatus)(AddressOf OnEngineStatusUpdated), edition, status)
             Return
         End If
 
@@ -2657,6 +3558,15 @@ Public Class Form1
         Else
             statusText = "Status: Attacking target..."
         End If
+
+        If edition = BotEdition.Lite Then
+            _liteStatus = status
+            UpdateLiteStatus(statusText, status)
+            UpdateAttackButtonAppearance(False)
+            Return
+        End If
+
+        _fullStatus = status
 
         lblState.Text = statusText
         lblSystem.Text = $"System Active: {status.Running}"
@@ -2744,7 +3654,7 @@ Public Class Form1
             lblChatTranslationStatus.Text = chatState
         End If
         HandleChatTranslation(status)
-        UpdateAttackButtonAppearance(status.Running)
+        UpdateAttackButtonAppearance(False)
         HandleHpZeroAlarm(status)
         HandleWindowMissingAlarm(status)
         ApplyHealthUiTint(status.HpPercent, status.Running AndAlso status.WindowFound)
@@ -3079,13 +3989,16 @@ Public Class Form1
         End If
     End Sub
 
-    Private Sub OnEngineLogLine(line As String)
+    Private Sub OnEngineLogLine(edition As BotEdition, line As String)
         If InvokeRequired Then
-            BeginInvoke(New Action(Of String)(AddressOf OnEngineLogLine), line)
+            BeginInvoke(New Action(Of BotEdition, String)(AddressOf OnEngineLogLine), edition, line)
             Return
         End If
-        TrackKeyActionFromEngineLog(line)
-        AppendLog(line)
+        Dim prefixed As String = $"[{edition}] {line}"
+        If edition = BotEdition.Full Then
+            TrackKeyActionFromEngineLog(line)
+        End If
+        AppendLog(prefixed)
     End Sub
 
     Private Sub AddMonsterClicked(sender As Object, e As EventArgs)
@@ -3242,9 +4155,81 @@ Public Class Form1
             End Function)
     End Sub
 
+    Private Function BuildFullConfig() As BotConfig
+        Return BuildConfig()
+    End Function
+
+    Private Function BuildLiteConfig() As BotConfig
+        Dim cfg As New BotConfig()
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Lite)
+        cfg.LiteModeEnabled = True
+        cfg.WindowTitle = If(txtWindowTitle IsNot Nothing, txtWindowTitle.Text.Trim(), DefaultGameWindowTitle)
+        cfg.SelectedWindowHandle = If(selected IsNot Nothing, selected.MainWindowHandle, IntPtr.Zero)
+        cfg.LiteHpCheckPointX = _liteAutoPotHpPointX
+        cfg.LiteHpCheckPointY = _liteAutoPotHpPointY
+        cfg.LiteMpCheckPointX = _liteAutoPotMpPointX
+        cfg.LiteMpCheckPointY = _liteAutoPotMpPointY
+        cfg.LoopMs = 80
+        cfg.RetargetMs = 550
+        cfg.ForcedRetargetMs = 550
+        cfg.HpBar = BuildRect("hp_bar")
+        cfg.MpBar = BuildRect("mp_bar")
+        cfg.BypassHpMpLimits = False
+        cfg.Actions = New List(Of ActionRule)()
+
+        For Each action As PersistedCombatAction In GetPersistedLiteActions()
+            If action Is Nothing OrElse Not action.Enabled Then
+                Continue For
+            End If
+
+            cfg.Actions.Add(New ActionRule With {
+                .KeyName = action.ActionKey,
+                .Enabled = action.Enabled,
+                .Role = GetLiteDefaultRole(action.ActionKey),
+                .Priority = action.Priority,
+                .CooldownMs = CInt(Math.Round(Math.Max(1.0, action.CooldownSec) * 1000.0)),
+                .TriggerPercent = 1,
+                .MinHpPercent = 1,
+                .MinMpPercent = 1
+            })
+        Next
+
+        If chkLiteAutoPots IsNot Nothing AndAlso chkLiteAutoPots.Checked Then
+            If _liteAutoPotHpPointX >= 0 AndAlso _liteAutoPotHpPointY >= 0 Then
+                cfg.Actions.Add(New ActionRule With {
+                    .KeyName = "9",
+                    .Enabled = True,
+                    .Role = "heal",
+                    .Priority = 500,
+                    .CooldownMs = 1000,
+                    .TriggerPercent = 1,
+                    .MinHpPercent = 1,
+                    .MinMpPercent = 1
+                })
+            End If
+
+            If _liteAutoPotMpPointX >= 0 AndAlso _liteAutoPotMpPointY >= 0 Then
+                cfg.Actions.Add(New ActionRule With {
+                    .KeyName = "0",
+                    .Enabled = True,
+                    .Role = "mana",
+                    .Priority = 510,
+                    .CooldownMs = 1000,
+                    .TriggerPercent = 1,
+                    .MinHpPercent = 1,
+                    .MinMpPercent = 1
+                })
+            End If
+        End If
+
+        Return cfg
+    End Function
+
     Private Function BuildConfig() As BotConfig
         Dim cfg As New BotConfig()
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
         cfg.WindowTitle = txtWindowTitle.Text.Trim()
+        cfg.SelectedWindowHandle = If(selected IsNot Nothing, selected.MainWindowHandle, IntPtr.Zero)
         cfg.LoopMs = CInt(nudLoopMs.Value)
         cfg.RetargetMs = CInt(nudRetargetMs.Value)
         cfg.ForcedRetargetMs = CInt(If(nudForcedRetargetMs IsNot Nothing, nudForcedRetargetMs.Value, nudRetargetMs.Value))
@@ -3258,7 +4243,7 @@ Public Class Form1
         cfg.PartyAutoAcceptEnabled = _partyAutoAccept
         cfg.PartyAskEnabled = _partyAskEnabled
         cfg.PartyAskIntervalMs = CInt(Math.Round(CDbl(If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D)) * 1000.0))
-                cfg.PartyAskText = GetPartyAskCommandText()
+        cfg.PartyAskText = GetPartyAskCommandText()
         cfg.LootScannerEnabled = _lootScannerEnabled
         cfg.ItemNtfyTopic = If(txtItemNtfyTopic IsNot Nothing, txtItemNtfyTopic.Text.Trim(), "")
         cfg.LevelingAgentEnabled = (chkLevelingAgent IsNot Nothing AndAlso chkLevelingAgent.Checked)
@@ -3349,10 +4334,11 @@ Public Class Form1
             End Try
 
             Dim cooldownSec As Double = Math.Max(0.05, ParseDouble(SafeCell(row, "CooldownSec", "1.0"), 1.0))
+            Dim role As String = SafeCell(row, "Role", "attack").ToLowerInvariant()
             actions.Add(New ActionRule With {
                 .KeyName = keyName,
                 .Enabled = enabled,
-                .Role = SafeCell(row, "Role", "attack").ToLowerInvariant(),
+                .Role = role,
                 .Priority = ParseInt(SafeCell(row, "Priority", "100"), 100),
                 .CooldownMs = CInt(Math.Round(cooldownSec * 1000.0)),
                 .TriggerPercent = Math.Min(99, Math.Max(1, ParseInt(SafeCell(row, "TriggerPercent", "40"), 40))),
@@ -3536,7 +4522,7 @@ Public Class Form1
 
     Private Sub SaveRouteRecordingClicked(sender As Object, e As EventArgs)
         Dim cfg As BotConfig = BuildConfig()
-        Dim savedPath As String = _engine.SaveRecordedRoute(cfg)
+        Dim savedPath As String = _fullEngine.SaveRecordedRoute(cfg)
         If String.IsNullOrWhiteSpace(savedPath) Then
             AppendLog("Recorded route save failed. Make sure recording mode captured enough coordinate samples first.")
             Return
@@ -3690,7 +4676,33 @@ Public Class Form1
                 Return
             End If
 
-            Dim state As PersistedListState = JsonSerializer.Deserialize(Of PersistedListState)(raw)
+            Dim state As PersistedListState = Nothing
+            Dim liteState As PersistedLiteState = Nothing
+            Dim appState As PersistedAppState = Nothing
+            Try
+                appState = JsonSerializer.Deserialize(Of PersistedAppState)(raw)
+            Catch
+            End Try
+
+            Dim hasSeparatedState As Boolean =
+                raw.IndexOf("""Full""", StringComparison.OrdinalIgnoreCase) >= 0 AndAlso
+                raw.IndexOf("""Lite""", StringComparison.OrdinalIgnoreCase) >= 0
+
+            If hasSeparatedState AndAlso appState IsNot Nothing Then
+                state = If(appState.Full, New PersistedListState())
+                liteState = If(appState.Lite, New PersistedLiteState())
+                If txtWindowTitle IsNot Nothing Then
+                    Dim sharedTitle As String = If(appState.WindowTitle, "").Trim()
+                    txtWindowTitle.Text = If(sharedTitle = "", DefaultGameWindowTitle, sharedTitle)
+                End If
+            Else
+                state = JsonSerializer.Deserialize(Of PersistedListState)(raw)
+                liteState = New PersistedLiteState()
+                If txtWindowTitle IsNot Nothing AndAlso state IsNot Nothing AndAlso state.SavedConfig IsNot Nothing Then
+                    Dim legacyTitle As String = If(state.SavedConfig.WindowTitle, "").Trim()
+                    txtWindowTitle.Text = If(legacyTitle = "", DefaultGameWindowTitle, legacyTitle)
+                End If
+            End If
             If state Is Nothing Then
                 Return
             End If
@@ -3790,6 +4802,7 @@ Public Class Form1
             If state.CombatActions IsNot Nothing AndAlso state.CombatActions.Count > 0 Then
                 ApplyPersistedCombatActions(state.CombatActions)
             End If
+            ApplyPersistedLiteState(liteState)
         Catch ex As Exception
             AppendLog("Unable to load saved lists: " & ex.Message)
         End Try
@@ -3797,11 +4810,12 @@ Public Class Form1
 
     Private Sub SavePersistedListState(Optional logFailure As Boolean = False, Optional includeFullConfig As Boolean = True)
         Try
+            CommitPendingGridEdits()
             If Not Directory.Exists(PersistDirectoryPath) Then
                 Directory.CreateDirectory(PersistDirectoryPath)
             End If
 
-            Dim state As New PersistedListState With {
+            Dim fullState As New PersistedListState With {
                 .MonsterFilterEnabled = (chkMonsterFilter IsNot Nothing AndAlso chkMonsterFilter.Checked),
                 .LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked),
                 .LootPickupSeconds = If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value, 4D),
@@ -3821,13 +4835,30 @@ Public Class Form1
                 .AutoPotHpPercent = If(nudAutoPotHp IsNot Nothing, nudAutoPotHp.Value, 80D),
                 .AutoPotMpPercent = If(nudAutoPotMp IsNot Nothing, nudAutoPotMp.Value, 35D),
                 .AlarmVolumePercent = CInt(If(nudAlarmVolume IsNot Nothing, nudAlarmVolume.Value, CDec(_alarmVolumePercent))),
-                .SavedConfig = If(includeFullConfig, BuildConfig(), Nothing),
+                .SavedConfig = If(includeFullConfig, BuildFullConfig(), Nothing),
                 .MonsterNames = GetListBoxItems(lstMonsterFilter),
                 .LootNames = GetListBoxItems(lstLootFilter),
                 .CombatActions = GetPersistedCombatActions()
             }
 
-            Dim json As String = JsonSerializer.Serialize(state, New JsonSerializerOptions With {.WriteIndented = True})
+            Dim liteState As New PersistedLiteState With {
+                .AutoPotsEnabled = (chkLiteAutoPots IsNot Nothing AndAlso chkLiteAutoPots.Checked),
+                .HpPointEnabled = (_liteAutoPotHpPointX >= 0 AndAlso _liteAutoPotHpPointY >= 0),
+                .HpPointX = _liteAutoPotHpPointX,
+                .HpPointY = _liteAutoPotHpPointY,
+                .MpPointEnabled = (_liteAutoPotMpPointX >= 0 AndAlso _liteAutoPotMpPointY >= 0),
+                .MpPointX = _liteAutoPotMpPointX,
+                .MpPointY = _liteAutoPotMpPointY,
+                .Actions = GetPersistedLiteActions()
+            }
+
+            Dim appState As New PersistedAppState With {
+                .WindowTitle = If(txtWindowTitle IsNot Nothing AndAlso txtWindowTitle.Text.Trim() <> "", txtWindowTitle.Text.Trim(), DefaultGameWindowTitle),
+                .Full = fullState,
+                .Lite = liteState
+            }
+
+            Dim json As String = JsonSerializer.Serialize(appState, New JsonSerializerOptions With {.WriteIndented = True})
             File.WriteAllText(PersistFilePath, json, Encoding.UTF8)
         Catch ex As Exception
             If logFailure Then
@@ -3836,13 +4867,43 @@ Public Class Form1
         End Try
     End Sub
 
+    Private Sub ApplyPersistedLiteState(state As PersistedLiteState)
+        Dim source As PersistedLiteState = If(state, New PersistedLiteState())
+        ApplyPersistedLiteActions(source.Actions)
+
+        _liteSyncInProgress = True
+        Try
+            If chkLiteAutoPots IsNot Nothing Then
+                chkLiteAutoPots.Checked = source.AutoPotsEnabled
+            End If
+            If source.HpPointEnabled Then
+                _liteAutoPotHpPointX = Math.Max(0, source.HpPointX)
+                _liteAutoPotHpPointY = Math.Max(0, source.HpPointY)
+            Else
+                _liteAutoPotHpPointX = -1
+                _liteAutoPotHpPointY = -1
+            End If
+            If source.MpPointEnabled Then
+                _liteAutoPotMpPointX = Math.Max(0, source.MpPointX)
+                _liteAutoPotMpPointY = Math.Max(0, source.MpPointY)
+            Else
+                _liteAutoPotMpPointX = -1
+                _liteAutoPotMpPointY = -1
+            End If
+            _pendingLitePointCapture = LitePointCaptureKind.None
+            UpdateLiteAutoPotUi()
+        Finally
+            _liteSyncInProgress = False
+        End Try
+    End Sub
+
     Private Sub ApplySavedConfigToUi(cfg As BotConfig)
         If cfg Is Nothing Then
             Return
         End If
 
-        If txtWindowTitle IsNot Nothing Then
-            txtWindowTitle.Text = If(cfg.WindowTitle, "").Trim()
+        If txtWindowTitle IsNot Nothing AndAlso String.IsNullOrWhiteSpace(txtWindowTitle.Text) Then
+            txtWindowTitle.Text = DefaultGameWindowTitle
         End If
         SetNumericControlValue(nudLoopMs, cfg.LoopMs)
         SetNumericControlValue(nudRetargetMs, cfg.RetargetMs)
@@ -4323,9 +5384,14 @@ Public Class Form1
         _keyActionEvents.RemoveAll(Function(x As KeyActionEvent) x.TimestampUtc < cutoff)
     End Sub
 
-    Private Sub UpdateAttackButtonAppearance(isRunning As Boolean)
+    Private Sub UpdateAttackButtonAppearance(_ignored As Boolean)
+        Dim fullRunning As Boolean = _fullEngine.IsRunning()
+        Dim liteRunning As Boolean = _liteEngine.IsRunning()
+        Dim runningEdition As BotEdition? = GetRunningEdition()
+        Dim selectedEdition As BotEdition = If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full)
+
         If btnAttack IsNot Nothing Then
-            If isRunning Then
+            If fullRunning Then
                 btnAttack.Text = "RUNNING"
                 btnAttack.BackColor = Color.FromArgb(220, 70, 55)
                 btnAttack.ForeColor = Color.White
@@ -4336,14 +5402,72 @@ Public Class Form1
             End If
         End If
 
+        If btnLiteAttack IsNot Nothing Then
+            btnLiteAttack.Text = If(liteRunning, "Running", If(fullRunning, "Start Lite", "Start"))
+            btnLiteAttack.BackColor = If(liteRunning, Color.FromArgb(255, 179, 179), Color.FromArgb(40, 180, 80))
+            btnLiteAttack.ForeColor = If(liteRunning, Color.FromArgb(120, 25, 25), Color.White)
+        End If
+
+        If btnStopBot IsNot Nothing Then
+            btnStopBot.Enabled = fullRunning
+        End If
+        If btnLiteStop IsNot Nothing Then
+            btnLiteStop.Enabled = liteRunning
+            btnLiteStop.BackColor = If(liteRunning, Color.FromArgb(230, 92, 92), Color.FromArgb(220, 220, 220))
+            btnLiteStop.ForeColor = If(liteRunning, Color.White, Color.FromArgb(120, 120, 120))
+        End If
+
         If lblRunState IsNot Nothing Then
-            lblRunState.Text = If(isRunning, "BOT RUNNING", "BOT PAUSED")
-            lblRunState.BackColor = If(isRunning, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+            lblRunState.Text = If(fullRunning, "FULL BOT RUNNING", "FULL BOT PAUSED")
+            lblRunState.BackColor = If(fullRunning, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
             lblRunState.ForeColor = Color.White
+        End If
+        If lblFullEdition IsNot Nothing Then
+            lblFullEdition.Text = If(liteRunning, "FULL VERSION - LITE BOT RUNNING", "FULL VERSION")
+        End If
+
+        If lblLiteRunState IsNot Nothing Then
+            lblLiteRunState.Text = If(liteRunning, "LITE BOT RUNNING", "LITE BOT PAUSED")
+            lblLiteRunState.BackColor = If(liteRunning, Color.FromArgb(86, 168, 123), Color.FromArgb(187, 108, 108))
+            lblLiteRunState.ForeColor = Color.White
+        End If
+
+        If lblLiteActiveMode IsNot Nothing Then
+            Dim activeText As String = "ACTIVE BOT: NONE"
+            If runningEdition.HasValue Then
+                activeText = $"ACTIVE BOT: {runningEdition.Value.ToString().ToUpperInvariant()}"
+            End If
+            lblLiteActiveMode.Text = activeText
         End If
 
         If lblShortcutHint IsNot Nothing Then
-            lblShortcutHint.Text = If(isRunning, "Ctrl+Shift -> Pause Bot", "Ctrl+Shift -> Resume Bot")
+            lblShortcutHint.Text = If(fullRunning, "Ctrl+Shift -> Pause Full Bot", $"Ctrl+Shift -> Start {selectedEdition}")
+        End If
+        If lblLiteShortcutHint IsNot Nothing Then
+            If liteRunning Then
+                lblLiteShortcutHint.Text = "Ctrl+Shift -> Pause Lite Bot"
+            ElseIf fullRunning Then
+                lblLiteShortcutHint.Text = "Full is running. Start Lite to switch modes."
+            Else
+                lblLiteShortcutHint.Text = "Ctrl+Shift -> Start selected tab"
+            End If
+        End If
+    End Sub
+
+    Private Sub UpdateLiteStatus(statusText As String, status As BotStatus)
+        If lblLiteState IsNot Nothing Then
+            lblLiteState.Text = statusText
+        End If
+        If lblLiteSystem IsNot Nothing Then
+            lblLiteSystem.Text = $"Lite Active: {status.Running}"
+        End If
+        If lblLiteHp IsNot Nothing Then
+            lblLiteHp.Text = $"HP%: {status.HpPercent:0.0}"
+            lblLiteHp.ForeColor = HpColor(status.HpPercent)
+        End If
+        If lblLiteMp IsNot Nothing Then
+            lblLiteMp.Text = $"MP%: {status.MpPercent:0.0}"
+            lblLiteMp.ForeColor = MpColor(status.MpPercent)
         End If
     End Sub
 
@@ -4912,6 +6036,9 @@ Public Class Form1
     End Function
 
     Private Sub ApplyDarkTheme(control As Control)
+        If String.Equals(If(control.Tag, "").ToString(), "lite-scope", StringComparison.OrdinalIgnoreCase) Then
+            Return
+        End If
         control.BackColor = Color.FromArgb(28, 28, 28)
         control.ForeColor = Color.Gainsboro
 
@@ -4956,7 +6083,8 @@ Public Class Form1
         If _overlayForm IsNot Nothing AndAlso Not _overlayForm.IsDisposed Then
             _overlayForm.Close()
         End If
-        _engine.Stop()
+        _fullEngine.Stop()
+        _liteEngine.Stop()
         MyBase.OnFormClosing(e)
     End Sub
 End Class
