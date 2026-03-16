@@ -940,7 +940,7 @@ Public Class Form1
         statusLayout.Controls.Add(lblLiteShortcutHint, 0, 0)
         statusLayout.Controls.Add(lblLiteState, 1, 0)
         statusLayout.Controls.Add(lblLiteSystem, 0, 1)
-        statusLayout.Controls.Add(New Label() With {.Text = "Lite checks selected HP/MP points only.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.FromArgb(90, 90, 90), .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}, 1, 1)
+        statusLayout.Controls.Add(New Label() With {.Text = "Lite HP/MP points are for AutoPots only. Attacks stay active.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.FromArgb(90, 90, 90), .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}, 1, 1)
         statusLayout.Controls.Add(lblLiteHp, 0, 2)
         statusLayout.Controls.Add(lblLiteMp, 1, 2)
         statusLayout.Controls.Add(New Label() With {.Text = "Selected process controls Lite key send.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.FromArgb(90, 90, 90), .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular), .Tag = "lite-scope"}, 0, 3)
@@ -4174,7 +4174,7 @@ Public Class Form1
         cfg.ForcedRetargetMs = 550
         cfg.HpBar = BuildRect("hp_bar")
         cfg.MpBar = BuildRect("mp_bar")
-        cfg.BypassHpMpLimits = False
+        cfg.BypassHpMpLimits = True
         cfg.Actions = New List(Of ActionRule)()
 
         For Each action As PersistedCombatAction In GetPersistedLiteActions()
