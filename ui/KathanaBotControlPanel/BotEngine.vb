@@ -451,6 +451,7 @@ Public Class BotEngine
     Private Const AttackBurstGapMs As Integer = 4
     Private Const StopKeyRepeatGapMs As Integer = 10
     Private Const ForegroundInputSettleMs As Integer = 15
+    Private Const CombatLockLostTargetConfirmFrames As Integer = 4
 
     Private ReadOnly _sync As New Object()
     Private ReadOnly _frameSync As New Object()
@@ -467,6 +468,10 @@ Public Class BotEngine
     Private _lastTargetWindowSeen As DateTime = DateTime.MinValue
     Private _noTargetBeganAt As DateTime = DateTime.MinValue
     Private _lastAttackAction As DateTime = DateTime.MinValue
+    Private _combatLockActive As Boolean = False
+    Private _combatLockTargetSignature As String = ""
+    Private _combatLockLostSignalCount As Integer = 0
+    Private _combatLockLastSeenAt As DateTime = DateTime.MinValue
     Private _lastMobHpSample As Double = -1
     Private _lastMobHpMovement As DateTime = DateTime.MinValue
     Private _noDamageTargetSignature As String = ""
@@ -663,6 +668,10 @@ Public Class BotEngine
             _lastTargetWindowSeen = DateTime.MinValue
             _noTargetBeganAt = DateTime.MinValue
             _lastAttackAction = DateTime.MinValue
+            _combatLockActive = False
+            _combatLockTargetSignature = ""
+            _combatLockLostSignalCount = 0
+            _combatLockLastSeenAt = DateTime.MinValue
             _lastMobHpSample = -1
             _lastMobHpMovement = DateTime.MinValue
             _noDamageTargetSignature = ""
@@ -1099,7 +1108,9 @@ Public Class BotEngine
             Dim nameConfirmedForAttack As Boolean = (Not monsterFilterActive) OrElse (normMobName <> "" AndAlso _nameConfirmConfirmedName.Equals(normMobName, StringComparison.OrdinalIgnoreCase))
             Dim missingNameBlockedByFilter As Boolean = monsterFilterActive AndAlso targetWindowVisible AndAlso normMobName = ""
             Dim nameConfirmationBlockedByFilter As Boolean = monsterFilterActive AndAlso targetWindowVisible AndAlso (Not missingNameBlockedByFilter) AndAlso (Not deniedTarget) AndAlso (Not nameConfirmedForAttack)
-            Dim canTrackFirstHitTarget As Boolean = targetWindowVisible AndAlso (mobHpPct >= cfg.MobHpPresenceThreshold) AndAlso (Not deniedTarget) AndAlso (Not missingNameBlockedByFilter)
+            Dim currentTargetAliveSignal As Boolean = HasLivingTargetSignal(targetWindowVisible, mobHpPct, cfg)
+            Dim combatLockActive As Boolean = UpdateCombatLockState(now, cfg, currentTargetAliveSignal, normMobName)
+            Dim canTrackFirstHitTarget As Boolean = currentTargetAliveSignal AndAlso (Not deniedTarget) AndAlso (Not missingNameBlockedByFilter)
             Dim currentFirstHitSignature As String = normMobName
             If canTrackFirstHitTarget Then
                 Dim isNewFirstHitTarget As Boolean = (Not _firstHitPending) OrElse ((currentFirstHitSignature <> "") AndAlso (Not _firstHitTargetSignature.Equals(currentFirstHitSignature, StringComparison.OrdinalIgnoreCase)))
@@ -1115,8 +1126,7 @@ Public Class BotEngine
             End If
             Dim firstHitWindowActive As Boolean = _firstHitPending AndAlso now < _firstHitWindowUntil
             Dim targetValid As Boolean =
-                targetWindowVisible AndAlso
-                (mobHpPct >= cfg.MobHpPresenceThreshold) AndAlso
+                currentTargetAliveSignal AndAlso
                 (Not deniedTarget) AndAlso
                 (Not missingNameBlockedByFilter) AndAlso
                 (Not missingNameBlockedByPreference) AndAlso
@@ -1169,7 +1179,7 @@ Public Class BotEngine
                     reason = ""
                 End If
 
-                If Not actionSent AndAlso Not targetWindowVisible Then
+                If Not actionSent AndAlso Not targetWindowVisible AndAlso Not combatLockActive Then
                     Dim travelReason As String = ""
                     If TryHandleNavigationTravel(cfg, hwnd, now, targetWindowVisible, targetValid, travelReason) Then
                         actionSent = True
@@ -1197,6 +1207,7 @@ Public Class BotEngine
                         MarkKeyUsed(attackAction.KeyName)
                         sentKeys.Add(attackAction.KeyName)
                         _lastAttackAction = DateTime.UtcNow
+                        BeginCombatLock(targetSignature, DateTime.UtcNow)
                         _firstHitPending = False
                         _firstHitWindowUntil = DateTime.MinValue
                         RecordAttackWithoutDamage(targetSignature)
@@ -1220,6 +1231,10 @@ Public Class BotEngine
                         Else
                             reason = "Waiting to send first attack before retarget."
                         End If
+                    End If
+                ElseIf combatLockActive Then
+                    If String.IsNullOrWhiteSpace(reason) Then
+                        reason = "Current mob still considered engaged. Waiting for death confirmation before retarget."
                     End If
                 Else
                     If (Not filterBlockedRetarget) AndAlso _lastTargetWindowSeen <> DateTime.MinValue AndAlso (now - _lastTargetWindowSeen).TotalMilliseconds < retargetDelayMs Then
@@ -4578,6 +4593,67 @@ Public Class BotEngine
         Return cleaned
     End Function
 
+    Private Sub BeginCombatLock(targetSignature As String, now As DateTime)
+        _combatLockActive = True
+        _combatLockLostSignalCount = 0
+        _combatLockLastSeenAt = now
+        Dim normalizedSignature As String = If(targetSignature, "").Trim().ToLowerInvariant()
+        If normalizedSignature <> "" Then
+            _combatLockTargetSignature = normalizedSignature
+        End If
+    End Sub
+
+    Private Sub ClearCombatLock()
+        _combatLockActive = False
+        _combatLockTargetSignature = ""
+        _combatLockLostSignalCount = 0
+        _combatLockLastSeenAt = DateTime.MinValue
+    End Sub
+
+    Private Function UpdateCombatLockState(now As DateTime, cfg As BotConfig, currentTargetAliveSignal As Boolean, normMobName As String) As Boolean
+        If Not _combatLockActive Then
+            Return False
+        End If
+
+        Dim normalizedName As String = If(normMobName, "").Trim().ToLowerInvariant()
+        Dim lockTargetMatches As Boolean =
+            _combatLockTargetSignature = "" OrElse
+            normalizedName = "" OrElse
+            _combatLockTargetSignature.Equals(normalizedName, StringComparison.OrdinalIgnoreCase)
+
+        If currentTargetAliveSignal AndAlso lockTargetMatches Then
+            _combatLockLostSignalCount = 0
+            _combatLockLastSeenAt = now
+            If _combatLockTargetSignature = "" AndAlso normalizedName <> "" Then
+                _combatLockTargetSignature = normalizedName
+            End If
+            Return True
+        End If
+
+        Dim minHoldMs As Integer = Math.Max(900, Math.Max(1, If(cfg?.RetargetMs, 550)) * 2)
+        If _lastAttackAction <> DateTime.MinValue AndAlso (now - _lastAttackAction).TotalMilliseconds < minHoldMs Then
+            Return True
+        End If
+
+        _combatLockLostSignalCount += 1
+        If _combatLockLostSignalCount < CombatLockLostTargetConfirmFrames Then
+            Return True
+        End If
+
+        ClearCombatLock()
+        Return False
+    End Function
+
+    Private Shared Function HasLivingTargetSignal(targetWindowVisible As Boolean, mobHpPct As Double, cfg As BotConfig) As Boolean
+        If targetWindowVisible Then
+            Return True
+        End If
+
+        Dim configuredThreshold As Double = If(cfg Is Nothing, 1.0, Math.Max(0.0, cfg.MobHpPresenceThreshold))
+        Dim lowHpKeepLockThreshold As Double = Math.Max(0.05, Math.Min(0.25, configuredThreshold * 0.25))
+        Return mobHpPct >= lowHpKeepLockThreshold
+    End Function
+
     Private Shared Function GetRetargetCooldownMs(cfg As BotConfig, Optional minimumMs As Integer = 1, Optional forced As Boolean = False) As Integer
         If cfg Is Nothing Then
             Return Math.Max(minimumMs, 1) + RetargetBufferMs
@@ -4603,6 +4679,7 @@ Public Class BotEngine
             _lastNormalRetarget = now
         End If
         If SendKey(hwnd, "E", FastKeyPressMs) Then
+            ClearCombatLock()
             SetLastAction(actionText)
             Return True
         End If
@@ -4656,6 +4733,9 @@ Public Class BotEngine
         If _lastAttackAction = DateTime.MinValue Then
             Return False
         End If
+        If _combatLockActive Then
+            Return False
+        End If
 
         Dim stuckMs As Integer = Math.Max(1, cfg.StuckTargetMs)
         Dim sinceAttackMs As Double = (now - _lastAttackAction).TotalMilliseconds
@@ -4665,10 +4745,6 @@ Public Class BotEngine
         End If
 
         Dim retargetCooldownMs As Integer = GetRetargetCooldownMs(cfg, 1, forced:=True)
-        If _noDamageAttackCount >= 3 AndAlso targetWindowVisible Then
-            Return (_lastForcedRetarget = DateTime.MinValue) OrElse (now - _lastForcedRetarget).TotalMilliseconds >= retargetCooldownMs
-        End If
-
         If Not targetValid Then
             Return False
         End If
@@ -4678,7 +4754,8 @@ Public Class BotEngine
         End If
 
         Dim sinceHpMoveMs As Double = (now - _lastMobHpMovement).TotalMilliseconds
-        If sinceHpMoveMs < stuckMs Then
+        Dim requiredNoProgressMs As Integer = Math.Max(6000, stuckMs * 3)
+        If sinceHpMoveMs < requiredNoProgressMs Then
             Return False
         End If
 
