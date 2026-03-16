@@ -134,6 +134,7 @@ Public Class Form1
     Private nudAutoPotHp As NumericUpDown
     Private nudAutoPotMp As NumericUpDown
     Private nudStuckTargetMs As NumericUpDown
+    Private nudStuckNoProgressRetargetMs As NumericUpDown
     Private nudLootNameMatchThreshold As NumericUpDown
     Private nudAlarmVolume As NumericUpDown
     Private nudStatsNtfyIntervalMinutes As NumericUpDown
@@ -368,6 +369,9 @@ Public Class Form1
         If nudStuckTargetMs IsNot Nothing Then
             AddHandler nudStuckTargetMs.ValueChanged, AddressOf LiveConfigChanged
         End If
+        If nudStuckNoProgressRetargetMs IsNot Nothing Then
+            AddHandler nudStuckNoProgressRetargetMs.ValueChanged, AddressOf LiveConfigChanged
+        End If
         If nudLootNameMatchThreshold IsNot Nothing Then
             AddHandler nudLootNameMatchThreshold.ValueChanged, AddressOf LiveConfigChanged
         End If
@@ -480,6 +484,9 @@ Public Class Form1
         End If
         If nudStuckTargetMs IsNot Nothing Then
             AddHandler nudStuckTargetMs.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudStuckNoProgressRetargetMs IsNot Nothing Then
+            AddHandler nudStuckNoProgressRetargetMs.ValueChanged, AddressOf PersistListSettingsChanged
         End If
         If nudLootNameMatchThreshold IsNot Nothing Then
             AddHandler nudLootNameMatchThreshold.ValueChanged, AddressOf PersistListSettingsChanged
@@ -987,17 +994,19 @@ Public Class Form1
         layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 32.0F))
 
-        Dim controlsPanel As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 3}
+        Dim controlsPanel As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 4}
         controlsPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 200.0F))
         controlsPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        controlsPanel.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
         controlsPanel.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
         controlsPanel.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
         controlsPanel.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
 
         controlsPanel.Controls.Add(New Label() With {.Text = "Retarget Key", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
         controlsPanel.Controls.Add(New Label() With {.Text = "E", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.LightGreen}, 1, 0)
-        controlsPanel.Controls.Add(New Label() With {.Text = "Retarget Interval (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
-        controlsPanel.Controls.Add(New Label() With {.Text = "Stuck Target Timeout (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
+        controlsPanel.Controls.Add(New Label() With {.Text = "Search Retarget Delay (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
+        controlsPanel.Controls.Add(New Label() With {.Text = "Stuck Detection Delay (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
+        controlsPanel.Controls.Add(New Label() With {.Text = "No-Progress Delay (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 3)
 
         Dim nudAutoPotRetarget As New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 50, .Maximum = 10000, .Value = 550}
         If nudRetargetMs IsNot Nothing Then
@@ -1023,17 +1032,29 @@ Public Class Form1
         AddHandler nudStuckTargetMs.ValueChanged, Sub(_s As Object, _e As EventArgs) PushLiveConfig()
         controlsPanel.Controls.Add(nudStuckTargetMs, 1, 2)
 
+        nudStuckNoProgressRetargetMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 1000, .Maximum = 60000, .Increment = 250, .Value = 6000}
+        AddHandler nudStuckNoProgressRetargetMs.ValueChanged, Sub(_s As Object, _e As EventArgs) PushLiveConfig()
+        controlsPanel.Controls.Add(nudStuckNoProgressRetargetMs, 1, 3)
+
         Dim note As New Label() With {
-            .Text = "Retarget Interval is mirrored from Vision. Stuck Target Timeout controls when the bot decides a target is stalled and forces a retarget.",
+            .Text =
+                "How these settings work:" & Environment.NewLine &
+                "1. Search Retarget Delay: how long the bot waits before pressing E again when it has no usable target." & Environment.NewLine &
+                "2. Stuck Detection Delay: minimum combat time before the current target can be treated as stuck." & Environment.NewLine &
+                "3. No-Progress Delay: how long the target's HP can stay unchanged before a stuck retarget is allowed." & Environment.NewLine & Environment.NewLine &
+                "Recommended starting points:" & Environment.NewLine &
+                "- Crowded / fast maps: 4000 to 6000" & Environment.NewLine &
+                "- Tanky mobs or longer run-in distance: 7000 to 12000",
             .Dock = DockStyle.Fill,
             .TextAlign = ContentAlignment.TopLeft,
-            .ForeColor = Color.LightSteelBlue
+            .ForeColor = Color.LightSteelBlue,
+            .Padding = New Padding(0, 4, 8, 0)
         }
         layout.Controls.Add(controlsPanel, 0, 0)
         layout.Controls.Add(note, 1, 0)
 
         Dim foot As New Label() With {
-            .Text = "Use a shorter timeout for crowded spots and a longer timeout for tankier mobs.",
+            .Text = "Higher values reduce accidental target switching. Lower values make the bot give up on stuck targets faster.",
             .Dock = DockStyle.Fill,
             .TextAlign = ContentAlignment.MiddleLeft,
             .ForeColor = Color.Gray
@@ -3228,6 +3249,7 @@ Public Class Form1
         cfg.RetargetMs = CInt(nudRetargetMs.Value)
         cfg.ForcedRetargetMs = CInt(If(nudForcedRetargetMs IsNot Nothing, nudForcedRetargetMs.Value, nudRetargetMs.Value))
         cfg.StuckTargetMs = CInt(If(nudStuckTargetMs IsNot Nothing, nudStuckTargetMs.Value, 2200D))
+        cfg.StuckTargetNoProgressRetargetMs = CInt(If(nudStuckNoProgressRetargetMs IsNot Nothing, nudStuckNoProgressRetargetMs.Value, 6000D))
         cfg.MobHpPresenceThreshold = CDbl(nudMobHpThreshold.Value)
         cfg.HighMaxHpSpecialEnabled = (chkHighMaxHpSpecial IsNot Nothing AndAlso chkHighMaxHpSpecial.Checked)
         cfg.HighMaxHpThreshold = CInt(If(nudHighMaxHpThreshold IsNot Nothing, nudHighMaxHpThreshold.Value, 2000D))
@@ -3826,6 +3848,7 @@ Public Class Form1
         SetNumericControlValue(nudRetargetMs, cfg.RetargetMs)
         SetNumericControlValue(nudForcedRetargetMs, If(cfg.ForcedRetargetMs > 0, cfg.ForcedRetargetMs, cfg.RetargetMs))
         SetNumericControlValue(nudStuckTargetMs, cfg.StuckTargetMs)
+        SetNumericControlValue(nudStuckNoProgressRetargetMs, If(cfg.StuckTargetNoProgressRetargetMs > 0, cfg.StuckTargetNoProgressRetargetMs, 6000))
         SetNumericControlValue(nudMobHpThreshold, CDec(cfg.MobHpPresenceThreshold))
         If chkHighMaxHpSpecial IsNot Nothing Then
             chkHighMaxHpSpecial.Checked = cfg.HighMaxHpSpecialEnabled

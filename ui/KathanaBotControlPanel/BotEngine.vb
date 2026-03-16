@@ -154,6 +154,7 @@ Public Class BotConfig
     Public Property BypassHpMpLimits As Boolean = False
     Public Property BypassStuckTarget As Boolean = True
     Public Property StuckTargetMs As Integer = 2200
+    Public Property StuckTargetNoProgressRetargetMs As Integer = 6000
     Public Property DeniedMobs As List(Of String) = New List(Of String)()
     Public Property LootPickupEnabled As Boolean = False
     Public Property LootPickupIntervalMs As Integer = 4000
@@ -4754,7 +4755,8 @@ Public Class BotEngine
         End If
 
         Dim sinceHpMoveMs As Double = (now - _lastMobHpMovement).TotalMilliseconds
-        Dim requiredNoProgressMs As Integer = Math.Max(6000, stuckMs * 3)
+        Dim configuredNoProgressMs As Integer = Math.Max(1000, If(cfg?.StuckTargetNoProgressRetargetMs, 6000))
+        Dim requiredNoProgressMs As Integer = configuredNoProgressMs
         If sinceHpMoveMs < requiredNoProgressMs Then
             Return False
         End If
