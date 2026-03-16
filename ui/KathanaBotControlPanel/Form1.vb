@@ -240,12 +240,18 @@ Public Class Form1
     Private ReadOnly _baseBackColors As New Dictionary(Of Control, Color)()
     Private ReadOnly _gridThemeSnapshots As New Dictionary(Of DataGridView, GridThemeSnapshot)()
     Private ReadOnly _keyActionEvents As New List(Of KeyActionEvent)()
+    Private ReadOnly _licenseHeartbeatTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _chatTranslator As New TranslationService()
     Private ReadOnly _chatTranslationLock As New SemaphoreSlim(1, 1)
     Private ReadOnly _chatSeenLineKeys As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
     Private ReadOnly _chatSeenLineOrder As New Queue(Of String)()
     Private ReadOnly _chatOverlayEntries As New List(Of ChatOverlayLine)()
     Private _lastChatOcrText As String = ""
+    Private _keygenState As New KeygenPersistedState()
+    Private _licenseSession As KeygenLicenseSession = Nothing
+    Private _licenseHeartbeatInProgress As Boolean = False
+    Private _licenseHeartbeatFailureCount As Integer = 0
+    Private _licenseShutdownRequested As Boolean = False
 
     Private Class GridThemeSnapshot
         Public Property BackgroundColor As Color
@@ -293,6 +299,7 @@ Public Class Form1
         Public Property WindowTitle As String = DefaultGameWindowTitle
         Public Property Full As PersistedListState = New PersistedListState()
         Public Property Lite As PersistedLiteState = New PersistedLiteState()
+        Public Property License As KeygenPersistedState = New KeygenPersistedState()
     End Class
 
     Private Class PersistedListState
@@ -393,6 +400,9 @@ Public Class Form1
         _enterToggleTimer.Interval = 45
         AddHandler _enterToggleTimer.Tick, AddressOf EnterToggleTimerTick
         _enterToggleTimer.Start()
+
+        _licenseHeartbeatTimer.Interval = 60000
+        AddHandler _licenseHeartbeatTimer.Tick, AddressOf LicenseHeartbeatTimerTick
 
         UpdateEditionUiState(False)
         PushLiveConfig()
@@ -2335,6 +2345,10 @@ Public Class Form1
 
     Protected Overrides Sub OnShown(e As EventArgs)
         MyBase.OnShown(e)
+        If Not EnsureKeygenLicenseOnStartup() Then
+            BeginInvoke(New Action(Sub() Close()))
+            Return
+        End If
         RefreshProcessWindowList(False, IntPtr.Zero)
         AutoStartOnLaunch()
     End Sub
@@ -4691,6 +4705,7 @@ Public Class Form1
             If hasSeparatedState AndAlso appState IsNot Nothing Then
                 state = If(appState.Full, New PersistedListState())
                 liteState = If(appState.Lite, New PersistedLiteState())
+                _keygenState = If(appState.License, New KeygenPersistedState())
                 If txtWindowTitle IsNot Nothing Then
                     Dim sharedTitle As String = If(appState.WindowTitle, "").Trim()
                     txtWindowTitle.Text = If(sharedTitle = "", DefaultGameWindowTitle, sharedTitle)
@@ -4698,6 +4713,7 @@ Public Class Form1
             Else
                 state = JsonSerializer.Deserialize(Of PersistedListState)(raw)
                 liteState = New PersistedLiteState()
+                _keygenState = New KeygenPersistedState()
                 If txtWindowTitle IsNot Nothing AndAlso state IsNot Nothing AndAlso state.SavedConfig IsNot Nothing Then
                     Dim legacyTitle As String = If(state.SavedConfig.WindowTitle, "").Trim()
                     txtWindowTitle.Text = If(legacyTitle = "", DefaultGameWindowTitle, legacyTitle)
@@ -4855,7 +4871,8 @@ Public Class Form1
             Dim appState As New PersistedAppState With {
                 .WindowTitle = If(txtWindowTitle IsNot Nothing AndAlso txtWindowTitle.Text.Trim() <> "", txtWindowTitle.Text.Trim(), DefaultGameWindowTitle),
                 .Full = fullState,
-                .Lite = liteState
+                .Lite = liteState,
+                .License = If(_keygenState, New KeygenPersistedState())
             }
 
             Dim json As String = JsonSerializer.Serialize(appState, New JsonSerializerOptions With {.WriteIndented = True})
@@ -6075,9 +6092,150 @@ Public Class Form1
         Next
     End Sub
 
+    Private Function EnsureKeygenLicenseOnStartup() As Boolean
+        Dim accountSlug As String = If(Environment.GetEnvironmentVariable("KATHANABOT_KEYGEN_ACCOUNT"), If(If(_keygenState IsNot Nothing, _keygenState.AccountSlug, Nothing), "")).Trim()
+        Dim licenseKey As String = If(Environment.GetEnvironmentVariable("KATHANABOT_KEYGEN_LICENSE"), KeygenLicenseManager.UnprotectLicenseKey(If(If(_keygenState IsNot Nothing, _keygenState.EncryptedLicenseKey, Nothing), ""))).Trim()
+        Dim fingerprint As String = KeygenLicenseManager.ComputeMachineFingerprint()
+
+        Do
+            If String.IsNullOrWhiteSpace(accountSlug) OrElse String.IsNullOrWhiteSpace(licenseKey) Then
+                If Not PromptForKeygenLicense(accountSlug, licenseKey) Then
+                    Return False
+                End If
+            End If
+
+            Try
+                _licenseSession = KeygenLicenseManager.EstablishSessionAsync(accountSlug, licenseKey, fingerprint).GetAwaiter().GetResult()
+                _licenseHeartbeatFailureCount = 0
+                _licenseShutdownRequested = False
+                _keygenState = New KeygenPersistedState With {
+                    .AccountSlug = _licenseSession.AccountSlug,
+                    .EncryptedLicenseKey = KeygenLicenseManager.ProtectLicenseKey(_licenseSession.LicenseKey),
+                    .MachineId = _licenseSession.MachineId
+                }
+                SavePersistedListState(False, False)
+                AppendLog("Keygen license validated. Single-session lock is active.")
+                StartKeygenHeartbeat()
+                Return True
+            Catch ex As KeygenApiFailureException
+                Dim retry As DialogResult = MessageBox.Show(Me, FormatKeygenFailure(ex), "License Check Failed", MessageBoxButtons.RetryCancel, MessageBoxIcon.Error)
+                If retry <> DialogResult.Retry Then
+                    Return False
+                End If
+                licenseKey = ""
+            Catch ex As Exception
+                Dim retry As DialogResult = MessageBox.Show(Me, "Unable to reach Keygen: " & ex.Message & Environment.NewLine & Environment.NewLine & "Click Retry to try again or Cancel to close the app.", "License Check Failed", MessageBoxButtons.RetryCancel, MessageBoxIcon.Error)
+                If retry <> DialogResult.Retry Then
+                    Return False
+                End If
+            End Try
+        Loop
+    End Function
+
+    Private Function PromptForKeygenLicense(ByRef accountSlug As String, ByRef licenseKey As String) As Boolean
+        Using prompt As New KeygenLicensePromptForm(accountSlug, licenseKey)
+            If prompt.ShowDialog(Me) <> DialogResult.OK Then
+                Return False
+            End If
+
+            accountSlug = prompt.AccountSlug
+            licenseKey = prompt.LicenseKey
+            Return True
+        End Using
+    End Function
+
+    Private Function FormatKeygenFailure(ex As KeygenApiFailureException) As String
+        If ex Is Nothing Then
+            Return "The license check failed."
+        End If
+
+        Select Case ex.Code.Trim().ToUpperInvariant()
+            Case "EXPIRED"
+                Return "This Keygen license has expired." & Environment.NewLine & ex.Message
+            Case "FINGERPRINT_SCOPE_MISMATCH"
+                Return "This license is already bound to a different PC." & Environment.NewLine & ex.Message
+            Case "TOO_MANY_PROCESSES"
+                Return "This license is already running somewhere else right now." & Environment.NewLine & ex.Message
+            Case "NO_MACHINE", "NO_MACHINES"
+                Return "This PC is not activated for the license yet." & Environment.NewLine & ex.Message
+            Case Else
+                Return ex.Message
+        End Select
+    End Function
+
+    Private Sub StartKeygenHeartbeat()
+        If _licenseSession Is Nothing Then
+            Return
+        End If
+
+        _licenseHeartbeatTimer.Interval = GetKeygenHeartbeatIntervalMs(_licenseSession.HeartbeatIntervalSeconds)
+        _licenseHeartbeatFailureCount = 0
+        _licenseHeartbeatTimer.Start()
+    End Sub
+
+    Private Function GetKeygenHeartbeatIntervalMs(intervalSeconds As Integer) As Integer
+        Dim seconds As Integer = Math.Max(30, Math.Min(120, intervalSeconds))
+        Return CInt(Math.Min(Integer.MaxValue, CLng(seconds) * 1000L))
+    End Function
+
+    Private Async Sub LicenseHeartbeatTimerTick(sender As Object, e As EventArgs)
+        If _licenseHeartbeatInProgress OrElse _licenseShutdownRequested OrElse _licenseSession Is Nothing Then
+            Return
+        End If
+
+        _licenseHeartbeatInProgress = True
+        Try
+            Dim nextInterval As Integer = Await KeygenLicenseManager.PingProcessAsync(_licenseSession)
+            If nextInterval > 0 Then
+                _licenseSession.HeartbeatIntervalSeconds = nextInterval
+                _licenseHeartbeatTimer.Interval = GetKeygenHeartbeatIntervalMs(nextInterval)
+            End If
+
+            Await KeygenLicenseManager.RevalidateAsync(_licenseSession)
+            _licenseHeartbeatFailureCount = 0
+        Catch ex As KeygenApiFailureException
+            AppendLog("Keygen license ended: " & ex.Message)
+            CloseForLicenseFailure(FormatKeygenFailure(ex))
+        Catch ex As Exception
+            _licenseHeartbeatFailureCount += 1
+            AppendLog("Keygen heartbeat failed: " & ex.Message)
+            If _licenseHeartbeatFailureCount >= 3 Then
+                CloseForLicenseFailure("The app could not confirm the Keygen session for 3 checks in a row." & Environment.NewLine & ex.Message)
+            End If
+        Finally
+            _licenseHeartbeatInProgress = False
+        End Try
+    End Sub
+
+    Private Sub CloseForLicenseFailure(message As String)
+        If _licenseShutdownRequested Then
+            Return
+        End If
+
+        _licenseShutdownRequested = True
+        _licenseHeartbeatTimer.Stop()
+        MessageBox.Show(Me, message, "License Ended", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        BeginInvoke(New Action(Sub() Close()))
+    End Sub
+
+    Private Sub ReleaseKeygenSession()
+        If _licenseSession Is Nothing Then
+            Return
+        End If
+
+        Try
+            KeygenLicenseManager.KillProcessAsync(_licenseSession).GetAwaiter().GetResult()
+        Catch
+        Finally
+            _licenseSession = Nothing
+        End Try
+    End Sub
+
     Protected Overrides Sub OnFormClosing(e As FormClosingEventArgs)
+        _licenseShutdownRequested = True
         _uiTimer.Stop()
         _enterToggleTimer.Stop()
+        _licenseHeartbeatTimer.Stop()
         SavePersistedListState(False)
         StopHpZeroAlarm()
         If _overlayForm IsNot Nothing AndAlso Not _overlayForm.IsDisposed Then
@@ -6085,6 +6243,7 @@ Public Class Form1
         End If
         _fullEngine.Stop()
         _liteEngine.Stop()
+        ReleaseKeygenSession()
         MyBase.OnFormClosing(e)
     End Sub
 End Class
