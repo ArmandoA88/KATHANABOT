@@ -445,7 +445,12 @@ Public Class BotEngine
     Private Const BaseClientWidth As Integer = 1024
     Private Const BaseClientHeight As Integer = 768
     Private Const MaxPartyMembers As Integer = 7
-    Private Const PartyListMergeGapRows As Integer = 4
+    Private Const PartyListBarBandGapRows As Integer = 2
+    Private Const FastKeyPressMs As Integer = 12
+    Private Const AttackBurstKeysPerLoop As Integer = 3
+    Private Const AttackBurstGapMs As Integer = 4
+    Private Const StopKeyRepeatGapMs As Integer = 10
+    Private Const ForegroundInputSettleMs As Integer = 15
 
     Private ReadOnly _sync As New Object()
     Private ReadOnly _frameSync As New Object()
@@ -1176,18 +1181,32 @@ Public Class BotEngine
 
                 ' Support keys can fire without blocking attack/special in the same loop.
                 Dim allowBlindAttack As Boolean = AllowBlindAttackWhenTargetMissing AndAlso (Not deniedTarget) AndAlso (Not _lastNavigationTravelActive)
-                Dim chosen As ActionRule = ChooseAction(cfg, hpPct, mpPct, targetValid, allowBlindAttack, highMaxHpAttackActive, reason)
-                If chosen IsNot Nothing AndAlso SendKey(hwnd, chosen.KeyName, 35) Then
-                    MarkKeyUsed(chosen.KeyName)
-                    SetLastAction($"{chosen.KeyName} ({chosen.Role})")
-                    actionSent = True
-                    reason = ""
-                    If chosen.Role = "attack" OrElse chosen.Role = "special" OrElse chosen.Role = "high_max_hp" Then
-                        _lastAttackAction = now
+                Dim attackBurst As List(Of ActionRule) = ChooseAttackBurstActions(cfg, hpPct, mpPct, targetValid, allowBlindAttack, highMaxHpAttackActive, reason)
+                If attackBurst.Count > 0 Then
+                    Dim sentKeys As New List(Of String)()
+                    Dim targetSignature As String = If(normMobName <> "", normMobName, If(mobName <> "", mobName, $"{mobHpPct:0.0}"))
+                    For Each attackAction As ActionRule In attackBurst
+                        If sentKeys.Count > 0 Then
+                            Thread.Sleep(AttackBurstGapMs)
+                        End If
+
+                        If Not SendKey(hwnd, attackAction.KeyName, FastKeyPressMs) Then
+                            Continue For
+                        End If
+
+                        MarkKeyUsed(attackAction.KeyName)
+                        sentKeys.Add(attackAction.KeyName)
+                        _lastAttackAction = DateTime.UtcNow
                         _firstHitPending = False
                         _firstHitWindowUntil = DateTime.MinValue
-                        Dim targetSignature As String = If(normMobName <> "", normMobName, If(mobName <> "", mobName, $"{mobHpPct:0.0}"))
                         RecordAttackWithoutDamage(targetSignature)
+                    Next
+
+                    If sentKeys.Count > 0 Then
+                        Dim actionLabel As String = If(sentKeys.Count = 1, $"{sentKeys(0)} ({attackBurst(0).Role})", $"{String.Join("/", sentKeys)} (attack burst)")
+                        SetLastAction(actionLabel)
+                        actionSent = True
+                        reason = ""
                     End If
                 End If
             End If
@@ -1822,14 +1841,10 @@ Public Class BotEngine
         Public Property AllAlive As Boolean
     End Structure
 
-    Private Structure PartyListSegmentInfo
+    Private Structure PartyListBarBandInfo
         Public Property Top As Integer
         Public Property Bottom As Integer
-        Public Property NamePixelCount As Integer
-        Public Property RedPixelCount As Integer
-        Public Property BluePixelCount As Integer
-        Public Property MaxRedRowPixels As Integer
-        Public Property MaxBlueRowPixels As Integer
+        Public Property MaxPixels As Integer
 
         Public ReadOnly Property Height As Integer
             Get
@@ -2027,13 +2042,10 @@ Public Class BotEngine
             Return summary
         End If
 
-        Dim rowName(crop.Height - 1) As Integer
         Dim rowRed(crop.Height - 1) As Integer
         Dim rowBlue(crop.Height - 1) As Integer
-        Dim rowContent(crop.Height - 1) As Integer
 
         For y As Integer = 0 To crop.Height - 1
-            Dim nameCount As Integer = 0
             Dim redCount As Integer = 0
             Dim blueCount As Integer = 0
             For x As Integer = 0 To crop.Width - 1
@@ -2042,127 +2054,82 @@ Public Class BotEngine
                     redCount += 1
                 ElseIf IsPartyMpBarPixel(px) Then
                     blueCount += 1
-                ElseIf IsPartyNameTextPixel(px) Then
-                    nameCount += 1
                 End If
             Next
 
-            rowName(y) = nameCount
             rowRed(y) = redCount
             rowBlue(y) = blueCount
-            rowContent(y) = nameCount + redCount + blueCount
         Next
 
-        Dim activeThreshold As Integer = Math.Max(6, CInt(Math.Ceiling(crop.Width * 0.035R)))
-        Dim segments As New List(Of PartyListSegmentInfo)()
-        Dim currentTop As Integer = -1
-        For y As Integer = 0 To crop.Height - 1
-            If rowContent(y) >= activeThreshold Then
-                If currentTop < 0 Then
-                    currentTop = y
-                End If
-            ElseIf currentTop >= 0 Then
-                segments.Add(BuildPartyListSegmentInfo(currentTop, y - 1, rowName, rowRed, rowBlue))
-                currentTop = -1
-            End If
-        Next
-
-        If currentTop >= 0 Then
-            segments.Add(BuildPartyListSegmentInfo(currentTop, crop.Height - 1, rowName, rowRed, rowBlue))
-        End If
-
-        Dim merged As List(Of PartyListSegmentInfo) = MergePartyListSegments(segments, rowName, rowRed, rowBlue)
-        Dim members As List(Of PartyListSegmentInfo) =
-            merged.
-                Where(Function(segment) IsLikelyPartyMemberSegment(segment, crop.Width)).
-                OrderBy(Function(segment) segment.Top).
-                Take(MaxPartyMembers).
-                ToList()
-
-        summary.Size = members.Count
-        Dim aliveRowThreshold As Integer = Math.Max(16, CInt(Math.Ceiling(crop.Width * 0.2R)))
-        summary.AliveCount = members.Where(Function(segment) segment.MaxRedRowPixels >= aliveRowThreshold).Count()
+        Dim redBands As List(Of PartyListBarBandInfo) = FindPartyBarBands(rowRed, crop.Width)
+        Dim blueBands As List(Of PartyListBarBandInfo) = FindPartyBarBands(rowBlue, crop.Width)
+        summary.AliveCount = Math.Min(MaxPartyMembers, redBands.Count)
+        summary.Size = Math.Min(MaxPartyMembers, Math.Max(redBands.Count, blueBands.Count))
         summary.AllAlive = summary.Size > 0 AndAlso summary.AliveCount >= summary.Size
         Return summary
     End Function
 
-    Private Shared Function BuildPartyListSegmentInfo(top As Integer, bottom As Integer, rowName() As Integer, rowRed() As Integer, rowBlue() As Integer) As PartyListSegmentInfo
-        Dim info As New PartyListSegmentInfo With {
-            .Top = Math.Max(0, top),
-            .Bottom = Math.Max(0, bottom)
-        }
-
-        For y As Integer = info.Top To info.Bottom
-            info.NamePixelCount += rowName(y)
-            info.RedPixelCount += rowRed(y)
-            info.BluePixelCount += rowBlue(y)
-            info.MaxRedRowPixels = Math.Max(info.MaxRedRowPixels, rowRed(y))
-            info.MaxBlueRowPixels = Math.Max(info.MaxBlueRowPixels, rowBlue(y))
-        Next
-
-        Return info
-    End Function
-
-    Private Shared Function MergePartyListSegments(segments As List(Of PartyListSegmentInfo), rowName() As Integer, rowRed() As Integer, rowBlue() As Integer) As List(Of PartyListSegmentInfo)
-        Dim ordered As List(Of PartyListSegmentInfo) = If(segments, New List(Of PartyListSegmentInfo)()).
-            OrderBy(Function(segment) segment.Top).
-            ToList()
-        If ordered.Count <= 1 Then
-            Return ordered
+    Private Shared Function FindPartyBarBands(rowCounts() As Integer, width As Integer) As List(Of PartyListBarBandInfo)
+        Dim bands As New List(Of PartyListBarBandInfo)()
+        If rowCounts Is Nothing OrElse rowCounts.Length = 0 OrElse width <= 0 Then
+            Return bands
         End If
 
-        Dim merged As New List(Of PartyListSegmentInfo)()
-        Dim current As PartyListSegmentInfo = ordered(0)
-        For i As Integer = 1 To ordered.Count - 1
-            Dim nextSegment As PartyListSegmentInfo = ordered(i)
-            Dim gap As Integer = nextSegment.Top - current.Bottom - 1
-            If gap <= PartyListMergeGapRows Then
-                current = BuildPartyListSegmentInfo(current.Top, nextSegment.Bottom, rowName, rowRed, rowBlue)
-            Else
-                merged.Add(current)
-                current = nextSegment
+        Dim minBarRowPixels As Integer = Math.Max(4, CInt(Math.Ceiling(width * 0.02R)))
+        Dim maxBandHeight As Integer = Math.Max(6, CInt(Math.Ceiling(width * 0.04R)))
+        Dim currentTop As Integer = -1
+        Dim currentBottom As Integer = -1
+        Dim currentMax As Integer = 0
+        Dim gapRows As Integer = 0
+
+        For y As Integer = 0 To rowCounts.Length - 1
+            If rowCounts(y) >= minBarRowPixels Then
+                If currentTop < 0 Then
+                    currentTop = y
+                End If
+
+                currentBottom = y
+                currentMax = Math.Max(currentMax, rowCounts(y))
+                gapRows = 0
+            ElseIf currentTop >= 0 Then
+                gapRows += 1
+                If gapRows > PartyListBarBandGapRows Then
+                    bands.Add(New PartyListBarBandInfo With {
+                        .Top = currentTop,
+                        .Bottom = currentBottom,
+                        .MaxPixels = currentMax
+                    })
+                    currentTop = -1
+                    currentBottom = -1
+                    currentMax = 0
+                    gapRows = 0
+                End If
             End If
         Next
 
-        merged.Add(current)
-        Return merged
-    End Function
-
-    Private Shared Function IsLikelyPartyMemberSegment(segment As PartyListSegmentInfo, width As Integer) As Boolean
-        If segment.Height < 4 Then
-            Return False
+        If currentTop >= 0 Then
+            bands.Add(New PartyListBarBandInfo With {
+                .Top = currentTop,
+                .Bottom = currentBottom,
+                .MaxPixels = currentMax
+            })
         End If
 
-        Dim minBarRowPixels As Integer = Math.Max(14, CInt(Math.Ceiling(width * 0.18R)))
-        If segment.MaxRedRowPixels >= minBarRowPixels OrElse segment.MaxBlueRowPixels >= minBarRowPixels Then
-            Return True
-        End If
-
-        Dim minNamePixels As Integer = Math.Max(28, width)
-        Return segment.NamePixelCount >= minNamePixels AndAlso segment.Height >= 5
-    End Function
-
-    Private Shared Function IsPartyNameTextPixel(px As Color) As Boolean
-        Dim luma As Integer = (CInt(px.R) * 30 + CInt(px.G) * 59 + CInt(px.B) * 11) \ 100
-        Dim maxChannel As Integer = Math.Max(px.R, Math.Max(px.G, px.B))
-        Dim minChannel As Integer = Math.Min(px.R, Math.Min(px.G, px.B))
-        If luma < 140 OrElse maxChannel < 170 Then
-            Return False
-        End If
-
-        If IsPartyHpBarPixel(px) OrElse IsPartyMpBarPixel(px) Then
-            Return False
-        End If
-
-        Return (px.R >= 155 AndAlso px.G >= 135) OrElse (maxChannel - minChannel <= 90)
+        Return bands.
+            Where(Function(band) band.MaxPixels >= minBarRowPixels AndAlso
+                                 band.Height <= maxBandHeight AndAlso
+                                 band.MaxPixels >= (band.Height * 2)).
+            OrderBy(Function(band) band.Top).
+            Take(MaxPartyMembers).
+            ToList()
     End Function
 
     Private Shared Function IsPartyHpBarPixel(px As Color) As Boolean
-        Return px.R >= 120 AndAlso px.R >= (px.G + 35) AndAlso px.R >= (px.B + 45)
+        Return px.R >= 90 AndAlso px.R >= (px.G + 16) AndAlso px.R >= (px.B + 16)
     End Function
 
     Private Shared Function IsPartyMpBarPixel(px As Color) As Boolean
-        Return px.B >= 115 AndAlso px.B >= (px.R + 20) AndAlso px.B >= (px.G + 15)
+        Return px.B >= 90 AndAlso px.B >= (px.R + 12) AndAlso px.B >= (px.G + 8)
     End Function
 
     Private Shared Function NormalizeChatOcrText(rawText As String) As String
@@ -3697,7 +3664,7 @@ Public Class BotEngine
         End If
 
         _lastLootPickup = now
-        If Not SendKey(hwnd, "F", 35) Then
+        If Not SendKey(hwnd, "F", FastKeyPressMs) Then
             Return
         End If
 
@@ -3991,7 +3958,7 @@ Public Class BotEngine
         End If
 
         Dim commandText As String = NormalizePartyAskCommand(cfg.PartyAskText)
-        If Not SendKey(hwnd, "ENTER", 35) Then
+        If Not SendKey(hwnd, "ENTER", FastKeyPressMs) Then
             Return False
         End If
         Thread.Sleep(60)
@@ -3999,7 +3966,7 @@ Public Class BotEngine
         Dim typedOk As Boolean = SendPartyAskCommand(hwnd, commandText)
         Thread.Sleep(55)
 
-        Dim sentFinalEnter As Boolean = SendKey(hwnd, "ENTER", 35)
+        Dim sentFinalEnter As Boolean = SendKey(hwnd, "ENTER", FastKeyPressMs)
         If sentFinalEnter Then
             _lastPartyAskAt = now
             _partyAskPauseLogged = False
@@ -4635,7 +4602,7 @@ Public Class BotEngine
         Else
             _lastNormalRetarget = now
         End If
-        If SendKey(hwnd, "E", 35) Then
+        If SendKey(hwnd, "E", FastKeyPressMs) Then
             SetLastAction(actionText)
             Return True
         End If
@@ -4771,7 +4738,7 @@ Public Class BotEngine
             If Not IsReady(action) Then
                 Continue For
             End If
-            If Not SendKey(hwnd, action.KeyName, 35) Then
+            If Not SendKey(hwnd, action.KeyName, FastKeyPressMs) Then
                 Continue For
             End If
 
@@ -4790,7 +4757,7 @@ Public Class BotEngine
             If Not IsReady(action) Then
                 Continue For
             End If
-            If Not SendKey(hwnd, action.KeyName, 35) Then
+            If Not SendKey(hwnd, action.KeyName, FastKeyPressMs) Then
                 Continue For
             End If
 
@@ -4831,11 +4798,11 @@ Public Class BotEngine
 
             Dim sentCount As Integer = 0
             For i As Integer = 1 To 3
-                If SendKey(hwnd, action.KeyName, 35) Then
+                If SendKey(hwnd, action.KeyName, FastKeyPressMs) Then
                     sentCount += 1
                     MarkKeyUsed(action.KeyName)
                 End If
-                Thread.Sleep(25)
+                Thread.Sleep(StopKeyRepeatGapMs)
             Next
 
             If sentCount > 0 Then
@@ -4876,7 +4843,7 @@ Public Class BotEngine
             Return False
         End If
 
-        If SendKey(hwnd, "E", 35) Then
+        If SendKey(hwnd, "E", FastKeyPressMs) Then
             _lastNormalRetarget = DateTime.UtcNow
             SetLastAction("E (manual retarget)")
             Return True
@@ -4884,16 +4851,18 @@ Public Class BotEngine
         Return False
     End Function
 
-    Private Function ChooseAction(cfg As BotConfig, hpPercent As Double, mpPercent As Double, targetValid As Boolean, allowBlindAttack As Boolean, highMaxHpAttackActive As Boolean, ByRef reason As String) As ActionRule
+    Private Function ChooseAttackBurstActions(cfg As BotConfig, hpPercent As Double, mpPercent As Double, targetValid As Boolean, allowBlindAttack As Boolean, highMaxHpAttackActive As Boolean, ByRef reason As String) As List(Of ActionRule)
         Dim ordered = cfg.Actions.Where(Function(a) a.Enabled).OrderBy(Function(a) a.Priority).ToList()
         If ordered.Count = 0 Then
             reason = "No enabled keys."
-            Return Nothing
+            Return New List(Of ActionRule)()
         End If
 
         Dim hasAttackKey As Boolean = False
         Dim statBlocked As Boolean = False
         Dim cooldownBlocked As Boolean = False
+        Dim selected As New List(Of ActionRule)()
+        Dim usedKeys As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
 
         For Each action In ordered
             Dim isAttackLike As Boolean =
@@ -4916,10 +4885,21 @@ Public Class BotEngine
             End If
 
             If targetValid OrElse allowBlindAttack Then
-                reason = ""
-                Return action
+                If Not usedKeys.Add(action.KeyName) Then
+                    Continue For
+                End If
+
+                selected.Add(action)
+                If selected.Count >= AttackBurstKeysPerLoop Then
+                    Exit For
+                End If
             End If
         Next
+
+        If selected.Count > 0 Then
+            reason = ""
+            Return selected
+        End If
 
         If Not hasAttackKey Then
             reason = "No enabled attack/special/high_max_hp keys."
@@ -4933,7 +4913,7 @@ Public Class BotEngine
             reason = "No eligible attack key."
         End If
 
-        Return Nothing
+        Return selected
     End Function
 
     Private Function IsReady(action As ActionRule) As Boolean
@@ -5687,7 +5667,7 @@ Public Class BotEngine
             Dim foregroundHwnd As IntPtr = NativeMethods.GetForegroundWindow()
             If foregroundHwnd <> hwnd Then
                 NativeMethods.SetForegroundWindow(hwnd)
-                Thread.Sleep(40)
+                Thread.Sleep(ForegroundInputSettleMs)
             End If
 
             Dim scan As Byte = CByte(NativeMethods.MapVirtualKey(CUInt(vk), 0UI))
