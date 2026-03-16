@@ -2345,9 +2345,11 @@ Public Class Form1
 
     Protected Overrides Sub OnShown(e As EventArgs)
         MyBase.OnShown(e)
-        If Not EnsureKeygenLicenseOnStartup() Then
-            BeginInvoke(New Action(Sub() Close()))
-            Return
+        If ShouldRequireKeygenLicense() Then
+            If Not EnsureKeygenLicenseOnStartup() Then
+                BeginInvoke(New Action(Sub() Close()))
+                Return
+            End If
         End If
         RefreshProcessWindowList(False, IntPtr.Zero)
         AutoStartOnLaunch()
@@ -6130,6 +6132,34 @@ Public Class Form1
                 End If
             End Try
         Loop
+    End Function
+
+    Private Shared Function ShouldRequireKeygenLicense() As Boolean
+        Dim isSingleFileFlag As Object = AppContext.GetData("IsSingleFile")
+        If TypeOf isSingleFileFlag Is Boolean Then
+            Return CBool(isSingleFileFlag)
+        End If
+
+        Dim executablePath As String = ""
+        Try
+            executablePath = Process.GetCurrentProcess().MainModule.FileName
+        Catch
+        End Try
+
+        If String.IsNullOrWhiteSpace(executablePath) Then
+            Return False
+        End If
+
+        Dim baseDir As String = AppContext.BaseDirectory
+        Dim exeName As String = Path.GetFileNameWithoutExtension(executablePath)
+        If String.IsNullOrWhiteSpace(baseDir) OrElse String.IsNullOrWhiteSpace(exeName) Then
+            Return False
+        End If
+
+        Dim runtimeConfigPath As String = Path.Combine(baseDir, exeName & ".runtimeconfig.json")
+        Dim depsPath As String = Path.Combine(baseDir, exeName & ".deps.json")
+
+        Return Not File.Exists(runtimeConfigPath) AndAlso Not File.Exists(depsPath)
     End Function
 
     Private Function PromptForKeygenLicense(ByRef accountSlug As String, ByRef licenseKey As String) As Boolean
