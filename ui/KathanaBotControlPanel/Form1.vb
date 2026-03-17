@@ -50,8 +50,12 @@ Public Class Form1
     Private btnLiteSelectHpLevel As Button
     Private btnLiteSelectMpLevel As Button
     Private btnLiteAutoPotHelp As Button
+    Private btnLitePartyAutoAccept As Button
+    Private btnLitePartyAsk As Button
     Private lblLiteHpPoint As Label
     Private lblLiteMpPoint As Label
+    Private nudLitePartyAskSeconds As NumericUpDown
+    Private txtLitePartyAskText As TextBox
     Private txtLiteAutoPotHelp As TextBox
     Private _mainTabs As TabControl
     Private _liteTab As TabPage
@@ -157,7 +161,7 @@ Public Class Form1
     Private btnBypassStuck As Button
     Private btnRetargetNow As Button
     Private btnPartyAutoAccept As Button
-        Private btnPartyAsk As Button
+    Private btnPartyAsk As Button
     Private btnLootScanner As Button
     Private txtItemNtfyTopic As TextBox
     Private txtStatsNtfyTopic As TextBox
@@ -188,7 +192,9 @@ Public Class Form1
     Private _bypassHpMpLimits As Boolean = False
     Private _bypassStuckTarget As Boolean = True
     Private _partyAutoAccept As Boolean = True
-        Private _partyAskEnabled As Boolean = False
+    Private _partyAskEnabled As Boolean = False
+    Private _litePartyAutoAccept As Boolean = False
+    Private _litePartyAskEnabled As Boolean = False
     Private _lootScannerEnabled As Boolean = True
     Private _overlayForm As CalibrationOverlayForm
     Private _chatTranslationOverlayForm As ChatTranslationOverlayForm
@@ -336,6 +342,10 @@ Public Class Form1
         Public Property MpPointEnabled As Boolean = False
         Public Property MpPointX As Integer = -1
         Public Property MpPointY As Integer = -1
+        Public Property PromptAutoAcceptEnabled As Boolean = False
+        Public Property AskForPartyEnabled As Boolean = False
+        Public Property AskForPartySeconds As Decimal = 30D
+        Public Property AskForPartyText As String = DefaultPartyAskCommand
         Public Property Actions As List(Of PersistedCombatAction) = New List(Of PersistedCombatAction)()
     End Class
 
@@ -966,7 +976,13 @@ Public Class Form1
         skillArea.Controls.Add(BuildLiteSkillGroup("Primary Skills", LitePrimarySkillKeys, Color.FromArgb(141, 112, 71)), 0, 0)
         skillArea.Controls.Add(BuildLiteSkillGroup("Secondary Skills", LiteSecondarySkillKeys, Color.FromArgb(111, 123, 140)), 0, 1)
         lowerArea.Controls.Add(skillArea, 0, 0)
-        lowerArea.Controls.Add(BuildLiteAutoPotsGroup(), 1, 0)
+
+        Dim sideArea As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2, .Tag = "lite-scope"}
+        sideArea.RowStyles.Add(New RowStyle(SizeType.Percent, 72.0F))
+        sideArea.RowStyles.Add(New RowStyle(SizeType.Percent, 28.0F))
+        sideArea.Controls.Add(BuildLiteAutoPotsGroup(), 0, 0)
+        sideArea.Controls.Add(BuildLitePartyGroup(), 0, 1)
+        lowerArea.Controls.Add(sideArea, 1, 0)
 
         Dim foot As New Label() With {
             .Dock = DockStyle.Fill,
@@ -1068,6 +1084,65 @@ Public Class Form1
         layout.Controls.Add(txtLiteAutoPotHelp, 0, 7)
 
         group.Controls.Add(layout)
+        Return group
+    End Function
+
+    Private Function BuildLitePartyGroup() As Control
+        Dim group As New GroupBox() With {.Text = "Party Ask", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(251, 251, 251), .Padding = New Padding(8), .Font = New Font("Segoe UI", 8.0F, FontStyle.Bold), .Tag = "lite-scope"}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 6, .Tag = "lite-scope"}
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 32.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 18.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 26.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 18.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 26.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 32.0F))
+
+        btnLitePartyAutoAccept = New Button() With {
+            .Text = "Auto Accept Party/Ress: OFF",
+            .Dock = DockStyle.Fill,
+            .BackColor = Color.FromArgb(110, 45, 45),
+            .ForeColor = Color.White,
+            .Font = New Font("Segoe UI", 8.0F, FontStyle.Bold),
+            .Tag = "lite-scope"
+        }
+        AddHandler btnLitePartyAutoAccept.Click, AddressOf TogglePartyAutoAcceptClicked
+        layout.Controls.Add(btnLitePartyAutoAccept, 0, 0)
+
+        layout.Controls.Add(New Label() With {.Text = "Ask every (sec)", .Dock = DockStyle.Fill, .ForeColor = Color.FromArgb(70, 70, 70), .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular), .Tag = "lite-scope"}, 0, 1)
+
+        nudLitePartyAskSeconds = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 5D, .Maximum = 600D, .Value = 30D, .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}
+        AddHandler nudLitePartyAskSeconds.ValueChanged,
+            Sub()
+                PushLiveConfig()
+                SavePersistedListState(False)
+            End Sub
+        layout.Controls.Add(nudLitePartyAskSeconds, 0, 2)
+
+        layout.Controls.Add(New Label() With {.Text = "Message text", .Dock = DockStyle.Fill, .ForeColor = Color.FromArgb(70, 70, 70), .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular), .Tag = "lite-scope"}, 0, 3)
+
+        txtLitePartyAskText = New TextBox() With {.Dock = DockStyle.Fill, .Text = DefaultPartyAskCommand, .BackColor = Color.White, .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}
+        AddHandler txtLitePartyAskText.TextChanged, AddressOf PartyAskTextChanged
+        AddHandler txtLitePartyAskText.TextChanged,
+            Sub()
+                PushLiveConfig()
+                SavePersistedListState(False)
+            End Sub
+        layout.Controls.Add(txtLitePartyAskText, 0, 4)
+
+        btnLitePartyAsk = New Button() With {
+            .Text = "Auto Ask Party (add): OFF",
+            .Dock = DockStyle.Fill,
+            .BackColor = Color.FromArgb(110, 45, 45),
+            .ForeColor = Color.White,
+            .Font = New Font("Segoe UI", 8.0F, FontStyle.Bold),
+            .Tag = "lite-scope"
+        }
+        AddHandler btnLitePartyAsk.Click, AddressOf TogglePartyAskClicked
+        layout.Controls.Add(btnLitePartyAsk, 0, 5)
+
+        group.Controls.Add(layout)
+        UpdateLitePromptAutoAcceptButton()
+        UpdateLitePartyAskButton()
         Return group
     End Function
 
@@ -1177,12 +1252,22 @@ Public Class Form1
             If chkLiteAutoPots IsNot Nothing Then
                 chkLiteAutoPots.Checked = False
             End If
+            _litePartyAutoAccept = False
+            _litePartyAskEnabled = False
+            If nudLitePartyAskSeconds IsNot Nothing Then
+                nudLitePartyAskSeconds.Value = Math.Max(nudLitePartyAskSeconds.Minimum, Math.Min(nudLitePartyAskSeconds.Maximum, 30D))
+            End If
+            If txtLitePartyAskText IsNot Nothing Then
+                txtLitePartyAskText.Text = DefaultPartyAskCommand
+            End If
             _liteAutoPotHpPointX = -1
             _liteAutoPotHpPointY = -1
             _liteAutoPotMpPointX = -1
             _liteAutoPotMpPointY = -1
             _pendingLitePointCapture = LitePointCaptureKind.None
             UpdateLiteAutoPotUi()
+            UpdateLitePromptAutoAcceptButton()
+            UpdateLitePartyAskButton()
         Finally
             _liteSyncInProgress = False
         End Try
@@ -2196,6 +2281,7 @@ Public Class Form1
         dgvCombat.Rows.Clear()
         _partyAutoAccept = False
         _partyAskEnabled = False
+        _litePartyAskEnabled = False
         _lootScannerEnabled = False
         For Each key In PrimaryKeys
             dgvCombat.Rows.Add(False, key, "1", "attack", keyIndex * 10, 1, 1, 1)
@@ -2851,25 +2937,42 @@ Public Class Form1
     End Sub
 
     Private Sub TogglePartyAutoAcceptClicked(sender As Object, e As EventArgs)
-        _partyAutoAccept = Not _partyAutoAccept
-        UpdatePromptAutoAcceptButton()
+        If sender Is btnLitePartyAutoAccept Then
+            _litePartyAutoAccept = Not _litePartyAutoAccept
+            UpdateLitePromptAutoAcceptButton()
+        Else
+            _partyAutoAccept = Not _partyAutoAccept
+            UpdatePromptAutoAcceptButton()
+        End If
         PushLiveConfig()
         SavePersistedListState(False)
-        AppendLog(If(_partyAutoAccept, "Party/resurrection auto-accept enabled.", "Party/resurrection auto-accept disabled."))
+        AppendLog(If(If(sender Is btnLitePartyAutoAccept, _litePartyAutoAccept, _partyAutoAccept), "Party/resurrection auto-accept enabled.", "Party/resurrection auto-accept disabled."))
     End Sub
 
     Private Sub UpdatePromptAutoAcceptButton()
-        If btnPartyAutoAccept Is Nothing Then
+        UpdatePromptAutoAcceptButtonCore(btnPartyAutoAccept, _partyAutoAccept)
+    End Sub
+
+    Private Sub UpdateLitePromptAutoAcceptButton()
+        UpdatePromptAutoAcceptButtonCore(btnLitePartyAutoAccept, _litePartyAutoAccept)
+    End Sub
+
+    Private Shared Sub UpdatePromptAutoAcceptButtonCore(target As Button, isEnabled As Boolean)
+        If target Is Nothing Then
             Return
         End If
-        btnPartyAutoAccept.Text = If(_partyAutoAccept, "Auto Accept Party/Ress: ON", "Auto Accept Party/Ress: OFF")
-        btnPartyAutoAccept.BackColor = If(_partyAutoAccept, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+        target.Text = If(isEnabled, "Auto Accept Party/Ress: ON", "Auto Accept Party/Ress: OFF")
+        target.BackColor = If(isEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
     End Sub
 
     Private Sub TogglePartyAskClicked(sender As Object, e As EventArgs)
-        _partyAskEnabled = Not _partyAskEnabled
-        btnPartyAsk.Text = If(_partyAskEnabled, "Auto Ask Party (add): ON", "Auto Ask Party (add): OFF")
-        btnPartyAsk.BackColor = If(_partyAskEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+        If sender Is btnLitePartyAsk Then
+            _litePartyAskEnabled = Not _litePartyAskEnabled
+            UpdateLitePartyAskButton()
+        Else
+            _partyAskEnabled = Not _partyAskEnabled
+            UpdatePartyAskButton()
+        End If
         PushLiveConfig()
         SavePersistedListState(False)
     End Sub
@@ -2883,24 +2986,48 @@ Public Class Form1
     End Sub
 
     Private Sub UpdatePartyAskButton()
-        If btnPartyAsk Is Nothing Then
+        UpdatePartyAskButtonCore(btnPartyAsk, _partyAskEnabled, GetPartyAskCommandText())
+    End Sub
+
+    Private Sub UpdateLitePartyAskButton()
+        UpdatePartyAskButtonCore(btnLitePartyAsk, _litePartyAskEnabled, GetLitePartyAskCommandText())
+    End Sub
+
+    Private Shared Sub UpdatePartyAskButtonCore(target As Button, isEnabled As Boolean, commandText As String)
+        If target Is Nothing Then
             Return
         End If
-        Dim commandLabel As String = GetPartyAskCommandText()
+        Dim commandLabel As String = If(commandText, "").Trim()
+        If commandLabel = "" Then
+            commandLabel = DefaultPartyAskCommand
+        End If
         If commandLabel.Length > 14 Then
             commandLabel = commandLabel.Substring(0, 11) & "..."
         End If
-        btnPartyAsk.Text = If(_partyAskEnabled, $"Auto Ask Party ({commandLabel}): ON", $"Auto Ask Party ({commandLabel}): OFF")
-        btnPartyAsk.BackColor = If(_partyAskEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+        target.Text = If(isEnabled, $"Auto Ask Party ({commandLabel}): ON", $"Auto Ask Party ({commandLabel}): OFF")
+        target.BackColor = If(isEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
     End Sub
 
-    Private Sub PartyAskTextChanged(_sender As Object, _e As EventArgs)
-        UpdatePartyAskButton()
+    Private Sub PartyAskTextChanged(sender As Object, _e As EventArgs)
+        If sender Is txtLitePartyAskText Then
+            UpdateLitePartyAskButton()
+        Else
+            UpdatePartyAskButton()
+        End If
     End Sub
 
     Private Function GetPartyAskCommandText() As String
         Dim rawText As String = If(txtPartyAskText IsNot Nothing, txtPartyAskText.Text, DefaultPartyAskCommand)
-        rawText = rawText.Replace(vbCr, " ").Replace(vbLf, " ").Trim()
+        Return NormalizePartyAskUiText(rawText)
+    End Function
+
+    Private Function GetLitePartyAskCommandText() As String
+        Dim rawText As String = If(txtLitePartyAskText IsNot Nothing, txtLitePartyAskText.Text, DefaultPartyAskCommand)
+        Return NormalizePartyAskUiText(rawText)
+    End Function
+
+    Private Shared Function NormalizePartyAskUiText(rawText As String) As String
+        rawText = If(rawText, "").Replace(vbCr, " ").Replace(vbLf, " ").Trim()
         If rawText = "" Then
             Return DefaultPartyAskCommand
         End If
@@ -4191,6 +4318,10 @@ Public Class Form1
         cfg.HpBar = BuildRect("hp_bar")
         cfg.MpBar = BuildRect("mp_bar")
         cfg.BypassHpMpLimits = True
+        cfg.PartyAutoAcceptEnabled = _litePartyAutoAccept
+        cfg.PartyAskEnabled = _litePartyAskEnabled
+        cfg.PartyAskIntervalMs = CInt(Math.Round(CDbl(If(nudLitePartyAskSeconds IsNot Nothing, nudLitePartyAskSeconds.Value, 30D)) * 1000.0))
+        cfg.PartyAskText = GetLitePartyAskCommandText()
         cfg.Actions = New List(Of ActionRule)()
 
         For Each action As PersistedCombatAction In GetPersistedLiteActions()
@@ -4867,6 +4998,10 @@ Public Class Form1
                 .MpPointEnabled = (_liteAutoPotMpPointX >= 0 AndAlso _liteAutoPotMpPointY >= 0),
                 .MpPointX = _liteAutoPotMpPointX,
                 .MpPointY = _liteAutoPotMpPointY,
+                .PromptAutoAcceptEnabled = _litePartyAutoAccept,
+                .AskForPartyEnabled = _litePartyAskEnabled,
+                .AskForPartySeconds = If(nudLitePartyAskSeconds IsNot Nothing, nudLitePartyAskSeconds.Value, 30D),
+                .AskForPartyText = GetLitePartyAskCommandText(),
                 .Actions = GetPersistedLiteActions()
             }
 
@@ -4895,6 +5030,15 @@ Public Class Form1
             If chkLiteAutoPots IsNot Nothing Then
                 chkLiteAutoPots.Checked = source.AutoPotsEnabled
             End If
+            _litePartyAutoAccept = source.PromptAutoAcceptEnabled
+            _litePartyAskEnabled = source.AskForPartyEnabled
+            If nudLitePartyAskSeconds IsNot Nothing Then
+                Dim boundedAskSeconds As Decimal = Math.Max(nudLitePartyAskSeconds.Minimum, Math.Min(nudLitePartyAskSeconds.Maximum, source.AskForPartySeconds))
+                nudLitePartyAskSeconds.Value = boundedAskSeconds
+            End If
+            If txtLitePartyAskText IsNot Nothing Then
+                txtLitePartyAskText.Text = If(String.IsNullOrWhiteSpace(source.AskForPartyText), DefaultPartyAskCommand, source.AskForPartyText.Trim())
+            End If
             If source.HpPointEnabled Then
                 _liteAutoPotHpPointX = Math.Max(0, source.HpPointX)
                 _liteAutoPotHpPointY = Math.Max(0, source.HpPointY)
@@ -4911,6 +5055,8 @@ Public Class Form1
             End If
             _pendingLitePointCapture = LitePointCaptureKind.None
             UpdateLiteAutoPotUi()
+            UpdateLitePromptAutoAcceptButton()
+            UpdateLitePartyAskButton()
         Finally
             _liteSyncInProgress = False
         End Try
