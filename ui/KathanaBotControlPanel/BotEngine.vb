@@ -644,6 +644,7 @@ Public Class BotEngine
     Private _lootScannerCapturePending As Boolean = False
     Private _lootScannerCaptureRequestedAt As DateTime = DateTime.MinValue
     Private _lootScannerAltHeld As Boolean = False
+    Private _lootScannerProcessingTask As Task = Nothing
     Private _agentState As LevelingAgentState = LevelingAgentState.Disabled
     Private _agentReason As String = ""
     Private _agentGuardrailTriggered As Boolean = False
@@ -840,6 +841,7 @@ Public Class BotEngine
             _lootScannerCapturePending = False
             _lootScannerCaptureRequestedAt = DateTime.MinValue
             _lootScannerAltHeld = False
+            _lootScannerProcessingTask = Nothing
             _agentState = If(_config.LevelingAgentEnabled, LevelingAgentState.Searching, LevelingAgentState.Disabled)
             _agentReason = ""
             _agentGuardrailTriggered = False
@@ -871,6 +873,7 @@ Public Class BotEngine
             _lootScannerCapturePending = False
             _lootScannerCaptureRequestedAt = DateTime.MinValue
             _lootScannerAltHeld = False
+            _lootScannerProcessingTask = Nothing
             _pendingLootPickupVerifyAt = DateTime.MinValue
         End SyncLock
         ReleaseLootScannerAltKey()
@@ -949,45 +952,50 @@ Public Class BotEngine
 
     Private Async Function LoopAsync(token As CancellationToken) As Task
         While Not token.IsCancellationRequested
-            Dim cfg As BotConfig
-            SyncLock _sync
-                cfg = _config
-            End SyncLock
-            Dim loopDelayMs As Integer = Math.Max(1, cfg.LoopMs)
-            Dim retargetDelayMs As Integer = GetRetargetCooldownMs(cfg, loopDelayMs)
-            Dim noTargetStableMs As Integer = retargetDelayMs
+            Dim cfg As BotConfig = Nothing
+            Dim loopDelayMs As Integer = 80
+            Try
+                SyncLock _sync
+                    cfg = _config
+                End SyncLock
+                If cfg Is Nothing Then
+                    cfg = BotConfig.CreateDefault()
+                End If
+                loopDelayMs = Math.Max(1, cfg.LoopMs)
+                Dim retargetDelayMs As Integer = GetRetargetCooldownMs(cfg, loopDelayMs)
+                Dim noTargetStableMs As Integer = retargetDelayMs
 
-            Dim hwnd As IntPtr = ResolveGameWindow(cfg)
-            If hwnd = IntPtr.Zero Then
-                ClearLatestLoopFrame()
-                ReleaseLootScannerAltKey()
-                ClearMapLocalizationRuntime()
-                ClearChatTranslationRuntime()
-                ClearPartyListRuntimeState()
-                UpdateLevelingAgentState(cfg, LevelingAgentState.Searching, "Game window not found.")
-                SetStatus(Sub(s)
-                              s.WindowFound = False
-                              s.HpPercent = 0
-                              s.MpPercent = 0
-                              s.MobHpPercent = 0
-                              s.MobMaxHp = -1
-                              s.MobHpText = ""
-                              s.ExpPercent = 0
-                              s.ExpPerHour = -1
-                              s.RupiahsTotal = -1
-                              s.RupiahsPerHour = -1
-                              s.MobName = ""
-                              s.TargetValid = False
-                              s.NotAttackingReason = "Window not found."
-                              s.ErrorMessage = "Game window not found."
-                          End Sub)
-                Await Task.Delay(loopDelayMs, token)
-                Continue While
-            End If
+                Dim hwnd As IntPtr = ResolveGameWindow(cfg)
+                If hwnd = IntPtr.Zero Then
+                    ClearLatestLoopFrame()
+                    ReleaseLootScannerAltKey()
+                    ClearMapLocalizationRuntime()
+                    ClearChatTranslationRuntime()
+                    ClearPartyListRuntimeState()
+                    UpdateLevelingAgentState(cfg, LevelingAgentState.Searching, "Game window not found.")
+                    SetStatus(Sub(s)
+                                  s.WindowFound = False
+                                  s.HpPercent = 0
+                                  s.MpPercent = 0
+                                  s.MobHpPercent = 0
+                                  s.MobMaxHp = -1
+                                  s.MobHpText = ""
+                                  s.ExpPercent = 0
+                                  s.ExpPerHour = -1
+                                  s.RupiahsTotal = -1
+                                  s.RupiahsPerHour = -1
+                                  s.MobName = ""
+                                  s.TargetValid = False
+                                  s.NotAttackingReason = "Window not found."
+                                  s.ErrorMessage = "Game window not found."
+                              End Sub)
+                    Await Task.Delay(loopDelayMs, token)
+                    Continue While
+                End If
 
-            Dim now As DateTime = DateTime.UtcNow
+                Dim now As DateTime = DateTime.UtcNow
 
-            If cfg.LiteModeEnabled Then
+                If cfg.LiteModeEnabled Then
                 Dim clientRect As NativeMethods.RECT
                 If Not NativeMethods.GetClientRect(hwnd, clientRect) Then
                     ClearLatestLoopFrame()
@@ -1501,7 +1509,19 @@ Public Class BotEngine
                           s.ErrorMessage = ""
                       End Sub)
 
-            Await Task.Delay(loopDelayMs, token)
+                Await Task.Delay(loopDelayMs, token)
+            Catch ex As OperationCanceledException When token.IsCancellationRequested
+                Exit While
+            Catch ex As Exception
+                ReleaseLootScannerAltKey()
+                ClearLatestLoopFrame()
+                RaiseEvent LogLine("Bot loop recovered from unexpected error: " & ex.Message)
+                SetStatus(Sub(s)
+                              s.NotAttackingReason = "Loop recovered from error."
+                              s.ErrorMessage = ex.Message
+                          End Sub)
+                Thread.Sleep(Math.Max(50, loopDelayMs))
+            End Try
         End While
 
         ReleaseLootScannerAltKey()
@@ -1509,7 +1529,7 @@ Public Class BotEngine
     End Function
 
     Private Sub BeginLootScannerCapture(now As DateTime)
-        Dim scan As Byte = CByte(NativeMethods.MapVirtualKey(CUInt(&H12), 0UI))
+        Dim scan As Byte = CByte(NativeMethods.MapVirtualKey(CUInt(&HA5), 0UI))
         Dim KEYEVENTF_EXTENDEDKEY As UInteger = &H1
 
         Try
@@ -1549,13 +1569,24 @@ Public Class BotEngine
             Return
         End If
 
+        If _lootScannerProcessingTask IsNot Nothing Then
+            If Not _lootScannerProcessingTask.IsCompleted Then
+                RaiseEvent LogLine("Loot scanner skipped: previous scan is still running.")
+                ReleaseLootScannerAltKey()
+                _lootScannerCapturePending = False
+                _lootScannerCaptureRequestedAt = DateTime.MinValue
+                Return
+            End If
+            _lootScannerProcessingTask = Nothing
+        End If
+
         Dim frameClone As Bitmap = DirectCast(frame.Clone(), Bitmap)
         Dim allowedNames As List(Of String) = If(cfg.LootAllowedNames, New List(Of String)()).ToList()
         Dim lootMatchThresholdPercent As Integer = ClampLootMatchThresholdPercent(cfg.LootNameMatchThresholdPercent)
         Dim lootScanPolygonCopy As List(Of DrawingPoint) = ClonePointList(lootScanPolygon)
         Dim topic As String = If(cfg.ItemNtfyTopic, "")
 
-        Task.Run(Sub()
+        _lootScannerProcessingTask = Task.Run(Sub()
             Dim scanFrame As Bitmap = frameClone
             Dim lootScanFrame As Bitmap = Nothing
             Try
@@ -1564,7 +1595,7 @@ Public Class BotEngine
                     lootScanFrame = DirectCast(scanFrame.Clone(), Bitmap)
                 End If
 
-                Dim ocrText As String = OcrReader.ReadScreenText(lootScanFrame)
+                Dim ocrText As String = OcrReader.ReadScreenTextIsolated(lootScanFrame)
                 If Not String.IsNullOrWhiteSpace(ocrText) AndAlso allowedNames IsNot Nothing Then
                     Dim matchedItem As String = ""
                     If TryFindAllowedLootMatch(ocrText, allowedNames, lootMatchThresholdPercent, matchedItem) Then
@@ -1611,12 +1642,14 @@ Public Class BotEngine
             Return
         End If
 
-        Dim scan As Byte = CByte(NativeMethods.MapVirtualKey(CUInt(&H12), 0UI))
+        Dim rightAltScan As Byte = CByte(NativeMethods.MapVirtualKey(CUInt(&HA5), 0UI))
+        Dim genericAltScan As Byte = CByte(NativeMethods.MapVirtualKey(CUInt(&H12), 0UI))
         Dim KEYEVENTF_EXTENDEDKEY As UInteger = &H1
         Dim KEYEVENTF_KEYUP As UInteger = &H2
 
         Try
-            keybd_event(&HA5, scan, KEYEVENTF_EXTENDEDKEY Or KEYEVENTF_KEYUP, UIntPtr.Zero)
+            keybd_event(&HA5, rightAltScan, KEYEVENTF_EXTENDEDKEY Or KEYEVENTF_KEYUP, UIntPtr.Zero)
+            keybd_event(&H12, genericAltScan, KEYEVENTF_KEYUP, UIntPtr.Zero)
         Catch
         Finally
             _lootScannerAltHeld = False

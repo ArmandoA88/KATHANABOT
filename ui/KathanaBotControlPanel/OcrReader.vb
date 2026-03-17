@@ -108,6 +108,23 @@ Public NotInheritable Class OcrReader
         Return ReadScreenTextStaFallback(source)
     End Function
 
+    Public Shared Function ReadScreenTextIsolated(source As Bitmap) As String
+        If source Is Nothing Then
+            Return ""
+        End If
+
+        Dim direct As String = ""
+        Try
+            direct = ReadScreenTextInternal(source, True)
+            If Not String.IsNullOrWhiteSpace(direct) Then
+                Return direct
+            End If
+        Catch
+        End Try
+
+        Return ReadScreenTextStaFallback(source, True)
+    End Function
+
     Private Shared Function ReadHpFractionStaFallback(source As Bitmap) As String
         Dim output As String = ""
         Dim done As New ManualResetEventSlim(False)
@@ -158,14 +175,14 @@ Public NotInheritable Class OcrReader
         Return output
     End Function
 
-    Private Shared Function ReadScreenTextStaFallback(source As Bitmap) As String
+    Private Shared Function ReadScreenTextStaFallback(source As Bitmap, Optional isolatedEngine As Boolean = False) As String
         Dim output As String = ""
         Dim done As New ManualResetEventSlim(False)
 
         Dim worker As New Thread(
             Sub()
                 Try
-                    output = ReadScreenTextInternal(source)
+                    output = ReadScreenTextInternal(source, isolatedEngine)
                 Catch ex As Exception
                     SetLastError(ex.Message)
                 Finally
@@ -183,8 +200,8 @@ Public NotInheritable Class OcrReader
         Return output
     End Function
 
-    Private Shared Function ReadScreenTextInternal(source As Bitmap) As String
-        Dim engine = GetEngine()
+    Private Shared Function ReadScreenTextInternal(source As Bitmap, Optional isolatedEngine As Boolean = False) As String
+        Dim engine As OcrEngine = If(isolatedEngine, CreateEngine(), GetEngine())
         If engine Is Nothing Then
             Return ""
         End If
@@ -417,16 +434,21 @@ Public NotInheritable Class OcrReader
 
             _initAttempted = True
             Try
-                _engine = OcrEngine.TryCreateFromUserProfileLanguages()
-                If _engine Is Nothing Then
-                    _engine = OcrEngine.TryCreateFromLanguage(New Language("en-US"))
-                End If
+                _engine = CreateEngine()
             Catch
                 _engine = Nothing
             End Try
 
             Return _engine
         End SyncLock
+    End Function
+
+    Private Shared Function CreateEngine() As OcrEngine
+        Dim engine As OcrEngine = OcrEngine.TryCreateFromUserProfileLanguages()
+        If engine Is Nothing Then
+            engine = OcrEngine.TryCreateFromLanguage(New Language("en-US"))
+        End If
+        Return engine
     End Function
 
     Private Shared Async Function ConvertBitmapAsync(source As Bitmap) As Task(Of SoftwareBitmap)
