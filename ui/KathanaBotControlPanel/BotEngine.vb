@@ -985,11 +985,12 @@ Public Class BotEngine
                 Continue While
             End If
 
-            If cfg.LiteModeEnabled Then
-                ClearLatestLoopFrame()
+            Dim now As DateTime = DateTime.UtcNow
 
+            If cfg.LiteModeEnabled Then
                 Dim clientRect As NativeMethods.RECT
                 If Not NativeMethods.GetClientRect(hwnd, clientRect) Then
+                    ClearLatestLoopFrame()
                     SetStatus(Sub(s)
                                   s.WindowFound = True
                                   s.HpPercent = 0
@@ -1019,6 +1020,18 @@ Public Class BotEngine
                 Dim liteChatRegion As New RectRegion(0, 0, 1, 1)
                 ResolveVisionRegions(cfg, clientWidth, clientHeight, liteHpRegion, liteMpRegion, liteMobNameRegion, liteMobHpRegion, liteUnreachableTextRegion, litePranaExpRegion, liteRupiahsRegion, litePartyInviteScanRegion, litePartyInviteOkRegion, litePartyListRegion, liteMapRegion, liteMapCoordinateRegion, liteChatRegion)
 
+                Dim liteFrame As Bitmap = Nothing
+                If cfg.PartyAutoAcceptEnabled Then
+                    liteFrame = CaptureClient(hwnd)
+                    If liteFrame IsNot Nothing Then
+                        ReplaceLatestLoopFrame(liteFrame)
+                    Else
+                        ClearLatestLoopFrame()
+                    End If
+                Else
+                    ClearLatestLoopFrame()
+                End If
+
                 Dim hasLiteHpPoint As Boolean = cfg.LiteHpCheckPointX >= 0 AndAlso cfg.LiteHpCheckPointY >= 0
                 Dim hasLiteMpPoint As Boolean = cfg.LiteMpCheckPointX >= 0 AndAlso cfg.LiteMpCheckPointY >= 0
                 Dim hpScanOk As Boolean = False
@@ -1041,7 +1054,21 @@ Public Class BotEngine
 
                 Dim liteReason As String = ""
                 Dim liteActionSent As Boolean = False
-                If hpScanOk OrElse mpScanOk Then
+                If liteFrame IsNot Nothing Then
+                    liteActionSent = TryHandleAutoAcceptPrompts(cfg, hwnd, liteFrame, now, litePartyInviteScanRegion, litePartyInviteOkRegion)
+                    If liteActionSent Then
+                        liteReason = "Auto-accept prompt detected and accepted."
+                    End If
+                End If
+
+                If Not liteActionSent Then
+                    liteActionSent = TryHandlePartyAsk(cfg, hwnd, now)
+                    If liteActionSent Then
+                        liteReason = "Party ask command sent."
+                    End If
+                End If
+
+                If Not liteActionSent AndAlso (hpScanOk OrElse mpScanOk) Then
                     liteActionSent = TrySendSupportActions(cfg, hwnd, liteHpPct, liteMpPct)
                 End If
 
@@ -1072,11 +1099,14 @@ Public Class BotEngine
                 End If
 
                 Dim liteScanWarning As String = ""
+                If cfg.PartyAutoAcceptEnabled AndAlso liteFrame Is Nothing Then
+                    liteScanWarning = "Unable to capture Lite window for party prompt scan."
+                End If
                 If hasLiteHpPoint AndAlso Not hpScanOk Then
-                    liteScanWarning = "Unable to read Lite HP AutoPots point."
+                    liteScanWarning = If(liteScanWarning = "", "Unable to read Lite HP AutoPots point.", liteScanWarning & " Unable to read Lite HP AutoPots point.")
                 End If
                 If hasLiteMpPoint AndAlso Not mpScanOk Then
-                    liteScanWarning = If(liteScanWarning = "", "Unable to read Lite Mana AutoPots point.", "Unable to read Lite HP and Mana AutoPots points.")
+                    liteScanWarning = If(liteScanWarning = "", "Unable to read Lite Mana AutoPots point.", liteScanWarning & " Unable to read Lite Mana AutoPots point.")
                 End If
 
                 SetStatus(Sub(s)
@@ -1095,6 +1125,9 @@ Public Class BotEngine
                               s.NotAttackingReason = If(liteActionSent, "", If(String.IsNullOrWhiteSpace(liteReason), "No enabled Lite action is ready.", liteReason))
                               s.ErrorMessage = liteScanWarning
                           End Sub)
+                If liteFrame IsNot Nothing Then
+                    liteFrame.Dispose()
+                End If
                 Await Task.Delay(loopDelayMs, token)
                 Continue While
             End If
@@ -1144,7 +1177,6 @@ Public Class BotEngine
             Dim rupiahsTotal As Long = ReadRupiahsTotal(frame, rupiahsRegion)
             Dim captureGlitch As Boolean = IsLikelyVisionCaptureGlitch(frame, hpRegion, mpRegion, hpPct, mpPct)
 
-            Dim now As DateTime = DateTime.UtcNow
             Dim activeHwnd As IntPtr = NativeMethods.GetForegroundWindow()
             TryHandlePendingLootScannerCapture(cfg, hwnd, activeHwnd, frame, lootScanPolygon, now)
             TryHandlePendingLootPickupVerification(cfg, hwnd, frame, now, mobNameRegion)
