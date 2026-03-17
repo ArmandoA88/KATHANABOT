@@ -163,8 +163,19 @@ Public Class Form1
     Private btnPartyAutoAccept As Button
     Private btnPartyAsk As Button
     Private btnLootScanner As Button
+    Private tblNotificationSettings As TableLayoutPanel
+    Private cboNotificationProvider As ComboBox
+    Private lblDiscordGlobalWebhook As Label
+    Private lblDiscordItemWebhook As Label
+    Private lblDiscordStatsWebhook As Label
+    Private txtDiscordGlobalWebhookUrl As TextBox
+    Private txtDiscordItemWebhookUrl As TextBox
+    Private txtDiscordStatsWebhookUrl As TextBox
+    Private lblNtfyGlobalTopic As Label
     Private txtItemNtfyTopic As TextBox
+    Private lblNtfyItemTopic As Label
     Private txtStatsNtfyTopic As TextBox
+    Private lblNtfyStatsTopic As Label
     Private btnHelp As Button
     Private nudPartyAskSeconds As NumericUpDown
     Private txtPartyAskText As TextBox
@@ -235,6 +246,8 @@ Public Class Form1
     Private Const DeadConfirmRequiredCount As Integer = 5
     Private Const DeathNotificationRetryCount As Integer = 3
     Private Const StartupNotificationWarmupSeconds As Integer = 20
+    Private Const NotificationProviderNtfy As String = "ntfy"
+    Private Const NotificationProviderDiscord As String = "discord"
     Private Const DefaultNtfyTopicName As String = "Katana12345"
     Private Const DefaultPartyAskCommand As String = "add"
     Private Const DefaultLootNameMatchThresholdPercent As Integer = 80
@@ -319,8 +332,13 @@ Public Class Form1
         Public Property PromptAutoAcceptEnabled As Boolean = True
         Public Property AskForPartyEnabled As Boolean = False
         Public Property AskForPartySeconds As Decimal = 30D
-            Public Property AskForPartyText As String
+        Public Property AskForPartyText As String
         Public Property LootScannerEnabled As Boolean = True
+        Public Property NotificationProvider As String = NotificationProviderNtfy
+        Public Property DiscordWebhookUrl As String = ""
+        Public Property DiscordGlobalWebhookUrl As String = ""
+        Public Property DiscordItemWebhookUrl As String = ""
+        Public Property DiscordStatsWebhookUrl As String = ""
         Public Property ItemNtfyTopic As String = "add"
         Public Property NtfyTopic As String = ""
         Public Property StatsNtfyTopic As String = ""
@@ -420,13 +438,35 @@ Public Class Form1
 
     Private Sub SetupLiveConfigBindings()
         AddHandler txtWindowTitle.TextChanged, AddressOf LiveConfigChanged
+        If cboNotificationProvider IsNot Nothing Then
+            AddHandler cboNotificationProvider.SelectedIndexChanged, AddressOf NotificationProviderChanged
+        End If
+        If txtDiscordGlobalWebhookUrl IsNot Nothing Then
+            AddHandler txtDiscordGlobalWebhookUrl.TextChanged, AddressOf LiveConfigChanged
+            AddHandler txtDiscordGlobalWebhookUrl.TextChanged, AddressOf PersistListSettingsChanged
+        End If
+        If txtDiscordItemWebhookUrl IsNot Nothing Then
+            AddHandler txtDiscordItemWebhookUrl.TextChanged, AddressOf LiveConfigChanged
+            AddHandler txtDiscordItemWebhookUrl.TextChanged, AddressOf PersistListSettingsChanged
+        End If
+        If txtDiscordStatsWebhookUrl IsNot Nothing Then
+            AddHandler txtDiscordStatsWebhookUrl.TextChanged, AddressOf LiveConfigChanged
+            AddHandler txtDiscordStatsWebhookUrl.TextChanged, AddressOf PersistListSettingsChanged
+        End If
         If txtNtfyTopic IsNot Nothing Then
             AddHandler txtNtfyTopic.TextChanged, AddressOf LiveConfigChanged
+            AddHandler txtNtfyTopic.TextChanged, AddressOf PersistListSettingsChanged
+        End If
+        If txtItemNtfyTopic IsNot Nothing Then
+            AddHandler txtItemNtfyTopic.TextChanged, AddressOf LiveConfigChanged
+            AddHandler txtItemNtfyTopic.TextChanged, AddressOf PersistListSettingsChanged
         End If
         If txtStatsNtfyTopic IsNot Nothing Then
+            AddHandler txtStatsNtfyTopic.TextChanged, AddressOf LiveConfigChanged
             AddHandler txtStatsNtfyTopic.TextChanged, AddressOf PersistListSettingsChanged
         End If
         If nudStatsNtfyIntervalMinutes IsNot Nothing Then
+            AddHandler nudStatsNtfyIntervalMinutes.ValueChanged, AddressOf LiveConfigChanged
             AddHandler nudStatsNtfyIntervalMinutes.ValueChanged, AddressOf PersistListSettingsChanged
         End If
         If txtLootScanAreaPoints IsNot Nothing Then
@@ -689,6 +729,41 @@ Public Class Form1
 
     Private Sub PersistListSettingsChanged(_sender As Object, _e As EventArgs)
         SavePersistedListState(False)
+    End Sub
+
+    Private Sub NotificationProviderChanged(_sender As Object, _e As EventArgs)
+        UpdateNotificationProviderUi()
+        PushLiveConfig()
+        SavePersistedListState(False)
+    End Sub
+
+    Private Sub UpdateNotificationProviderUi()
+        Dim provider As String = GetNotificationProviderName()
+        Dim useDiscord As Boolean = provider = NotificationProviderDiscord
+        SetNotificationRowVisible(1, lblDiscordGlobalWebhook, txtDiscordGlobalWebhookUrl, useDiscord)
+        SetNotificationRowVisible(2, lblDiscordItemWebhook, txtDiscordItemWebhookUrl, useDiscord)
+        SetNotificationRowVisible(3, lblDiscordStatsWebhook, txtDiscordStatsWebhookUrl, useDiscord)
+        SetNotificationRowVisible(4, lblNtfyGlobalTopic, txtNtfyTopic, Not useDiscord)
+        SetNotificationRowVisible(5, lblNtfyItemTopic, txtItemNtfyTopic, Not useDiscord)
+        SetNotificationRowVisible(6, lblNtfyStatsTopic, txtStatsNtfyTopic, Not useDiscord)
+    End Sub
+
+    Private Sub SetNotificationRowVisible(rowIndex As Integer, label As Control, editor As Control, visible As Boolean)
+        If tblNotificationSettings Is Nothing OrElse rowIndex < 0 OrElse rowIndex >= tblNotificationSettings.RowStyles.Count Then
+            Return
+        End If
+
+        If label IsNot Nothing Then
+            label.Visible = visible
+        End If
+        If editor IsNot Nothing Then
+            editor.Visible = visible
+            editor.Enabled = visible
+        End If
+
+        tblNotificationSettings.RowStyles(rowIndex).SizeType = SizeType.Absolute
+        tblNotificationSettings.RowStyles(rowIndex).Height = If(visible, 42.0F, 0.0F)
+        tblNotificationSettings.PerformLayout()
     End Sub
 
     Private Sub PushLiveConfig()
@@ -1619,9 +1694,14 @@ Public Class Form1
         thresholdsGroup.Controls.Add(thresholdsLayout)
 
         Dim notifyGroup As New GroupBox() With {.Text = "Notifications + Loot Matching", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
-        Dim notifyLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 7}
+        Dim notifyLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 11}
+        tblNotificationSettings = notifyLayout
         notifyLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 180.0F))
         notifyLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
+        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
+        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
+        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
         notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
         notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
         notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
@@ -1630,44 +1710,69 @@ Public Class Form1
         notifyLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 30.0F))
 
-        notifyLayout.Controls.Add(New Label() With {.Text = "ntfy Channel (Global)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
+        notifyLayout.Controls.Add(New Label() With {.Text = "Notification Provider", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
+        cboNotificationProvider = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList}
+        cboNotificationProvider.Items.AddRange(New Object() {"ntfy", "discord"})
+        cboNotificationProvider.SelectedItem = NotificationProviderNtfy
+        notifyLayout.Controls.Add(cboNotificationProvider, 1, 0)
+
+        lblDiscordGlobalWebhook = New Label() With {.Text = "Discord Webhook (Global)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        notifyLayout.Controls.Add(lblDiscordGlobalWebhook, 0, 1)
+        txtDiscordGlobalWebhookUrl = New TextBox() With {.Dock = DockStyle.Fill, .Text = ""}
+        notifyLayout.Controls.Add(txtDiscordGlobalWebhookUrl, 1, 1)
+
+        lblDiscordItemWebhook = New Label() With {.Text = "Discord Webhook (Items)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        notifyLayout.Controls.Add(lblDiscordItemWebhook, 0, 2)
+        txtDiscordItemWebhookUrl = New TextBox() With {.Dock = DockStyle.Fill, .Text = ""}
+        notifyLayout.Controls.Add(txtDiscordItemWebhookUrl, 1, 2)
+
+        lblDiscordStatsWebhook = New Label() With {.Text = "Discord Webhook (Stats)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        notifyLayout.Controls.Add(lblDiscordStatsWebhook, 0, 3)
+        txtDiscordStatsWebhookUrl = New TextBox() With {.Dock = DockStyle.Fill, .Text = ""}
+        notifyLayout.Controls.Add(txtDiscordStatsWebhookUrl, 1, 3)
+
+        lblNtfyGlobalTopic = New Label() With {.Text = "ntfy Channel (Global)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        notifyLayout.Controls.Add(lblNtfyGlobalTopic, 0, 4)
         txtNtfyTopic = New TextBox() With {.Dock = DockStyle.Fill, .Text = DefaultNtfyTopicName}
-        notifyLayout.Controls.Add(txtNtfyTopic, 1, 0)
+        notifyLayout.Controls.Add(txtNtfyTopic, 1, 4)
 
-        notifyLayout.Controls.Add(New Label() With {.Text = "ntfy Channel (Items)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
+        lblNtfyItemTopic = New Label() With {.Text = "ntfy Channel (Items)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        notifyLayout.Controls.Add(lblNtfyItemTopic, 0, 5)
         txtItemNtfyTopic = New TextBox() With {.Dock = DockStyle.Fill, .Text = ""}
-        notifyLayout.Controls.Add(txtItemNtfyTopic, 1, 1)
+        notifyLayout.Controls.Add(txtItemNtfyTopic, 1, 5)
 
-        notifyLayout.Controls.Add(New Label() With {.Text = "ntfy Channel (Stats)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
+        lblNtfyStatsTopic = New Label() With {.Text = "ntfy Channel (Stats)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        notifyLayout.Controls.Add(lblNtfyStatsTopic, 0, 6)
         txtStatsNtfyTopic = New TextBox() With {.Dock = DockStyle.Fill, .Text = ""}
-        notifyLayout.Controls.Add(txtStatsNtfyTopic, 1, 2)
+        notifyLayout.Controls.Add(txtStatsNtfyTopic, 1, 6)
 
-        notifyLayout.Controls.Add(New Label() With {.Text = "Stats Interval (min)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 3)
+        notifyLayout.Controls.Add(New Label() With {.Text = "Stats Interval (min)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 7)
         nudStatsNtfyIntervalMinutes = New NumericUpDown() With {.Minimum = 1D, .Maximum = 1440D, .DecimalPlaces = 0, .Value = 30D, .Dock = DockStyle.Left, .Width = 100}
-        notifyLayout.Controls.Add(nudStatsNtfyIntervalMinutes, 1, 3)
+        notifyLayout.Controls.Add(nudStatsNtfyIntervalMinutes, 1, 7)
 
-        notifyLayout.Controls.Add(New Label() With {.Text = "Loot Name Match %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 4)
+        notifyLayout.Controls.Add(New Label() With {.Text = "Loot Name Match %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 8)
         nudLootNameMatchThreshold = New NumericUpDown() With {.Minimum = 50, .Maximum = 100, .Value = DefaultLootNameMatchThresholdPercent, .Dock = DockStyle.Fill}
-        notifyLayout.Controls.Add(nudLootNameMatchThreshold, 1, 4)
+        notifyLayout.Controls.Add(nudLootNameMatchThreshold, 1, 8)
 
         Dim note As New Label() With {
             .Text = "Loot Name Match % controls fuzzy OCR matching for Loot Filter names. Use a higher value for stricter matching and a lower value when OCR is inconsistent." & Environment.NewLine &
+                    "Use provider 'discord' with one webhook per alert stream (global, items, stats), or provider 'ntfy' with the topic fields below." & Environment.NewLine &
                     "Use role 'max_health' in Combat Skills if you want the max-health potion threshold controlled here. HP alarm only triggers at HP=0." & Environment.NewLine &
                     "Stats alerts send Prana/EXP %, EXP/hr, Rupiahs total, and Rupiahs/hr on the interval you choose while the bot is running.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.TopLeft
         }
-        notifyLayout.Controls.Add(note, 0, 5)
+        notifyLayout.Controls.Add(note, 0, 9)
         notifyLayout.SetColumnSpan(note, 2)
 
         Dim notifyFoot As New Label() With {
-            .Text = "Item alerts use the item channel; death/window alerts use the global channel; periodic stats use the stats channel.",
+            .Text = "Discord and ntfy both use separate global/items/stats destinations.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.Gray,
             .TextAlign = ContentAlignment.MiddleLeft
         }
-        notifyLayout.Controls.Add(notifyFoot, 0, 6)
+        notifyLayout.Controls.Add(notifyFoot, 0, 10)
         notifyLayout.SetColumnSpan(notifyFoot, 2)
         notifyGroup.Controls.Add(notifyLayout)
 
@@ -1682,9 +1787,9 @@ Public Class Form1
         }
         Dim btnApply As New Button() With {.Text = "Apply To Heal/Mana/Max-HP Rows", .Width = 220, .Height = 30, .BackColor = Color.FromArgb(42, 120, 80), .ForeColor = Color.White}
         AddHandler btnApply.Click, Sub(_s As Object, _e As EventArgs) ApplyQuickAutoPotThresholds()
-        Dim btnTestAlarm As New Button() With {.Text = "Test Alarm + Phone", .Width = 150, .Height = 30, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
+        Dim btnTestAlarm As New Button() With {.Text = "Test Alarm + Notify", .Width = 150, .Height = 30, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
         AddHandler btnTestAlarm.Click, AddressOf TestAlarmClicked
-        Dim btnTestPhone As New Button() With {.Text = "Test Phone Alert", .Width = 130, .Height = 30, .BackColor = Color.FromArgb(55, 110, 170), .ForeColor = Color.White}
+        Dim btnTestPhone As New Button() With {.Text = "Test Notification", .Width = 130, .Height = 30, .BackColor = Color.FromArgb(55, 110, 170), .ForeColor = Color.White}
         AddHandler btnTestPhone.Click, AddressOf TestPhoneAlertClicked
         buttonRow.Controls.Add(btnApply)
         buttonRow.Controls.Add(btnTestAlarm)
@@ -1695,6 +1800,7 @@ Public Class Form1
         settingsGroup.Controls.Add(settingsLayout)
         root.Controls.Add(settingsGroup, 0, 0)
         root.Controls.Add(BuildAutoPotUnstuckGroup(), 0, 1)
+        UpdateNotificationProviderUi()
         tab.Controls.Add(root)
         Return tab
     End Function
@@ -2309,6 +2415,18 @@ Public Class Form1
         If txtNtfyTopic IsNot Nothing Then
             txtNtfyTopic.Text = DefaultNtfyTopicName
         End If
+        If cboNotificationProvider IsNot Nothing Then
+            cboNotificationProvider.SelectedItem = NotificationProviderNtfy
+        End If
+        If txtDiscordGlobalWebhookUrl IsNot Nothing Then
+            txtDiscordGlobalWebhookUrl.Text = ""
+        End If
+        If txtDiscordItemWebhookUrl IsNot Nothing Then
+            txtDiscordItemWebhookUrl.Text = ""
+        End If
+        If txtDiscordStatsWebhookUrl IsNot Nothing Then
+            txtDiscordStatsWebhookUrl.Text = ""
+        End If
         If nudPartyAskSeconds IsNot Nothing Then
             nudPartyAskSeconds.Value = 30
         End If
@@ -2317,6 +2435,7 @@ Public Class Form1
         End If
         _alarmVolumePercent = CInt(nudAlarmVolume.Value)
         UpdateAttackButtonAppearance(False)
+        UpdateNotificationProviderUi()
         UpdatePromptAutoAcceptButton()
         UpdatePartyAskButton()
         ApplyLiteDefaults()
@@ -3141,10 +3260,12 @@ Public Class Form1
             "10) AUTO-POT TAB",
             "- Heal Trigger %, Mana Trigger % quick sliders.",
             "- HP=0 Alarm Volume % sets system alarm pulse volume for death alert.",
-            "- ntfy Channel is used for phone notifications (ntfy.sh topic).",
+            "- Notification Provider selects ntfy or Discord webhook delivery.",
+            "- Discord has separate Global, Items, and Stats webhook fields.",
+            "- ntfy Channel fields are used only when provider is set to ntfy.",
             "- Apply To Heal/Mana/Max-HP Rows applies quick thresholds to matching roles.",
-            "- Test Alarm + Phone tests sound and ntfy message.",
-            "- Test Phone Alert sends only ntfy test.",
+            "- Test Alarm + Notify tests sound and the selected notification provider.",
+            "- Test Notification sends only the selected notification test.",
             "",
             "11) AUTO-POT TAB - UNSTUCK / RETARGET",
             "- Retarget Interval (ms) mirrors Vision tab Retarget (ms).",
@@ -3165,8 +3286,8 @@ Public Class Form1
             "",
             "15) ALERTS AND SAFETY",
             "- HP zero death detection: requires stable confirmation before death alarm.",
-            "- Death alert: plays sound, sends ntfy alert, then stops bot to avoid repeats.",
-            "- Window missing/crash alert: sends separate ntfy message when game window",
+            "- Death alert: plays sound, sends a notification, then stops bot to avoid repeats.",
+            "- Window missing/crash alert: sends a separate notification when game window",
             "  is not found while running (one-shot latch until recovery).",
             "",
             "16) ENGINE AUTOMATION BEHAVIORS",
@@ -3191,7 +3312,7 @@ Public Class Form1
             "19) TROUBLESHOOTING",
             "- If no actions happen: verify window title and capture snapshot first.",
             "- If wrong targets: recalibrate regions and review monster filter list.",
-            "- If no phone alerts: verify ntfy channel text and internet access.",
+            "- If no notifications: verify the selected provider settings and internet access.",
             "- If process rename fails: target app may reject window title changes."
         })
     End Function
@@ -3259,9 +3380,11 @@ Public Class Form1
             "10) PESTANA AUTO-POT",
             "- Heal Trigger %, Mana Trigger %. ",
             "- HP=0 Alarm Volume % para volumen de alarma.",
-            "- ntfy Channel para notificaciones al telefono.",
+            "- Notification Provider elige entre ntfy o Discord webhook.",
+            "- Discord tiene webhooks separados para Global, Items y Stats.",
+            "- Los campos ntfy solo se usan cuando el proveedor es ntfy.",
             "- Apply To Heal/Mana/Max-HP Rows aplica umbrales rapidos.",
-            "- Test Alarm + Phone y Test Phone Alert para pruebas.",
+            "- Test Alarm + Notify y Test Notification para pruebas.",
             "",
             "11) PESTANA AUTO-POT - UNSTUCK / RETARGET",
             "- Retarget Interval (ms) refleja el valor Retarget(ms) de Vision.",
@@ -3280,7 +3403,7 @@ Public Class Form1
             "",
             "15) ALERTAS",
             "- Alerta de muerte por HP=0 con confirmacion estable.",
-            "- Reproduce alarma, envia ntfy y detiene bot para evitar repeticion.",
+            "- Reproduce alarma, envia una notificacion y detiene bot para evitar repeticion.",
             "- Alerta separada cuando no se encuentra ventana del juego (posible crash).",
             "",
             "16) AUTOMATIZACION DEL MOTOR",
@@ -3304,7 +3427,7 @@ Public Class Form1
             "19) SOLUCION DE PROBLEMAS",
             "- Sin acciones: valida Window Title y prueba Capture Snapshot.",
             "- Objetivos incorrectos: recalibra regiones y revisa filtro de monstruos.",
-            "- Sin alertas al telefono: revisa canal ntfy e internet.",
+            "- Sin notificaciones: revisa el proveedor seleccionado, webhook/canal y el internet.",
             "- Error al renombrar proceso: algunas apps bloquean SetWindowText."
         })
     End Function
@@ -3372,9 +3495,11 @@ Public Class Form1
             "10) AUTO-POT TAB",
             "- Heal Trigger %, Mana Trigger % quick controls.",
             "- HP=0 Alarm Volume % para sa death alarm volume.",
-            "- ntfy Channel para sa phone notifications.",
+            "- Notification Provider pumipili sa ntfy o Discord webhook.",
+            "- May hiwalay na Discord webhooks para sa Global, Items, at Stats.",
+            "- Ang ntfy fields ay ginagamit lang kapag ntfy ang provider.",
             "- Apply To Heal/Mana/Max-HP Rows para sa mabilis na threshold apply.",
-            "- Test Alarm + Phone at Test Phone Alert para sa testing.",
+            "- Test Alarm + Notify at Test Notification para sa testing.",
             "",
             "11) AUTO-POT TAB - UNSTUCK / RETARGET",
             "- Retarget Interval (ms) naka-sync sa Retarget(ms) ng Vision tab.",
@@ -3394,7 +3519,7 @@ Public Class Form1
             "",
             "15) ALERTS",
             "- Death alert kapag HP=0 na confirmed.",
-            "- Magpapatunog, magpapadala ng ntfy, at hihinto ang bot para iwas repeat.",
+            "- Magpapatunog, magpapadala ng notification, at hihinto ang bot para iwas repeat.",
             "- Hiwalay na crash/window-missing alert kapag hindi makita ang game window.",
             "",
             "16) ENGINE AUTOMATION",
@@ -3418,7 +3543,7 @@ Public Class Form1
             "19) TROUBLESHOOTING",
             "- Walang action: i-check Window Title at subukan ang Capture Snapshot.",
             "- Maling target: i-recalibrate regions at ayusin monster filter.",
-            "- Walang phone alert: i-check ntfy channel at internet.",
+            "- Walang notification: i-check ang napiling provider, webhook/channel, at internet.",
             "- Rename fail: may apps na hindi pumapayag sa window title change."
         })
     End Function
@@ -3574,7 +3699,13 @@ Public Class Form1
             $"RouteRecordingSamples: {st.RouteRecordingSampleCount}{Environment.NewLine}" &
             $"RouteRecordingStatus: {If(String.IsNullOrWhiteSpace(st.RouteRecordingStatus), "n/a", st.RouteRecordingStatus)}{Environment.NewLine}" &
             $"RouteRecordingLastSavedPath: {If(String.IsNullOrWhiteSpace(st.RouteRecordingLastSavedPath), "n/a", st.RouteRecordingLastSavedPath)}{Environment.NewLine}" &
+            $"NotificationProvider: {GetNotificationProviderName()}{Environment.NewLine}" &
+            $"NotificationDestination: {GetNotificationDestinationSummary()}{Environment.NewLine}" &
+            $"DiscordGlobalWebhookConfigured: {If(GetDiscordGlobalWebhookUrl() <> "", "True", "False")}{Environment.NewLine}" &
+            $"DiscordItemWebhookConfigured: {If(GetDiscordItemWebhookUrl() <> "", "True", "False")}{Environment.NewLine}" &
+            $"DiscordStatsWebhookConfigured: {If(GetDiscordStatsWebhookUrl() <> "", "True", "False")}{Environment.NewLine}" &
             $"NtfyTopic: {GetNtfyTopicName()}{Environment.NewLine}" &
+            $"ItemNtfyTopic: {If(txtItemNtfyTopic IsNot Nothing, txtItemNtfyTopic.Text.Trim(), "")}{Environment.NewLine}" &
             $"StatsNtfyTopic: {GetStatsNtfyTopicName()}{Environment.NewLine}" &
             $"StatsNtfyIntervalMinutes: {GetStatsNotificationIntervalMinutes()}{Environment.NewLine}" &
             $"LastStatsNtfyUtc: {If(_lastStatsNotificationUtc = DateTime.MinValue, "n/a", _lastStatsNotificationUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"))}{Environment.NewLine}" &
@@ -4282,19 +4413,19 @@ Public Class Form1
 
     Private Sub TestAlarmClicked(sender As Object, e As EventArgs)
         _alarmVolumePercent = CInt(nudAlarmVolume.Value)
-        AppendLog($"Testing HP=0 alarm + phone alert at {_alarmVolumePercent}% volume.")
+        AppendLog($"Testing HP=0 alarm + notification via {GetNotificationProviderName()} at {_alarmVolumePercent}% volume.")
         Task.Run(Sub() PlayAlarmPulse(_alarmVolumePercent))
         Task.Run(
             Async Function()
-                Await SendPhoneNotificationAsync("KathanaBot Test", "Combined test: HP alarm sound + phone alert.")
+                Await SendPhoneNotificationAsync("KathanaBot Test", "Combined test: HP alarm sound + notification.")
             End Function)
     End Sub
 
     Private Sub TestPhoneAlertClicked(sender As Object, e As EventArgs)
-        AppendLog($"Sending test phone alert to ntfy topic '{GetNtfyTopicName()}'.")
+        AppendLog($"Sending test notification via {GetNotificationDestinationSummary()}.")
         Task.Run(
             Async Function()
-                Await SendPhoneNotificationAsync("KathanaBot Test", "Test phone alert from Auto-Pot tab.")
+                Await SendPhoneNotificationAsync("KathanaBot Test", "Test notification from Auto-Pot tab.")
             End Function)
     End Sub
 
@@ -4322,6 +4453,11 @@ Public Class Form1
         cfg.PartyAskEnabled = _litePartyAskEnabled
         cfg.PartyAskIntervalMs = CInt(Math.Round(CDbl(If(nudLitePartyAskSeconds IsNot Nothing, nudLitePartyAskSeconds.Value, 30D)) * 1000.0))
         cfg.PartyAskText = GetLitePartyAskCommandText()
+        cfg.NotificationProvider = GetNotificationProviderName()
+        cfg.DiscordWebhookUrl = GetDiscordWebhookUrl()
+        cfg.DiscordGlobalWebhookUrl = GetDiscordGlobalWebhookUrl()
+        cfg.DiscordItemWebhookUrl = GetDiscordItemWebhookUrl()
+        cfg.DiscordStatsWebhookUrl = GetDiscordStatsWebhookUrl()
         cfg.Actions = New List(Of ActionRule)()
 
         For Each action As PersistedCombatAction In GetPersistedLiteActions()
@@ -4392,6 +4528,11 @@ Public Class Form1
         cfg.PartyAskIntervalMs = CInt(Math.Round(CDbl(If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D)) * 1000.0))
         cfg.PartyAskText = GetPartyAskCommandText()
         cfg.LootScannerEnabled = _lootScannerEnabled
+        cfg.NotificationProvider = GetNotificationProviderName()
+        cfg.DiscordWebhookUrl = GetDiscordWebhookUrl()
+        cfg.DiscordGlobalWebhookUrl = GetDiscordGlobalWebhookUrl()
+        cfg.DiscordItemWebhookUrl = GetDiscordItemWebhookUrl()
+        cfg.DiscordStatsWebhookUrl = GetDiscordStatsWebhookUrl()
         cfg.ItemNtfyTopic = If(txtItemNtfyTopic IsNot Nothing, txtItemNtfyTopic.Text.Trim(), "")
         cfg.LevelingAgentEnabled = (chkLevelingAgent IsNot Nothing AndAlso chkLevelingAgent.Checked)
         cfg.LevelingPreferredMobs = ParseCommaSeparatedList(If(txtLevelingPreferredMobs IsNot Nothing, txtLevelingPreferredMobs.Text, ""))
@@ -4904,6 +5045,30 @@ Public Class Form1
                 Dim topic As String = If(state.NtfyTopic, "").Trim()
                 txtNtfyTopic.Text = If(topic = "", DefaultNtfyTopicName, topic)
             End If
+            If cboNotificationProvider IsNot Nothing Then
+                cboNotificationProvider.SelectedItem = NormalizeNotificationProviderName(state.NotificationProvider)
+            End If
+            If txtDiscordGlobalWebhookUrl IsNot Nothing Then
+                Dim globalWebhook As String = If(state.DiscordGlobalWebhookUrl, "").Trim()
+                If globalWebhook = "" Then
+                    globalWebhook = If(state.DiscordWebhookUrl, "").Trim()
+                End If
+                txtDiscordGlobalWebhookUrl.Text = globalWebhook
+            End If
+            If txtDiscordItemWebhookUrl IsNot Nothing Then
+                Dim itemWebhook As String = If(state.DiscordItemWebhookUrl, "").Trim()
+                If itemWebhook = "" Then
+                    itemWebhook = If(state.DiscordWebhookUrl, "").Trim()
+                End If
+                txtDiscordItemWebhookUrl.Text = itemWebhook
+            End If
+            If txtDiscordStatsWebhookUrl IsNot Nothing Then
+                Dim statsWebhook As String = If(state.DiscordStatsWebhookUrl, "").Trim()
+                If statsWebhook = "" Then
+                    statsWebhook = If(state.DiscordWebhookUrl, "").Trim()
+                End If
+                txtDiscordStatsWebhookUrl.Text = statsWebhook
+            End If
             If txtItemNtfyTopic IsNot Nothing Then
                 txtItemNtfyTopic.Text = If(state.ItemNtfyTopic, "").Trim()
             End If
@@ -4914,6 +5079,7 @@ Public Class Form1
                 Dim boundedStatsInterval As Decimal = Math.Max(nudStatsNtfyIntervalMinutes.Minimum, Math.Min(nudStatsNtfyIntervalMinutes.Maximum, state.StatsNtfyIntervalMinutes))
                 nudStatsNtfyIntervalMinutes.Value = boundedStatsInterval
             End If
+            UpdateNotificationProviderUi()
             If nudAutoPotHp IsNot Nothing Then
                 Dim boundedAutoHp As Decimal = Math.Max(nudAutoPotHp.Minimum, Math.Min(nudAutoPotHp.Maximum, state.AutoPotHpPercent))
                 nudAutoPotHp.Value = boundedAutoHp
@@ -4977,6 +5143,11 @@ Public Class Form1
                 .AskForPartySeconds = If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D),
                                 .AskForPartyText = GetPartyAskCommandText(),
                 .LootScannerEnabled = _lootScannerEnabled,
+                .NotificationProvider = GetNotificationProviderName(),
+                .DiscordWebhookUrl = GetDiscordWebhookUrl(),
+                .DiscordGlobalWebhookUrl = GetDiscordGlobalWebhookUrl(),
+                .DiscordItemWebhookUrl = GetDiscordItemWebhookUrl(),
+                .DiscordStatsWebhookUrl = GetDiscordStatsWebhookUrl(),
                 .NtfyTopic = If(txtNtfyTopic IsNot Nothing, txtNtfyTopic.Text.Trim(), ""),
                 .ItemNtfyTopic = If(txtItemNtfyTopic IsNot Nothing, txtItemNtfyTopic.Text.Trim(), ""),
                 .StatsNtfyTopic = If(txtStatsNtfyTopic IsNot Nothing, txtStatsNtfyTopic.Text.Trim(), ""),
@@ -5107,6 +5278,31 @@ Public Class Form1
             btnLootScanner.Text = If(_lootScannerEnabled, "Loot Scanner (Alt): ON", "Loot Scanner (Alt): OFF")
             btnLootScanner.BackColor = If(_lootScannerEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
         End If
+        If cboNotificationProvider IsNot Nothing Then
+            cboNotificationProvider.SelectedItem = NormalizeNotificationProviderName(cfg.NotificationProvider)
+        End If
+        If txtDiscordGlobalWebhookUrl IsNot Nothing Then
+            Dim globalWebhook As String = If(cfg.DiscordGlobalWebhookUrl, "").Trim()
+            If globalWebhook = "" Then
+                globalWebhook = If(cfg.DiscordWebhookUrl, "").Trim()
+            End If
+            txtDiscordGlobalWebhookUrl.Text = globalWebhook
+        End If
+        If txtDiscordItemWebhookUrl IsNot Nothing Then
+            Dim itemWebhook As String = If(cfg.DiscordItemWebhookUrl, "").Trim()
+            If itemWebhook = "" Then
+                itemWebhook = If(cfg.DiscordWebhookUrl, "").Trim()
+            End If
+            txtDiscordItemWebhookUrl.Text = itemWebhook
+        End If
+        If txtDiscordStatsWebhookUrl IsNot Nothing Then
+            Dim statsWebhook As String = If(cfg.DiscordStatsWebhookUrl, "").Trim()
+            If statsWebhook = "" Then
+                statsWebhook = If(cfg.DiscordWebhookUrl, "").Trim()
+            End If
+            txtDiscordStatsWebhookUrl.Text = statsWebhook
+        End If
+        UpdateNotificationProviderUi()
         If txtItemNtfyTopic IsNot Nothing Then
             txtItemNtfyTopic.Text = If(cfg.ItemNtfyTopic, "").Trim()
         End If
@@ -5848,7 +6044,7 @@ Public Class Form1
             Async Function()
                 Dim sent As Boolean = Await SendPhoneNotificationAsync("KathanaBot HP Alert", "HP reached zero on 5 consecutive valid frames. Character is dead.", DeathNotificationRetryCount)
                 If Not sent Then
-                    AppendLogSafe("Phone alert failed after retries. Check ntfy topic/network.")
+                    AppendLogSafe("Notification failed after retries. Check notification settings/network.")
                 End If
             End Function)
     End Sub
@@ -5868,10 +6064,99 @@ Public Class Form1
             Async Function()
                 Dim sent As Boolean = Await SendPhoneNotificationAsync("KathanaBot Game Alert", body, DeathNotificationRetryCount)
                 If Not sent Then
-                    AppendLogSafe("Game-window alert failed after retries. Check ntfy topic/network.")
+                    AppendLogSafe("Game-window alert failed after retries. Check notification settings/network.")
                 End If
             End Function)
     End Sub
+
+    Private Shared Function NormalizeNotificationProviderName(raw As String) As String
+        Dim cleaned As String = If(raw, "").Trim().ToLowerInvariant()
+        If cleaned = NotificationProviderDiscord Then
+            Return NotificationProviderDiscord
+        End If
+        Return NotificationProviderNtfy
+    End Function
+
+    Private Function GetNotificationProviderName() As String
+        Dim raw As String = ""
+        If cboNotificationProvider IsNot Nothing AndAlso cboNotificationProvider.SelectedItem IsNot Nothing Then
+            raw = cboNotificationProvider.SelectedItem.ToString()
+        End If
+        Return NormalizeNotificationProviderName(raw)
+    End Function
+
+    Private Function GetDiscordWebhookUrl() As String
+        Return GetDiscordGlobalWebhookUrl()
+    End Function
+
+    Private Function GetDiscordGlobalWebhookUrl() As String
+        Return If(txtDiscordGlobalWebhookUrl IsNot Nothing, txtDiscordGlobalWebhookUrl.Text, "").Trim()
+    End Function
+
+    Private Function GetDiscordItemWebhookUrl() As String
+        Dim raw As String = If(txtDiscordItemWebhookUrl IsNot Nothing, txtDiscordItemWebhookUrl.Text, "").Trim()
+        If raw = "" Then
+            Return GetDiscordGlobalWebhookUrl()
+        End If
+        Return raw
+    End Function
+
+    Private Function GetDiscordStatsWebhookUrl() As String
+        Dim raw As String = If(txtDiscordStatsWebhookUrl IsNot Nothing, txtDiscordStatsWebhookUrl.Text, "").Trim()
+        If raw = "" Then
+            Return GetDiscordGlobalWebhookUrl()
+        End If
+        Return raw
+    End Function
+
+    Private Shared Function IsLikelyDiscordWebhookUrl(rawUrl As String) As Boolean
+        Dim trimmed As String = If(rawUrl, "").Trim()
+        If trimmed = "" Then
+            Return False
+        End If
+
+        Dim parsed As Uri = Nothing
+        If Not Uri.TryCreate(trimmed, UriKind.Absolute, parsed) OrElse parsed Is Nothing Then
+            Return False
+        End If
+
+        Dim host As String = parsed.Host.ToLowerInvariant()
+        If host <> "discord.com" AndAlso host <> "www.discord.com" AndAlso host <> "discordapp.com" Then
+            Return False
+        End If
+
+        Return parsed.AbsolutePath.IndexOf("/api/webhooks/", StringComparison.OrdinalIgnoreCase) >= 0
+    End Function
+
+    Private Shared Function NormalizeDiscordWebhookUrl(rawUrl As String) As String
+        Dim trimmed As String = If(rawUrl, "").Trim()
+        If trimmed = "" Then
+            Return ""
+        End If
+
+        If Regex.IsMatch(trimmed, "(^|[?&])wait=", RegexOptions.IgnoreCase) Then
+            Return trimmed
+        End If
+
+        If trimmed.Contains("?"c) Then
+            Return trimmed & "&wait=true"
+        End If
+        Return trimmed & "?wait=true"
+    End Function
+
+    Private Function GetNotificationDestinationSummary() As String
+        If GetNotificationProviderName() = NotificationProviderDiscord Then
+            Return "Discord global webhook"
+        End If
+        Return $"ntfy topic '{GetNtfyTopicName()}'"
+    End Function
+
+    Private Function GetStatsNotificationDestinationSummary() As String
+        If GetNotificationProviderName() = NotificationProviderDiscord Then
+            Return "Discord stats webhook"
+        End If
+        Return $"ntfy topic '{GetStatsNtfyTopicName()}'"
+    End Function
 
     Private Function GetNtfyTopicName() As String
         Dim raw As String = ""
@@ -5933,8 +6218,12 @@ Public Class Form1
     End Function
 
     Private Sub HandlePeriodicStatsNotification(status As BotStatus)
+        Dim provider As String = GetNotificationProviderName()
         Dim topic As String = GetStatsNtfyTopicName()
-        If topic = "" OrElse status Is Nothing Then
+        If status Is Nothing Then
+            Return
+        End If
+        If provider = NotificationProviderNtfy AndAlso topic = "" Then
             Return
         End If
 
@@ -5959,18 +6248,23 @@ Public Class Form1
             $"Party: {FormatPartyForNotification(status)}"
 
         _lastStatsNotificationUtc = DateTime.UtcNow
+        Dim destinationSummary As String = GetStatsNotificationDestinationSummary()
         Task.Run(
             Async Function()
-                Dim sent As Boolean = Await SendPhoneNotificationToTopicAsync($"KathanaBot {intervalMinutes}m Stats", body, topic, 1, "default", "chart_with_upwards_trend,moneybag")
+                Dim sent As Boolean = Await SendPhoneNotificationToTopicAsync($"KathanaBot {intervalMinutes}m Stats", body, topic, 1, "default", "chart_with_upwards_trend,moneybag", GetDiscordStatsWebhookUrl(), "Discord stats webhook")
                 If sent Then
-                    AppendLogSafe($"{intervalMinutes}-minute stats sent to ntfy topic '{topic}'.")
+                    AppendLogSafe($"{intervalMinutes}-minute stats sent via {destinationSummary}.")
                 Else
-                    AppendLogSafe($"{intervalMinutes}-minute stats alert failed for ntfy topic '{topic}'.")
+                    AppendLogSafe($"{intervalMinutes}-minute stats alert failed via {destinationSummary}.")
                 End If
             End Function)
     End Sub
 
-    Private Async Function SendPhoneNotificationToTopicAsync(title As String, body As String, topic As String, Optional maxAttempts As Integer = 1, Optional priority As String = "urgent", Optional tags As String = "warning,gamepad") As Task(Of Boolean)
+    Private Async Function SendPhoneNotificationToTopicAsync(title As String, body As String, topic As String, Optional maxAttempts As Integer = 1, Optional priority As String = "urgent", Optional tags As String = "warning,gamepad", Optional discordWebhookUrl As String = Nothing, Optional discordDestinationLabel As String = "Discord webhook") As Task(Of Boolean)
+        If GetNotificationProviderName() = NotificationProviderDiscord Then
+            Return Await SendDiscordNotificationAsync(title, body, If(String.IsNullOrWhiteSpace(discordWebhookUrl), GetDiscordGlobalWebhookUrl(), discordWebhookUrl), discordDestinationLabel, maxAttempts)
+        End If
+
         Dim cleanedTopic As String = If(topic, "").Trim()
         If cleanedTopic = "" Then
             Return False
@@ -6006,11 +6300,77 @@ Public Class Form1
         Return False
     End Function
 
+    Private Async Function SendDiscordNotificationAsync(title As String, body As String, webhookUrl As String, destinationLabel As String, Optional maxAttempts As Integer = 1) As Task(Of Boolean)
+        Dim rawWebhookUrl As String = If(webhookUrl, "").Trim()
+        If rawWebhookUrl = "" Then
+            AppendLogSafe($"{destinationLabel} skipped: webhook URL is empty.")
+            Return False
+        End If
+        If Not IsLikelyDiscordWebhookUrl(rawWebhookUrl) Then
+            AppendLogSafe($"{destinationLabel} skipped: webhook URL format is invalid. Use the full Discord webhook URL from Server Settings -> Integrations -> Webhooks.")
+            Return False
+        End If
+
+        Dim attempts As Integer = Math.Max(1, maxAttempts)
+        Dim normalizedWebhookUrl As String = NormalizeDiscordWebhookUrl(rawWebhookUrl)
+        Dim payloadText As String = $"{title}{Environment.NewLine}{body}".Trim()
+        If payloadText.Length > 1900 Then
+            payloadText = payloadText.Substring(0, 1897) & "..."
+        End If
+
+        For attempt As Integer = 1 To attempts
+            Try
+                Using request As New HttpRequestMessage(HttpMethod.Post, normalizedWebhookUrl)
+                    Dim payload = New With {
+                        .username = "KathanaBot",
+                        .content = payloadText,
+                        .allowed_mentions = New With {
+                            .parse = Array.Empty(Of String)()
+                        }
+                    }
+                    request.Content = New StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+
+                    Dim response As HttpResponseMessage = Await NtfyClient.SendAsync(request)
+                    If response.IsSuccessStatusCode Then
+                        Return True
+                    End If
+
+                    Dim responseText As String = ""
+                    If response.Content IsNot Nothing Then
+                        responseText = (Await response.Content.ReadAsStringAsync()).Trim()
+                    End If
+                    If responseText <> "" Then
+                        AppendLogSafe($"{destinationLabel} failed ({CInt(response.StatusCode)}) (attempt {attempt}/{attempts}): {responseText}")
+                    Else
+                        AppendLogSafe($"{destinationLabel} failed ({CInt(response.StatusCode)}) (attempt {attempt}/{attempts}).")
+                    End If
+                End Using
+            Catch ex As Exception
+                AppendLogSafe($"{destinationLabel} failed (attempt {attempt}/{attempts}): {ex.Message}")
+            End Try
+
+            If attempt < attempts Then
+                Await Task.Delay(1500)
+            End If
+        Next
+
+        Return False
+    End Function
+
     Private Async Function SendPhoneNotificationAsync(title As String, body As String, Optional maxAttempts As Integer = 1) As Task(Of Boolean)
-        Dim topic As String = GetNtfyTopicName()
-        Dim sent As Boolean = Await SendPhoneNotificationToTopicAsync(title, body, topic, maxAttempts)
+        Dim sent As Boolean
+        If GetNotificationProviderName() = NotificationProviderDiscord Then
+            sent = Await SendDiscordNotificationAsync(title, body, GetDiscordGlobalWebhookUrl(), "Discord global webhook", maxAttempts)
+        Else
+            Dim topic As String = GetNtfyTopicName()
+            sent = Await SendPhoneNotificationToTopicAsync(title, body, topic, maxAttempts)
+            If sent Then
+                AppendLogSafe($"Notification sent to ntfy topic '{topic}'.")
+            End If
+            Return sent
+        End If
         If sent Then
-            AppendLogSafe($"Phone alert sent to ntfy topic '{topic}'.")
+            AppendLogSafe("Notification sent to Discord global webhook.")
         End If
         Return sent
     End Function

@@ -177,6 +177,11 @@ Public Class BotConfig
     Public Property PartyAskIntervalMs As Integer = 30000
     Public Property PartyAskText As String = "add"
     Public Property LootScannerEnabled As Boolean = True
+    Public Property NotificationProvider As String = "ntfy"
+    Public Property DiscordWebhookUrl As String = ""
+    Public Property DiscordGlobalWebhookUrl As String = ""
+    Public Property DiscordItemWebhookUrl As String = ""
+    Public Property DiscordStatsWebhookUrl As String = ""
     Public Property ItemNtfyTopic As String = ""
     Public Property LevelingAgentEnabled As Boolean = False
     Public Property LevelingPreferredMobs As List(Of String) = New List(Of String)()
@@ -450,6 +455,8 @@ End Module
 Public Class BotEngine
     Public Event StatusUpdated(status As BotStatus)
     Public Event LogLine(line As String)
+    Private Const NotificationProviderNtfy As String = "ntfy"
+    Private Const NotificationProviderDiscord As String = "discord"
     Private Const AllowBlindAttackWhenTargetMissing As Boolean = False
     Private Const FirstHitWindowMs As Integer = 800
     Private Const BlacklistLockWindowMs As Integer = 800
@@ -1584,7 +1591,9 @@ Public Class BotEngine
         Dim allowedNames As List(Of String) = If(cfg.LootAllowedNames, New List(Of String)()).ToList()
         Dim lootMatchThresholdPercent As Integer = ClampLootMatchThresholdPercent(cfg.LootNameMatchThresholdPercent)
         Dim lootScanPolygonCopy As List(Of DrawingPoint) = ClonePointList(lootScanPolygon)
-        Dim topic As String = If(cfg.ItemNtfyTopic, "")
+        Dim topic As String = If(cfg.ItemNtfyTopic, "").Trim()
+        Dim notificationProvider As String = NormalizeNotificationProviderName(cfg.NotificationProvider)
+        Dim discordWebhookUrl As String = GetDiscordItemWebhookUrl(cfg)
 
         _lootScannerProcessingTask = Task.Run(Sub()
             Dim scanFrame As Bitmap = frameClone
@@ -1604,17 +1613,61 @@ Public Class BotEngine
                         Console.Beep(800, 1000)
                         RaiseEvent LogLine($"LOOT ALARM: Found {matchedItem} (fuzzy {lootMatchThresholdPercent}%).")
 
-                        If Not String.IsNullOrWhiteSpace(topic) Then
+                        If notificationProvider = NotificationProviderDiscord Then
+                            Task.Run(Async Function()
+                                Try
+                                    If String.IsNullOrWhiteSpace(discordWebhookUrl) Then
+                                        RaiseEvent LogLine("Item notification skipped: Discord webhook URL is empty.")
+                                        Return
+                                    End If
+                                    If Not IsLikelyDiscordWebhookUrl(discordWebhookUrl) Then
+                                        RaiseEvent LogLine("Item notification skipped: Discord webhook URL format is invalid.")
+                                        Return
+                                    End If
+
+                                    Using client As New System.Net.Http.HttpClient()
+                                        Using request As New System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, NormalizeDiscordWebhookUrl(discordWebhookUrl))
+                                            Dim payload = New With {
+                                                .username = "KathanaBot",
+                                                .content = $"KathanaBot Loot Finder{Environment.NewLine}Found important item: {matchedItem}",
+                                                .allowed_mentions = New With {
+                                                    .parse = Array.Empty(Of String)()
+                                                }
+                                            }
+                                            request.Content = New System.Net.Http.StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+                                            Dim response As System.Net.Http.HttpResponseMessage = Await client.SendAsync(request)
+                                            If Not response.IsSuccessStatusCode Then
+                                                Dim responseText As String = ""
+                                                If response.Content IsNot Nothing Then
+                                                    responseText = (Await response.Content.ReadAsStringAsync()).Trim()
+                                                End If
+                                                If responseText <> "" Then
+                                                    RaiseEvent LogLine($"Item notification failed via Discord ({CInt(response.StatusCode)}): {responseText}")
+                                                Else
+                                                    RaiseEvent LogLine($"Item notification failed via Discord ({CInt(response.StatusCode)}).")
+                                                End If
+                                            End If
+                                        End Using
+                                    End Using
+                                Catch ex As Exception
+                                    RaiseEvent LogLine("Item notification failed via Discord: " & ex.Message)
+                                End Try
+                            End Function)
+                        ElseIf Not String.IsNullOrWhiteSpace(topic) Then
                             Task.Run(Async Function()
                                 Try
                                     Using client As New System.Net.Http.HttpClient()
-                                        Dim request As New System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, "https://ntfy.sh/" & Uri.EscapeDataString(topic))
-                                        request.Content = New System.Net.Http.StringContent("Found important item: " & matchedItem)
-                                        request.Headers.Add("Title", "KathanaBot Loot Finder")
-                                        Await client.SendAsync(request)
+                                        Using request As New System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, "https://ntfy.sh/" & Uri.EscapeDataString(topic))
+                                            request.Content = New System.Net.Http.StringContent("Found important item: " & matchedItem)
+                                            request.Headers.Add("Title", "KathanaBot Loot Finder")
+                                            Dim response As System.Net.Http.HttpResponseMessage = Await client.SendAsync(request)
+                                            If Not response.IsSuccessStatusCode Then
+                                                RaiseEvent LogLine($"Item notification failed via ntfy ({CInt(response.StatusCode)}) for topic '{topic}'.")
+                                            End If
+                                        End Using
                                     End Using
                                 Catch ex As Exception
-                                    RaiseEvent LogLine("Item Ntfy send failed: " & ex.Message)
+                                    RaiseEvent LogLine("Item notification failed via ntfy: " & ex.Message)
                                 End Try
                             End Function)
                         End If
@@ -6190,5 +6243,64 @@ Public Class BotEngine
         Catch
             Return False
         End Try
+    End Function
+
+    Private Shared Function NormalizeNotificationProviderName(raw As String) As String
+        Dim cleaned As String = If(raw, "").Trim().ToLowerInvariant()
+        If cleaned = NotificationProviderDiscord Then
+            Return NotificationProviderDiscord
+        End If
+        Return NotificationProviderNtfy
+    End Function
+
+    Private Shared Function GetDiscordGlobalWebhookUrl(cfg As BotConfig) As String
+        Dim globalWebhook As String = If(cfg IsNot Nothing, If(cfg.DiscordGlobalWebhookUrl, "").Trim(), "")
+        If globalWebhook = "" AndAlso cfg IsNot Nothing Then
+            globalWebhook = If(cfg.DiscordWebhookUrl, "").Trim()
+        End If
+        Return globalWebhook
+    End Function
+
+    Private Shared Function GetDiscordItemWebhookUrl(cfg As BotConfig) As String
+        Dim itemWebhook As String = If(cfg IsNot Nothing, If(cfg.DiscordItemWebhookUrl, "").Trim(), "")
+        If itemWebhook = "" Then
+            itemWebhook = GetDiscordGlobalWebhookUrl(cfg)
+        End If
+        Return itemWebhook
+    End Function
+
+    Private Shared Function IsLikelyDiscordWebhookUrl(rawUrl As String) As Boolean
+        Dim trimmed As String = If(rawUrl, "").Trim()
+        If trimmed = "" Then
+            Return False
+        End If
+
+        Dim parsed As Uri = Nothing
+        If Not Uri.TryCreate(trimmed, UriKind.Absolute, parsed) OrElse parsed Is Nothing Then
+            Return False
+        End If
+
+        Dim host As String = parsed.Host.ToLowerInvariant()
+        If host <> "discord.com" AndAlso host <> "www.discord.com" AndAlso host <> "discordapp.com" Then
+            Return False
+        End If
+
+        Return parsed.AbsolutePath.IndexOf("/api/webhooks/", StringComparison.OrdinalIgnoreCase) >= 0
+    End Function
+
+    Private Shared Function NormalizeDiscordWebhookUrl(rawUrl As String) As String
+        Dim trimmed As String = If(rawUrl, "").Trim()
+        If trimmed = "" Then
+            Return ""
+        End If
+
+        If Regex.IsMatch(trimmed, "(^|[?&])wait=", RegexOptions.IgnoreCase) Then
+            Return trimmed
+        End If
+
+        If trimmed.Contains("?"c) Then
+            Return trimmed & "&wait=true"
+        End If
+        Return trimmed & "?wait=true"
     End Function
 End Class
