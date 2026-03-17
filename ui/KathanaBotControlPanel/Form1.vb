@@ -60,6 +60,11 @@ Public Class Form1
     Private _mainTabs As TabControl
     Private _liteTab As TabPage
     Private _combatTab As TabPage
+    Private _visionTab As TabPage
+    Private _autoPotTab As TabPage
+    Private _autoLootTab As TabPage
+    Private _levelingTab As TabPage
+    Private _diagnosticsTab As TabPage
 
     Private txtWindowTitle As TextBox
     Private nudLoopMs As NumericUpDown
@@ -84,6 +89,9 @@ Public Class Form1
     Private btnPickLootRejectPoint As Button
     Private btnClearLootRejectPoint As Button
     Private lblLootRejectPoint As Label
+    Private btnPickLootNamePickupPoint As Button
+    Private btnClearLootNamePickupPoint As Button
+    Private lblLootNamePickupPoint As Label
 
     Private NotInheritable Class ChatLanguageOption
         Public Property Label As String
@@ -102,7 +110,15 @@ Public Class Form1
     Private dgvCombat As DataGridView
     Private chkMonsterFilter As CheckBox
     Private chkLootPickup As CheckBox
+    Private chkLootNameAutoPickup As CheckBox
+    Private chkLootNamePickupRestoreCursor As CheckBox
+    Private nudLootNamePickupOffsetX As NumericUpDown
+    Private nudLootNamePickupOffsetY As NumericUpDown
     Private nudLootPickupSeconds As NumericUpDown
+    Private nudLootNamePickupClickDelayMs As NumericUpDown
+    Private nudLootNamePickupFPressCount As NumericUpDown
+    Private nudLootNamePickupFPressGapMs As NumericUpDown
+    Private nudLootNamePickupMouseHoldMs As NumericUpDown
     Private lstMonsterFilter As ListBox
     Private lstLootFilter As ListBox
     Private txtMonsterName As TextBox
@@ -226,8 +242,11 @@ Public Class Form1
     Private _windowMissingNotificationLatched As Boolean = False
     Private _ctrlShiftWasDown As Boolean = False
     Private _isPickingLootRejectPoint As Boolean = False
+    Private _isPickingLootNamePickupPoint As Boolean = False
     Private _lootRejectPointX As Integer = -1
     Private _lootRejectPointY As Integer = -1
+    Private _lootNamePickupPointX As Integer = -1
+    Private _lootNamePickupPointY As Integer = -1
     Private _liteAutoPotHpPointX As Integer = -1
     Private _liteAutoPotHpPointY As Integer = -1
     Private _liteAutoPotMpPointX As Integer = -1
@@ -326,6 +345,17 @@ Public Class Form1
         Public Property LootPickupEnabled As Boolean = False
         Public Property LootPickupSeconds As Decimal = 4D
         Public Property LootNameMatchThresholdPercent As Decimal = 80D
+        Public Property LootNameAutoPickupEnabled As Boolean = False
+        Public Property LootNamePickupOffsetX As Decimal = 0D
+        Public Property LootNamePickupOffsetY As Decimal = 18D
+        Public Property LootNamePickupPointEnabled As Boolean = False
+        Public Property LootNamePickupPointX As Integer = -1
+        Public Property LootNamePickupPointY As Integer = -1
+        Public Property LootNamePickupClickDelayMs As Decimal = 180D
+        Public Property LootNamePickupFPressCount As Decimal = 3D
+        Public Property LootNamePickupFPressGapMs As Decimal = 110D
+        Public Property LootNamePickupMouseHoldMs As Decimal = 35D
+        Public Property LootNamePickupRestoreCursor As Boolean = True
         Public Property LootRejectPointEnabled As Boolean = False
         Public Property LootRejectPointX As Integer = -1
         Public Property LootRejectPointY As Integer = -1
@@ -514,6 +544,30 @@ Public Class Form1
         AddHandler chkMonsterFilter.CheckedChanged, AddressOf LiveConfigChanged
         AddHandler chkLootPickup.CheckedChanged, AddressOf LiveConfigChanged
         AddHandler nudLootPickupSeconds.ValueChanged, AddressOf LiveConfigChanged
+        If chkLootNameAutoPickup IsNot Nothing Then
+            AddHandler chkLootNameAutoPickup.CheckedChanged, AddressOf LiveConfigChanged
+        End If
+        If nudLootNamePickupOffsetX IsNot Nothing Then
+            AddHandler nudLootNamePickupOffsetX.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If nudLootNamePickupOffsetY IsNot Nothing Then
+            AddHandler nudLootNamePickupOffsetY.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If nudLootNamePickupClickDelayMs IsNot Nothing Then
+            AddHandler nudLootNamePickupClickDelayMs.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If nudLootNamePickupFPressCount IsNot Nothing Then
+            AddHandler nudLootNamePickupFPressCount.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If nudLootNamePickupFPressGapMs IsNot Nothing Then
+            AddHandler nudLootNamePickupFPressGapMs.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If nudLootNamePickupMouseHoldMs IsNot Nothing Then
+            AddHandler nudLootNamePickupMouseHoldMs.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If chkLootNamePickupRestoreCursor IsNot Nothing Then
+            AddHandler chkLootNamePickupRestoreCursor.CheckedChanged, AddressOf LiveConfigChanged
+        End If
         If nudPartyAskSeconds IsNot Nothing Then
             AddHandler nudPartyAskSeconds.ValueChanged, AddressOf LiveConfigChanged
         End If
@@ -610,6 +664,30 @@ Public Class Form1
         AddHandler chkMonsterFilter.CheckedChanged, AddressOf PersistListSettingsChanged
         AddHandler chkLootPickup.CheckedChanged, AddressOf PersistListSettingsChanged
         AddHandler nudLootPickupSeconds.ValueChanged, AddressOf PersistListSettingsChanged
+        If chkLootNameAutoPickup IsNot Nothing Then
+            AddHandler chkLootNameAutoPickup.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudLootNamePickupOffsetX IsNot Nothing Then
+            AddHandler nudLootNamePickupOffsetX.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudLootNamePickupOffsetY IsNot Nothing Then
+            AddHandler nudLootNamePickupOffsetY.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudLootNamePickupClickDelayMs IsNot Nothing Then
+            AddHandler nudLootNamePickupClickDelayMs.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudLootNamePickupFPressCount IsNot Nothing Then
+            AddHandler nudLootNamePickupFPressCount.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudLootNamePickupFPressGapMs IsNot Nothing Then
+            AddHandler nudLootNamePickupFPressGapMs.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudLootNamePickupMouseHoldMs IsNot Nothing Then
+            AddHandler nudLootNamePickupMouseHoldMs.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If chkLootNamePickupRestoreCursor IsNot Nothing Then
+            AddHandler chkLootNamePickupRestoreCursor.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
         If chkHighMaxHpSpecial IsNot Nothing Then
             AddHandler chkHighMaxHpSpecial.CheckedChanged, AddressOf PersistListSettingsChanged
         End If
@@ -725,6 +803,7 @@ Public Class Form1
 
     Private Sub LiveConfigChanged(_sender As Object, _e As EventArgs)
         PushLiveConfig()
+        UpdateMainTabIndicators()
     End Sub
 
     Private Sub PersistListSettingsChanged(_sender As Object, _e As EventArgs)
@@ -735,6 +814,7 @@ Public Class Form1
         UpdateNotificationProviderUi()
         PushLiveConfig()
         SavePersistedListState(False)
+        UpdateMainTabIndicators()
     End Sub
 
     Private Sub UpdateNotificationProviderUi()
@@ -802,7 +882,14 @@ Public Class Form1
         }
         Controls.Add(pnlWindowFrame)
 
-        _mainTabs = New TabControl() With {.Dock = DockStyle.Fill, .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold)}
+        _mainTabs = New TabControl() With {
+            .Dock = DockStyle.Fill,
+            .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold),
+            .DrawMode = TabDrawMode.OwnerDrawFixed,
+            .SizeMode = TabSizeMode.Fixed,
+            .ItemSize = New Size(180, 42)
+        }
+        AddHandler _mainTabs.DrawItem, AddressOf MainTabsDrawItem
         AddHandler _mainTabs.SelectedIndexChanged, AddressOf MainTabsSelectedIndexChanged
         pnlWindowFrame.Controls.Add(_mainTabs)
 
@@ -816,13 +903,20 @@ Public Class Form1
 
         _liteTab = BuildLiteTab()
         _combatTab = BuildCombatTab()
+        _visionTab = BuildVisionTab()
+        _autoPotTab = BuildAutoPotTab()
         _mainTabs.TabPages.Add(_liteTab)
         _mainTabs.TabPages.Add(_combatTab)
-        _mainTabs.TabPages.Add(BuildVisionTab())
-        _mainTabs.TabPages.Add(BuildAutoPotTab())
-        _mainTabs.TabPages.Add(BuildLevelingTab())
-        _mainTabs.TabPages.Add(BuildDiagnosticsTab())
+        _mainTabs.TabPages.Add(_visionTab)
+        _mainTabs.TabPages.Add(_autoPotTab)
+        _autoLootTab = BuildAutoLootTab()
+        _mainTabs.TabPages.Add(_autoLootTab)
+        _levelingTab = BuildLevelingTab()
+        _mainTabs.TabPages.Add(_levelingTab)
+        _diagnosticsTab = BuildDiagnosticsTab()
+        _mainTabs.TabPages.Add(_diagnosticsTab)
         _mainTabs.SelectedTab = _combatTab
+        UpdateMainTabIndicators()
     End Sub
 
     Private Function BuildLiteTab() As TabPage
@@ -873,6 +967,7 @@ Public Class Form1
 
     Private Sub MainTabsSelectedIndexChanged(sender As Object, e As EventArgs)
         UpdateEditionUiState(True)
+        UpdateMainTabIndicators()
     End Sub
 
     Private Sub UpdateEditionUiState(logChange As Boolean)
@@ -899,6 +994,141 @@ Public Class Form1
             AppendLog($"Edition tab switched to {_edition}. Running bot remains unchanged until Start is pressed.")
         End If
     End Sub
+
+    Private Sub MainTabsDrawItem(sender As Object, e As DrawItemEventArgs)
+        If _mainTabs Is Nothing OrElse e.Index < 0 OrElse e.Index >= _mainTabs.TabPages.Count Then
+            Return
+        End If
+
+        Dim tab As TabPage = _mainTabs.TabPages(e.Index)
+        Dim isSelected As Boolean = (e.State And DrawItemState.Selected) = DrawItemState.Selected
+        Dim isActive As Boolean = IsMainTabActive(tab)
+        Dim backColor As Color = GetMainTabBackColor(isActive, isSelected)
+        Dim foreColor As Color = If(isActive OrElse isSelected, Color.White, Color.Gainsboro)
+        Dim bounds As Rectangle = e.Bounds
+
+        Using backgroundBrush As New SolidBrush(backColor)
+            e.Graphics.FillRectangle(backgroundBrush, bounds)
+        End Using
+
+        Using borderPen As New Pen(Color.FromArgb(28, 28, 28))
+            e.Graphics.DrawRectangle(borderPen, bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1)
+        End Using
+
+        Dim textBounds As Rectangle = Rectangle.Inflate(bounds, -8, -3)
+        TextRenderer.DrawText(e.Graphics, tab.Text, e.Font, textBounds, foreColor, TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis)
+    End Sub
+
+    Private Function GetMainTabBackColor(isActive As Boolean, isSelected As Boolean) As Color
+        If isActive Then
+            Return If(isSelected, Color.FromArgb(47, 154, 87), Color.FromArgb(34, 118, 68))
+        End If
+
+        Return If(isSelected, Color.FromArgb(92, 92, 92), Color.FromArgb(64, 64, 64))
+    End Function
+
+    Private Sub UpdateMainTabIndicators()
+        If _mainTabs IsNot Nothing AndAlso Not _mainTabs.IsDisposed Then
+            _mainTabs.Invalidate()
+        End If
+    End Sub
+
+    Private Function IsMainTabActive(tab As TabPage) As Boolean
+        If tab Is Nothing Then
+            Return False
+        End If
+
+        If tab Is _liteTab Then
+            Return IsLiteTabActive()
+        End If
+        If tab Is _combatTab Then
+            Return IsCombatTabActive()
+        End If
+        If tab Is _visionTab Then
+            Return IsVisionTabActive()
+        End If
+        If tab Is _autoPotTab Then
+            Return IsAutoPotTabActive()
+        End If
+        If tab Is _autoLootTab Then
+            Return IsAutoLootTabActive()
+        End If
+        If tab Is _levelingTab Then
+            Return IsLevelingTabActive()
+        End If
+
+        Return False
+    End Function
+
+    Private Function IsLiteTabActive() As Boolean
+        If _liteEngine.IsRunning() Then
+            Return True
+        End If
+
+        For Each entry In _liteActionEnabledChecks
+            If entry.Value IsNot Nothing AndAlso entry.Value.Checked Then
+                Return True
+            End If
+        Next
+
+        Return (chkLiteAutoPots IsNot Nothing AndAlso chkLiteAutoPots.Checked) OrElse _litePartyAutoAccept OrElse _litePartyAskEnabled
+    End Function
+
+    Private Function IsCombatTabActive() As Boolean
+        Return _fullEngine.IsRunning() OrElse _partyAutoAccept OrElse _partyAskEnabled OrElse HasEnabledCombatActions()
+    End Function
+
+    Private Function IsVisionTabActive() As Boolean
+        Return (chkChatTranslationEnabled IsNot Nothing AndAlso chkChatTranslationEnabled.Checked) OrElse
+               (_overlayForm IsNot Nothing AndAlso Not _overlayForm.IsDisposed AndAlso _overlayForm.Visible)
+    End Function
+
+    Private Function IsAutoPotTabActive() As Boolean
+        If GetNotificationProviderName() = NotificationProviderDiscord Then
+            Return Not String.IsNullOrWhiteSpace(If(txtDiscordGlobalWebhookUrl IsNot Nothing, txtDiscordGlobalWebhookUrl.Text, "")) OrElse
+                   Not String.IsNullOrWhiteSpace(If(txtDiscordItemWebhookUrl IsNot Nothing, txtDiscordItemWebhookUrl.Text, "")) OrElse
+                   Not String.IsNullOrWhiteSpace(If(txtDiscordStatsWebhookUrl IsNot Nothing, txtDiscordStatsWebhookUrl.Text, ""))
+        End If
+
+        Return Not String.IsNullOrWhiteSpace(If(txtNtfyTopic IsNot Nothing, txtNtfyTopic.Text, "")) OrElse
+               Not String.IsNullOrWhiteSpace(If(txtItemNtfyTopic IsNot Nothing, txtItemNtfyTopic.Text, "")) OrElse
+               Not String.IsNullOrWhiteSpace(If(txtStatsNtfyTopic IsNot Nothing, txtStatsNtfyTopic.Text, ""))
+    End Function
+
+    Private Function IsAutoLootTabActive() As Boolean
+        Return _lootScannerEnabled OrElse
+               (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked) OrElse
+               (chkLootNameAutoPickup IsNot Nothing AndAlso chkLootNameAutoPickup.Checked)
+    End Function
+
+    Private Function IsLevelingTabActive() As Boolean
+        Return (chkLevelingAgent IsNot Nothing AndAlso chkLevelingAgent.Checked) OrElse
+               (chkNavigationEnabled IsNot Nothing AndAlso chkNavigationEnabled.Checked) OrElse
+               (chkTravelPreview IsNot Nothing AndAlso chkTravelPreview.Checked) OrElse
+               (chkTravelExecute IsNot Nothing AndAlso chkTravelExecute.Checked) OrElse
+               (chkRouteRecording IsNot Nothing AndAlso chkRouteRecording.Checked)
+    End Function
+
+    Private Function HasEnabledCombatActions() As Boolean
+        If dgvCombat Is Nothing Then
+            Return False
+        End If
+
+        For Each row As DataGridViewRow In dgvCombat.Rows
+            If row Is Nothing OrElse row.IsNewRow Then
+                Continue For
+            End If
+
+            Try
+                If Convert.ToBoolean(row.Cells("Enabled").Value) Then
+                    Return True
+                End If
+            Catch
+            End Try
+        Next
+
+        Return False
+    End Function
 
     Private Function BuildLiteProcessPanel() As Control
         Dim panel As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 4, .Padding = New Padding(0, 0, 10, 0), .Tag = "lite-scope"}
@@ -1303,6 +1533,7 @@ Public Class Form1
 
         PushLiveConfig()
         SavePersistedListState(False)
+        UpdateMainTabIndicators()
     End Sub
 
     Private Shared Function GetLiteDefaultRole(keyName As String) As String
@@ -1346,6 +1577,7 @@ Public Class Form1
         Finally
             _liteSyncInProgress = False
         End Try
+        UpdateMainTabIndicators()
     End Sub
 
     Private Function GetPersistedLiteActions() As List(Of PersistedCombatAction)
@@ -1420,6 +1652,7 @@ Public Class Form1
         If btnLiteSelectMpLevel IsNot Nothing Then
             btnLiteSelectMpLevel.Text = If(_pendingLitePointCapture = LitePointCaptureKind.Mp, "RIGHT click Mana bar...", "Select Mana level")
         End If
+        UpdateMainTabIndicators()
     End Sub
 
     Private Sub LoadPresetClicked(sender As Object, e As EventArgs)
@@ -1750,13 +1983,11 @@ Public Class Form1
         nudStatsNtfyIntervalMinutes = New NumericUpDown() With {.Minimum = 1D, .Maximum = 1440D, .DecimalPlaces = 0, .Value = 30D, .Dock = DockStyle.Left, .Width = 100}
         notifyLayout.Controls.Add(nudStatsNtfyIntervalMinutes, 1, 7)
 
-        notifyLayout.Controls.Add(New Label() With {.Text = "Loot Name Match %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 8)
-        nudLootNameMatchThreshold = New NumericUpDown() With {.Minimum = 50, .Maximum = 100, .Value = DefaultLootNameMatchThresholdPercent, .Dock = DockStyle.Fill}
-        notifyLayout.Controls.Add(nudLootNameMatchThreshold, 1, 8)
+        notifyLayout.Controls.Add(New Label() With {.Text = "Loot Matching", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 8)
+        notifyLayout.Controls.Add(New Label() With {.Text = "Moved to Auto-Loot tab", .Dock = DockStyle.Fill, .ForeColor = Color.LightSteelBlue, .TextAlign = ContentAlignment.MiddleLeft}, 1, 8)
 
         Dim note As New Label() With {
-            .Text = "Loot Name Match % controls fuzzy OCR matching for Loot Filter names. Use a higher value for stricter matching and a lower value when OCR is inconsistent." & Environment.NewLine &
-                    "Use provider 'discord' with one webhook per alert stream (global, items, stats), or provider 'ntfy' with the topic fields below." & Environment.NewLine &
+            .Text = "Use provider 'discord' with one webhook per alert stream (global, items, stats), or provider 'ntfy' with the topic fields below." & Environment.NewLine &
                     "Use role 'max_health' in Combat Skills if you want the max-health potion threshold controlled here. HP alarm only triggers at HP=0." & Environment.NewLine &
                     "Stats alerts send Prana/EXP %, EXP/hr, Rupiahs total, and Rupiahs/hr on the interval you choose while the bot is running.",
             .Dock = DockStyle.Fill,
@@ -1880,6 +2111,131 @@ Public Class Form1
         }
         layout.Controls.Add(foot, 0, 1)
         layout.SetColumnSpan(foot, 2)
+        group.Controls.Add(layout)
+        Return group
+    End Function
+
+    Private Function BuildAutoLootTab() As TabPage
+        Dim tab As New TabPage("Auto-Loot") With {.BackColor = Color.FromArgb(20, 20, 20)}
+        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1, .Padding = New Padding(10)}
+        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 46.0F))
+        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 54.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+
+        Dim left As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
+        left.RowStyles.Add(New RowStyle(SizeType.Percent, 58.0F))
+        left.RowStyles.Add(New RowStyle(SizeType.Percent, 42.0F))
+        left.Controls.Add(BuildLootFilterGroup(), 0, 0)
+        left.Controls.Add(BuildLootScanSettingsGroup(), 0, 1)
+
+        Dim right As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 1}
+        right.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        right.Controls.Add(BuildLootNameAutoPickupGroup(), 0, 0)
+
+        root.Controls.Add(left, 0, 0)
+        root.Controls.Add(right, 1, 0)
+        tab.Controls.Add(root)
+        Return tab
+    End Function
+
+    Private Function BuildLootScanSettingsGroup() As GroupBox
+        Dim group As New GroupBox() With {.Text = "Loot Scan Matching", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 5}
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 180.0F))
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 44.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 24.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+
+        layout.Controls.Add(New Label() With {.Text = "Loot Name Match %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
+        nudLootNameMatchThreshold = New NumericUpDown() With {.Minimum = 50, .Maximum = 100, .Value = DefaultLootNameMatchThresholdPercent, .Dock = DockStyle.Fill}
+        layout.Controls.Add(nudLootNameMatchThreshold, 1, 0)
+
+        layout.Controls.Add(New Label() With {.Text = "Loot Scan Area", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
+        layout.Controls.Add(New Label() With {.Text = "Configured in Vision tab", .Dock = DockStyle.Fill, .ForeColor = Color.LightSteelBlue, .TextAlign = ContentAlignment.MiddleLeft}, 1, 1)
+
+        btnLootScanner = New Button() With {
+            .Text = If(_lootScannerEnabled, "Loot Scanner (Alt): ON", "Loot Scanner (Alt): OFF"),
+            .Dock = DockStyle.Left,
+            .Width = 220,
+            .Height = 34,
+            .BackColor = If(_lootScannerEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
+            .ForeColor = Color.White
+        }
+        AddHandler btnLootScanner.Click, AddressOf ToggleLootScannerClicked
+        layout.Controls.Add(btnLootScanner, 0, 2)
+        layout.SetColumnSpan(btnLootScanner, 2)
+
+        Dim note As New Label() With {
+            .Text = "Loot Scanner (Alt) reads the loot text from the Vision tab scan area. When an allowed loot name matches here, the pickup-by-name sequence can click the game window on a user-selected client point, wait, and then press F multiple times.",
+            .Dock = DockStyle.Fill,
+            .ForeColor = Color.LightSteelBlue,
+            .TextAlign = ContentAlignment.TopLeft
+        }
+        layout.Controls.Add(note, 0, 4)
+        layout.SetColumnSpan(note, 2)
+        group.Controls.Add(layout)
+        Return group
+    End Function
+
+    Private Function BuildLootNameAutoPickupGroup() As GroupBox
+        Dim group As New GroupBox() With {.Text = "Pickup By Name (Dynamic Label Click)", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 9}
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 220.0F))
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+
+        chkLootNameAutoPickup = New CheckBox() With {.Text = "Enable pickup by matched loot name", .Dock = DockStyle.Fill, .Checked = False}
+        layout.Controls.Add(chkLootNameAutoPickup, 0, 0)
+        layout.SetColumnSpan(chkLootNameAutoPickup, 2)
+
+        layout.Controls.Add(New Label() With {.Text = "Click Offset X", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
+        nudLootNamePickupOffsetX = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = -300, .Maximum = 300, .Increment = 1, .Value = 0, .Width = 120}
+        layout.Controls.Add(nudLootNamePickupOffsetX, 1, 1)
+
+        layout.Controls.Add(New Label() With {.Text = "Click Offset Y", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
+        nudLootNamePickupOffsetY = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = -300, .Maximum = 300, .Increment = 1, .Value = 18, .Width = 120}
+        layout.Controls.Add(nudLootNamePickupOffsetY, 1, 2)
+
+        layout.Controls.Add(New Label() With {.Text = "Wait Before F (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 3)
+        nudLootNamePickupClickDelayMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0, .Maximum = 5000, .Increment = 10, .Value = 180, .Width = 120}
+        layout.Controls.Add(nudLootNamePickupClickDelayMs, 1, 3)
+
+        layout.Controls.Add(New Label() With {.Text = "Mouse Hold (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 4)
+        nudLootNamePickupMouseHoldMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0, .Maximum = 1000, .Increment = 5, .Value = 35, .Width = 120}
+        layout.Controls.Add(nudLootNamePickupMouseHoldMs, 1, 4)
+
+        layout.Controls.Add(New Label() With {.Text = "Press F Count", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 5)
+        nudLootNamePickupFPressCount = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1, .Maximum = 10, .Value = 3, .Width = 120}
+        layout.Controls.Add(nudLootNamePickupFPressCount, 1, 5)
+
+        layout.Controls.Add(New Label() With {.Text = "F Gap (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 6)
+        nudLootNamePickupFPressGapMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0, .Maximum = 2000, .Increment = 10, .Value = 110, .Width = 120}
+        layout.Controls.Add(nudLootNamePickupFPressGapMs, 1, 6)
+
+        chkLootNamePickupRestoreCursor = New CheckBox() With {.Text = "Restore mouse cursor after click", .Dock = DockStyle.Fill, .Checked = True}
+        layout.Controls.Add(chkLootNamePickupRestoreCursor, 0, 7)
+        layout.SetColumnSpan(chkLootNamePickupRestoreCursor, 2)
+
+        Dim note As New Label() With {
+            .Text = "The bot now uses the matched loot label position from OCR. It clicks at the label's bottom-center plus your X/Y offsets, then waits and presses F. Use Offset Y to move the click lower than the text if the item is on the ground below the label.",
+            .Dock = DockStyle.Bottom,
+            .ForeColor = Color.LightSteelBlue,
+            .TextAlign = ContentAlignment.TopLeft,
+            .AutoSize = False,
+            .Height = 68
+        }
+        layout.Controls.Add(note, 0, 8)
+        layout.SetColumnSpan(note, 2)
         group.Controls.Add(layout)
         Return group
     End Function
@@ -2077,11 +2433,9 @@ Public Class Form1
     End Function
 
     Private Function BuildFiltersPanel() As Control
-        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1, .Margin = New Padding(0)}
-        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
-        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
+        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 1, .Margin = New Padding(0)}
+        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
         root.Controls.Add(BuildMonsterFilterGroup(), 0, 0)
-        root.Controls.Add(BuildLootFilterGroup(), 1, 0)
         Return root
     End Function
 
@@ -2221,18 +2575,9 @@ Public Class Form1
             .BackColor = If(_partyAskEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
             .ForeColor = Color.White
         }
-        btnLootScanner = New Button() With {
-            .Text = If(_lootScannerEnabled, "Loot Scanner (Alt): ON", "Loot Scanner (Alt): OFF"),
-            .Top = 764,
-            .Left = 8,
-            .Width = 210,
-            .Height = 38,
-            .BackColor = If(_lootScannerEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
-            .ForeColor = Color.White
-        }
         btnHelp = New Button() With {
             .Text = "Help (EN/ES/FIL)",
-            .Top = 814,
+            .Top = 764,
             .Left = 8,
             .Width = 210,
             .Height = 38,
@@ -2246,8 +2591,7 @@ Public Class Form1
         AddHandler btnBypassStuck.Click, AddressOf ToggleStuckTargetBypassClicked
         AddHandler btnRetargetNow.Click, AddressOf ManualRetargetClicked
         AddHandler btnPartyAutoAccept.Click, AddressOf TogglePartyAutoAcceptClicked
-                AddHandler btnPartyAsk.Click, AddressOf TogglePartyAskClicked
-        AddHandler btnLootScanner.Click, AddressOf ToggleLootScannerClicked
+        AddHandler btnPartyAsk.Click, AddressOf TogglePartyAskClicked
         AddHandler txtPartyAskText.TextChanged, AddressOf PartyAskTextChanged
         AddHandler btnHelp.Click, AddressOf HelpClicked
         panel.Controls.Add(lblFullEdition)
@@ -2271,8 +2615,7 @@ Public Class Form1
         panel.Controls.Add(nudPartyAskSeconds)
         panel.Controls.Add(lblPartyAskText)
         panel.Controls.Add(txtPartyAskText)
-                panel.Controls.Add(btnPartyAsk)
-        panel.Controls.Add(btnLootScanner)
+        panel.Controls.Add(btnPartyAsk)
         panel.Controls.Add(btnHelp)
         Return panel
     End Function
@@ -2406,6 +2749,33 @@ Public Class Form1
         Next
         chkLootPickup.Checked = False
         nudLootPickupSeconds.Value = 1D
+        If chkLootNameAutoPickup IsNot Nothing Then
+            chkLootNameAutoPickup.Checked = False
+        End If
+        If nudLootNamePickupOffsetX IsNot Nothing Then
+            nudLootNamePickupOffsetX.Value = 0D
+        End If
+        If nudLootNamePickupOffsetY IsNot Nothing Then
+            nudLootNamePickupOffsetY.Value = 18D
+        End If
+        If nudLootNamePickupClickDelayMs IsNot Nothing Then
+            nudLootNamePickupClickDelayMs.Value = 180D
+        End If
+        If nudLootNamePickupFPressCount IsNot Nothing Then
+            nudLootNamePickupFPressCount.Value = 3D
+        End If
+        If nudLootNamePickupFPressGapMs IsNot Nothing Then
+            nudLootNamePickupFPressGapMs.Value = 110D
+        End If
+        If nudLootNamePickupMouseHoldMs IsNot Nothing Then
+            nudLootNamePickupMouseHoldMs.Value = 35D
+        End If
+        If chkLootNamePickupRestoreCursor IsNot Nothing Then
+            chkLootNamePickupRestoreCursor.Checked = True
+        End If
+        _lootNamePickupPointX = -1
+        _lootNamePickupPointY = -1
+        _isPickingLootNamePickupPoint = False
         nudAutoPotHp.Value = 1D
         nudAutoPotMp.Value = 1D
         nudAlarmVolume.Value = 1D
@@ -2435,6 +2805,7 @@ Public Class Form1
         End If
         _alarmVolumePercent = CInt(nudAlarmVolume.Value)
         UpdateAttackButtonAppearance(False)
+        UpdateLootNamePickupPointUi()
         UpdateNotificationProviderUi()
         UpdatePromptAutoAcceptButton()
         UpdatePartyAskButton()
@@ -2593,16 +2964,18 @@ Public Class Form1
         End If
     End Sub
 
-    Private Sub SnapshotClicked(sender As Object, e As EventArgs)
+    Private Function CaptureSnapshotIntoPreview(Optional logWhenUnavailable As Boolean = True) As Boolean
         PushLiveConfig()
         Dim bmp As Bitmap = _fullEngine.CaptureSnapshot()
         If bmp Is Nothing Then
-            If _fullEngine.IsRunning() Then
-                AppendLog("Snapshot unavailable yet. Wait for the next Vision loop frame.")
-            Else
-                AppendLog("Snapshot failed. Window not found or capture failed.")
+            If logWhenUnavailable Then
+                If _fullEngine.IsRunning() Then
+                    AppendLog("Snapshot unavailable yet. Wait for the next Vision loop frame.")
+                Else
+                    AppendLog("Snapshot failed. Window not found or capture failed.")
+                End If
             End If
-            Return
+            Return False
         End If
 
         Dim oldImage = picSnapshot.Image
@@ -2611,16 +2984,32 @@ Public Class Form1
             oldImage.Dispose()
         End If
         AppendLog("Snapshot captured.")
+        Return True
+    End Function
+
+    Private Sub SnapshotClicked(sender As Object, e As EventArgs)
+        CaptureSnapshotIntoPreview(True)
+    End Sub
+
+    Private Sub FocusVisionSnapshotForPick(pickDescription As String)
+        If _mainTabs IsNot Nothing AndAlso _visionTab IsNot Nothing Then
+            _mainTabs.SelectedTab = _visionTab
+        End If
+
+        Dim captured As Boolean = CaptureSnapshotIntoPreview(False)
+        If captured Then
+            AppendLog($"{pickDescription} mode enabled. Click the target point on Snapshot in the Vision tab.")
+        Else
+            AppendLog($"{pickDescription} mode enabled. Snapshot is not available yet. Capture Snapshot in the Vision tab, then click the target point.")
+        End If
     End Sub
 
     Private Sub PickLootRejectPointClicked(sender As Object, e As EventArgs)
         _isPickingLootRejectPoint = True
+        _isPickingLootNamePickupPoint = False
+        UpdateLootNamePickupPointUi()
         UpdateLootRejectPointUi()
-        If picSnapshot Is Nothing OrElse picSnapshot.Image Is Nothing Then
-            AppendLog("Pick mode enabled. Capture Snapshot first, then click the reject button point.")
-            Return
-        End If
-        AppendLog("Pick mode enabled. Click the reject button point on Snapshot.")
+        FocusVisionSnapshotForPick("Loot reject")
     End Sub
 
     Private Sub ClearLootRejectPointClicked(sender As Object, e As EventArgs)
@@ -2633,8 +3022,26 @@ Public Class Form1
         AppendLog("Loot reject click point cleared.")
     End Sub
 
+    Private Sub PickLootNamePickupPointClicked(sender As Object, e As EventArgs)
+        _isPickingLootNamePickupPoint = True
+        _isPickingLootRejectPoint = False
+        UpdateLootRejectPointUi()
+        UpdateLootNamePickupPointUi()
+        FocusVisionSnapshotForPick("Loot pickup-point")
+    End Sub
+
+    Private Sub ClearLootNamePickupPointClicked(sender As Object, e As EventArgs)
+        _isPickingLootNamePickupPoint = False
+        _lootNamePickupPointX = -1
+        _lootNamePickupPointY = -1
+        UpdateLootNamePickupPointUi()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        AppendLog("Loot name auto-pickup point cleared.")
+    End Sub
+
     Private Sub SnapshotMouseClick(sender As Object, e As MouseEventArgs)
-        If Not _isPickingLootRejectPoint Then
+        If Not _isPickingLootRejectPoint AndAlso Not _isPickingLootNamePickupPoint Then
             Return
         End If
         If picSnapshot Is Nothing OrElse picSnapshot.Image Is Nothing Then
@@ -2648,13 +3055,24 @@ Public Class Form1
             Return
         End If
 
-        _lootRejectPointX = mapped.X
-        _lootRejectPointY = mapped.Y
-        _isPickingLootRejectPoint = False
-        UpdateLootRejectPointUi()
+        If _isPickingLootRejectPoint Then
+            _lootRejectPointX = mapped.X
+            _lootRejectPointY = mapped.Y
+            _isPickingLootRejectPoint = False
+            UpdateLootRejectPointUi()
+            PushLiveConfig()
+            SavePersistedListState(False)
+            AppendLog($"Loot reject point set: x={_lootRejectPointX}, y={_lootRejectPointY}.")
+            Return
+        End If
+
+        _lootNamePickupPointX = mapped.X
+        _lootNamePickupPointY = mapped.Y
+        _isPickingLootNamePickupPoint = False
+        UpdateLootNamePickupPointUi()
         PushLiveConfig()
         SavePersistedListState(False)
-        AppendLog($"Loot reject point set: x={_lootRejectPointX}, y={_lootRejectPointY}.")
+        AppendLog($"Loot name pickup point set: x={_lootNamePickupPointX}, y={_lootNamePickupPointY}.")
     End Sub
 
     Private Shared Function TryMapPictureBoxPointToImage(picture As PictureBox, clientPoint As System.Drawing.Point, ByRef imagePoint As System.Drawing.Point) As Boolean
@@ -2708,7 +3126,30 @@ Public Class Form1
         End If
 
         If picSnapshot IsNot Nothing Then
-            picSnapshot.Cursor = If(_isPickingLootRejectPoint, Cursors.Cross, Cursors.Default)
+            picSnapshot.Cursor = If(_isPickingLootRejectPoint OrElse _isPickingLootNamePickupPoint, Cursors.Cross, Cursors.Default)
+        End If
+    End Sub
+
+    Private Sub UpdateLootNamePickupPointUi()
+        If lblLootNamePickupPoint IsNot Nothing Then
+            If _lootNamePickupPointX >= 0 AndAlso _lootNamePickupPointY >= 0 Then
+                lblLootNamePickupPoint.Text = $"Fixed Click Point: {_lootNamePickupPointX}, {_lootNamePickupPointY}"
+            Else
+                lblLootNamePickupPoint.Text = "Fixed Click Point: (not set)"
+            End If
+        End If
+
+        If btnPickLootNamePickupPoint IsNot Nothing Then
+            btnPickLootNamePickupPoint.Text = If(_isPickingLootNamePickupPoint, "Click Snapshot...", "Pick Fixed Point")
+            btnPickLootNamePickupPoint.BackColor = If(_isPickingLootNamePickupPoint, Color.FromArgb(175, 110, 30), Color.FromArgb(45, 95, 140))
+        End If
+
+        If btnClearLootNamePickupPoint IsNot Nothing Then
+            btnClearLootNamePickupPoint.Enabled = (_lootNamePickupPointX >= 0 AndAlso _lootNamePickupPointY >= 0)
+        End If
+
+        If picSnapshot IsNot Nothing Then
+            picSnapshot.Cursor = If(_isPickingLootRejectPoint OrElse _isPickingLootNamePickupPoint, Cursors.Cross, Cursors.Default)
         End If
     End Sub
 
@@ -3065,6 +3506,7 @@ Public Class Form1
         End If
         PushLiveConfig()
         SavePersistedListState(False)
+        UpdateMainTabIndicators()
         AppendLog(If(If(sender Is btnLitePartyAutoAccept, _litePartyAutoAccept, _partyAutoAccept), "Party/resurrection auto-accept enabled.", "Party/resurrection auto-accept disabled."))
     End Sub
 
@@ -3094,14 +3536,18 @@ Public Class Form1
         End If
         PushLiveConfig()
         SavePersistedListState(False)
+        UpdateMainTabIndicators()
     End Sub
 
     Private Sub ToggleLootScannerClicked(sender As Object, e As EventArgs)
         _lootScannerEnabled = Not _lootScannerEnabled
-        btnLootScanner.Text = If(_lootScannerEnabled, "Loot Scanner (Alt): ON", "Loot Scanner (Alt): OFF")
-        btnLootScanner.BackColor = If(_lootScannerEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+        If btnLootScanner IsNot Nothing Then
+            btnLootScanner.Text = If(_lootScannerEnabled, "Loot Scanner (Alt): ON", "Loot Scanner (Alt): OFF")
+            btnLootScanner.BackColor = If(_lootScannerEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+        End If
         PushLiveConfig()
         SavePersistedListState(False)
+        UpdateMainTabIndicators()
     End Sub
 
     Private Sub UpdatePartyAskButton()
@@ -3221,7 +3667,7 @@ Public Class Form1
             "4) COMBAT TAB - LOOT FILTER",
             "- Loot pickup toggle and interval seconds.",
             "- Add / Remove loot names to allow-list.",
-            "- Loot Name Match % (Auto-Pot tab) sets fuzzy OCR matching threshold for loot names (default 80%).",
+            "- Loot Name Match % (Auto-Loot tab) sets fuzzy OCR matching threshold for loot names (default 80%).",
             "- Loot reject point can be picked from snapshot to click reject button.",
             "",
             "5) CENTER CONTROL PANEL",
@@ -3347,7 +3793,7 @@ Public Class Form1
             "4) FILTRO DE LOOT",
             "- Activar loot y definir intervalo en segundos.",
             "- Lista de nombres permitidos para recoger.",
-            "- Loot Name Match % (pestana Auto-Pot) define el umbral de coincidencia OCR difusa para loot (80% por defecto).",
+            "- Loot Name Match % (pestana Auto-Loot) define el umbral de coincidencia OCR difusa para loot (80% por defecto).",
             "- Punto de rechazo de loot configurable desde snapshot.",
             "",
             "5) PANEL CENTRAL",
@@ -3462,7 +3908,7 @@ Public Class Form1
             "4) LOOT FILTER",
             "- Toggle ng loot pickup at interval in seconds.",
             "- Allowed loot names list.",
-            "- Loot Name Match % (Auto-Pot tab) sets fuzzy OCR match threshold for loot names (default 80%).",
+            "- Loot Name Match % (Auto-Loot tab) sets fuzzy OCR match threshold for loot names (default 80%).",
             "- Loot reject point na puwedeng piliin mula sa snapshot image.",
             "",
             "5) CENTER CONTROL PANEL",
@@ -3567,6 +4013,7 @@ Public Class Form1
             _overlayForm.Close()
             _overlayForm = Nothing
             btnOverlayToggle.Text = "Show Overlay"
+            UpdateMainTabIndicators()
             AppendLog("Calibration overlay hidden.")
             Return
         End If
@@ -3582,9 +4029,11 @@ Public Class Form1
                 If btnOverlayToggle IsNot Nothing AndAlso Not btnOverlayToggle.IsDisposed Then
                     btnOverlayToggle.Text = "Show Overlay"
                 End If
+                UpdateMainTabIndicators()
             End Sub
         _overlayForm.Show(Me)
         btnOverlayToggle.Text = "Hide Overlay"
+        UpdateMainTabIndicators()
         AppendLog("Calibration overlay shown.")
     End Sub
 
@@ -3711,6 +4160,8 @@ Public Class Form1
             $"LastStatsNtfyUtc: {If(_lastStatsNotificationUtc = DateTime.MinValue, "n/a", _lastStatsNotificationUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"))}{Environment.NewLine}" &
             $"LootPickupEnabled: {If(chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked, "True", "False")}{Environment.NewLine}" &
             $"LootPickupIntervalSec: {If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value.ToString(), "4")}{Environment.NewLine}" &
+            $"LootNameAutoPickupEnabled: {If(chkLootNameAutoPickup IsNot Nothing AndAlso chkLootNameAutoPickup.Checked, "True", "False")}{Environment.NewLine}" &
+            $"LootNamePickupPoint: {If(_lootNamePickupPointX >= 0 AndAlso _lootNamePickupPointY >= 0, _lootNamePickupPointX.ToString() & "," & _lootNamePickupPointY.ToString(), "not set")}{Environment.NewLine}" &
             $"LootNameMatchThreshold%: {If(nudLootNameMatchThreshold IsNot Nothing, nudLootNameMatchThreshold.Value.ToString(), DefaultLootNameMatchThresholdPercent.ToString())}{Environment.NewLine}" &
             $"LootRejectPoint: {If(_lootRejectPointX >= 0 AndAlso _lootRejectPointY >= 0, _lootRejectPointX.ToString() & "," & _lootRejectPointY.ToString(), "not set")}{Environment.NewLine}" &
             $"AlarmVolume%: {_alarmVolumePercent}{Environment.NewLine}" &
@@ -4582,6 +5033,16 @@ Public Class Form1
         cfg.LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked)
         cfg.LootPickupIntervalMs = CInt(Math.Round(CDbl(If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value, 4D)) * 1000.0))
         cfg.LootNameMatchThresholdPercent = CInt(If(nudLootNameMatchThreshold IsNot Nothing, nudLootNameMatchThreshold.Value, CDec(DefaultLootNameMatchThresholdPercent)))
+        cfg.LootNameAutoPickupEnabled = (chkLootNameAutoPickup IsNot Nothing AndAlso chkLootNameAutoPickup.Checked)
+        cfg.LootNamePickupOffsetX = CInt(If(nudLootNamePickupOffsetX IsNot Nothing, nudLootNamePickupOffsetX.Value, 0D))
+        cfg.LootNamePickupOffsetY = CInt(If(nudLootNamePickupOffsetY IsNot Nothing, nudLootNamePickupOffsetY.Value, 18D))
+        cfg.LootNamePickupPointX = _lootNamePickupPointX
+        cfg.LootNamePickupPointY = _lootNamePickupPointY
+        cfg.LootNamePickupClickDelayMs = CInt(If(nudLootNamePickupClickDelayMs IsNot Nothing, nudLootNamePickupClickDelayMs.Value, 180D))
+        cfg.LootNamePickupFPressCount = CInt(If(nudLootNamePickupFPressCount IsNot Nothing, nudLootNamePickupFPressCount.Value, 3D))
+        cfg.LootNamePickupFPressGapMs = CInt(If(nudLootNamePickupFPressGapMs IsNot Nothing, nudLootNamePickupFPressGapMs.Value, 110D))
+        cfg.LootNamePickupMouseHoldMs = CInt(If(nudLootNamePickupMouseHoldMs IsNot Nothing, nudLootNamePickupMouseHoldMs.Value, 35D))
+        cfg.LootNamePickupRestoreCursor = (chkLootNamePickupRestoreCursor Is Nothing OrElse chkLootNamePickupRestoreCursor.Checked)
         cfg.LootPickupVerifyDelayMs = 80
         cfg.LootRejectClickEnabled = (_lootRejectPointX >= 0 AndAlso _lootRejectPointY >= 0)
         cfg.LootRejectPointX = _lootRejectPointX
@@ -5015,6 +5476,37 @@ Public Class Form1
                 Dim boundedLootMatch As Decimal = Math.Max(nudLootNameMatchThreshold.Minimum, Math.Min(nudLootNameMatchThreshold.Maximum, state.LootNameMatchThresholdPercent))
                 nudLootNameMatchThreshold.Value = boundedLootMatch
             End If
+            If chkLootNameAutoPickup IsNot Nothing Then
+                chkLootNameAutoPickup.Checked = state.LootNameAutoPickupEnabled
+            End If
+            If state.LootNamePickupPointEnabled Then
+                _lootNamePickupPointX = Math.Max(0, state.LootNamePickupPointX)
+                _lootNamePickupPointY = Math.Max(0, state.LootNamePickupPointY)
+            Else
+                _lootNamePickupPointX = -1
+                _lootNamePickupPointY = -1
+            End If
+            If nudLootNamePickupOffsetX IsNot Nothing Then
+                nudLootNamePickupOffsetX.Value = Math.Max(nudLootNamePickupOffsetX.Minimum, Math.Min(nudLootNamePickupOffsetX.Maximum, state.LootNamePickupOffsetX))
+            End If
+            If nudLootNamePickupOffsetY IsNot Nothing Then
+                nudLootNamePickupOffsetY.Value = Math.Max(nudLootNamePickupOffsetY.Minimum, Math.Min(nudLootNamePickupOffsetY.Maximum, state.LootNamePickupOffsetY))
+            End If
+            If nudLootNamePickupClickDelayMs IsNot Nothing Then
+                nudLootNamePickupClickDelayMs.Value = Math.Max(nudLootNamePickupClickDelayMs.Minimum, Math.Min(nudLootNamePickupClickDelayMs.Maximum, state.LootNamePickupClickDelayMs))
+            End If
+            If nudLootNamePickupFPressCount IsNot Nothing Then
+                nudLootNamePickupFPressCount.Value = Math.Max(nudLootNamePickupFPressCount.Minimum, Math.Min(nudLootNamePickupFPressCount.Maximum, state.LootNamePickupFPressCount))
+            End If
+            If nudLootNamePickupFPressGapMs IsNot Nothing Then
+                nudLootNamePickupFPressGapMs.Value = Math.Max(nudLootNamePickupFPressGapMs.Minimum, Math.Min(nudLootNamePickupFPressGapMs.Maximum, state.LootNamePickupFPressGapMs))
+            End If
+            If nudLootNamePickupMouseHoldMs IsNot Nothing Then
+                nudLootNamePickupMouseHoldMs.Value = Math.Max(nudLootNamePickupMouseHoldMs.Minimum, Math.Min(nudLootNamePickupMouseHoldMs.Maximum, state.LootNamePickupMouseHoldMs))
+            End If
+            If chkLootNamePickupRestoreCursor IsNot Nothing Then
+                chkLootNamePickupRestoreCursor.Checked = state.LootNamePickupRestoreCursor
+            End If
             If state.LootRejectPointEnabled Then
                 _lootRejectPointX = Math.Max(0, state.LootRejectPointX)
                 _lootRejectPointY = Math.Max(0, state.LootRejectPointY)
@@ -5023,7 +5515,9 @@ Public Class Form1
                 _lootRejectPointY = -1
             End If
             _isPickingLootRejectPoint = False
+            _isPickingLootNamePickupPoint = False
             UpdateLootRejectPointUi()
+            UpdateLootNamePickupPointUi()
             _partyAutoAccept = state.PromptAutoAcceptEnabled
             UpdatePromptAutoAcceptButton()
             _partyAskEnabled = state.AskForPartyEnabled
@@ -5135,6 +5629,17 @@ Public Class Form1
                 .LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked),
                 .LootPickupSeconds = If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value, 4D),
                 .LootNameMatchThresholdPercent = If(nudLootNameMatchThreshold IsNot Nothing, nudLootNameMatchThreshold.Value, CDec(DefaultLootNameMatchThresholdPercent)),
+                .LootNameAutoPickupEnabled = (chkLootNameAutoPickup IsNot Nothing AndAlso chkLootNameAutoPickup.Checked),
+                .LootNamePickupOffsetX = If(nudLootNamePickupOffsetX IsNot Nothing, nudLootNamePickupOffsetX.Value, 0D),
+                .LootNamePickupOffsetY = If(nudLootNamePickupOffsetY IsNot Nothing, nudLootNamePickupOffsetY.Value, 18D),
+                .LootNamePickupPointEnabled = (_lootNamePickupPointX >= 0 AndAlso _lootNamePickupPointY >= 0),
+                .LootNamePickupPointX = _lootNamePickupPointX,
+                .LootNamePickupPointY = _lootNamePickupPointY,
+                .LootNamePickupClickDelayMs = If(nudLootNamePickupClickDelayMs IsNot Nothing, nudLootNamePickupClickDelayMs.Value, 180D),
+                .LootNamePickupFPressCount = If(nudLootNamePickupFPressCount IsNot Nothing, nudLootNamePickupFPressCount.Value, 3D),
+                .LootNamePickupFPressGapMs = If(nudLootNamePickupFPressGapMs IsNot Nothing, nudLootNamePickupFPressGapMs.Value, 110D),
+                .LootNamePickupMouseHoldMs = If(nudLootNamePickupMouseHoldMs IsNot Nothing, nudLootNamePickupMouseHoldMs.Value, 35D),
+                .LootNamePickupRestoreCursor = (chkLootNamePickupRestoreCursor Is Nothing OrElse chkLootNamePickupRestoreCursor.Checked),
                 .LootRejectPointEnabled = (_lootRejectPointX >= 0 AndAlso _lootRejectPointY >= 0),
                 .LootRejectPointX = _lootRejectPointX,
                 .LootRejectPointY = _lootRejectPointY,
@@ -5380,6 +5885,27 @@ Public Class Form1
         End If
         SetNumericControlValue(nudLootPickupSeconds, CDec(Math.Max(100, cfg.LootPickupIntervalMs) / 1000.0))
         SetNumericControlValue(nudLootNameMatchThreshold, CDec(cfg.LootNameMatchThresholdPercent))
+        If chkLootNameAutoPickup IsNot Nothing Then
+            chkLootNameAutoPickup.Checked = cfg.LootNameAutoPickupEnabled
+        End If
+        SetNumericControlValue(nudLootNamePickupOffsetX, CDec(cfg.LootNamePickupOffsetX))
+        SetNumericControlValue(nudLootNamePickupOffsetY, CDec(cfg.LootNamePickupOffsetY))
+        If cfg.LootNamePickupPointX >= 0 AndAlso cfg.LootNamePickupPointY >= 0 Then
+            _lootNamePickupPointX = cfg.LootNamePickupPointX
+            _lootNamePickupPointY = cfg.LootNamePickupPointY
+        Else
+            _lootNamePickupPointX = -1
+            _lootNamePickupPointY = -1
+        End If
+        _isPickingLootNamePickupPoint = False
+        SetNumericControlValue(nudLootNamePickupClickDelayMs, CDec(Math.Max(0, cfg.LootNamePickupClickDelayMs)))
+        SetNumericControlValue(nudLootNamePickupFPressCount, CDec(Math.Max(1, cfg.LootNamePickupFPressCount)))
+        SetNumericControlValue(nudLootNamePickupFPressGapMs, CDec(Math.Max(0, cfg.LootNamePickupFPressGapMs)))
+        SetNumericControlValue(nudLootNamePickupMouseHoldMs, CDec(Math.Max(0, cfg.LootNamePickupMouseHoldMs)))
+        If chkLootNamePickupRestoreCursor IsNot Nothing Then
+            chkLootNamePickupRestoreCursor.Checked = cfg.LootNamePickupRestoreCursor
+        End If
+        UpdateLootNamePickupPointUi()
 
         If cfg.LootRejectClickEnabled AndAlso cfg.LootRejectPointX >= 0 AndAlso cfg.LootRejectPointY >= 0 Then
             _lootRejectPointX = cfg.LootRejectPointX
@@ -5442,6 +5968,7 @@ Public Class Form1
                 ApplyPersistedCombatActions(persisted)
             End If
         End If
+        UpdateMainTabIndicators()
     End Sub
 
     Private Sub UpsertRegionRow(regionName As String, region As RectRegion)
@@ -5813,6 +6340,7 @@ Public Class Form1
                 lblLiteShortcutHint.Text = "Ctrl+Shift -> Start selected tab"
             End If
         End If
+        UpdateMainTabIndicators()
     End Sub
 
     Private Sub UpdateLiteStatus(statusText As String, status As BotStatus)

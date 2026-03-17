@@ -167,6 +167,16 @@ Public Class BotConfig
     Public Property LootPickupEnabled As Boolean = False
     Public Property LootPickupIntervalMs As Integer = 4000
     Public Property LootPickupVerifyDelayMs As Integer = 80
+    Public Property LootNameAutoPickupEnabled As Boolean = False
+    Public Property LootNamePickupOffsetX As Integer = 0
+    Public Property LootNamePickupOffsetY As Integer = 18
+    Public Property LootNamePickupPointX As Integer = -1
+    Public Property LootNamePickupPointY As Integer = -1
+    Public Property LootNamePickupClickDelayMs As Integer = 180
+    Public Property LootNamePickupFPressCount As Integer = 3
+    Public Property LootNamePickupFPressGapMs As Integer = 110
+    Public Property LootNamePickupMouseHoldMs As Integer = 35
+    Public Property LootNamePickupRestoreCursor As Boolean = True
     Public Property LootRejectClickEnabled As Boolean = False
     Public Property LootRejectPointX As Integer = -1
     Public Property LootRejectPointY As Integer = -1
@@ -336,6 +346,8 @@ Friend Module NativeMethods
     Friend Const WM_LBUTTONDOWN As Integer = &H201
     Friend Const WM_LBUTTONUP As Integer = &H202
     Friend Const MK_LBUTTON As Integer = &H1
+    Friend Const MOUSEEVENTF_LEFTDOWN As UInteger = &H2UI
+    Friend Const MOUSEEVENTF_LEFTUP As UInteger = &H4UI
 
     <StructLayout(LayoutKind.Sequential)>
     Friend Structure POINT
@@ -358,6 +370,18 @@ Friend Module NativeMethods
     <DllImport("user32.dll", SetLastError:=True)>
     Friend Function SetForegroundWindow(hWnd As IntPtr) As Boolean
     End Function
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function GetCursorPos(ByRef lpPoint As POINT) As Boolean
+    End Function
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function SetCursorPos(X As Integer, Y As Integer) As Boolean
+    End Function
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Sub mouse_event(dwFlags As UInteger, dx As UInteger, dy As UInteger, dwData As UInteger, dwExtraInfo As UIntPtr)
+    End Sub
 
     Friend Delegate Function EnumWindowsProc(hWnd As IntPtr, lParam As IntPtr) As Boolean
 
@@ -401,10 +425,6 @@ Friend Module NativeMethods
 
     <DllImport("user32.dll", SetLastError:=True)>
     Friend Function ScreenToClient(hWnd As IntPtr, ByRef lpPoint As POINT) As Boolean
-    End Function
-
-    <DllImport("user32.dll", SetLastError:=True)>
-    Friend Function GetCursorPos(ByRef lpPoint As POINT) As Boolean
     End Function
 
     <DllImport("user32.dll", SetLastError:=True)>
@@ -1599,19 +1619,28 @@ Public Class BotEngine
             Dim scanFrame As Bitmap = frameClone
             Dim lootScanFrame As Bitmap = Nothing
             Try
+                Dim lootScanBounds As Rectangle = GetPolygonBounds(scanFrame, lootScanPolygonCopy)
                 lootScanFrame = CropBitmapToPolygon(scanFrame, lootScanPolygonCopy)
                 If lootScanFrame Is Nothing Then
                     lootScanFrame = DirectCast(scanFrame.Clone(), Bitmap)
+                    lootScanBounds = New Rectangle(0, 0, lootScanFrame.Width, lootScanFrame.Height)
                 End If
 
-                Dim ocrText As String = OcrReader.ReadScreenTextIsolated(lootScanFrame)
+                Dim ocrRegions As List(Of OcrReader.OcrTextRegion) = OcrReader.ReadScreenTextRegionsIsolated(lootScanFrame)
+                Dim ocrText As String = String.Join(Environment.NewLine, ocrRegions.Select(Function(region) region.Text))
                 If Not String.IsNullOrWhiteSpace(ocrText) AndAlso allowedNames IsNot Nothing Then
                     Dim matchedItem As String = ""
-                    If TryFindAllowedLootMatch(ocrText, allowedNames, lootMatchThresholdPercent, matchedItem) Then
+                    Dim matchedRegion As OcrReader.OcrTextRegion = Nothing
+                    If TryFindAllowedLootRegionMatch(ocrRegions, allowedNames, lootMatchThresholdPercent, matchedItem, matchedRegion) OrElse
+                       TryFindAllowedLootMatch(ocrText, allowedNames, lootMatchThresholdPercent, matchedItem) Then
                         System.Media.SystemSounds.Exclamation.Play()
                         Console.Beep(800, 1000)
                         Console.Beep(800, 1000)
                         RaiseEvent LogLine($"LOOT ALARM: Found {matchedItem} (fuzzy {lootMatchThresholdPercent}%).")
+
+                        If cfg.LootNameAutoPickupEnabled Then
+                            TryExecuteLootNameAutoPickup(hwnd, cfg, matchedItem, matchedRegion, lootScanBounds)
+                        End If
 
                         If notificationProvider = NotificationProviderDiscord Then
                             Task.Run(Async Function()
@@ -3743,24 +3772,12 @@ Public Class BotEngine
     End Function
 
     Private Shared Function CropBitmapToPolygon(frame As Bitmap, points As List(Of DrawingPoint)) As Bitmap
-        If frame Is Nothing OrElse points Is Nothing OrElse points.Count < 3 Then
+        Dim bounds As Rectangle = GetPolygonBounds(frame, points)
+        If bounds = Rectangle.Empty Then
             Return Nothing
         End If
 
         Dim normalized As List(Of DrawingPoint) = points.Select(Function(pt) New DrawingPoint(Math.Max(0, Math.Min(frame.Width - 1, pt.X)), Math.Max(0, Math.Min(frame.Height - 1, pt.Y)))).ToList()
-        If normalized.Count < 3 Then
-            Return Nothing
-        End If
-
-        Dim minX As Integer = normalized.Min(Function(pt) pt.X)
-        Dim minY As Integer = normalized.Min(Function(pt) pt.Y)
-        Dim maxX As Integer = normalized.Max(Function(pt) pt.X)
-        Dim maxY As Integer = normalized.Max(Function(pt) pt.Y)
-        If maxX <= minX OrElse maxY <= minY Then
-            Return Nothing
-        End If
-
-        Dim bounds As New Rectangle(minX, minY, Math.Max(1, maxX - minX + 1), Math.Max(1, maxY - minY + 1))
         Dim result As New Bitmap(bounds.Width, bounds.Height, PixelFormat.Format24bppRgb)
         Using g As Graphics = Graphics.FromImage(result)
             g.Clear(Color.Black)
@@ -3773,6 +3790,27 @@ Public Class BotEngine
             End Using
         End Using
         Return result
+    End Function
+
+    Private Shared Function GetPolygonBounds(frame As Bitmap, points As List(Of DrawingPoint)) As Rectangle
+        If frame Is Nothing OrElse points Is Nothing OrElse points.Count < 3 Then
+            Return Rectangle.Empty
+        End If
+
+        Dim normalized As List(Of DrawingPoint) = points.Select(Function(pt) New DrawingPoint(Math.Max(0, Math.Min(frame.Width - 1, pt.X)), Math.Max(0, Math.Min(frame.Height - 1, pt.Y)))).ToList()
+        If normalized.Count < 3 Then
+            Return Rectangle.Empty
+        End If
+
+        Dim minX As Integer = normalized.Min(Function(pt) pt.X)
+        Dim minY As Integer = normalized.Min(Function(pt) pt.Y)
+        Dim maxX As Integer = normalized.Max(Function(pt) pt.X)
+        Dim maxY As Integer = normalized.Max(Function(pt) pt.Y)
+        If maxX <= minX OrElse maxY <= minY Then
+            Return Rectangle.Empty
+        End If
+
+        Return New Rectangle(minX, minY, Math.Max(1, maxX - minX + 1), Math.Max(1, maxY - minY + 1))
     End Function
 
     Private Function ReadMobNameIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime, Optional forceRefresh As Boolean = False) As String
@@ -4759,6 +4797,29 @@ Public Class BotEngine
                     Return True
                 End If
             Next
+        Next
+
+        Return False
+    End Function
+
+    Private Shared Function TryFindAllowedLootRegionMatch(regions As List(Of OcrReader.OcrTextRegion), allowList As List(Of String), thresholdPercent As Integer, ByRef matchedAllowedName As String, ByRef matchedRegion As OcrReader.OcrTextRegion) As Boolean
+        matchedAllowedName = ""
+        matchedRegion = Nothing
+        If regions Is Nothing OrElse regions.Count = 0 OrElse allowList Is Nothing OrElse allowList.Count = 0 Then
+            Return False
+        End If
+
+        For Each region In regions
+            If region Is Nothing OrElse region.Bounds = Rectangle.Empty OrElse String.IsNullOrWhiteSpace(region.Text) Then
+                Continue For
+            End If
+
+            Dim localMatchedName As String = ""
+            If TryFindAllowedLootMatch(region.Text, allowList, thresholdPercent, localMatchedName) Then
+                matchedAllowedName = localMatchedName
+                matchedRegion = region
+                Return True
+            End If
         Next
 
         Return False
@@ -6243,6 +6304,109 @@ Public Class BotEngine
         Catch
             Return False
         End Try
+    End Function
+
+    Private Function TryExecuteLootNameAutoPickup(hwnd As IntPtr, cfg As BotConfig, matchedItem As String, matchedRegion As OcrReader.OcrTextRegion, lootScanBounds As Rectangle) As Boolean
+        If hwnd = IntPtr.Zero OrElse cfg Is Nothing OrElse Not cfg.LootNameAutoPickupEnabled Then
+            Return False
+        End If
+
+        Dim clientRect As NativeMethods.RECT
+        If Not NativeMethods.GetClientRect(hwnd, clientRect) Then
+            RaiseEvent LogLine("Loot auto-pick skipped: game client rect unavailable.")
+            Return False
+        End If
+
+        Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
+        Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
+        If matchedRegion Is Nothing OrElse matchedRegion.Bounds = Rectangle.Empty Then
+            RaiseEvent LogLine($"Loot auto-pick skipped for {matchedItem}: OCR did not return a loot label position.")
+            Return False
+        End If
+
+        Dim clientX As Integer = lootScanBounds.X + matchedRegion.Bounds.X + (matchedRegion.Bounds.Width \ 2) + cfg.LootNamePickupOffsetX
+        Dim clientY As Integer = lootScanBounds.Y + matchedRegion.Bounds.Bottom + cfg.LootNamePickupOffsetY
+        clientX = Math.Max(0, Math.Min(clientWidth - 1, clientX))
+        clientY = Math.Max(0, Math.Min(clientHeight - 1, clientY))
+
+        Dim screenPoint As NativeMethods.POINT
+        If Not TryMapClientPointToScreen(hwnd, clientX, clientY, screenPoint) Then
+            RaiseEvent LogLine($"Loot auto-pick skipped for {matchedItem}: failed to map client point to screen.")
+            Return False
+        End If
+
+        Dim hadCursor As Boolean = False
+        Dim previousCursor As NativeMethods.POINT
+        Try
+            hadCursor = NativeMethods.GetCursorPos(previousCursor)
+        Catch
+            hadCursor = False
+        End Try
+
+        Try
+            NativeMethods.SetForegroundWindow(hwnd)
+            Thread.Sleep(ForegroundInputSettleMs)
+
+            If Not NativeMethods.SetCursorPos(screenPoint.X, screenPoint.Y) Then
+                RaiseEvent LogLine($"Loot auto-pick skipped for {matchedItem}: SetCursorPos failed.")
+                Return False
+            End If
+
+            Thread.Sleep(10)
+            NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTDOWN, CUInt(screenPoint.X), CUInt(screenPoint.Y), 0UI, UIntPtr.Zero)
+            Thread.Sleep(Math.Max(0, cfg.LootNamePickupMouseHoldMs))
+            NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTUP, CUInt(screenPoint.X), CUInt(screenPoint.Y), 0UI, UIntPtr.Zero)
+
+            Dim waitBeforeFMs As Integer = Math.Max(0, cfg.LootNamePickupClickDelayMs)
+            If waitBeforeFMs > 0 Then
+                Thread.Sleep(waitBeforeFMs)
+            End If
+
+            Dim fCount As Integer = Math.Max(1, cfg.LootNamePickupFPressCount)
+            Dim gapMs As Integer = Math.Max(0, cfg.LootNamePickupFPressGapMs)
+            Dim sentAny As Boolean = False
+            For pressIndex As Integer = 1 To fCount
+                If SendKey(hwnd, "F", FastKeyPressMs) Then
+                    sentAny = True
+                End If
+                If pressIndex < fCount AndAlso gapMs > 0 Then
+                    Thread.Sleep(gapMs)
+                End If
+            Next
+
+            If sentAny Then
+                SetLastAction($"Loot auto-pick ({matchedItem})")
+                RaiseEvent LogLine($"Loot auto-pick clicked matched label '{matchedItem}' at client {clientX},{clientY} -> screen {screenPoint.X},{screenPoint.Y}, then pressed F x{fCount}.")
+            Else
+                RaiseEvent LogLine($"Loot auto-pick click completed for {matchedItem}, but F presses were not sent.")
+            End If
+            Return sentAny
+        Catch ex As Exception
+            RaiseEvent LogLine($"Loot auto-pick failed for {matchedItem}: {ex.Message}")
+            Return False
+        Finally
+            If cfg.LootNamePickupRestoreCursor AndAlso hadCursor Then
+                Try
+                    NativeMethods.SetCursorPos(previousCursor.X, previousCursor.Y)
+                Catch
+                End Try
+            End If
+        End Try
+    End Function
+
+    Private Shared Function TryMapClientPointToScreen(hwnd As IntPtr, clientX As Integer, clientY As Integer, ByRef screenPoint As NativeMethods.POINT) As Boolean
+        screenPoint = New NativeMethods.POINT With {.X = 0, .Y = 0}
+        If hwnd = IntPtr.Zero Then
+            Return False
+        End If
+
+        Dim pt As New NativeMethods.POINT With {.X = clientX, .Y = clientY}
+        If Not NativeMethods.ClientToScreen(hwnd, pt) Then
+            Return False
+        End If
+
+        screenPoint = pt
+        Return True
     End Function
 
     Private Shared Function NormalizeNotificationProviderName(raw As String) As String

@@ -14,6 +14,11 @@ Imports Windows.Media.Ocr
 Imports Windows.Storage.Streams
 
 Public NotInheritable Class OcrReader
+    Public NotInheritable Class OcrTextRegion
+        Public Property Text As String = ""
+        Public Property Bounds As Rectangle = Rectangle.Empty
+    End Class
+
     Private Shared ReadOnly _sync As New Object()
     Private Shared _engine As OcrEngine
     Private Shared _initAttempted As Boolean = False
@@ -125,6 +130,22 @@ Public NotInheritable Class OcrReader
         Return ReadScreenTextStaFallback(source, True)
     End Function
 
+    Public Shared Function ReadScreenTextRegionsIsolated(source As Bitmap) As List(Of OcrTextRegion)
+        If source Is Nothing Then
+            Return New List(Of OcrTextRegion)()
+        End If
+
+        Try
+            Dim direct As List(Of OcrTextRegion) = ReadScreenTextRegionsInternal(source, True)
+            If direct IsNot Nothing AndAlso direct.Count > 0 Then
+                Return direct
+            End If
+        Catch
+        End Try
+
+        Return ReadScreenTextRegionsStaFallback(source, True)
+    End Function
+
     Private Shared Function ReadHpFractionStaFallback(source As Bitmap) As String
         Dim output As String = ""
         Dim done As New ManualResetEventSlim(False)
@@ -200,6 +221,31 @@ Public NotInheritable Class OcrReader
         Return output
     End Function
 
+    Private Shared Function ReadScreenTextRegionsStaFallback(source As Bitmap, Optional isolatedEngine As Boolean = False) As List(Of OcrTextRegion)
+        Dim output As List(Of OcrTextRegion) = New List(Of OcrTextRegion)()
+        Dim done As New ManualResetEventSlim(False)
+
+        Dim worker As New Thread(
+            Sub()
+                Try
+                    output = ReadScreenTextRegionsInternal(source, isolatedEngine)
+                Catch ex As Exception
+                    SetLastError(ex.Message)
+                Finally
+                    done.Set()
+                End Try
+            End Sub)
+        worker.IsBackground = True
+        worker.SetApartmentState(ApartmentState.STA)
+        worker.Start()
+
+        If Not done.Wait(1500) Then
+            SetLastError("OCR timeout.")
+            Return New List(Of OcrTextRegion)()
+        End If
+        Return If(output, New List(Of OcrTextRegion)())
+    End Function
+
     Private Shared Function ReadScreenTextInternal(source As Bitmap, Optional isolatedEngine As Boolean = False) As String
         Dim engine As OcrEngine = If(isolatedEngine, CreateEngine(), GetEngine())
         If engine Is Nothing Then
@@ -209,6 +255,15 @@ Public NotInheritable Class OcrReader
         ' Intentionally raw and 1:1 scale to prevent massive memory and CPU bloat
         ' when scanning an entire 1080p or 4K game client window.
         Return ReadRawTextAsync(engine, source).GetAwaiter().GetResult()
+    End Function
+
+    Private Shared Function ReadScreenTextRegionsInternal(source As Bitmap, Optional isolatedEngine As Boolean = False) As List(Of OcrTextRegion)
+        Dim engine As OcrEngine = If(isolatedEngine, CreateEngine(), GetEngine())
+        If engine Is Nothing Then
+            Return New List(Of OcrTextRegion)()
+        End If
+
+        Return ReadRawRegionsAsync(engine, source).GetAwaiter().GetResult()
     End Function
 
     Public Shared Function LastError() As String
@@ -424,6 +479,65 @@ Public NotInheritable Class OcrReader
         End If
 
         Return result.Text.Trim()
+    End Function
+
+    Private Shared Async Function ReadRawRegionsAsync(engine As OcrEngine, prepared As Bitmap) As Task(Of List(Of OcrTextRegion))
+        Dim items As New List(Of OcrTextRegion)()
+        Dim soft As SoftwareBitmap = Await ConvertBitmapAsync(prepared)
+        If soft Is Nothing Then
+            Return items
+        End If
+
+        Dim result = Await engine.RecognizeAsync(soft)
+        If result Is Nothing OrElse result.Lines Is Nothing OrElse result.Lines.Count = 0 Then
+            Return items
+        End If
+
+        For Each line In result.Lines
+            If line Is Nothing Then
+                Continue For
+            End If
+
+            Dim text As String = If(line.Text, "").Trim()
+            If text = "" Then
+                Continue For
+            End If
+
+            Dim bounds As Rectangle = Rectangle.Empty
+            If line.Words IsNot Nothing AndAlso line.Words.Count > 0 Then
+                Dim minX As Integer = Integer.MaxValue
+                Dim minY As Integer = Integer.MaxValue
+                Dim maxRight As Integer = Integer.MinValue
+                Dim maxBottom As Integer = Integer.MinValue
+
+                For Each word In line.Words
+                    Dim rect = word.BoundingRect
+                    Dim x As Integer = CInt(Math.Floor(rect.X))
+                    Dim y As Integer = CInt(Math.Floor(rect.Y))
+                    Dim right As Integer = CInt(Math.Ceiling(rect.X + rect.Width))
+                    Dim bottom As Integer = CInt(Math.Ceiling(rect.Y + rect.Height))
+                    minX = Math.Min(minX, x)
+                    minY = Math.Min(minY, y)
+                    maxRight = Math.Max(maxRight, right)
+                    maxBottom = Math.Max(maxBottom, bottom)
+                Next
+
+                If minX <= maxRight AndAlso minY <= maxBottom Then
+                    bounds = Rectangle.FromLTRB(minX, minY, maxRight, maxBottom)
+                End If
+            End If
+
+            If bounds = Rectangle.Empty Then
+                Continue For
+            End If
+
+            items.Add(New OcrTextRegion With {
+                .Text = text,
+                .Bounds = bounds
+            })
+        Next
+
+        Return items
     End Function
 
     Private Shared Function GetEngine() As OcrEngine
