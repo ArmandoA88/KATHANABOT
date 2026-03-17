@@ -39,6 +39,7 @@ Public Class Form1
     Private txtLiteProcessRename As TextBox
     Private btnLiteAttack As Button
     Private btnLiteStop As Button
+    Private btnLiteHelp As Button
     Private lblLiteRunState As Label
     Private lblLiteShortcutHint As Label
     Private lblLiteActiveMode As Label
@@ -1061,21 +1062,21 @@ Public Class Form1
     End Function
 
     Private Function IsLiteTabActive() As Boolean
-        If _liteEngine.IsRunning() Then
-            Return True
+        Dim runningEdition As BotEdition? = GetRunningEdition()
+        If runningEdition.HasValue Then
+            Return runningEdition.Value = BotEdition.Lite
         End If
 
-        For Each entry In _liteActionEnabledChecks
-            If entry.Value IsNot Nothing AndAlso entry.Value.Checked Then
-                Return True
-            End If
-        Next
-
-        Return (chkLiteAutoPots IsNot Nothing AndAlso chkLiteAutoPots.Checked) OrElse _litePartyAutoAccept OrElse _litePartyAskEnabled
+        Return _edition = BotEdition.Lite
     End Function
 
     Private Function IsCombatTabActive() As Boolean
-        Return _fullEngine.IsRunning() OrElse _partyAutoAccept OrElse _partyAskEnabled OrElse HasEnabledCombatActions()
+        Dim runningEdition As BotEdition? = GetRunningEdition()
+        If runningEdition.HasValue Then
+            Return runningEdition.Value = BotEdition.Full
+        End If
+
+        Return _edition = BotEdition.Full
     End Function
 
     Private Function IsVisionTabActive() As Boolean
@@ -1213,7 +1214,7 @@ Public Class Form1
 
     Private Function BuildLiteMainPanel() As Control
         Dim panel As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 4, .Tag = "lite-scope"}
-        panel.RowStyles.Add(New RowStyle(SizeType.Absolute, 104.0F))
+        panel.RowStyles.Add(New RowStyle(SizeType.Absolute, 132.0F))
         panel.RowStyles.Add(New RowStyle(SizeType.Absolute, 86.0F))
         panel.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         panel.RowStyles.Add(New RowStyle(SizeType.Absolute, 28.0F))
@@ -1230,20 +1231,25 @@ Public Class Form1
         modesGroup.Controls.Add(modesLayout)
 
         Dim commandGroup As New GroupBox() With {.Text = "Control", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(251, 251, 251), .Padding = New Padding(10), .Tag = "lite-scope"}
-        Dim commandLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 2, .Tag = "lite-scope"}
+        Dim commandLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 3, .Tag = "lite-scope"}
         commandLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
         commandLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
         commandLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 28.0F))
         commandLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        commandLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 30.0F))
         lblLiteRunState = New Label() With {.Text = "LITE BOT PAUSED", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleCenter, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White, .Font = New Font("Segoe UI", 8.25F, FontStyle.Bold), .Tag = "lite-scope"}
         btnLiteAttack = New Button() With {.Text = "Start", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(40, 180, 80), .ForeColor = Color.White, .Font = New Font("Segoe UI", 8.0F, FontStyle.Bold), .Tag = "lite-scope"}
         btnLiteStop = New Button() With {.Text = "Stop", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(220, 70, 55), .ForeColor = Color.White, .Font = New Font("Segoe UI", 8.0F, FontStyle.Bold), .Tag = "lite-scope"}
+        btnLiteHelp = New Button() With {.Text = "Help (EN/ES/FIL)", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(70, 70, 70), .ForeColor = Color.White, .Font = New Font("Segoe UI", 7.75F, FontStyle.Bold), .Tag = "lite-scope"}
         AddHandler btnLiteAttack.Click, AddressOf StartClicked
         AddHandler btnLiteStop.Click, AddressOf StopClicked
+        AddHandler btnLiteHelp.Click, AddressOf HelpClicked
         commandLayout.Controls.Add(lblLiteRunState, 0, 0)
         commandLayout.SetColumnSpan(lblLiteRunState, 2)
         commandLayout.Controls.Add(btnLiteAttack, 0, 1)
         commandLayout.Controls.Add(btnLiteStop, 1, 1)
+        commandLayout.Controls.Add(btnLiteHelp, 0, 2)
+        commandLayout.SetColumnSpan(btnLiteHelp, 2)
         commandGroup.Controls.Add(commandLayout)
 
         topRow.Controls.Add(modesGroup, 0, 0)
@@ -1291,7 +1297,7 @@ Public Class Form1
 
         Dim foot As New Label() With {
             .Dock = DockStyle.Fill,
-            .Text = "Lite uses E / R / F plus the Lite skill timers only. Potions use key 9 for Heal and key 0 for Mana (Tantra slot 10).",
+            .Text = "Lite uses E / R / F plus the Lite skill timers only. Lite timers now allow 1-9999 seconds. Potions use key 9 for Heal and key 0 for Mana (Tantra slot 10).",
             .ForeColor = Color.FromArgb(120, 120, 120),
             .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular),
             .TextAlign = ContentAlignment.MiddleLeft,
@@ -1306,9 +1312,9 @@ Public Class Form1
     End Function
 
     Private Function BuildLiteModePanel(title As String, keyName As String, iconKind As String, ByRef check As CheckBox, ByRef input As NumericUpDown, accentColor As Color) As Control
-        Dim panel As New Panel() With {.Width = 142, .Height = 66, .BackColor = Color.White, .Margin = New Padding(3, 0, 5, 0), .Tag = "lite-scope"}
+        Dim panel As New Panel() With {.Width = 154, .Height = 66, .BackColor = Color.White, .Margin = New Padding(3, 0, 5, 0), .Tag = "lite-scope"}
         Dim titleLabel As New Label() With {.Left = 8, .Top = 4, .Width = 126, .Height = 15, .Text = $"{title} ({keyName})", .Font = New Font("Segoe UI", 7.75F, FontStyle.Bold), .ForeColor = Color.FromArgb(55, 55, 55), .Tag = "lite-scope"}
-        Dim localInput As New NumericUpDown() With {.Left = 8, .Top = 20, .Width = 42, .Minimum = 1D, .Maximum = 99D, .DecimalPlaces = 0, .Increment = 1D, .Value = 1D, .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular), .Tag = "lite-scope"}
+        Dim localInput As New NumericUpDown() With {.Left = 8, .Top = 20, .Width = 56, .Minimum = 1D, .Maximum = 9999D, .DecimalPlaces = 0, .Increment = 1D, .Value = 1D, .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular), .Tag = "lite-scope"}
         Dim colorSwatch As New Panel() With {.Left = 8, .Top = 40, .Width = 126, .Height = 20, .BackColor = accentColor, .Tag = "lite-scope"}
         Dim iconPanel As Panel = BuildLiteIconPanel(iconKind)
         iconPanel.Left = 58
@@ -1496,9 +1502,9 @@ Public Class Form1
     End Function
 
     Private Function BuildLiteSkillSlot(keyName As String, accentColor As Color) As Control
-        Dim panel As New Panel() With {.Width = 56, .Height = 74, .BackColor = Color.White, .Margin = New Padding(2), .Tag = "lite-scope"}
-        Dim input As New NumericUpDown() With {.Left = 10, .Top = 6, .Width = 36, .Minimum = 1D, .Maximum = 99D, .DecimalPlaces = 0, .Increment = 1D, .Value = 1D, .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular), .Tag = "lite-scope"}
-        Dim frame As New Panel() With {.Left = 10, .Top = 34, .Width = 36, .Height = 28, .BackColor = accentColor, .Tag = "lite-scope"}
+        Dim panel As New Panel() With {.Width = 72, .Height = 74, .BackColor = Color.White, .Margin = New Padding(2), .Tag = "lite-scope"}
+        Dim input As New NumericUpDown() With {.Left = 10, .Top = 6, .Width = 52, .Minimum = 1D, .Maximum = 9999D, .DecimalPlaces = 0, .Increment = 1D, .Value = 1D, .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular), .Tag = "lite-scope"}
+        Dim frame As New Panel() With {.Left = 10, .Top = 34, .Width = 52, .Height = 28, .BackColor = accentColor, .Tag = "lite-scope"}
         Dim enabledCheck As New CheckBox() With {
             .Width = 16,
             .Height = 16,
@@ -1509,7 +1515,7 @@ Public Class Form1
             .ForeColor = Color.White,
             .Tag = "lite-scope"
         }
-        Dim keyLabel As New Label() With {.Left = 0, .Top = 12, .Width = 36, .Height = 14, .Text = keyName, .TextAlign = ContentAlignment.MiddleCenter, .ForeColor = Color.White, .Font = New Font("Segoe UI", 6.75F, FontStyle.Bold), .BackColor = Color.Transparent, .Tag = "lite-scope"}
+        Dim keyLabel As New Label() With {.Left = 0, .Top = 12, .Width = 52, .Height = 14, .Text = keyName, .TextAlign = ContentAlignment.MiddleCenter, .ForeColor = Color.White, .Font = New Font("Segoe UI", 6.75F, FontStyle.Bold), .BackColor = Color.Transparent, .Tag = "lite-scope"}
         panel.Controls.Add(input)
         panel.Controls.Add(frame)
         frame.Controls.Add(keyLabel)
@@ -1662,7 +1668,7 @@ Public Class Form1
     End Sub
 
     Private Function BuildCombatTab() As TabPage
-        Dim tab As New TabPage("Combat") With {.BackColor = Color.FromArgb(20, 20, 20)}
+        Dim tab As New TabPage("Combat Full") With {.BackColor = Color.FromArgb(20, 20, 20)}
         Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 1, .Padding = New Padding(8)}
         root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 52.0F))
         root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 18.0F))
@@ -2417,18 +2423,28 @@ Public Class Form1
 
     Private Function BuildCombatSkillsGroup() As GroupBox
         Dim group As New GroupBox() With {.Text = "Combat Skills", .Dock = DockStyle.Fill}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
         dgvCombat = New DataGridView() With {.Dock = DockStyle.Fill, .AllowUserToAddRows = False, .AllowUserToDeleteRows = False, .RowHeadersVisible = False, .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill}
         dgvCombat.Columns.Add(New DataGridViewCheckBoxColumn() With {.Name = "Enabled"})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Key", .ReadOnly = True, .FillWeight = 60.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "CooldownSec", .FillWeight = 90.0F})
         Dim roleColumn As New DataGridViewComboBoxColumn() With {.Name = "Role", .FillWeight = 80.0F}
-        roleColumn.Items.AddRange(New Object() {"attack", "heal", "max_health", "mana", "special", "high_max_hp", "stop"})
+        roleColumn.Items.AddRange(New Object() {"attack", "heal", "max_health", "mana", "special", "high_max_hp", "repair", "stop"})
         dgvCombat.Columns.Add(roleColumn)
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Priority", .FillWeight = 75.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "TriggerPercent", .FillWeight = 85.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "MinHpPercent", .FillWeight = 85.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "MinMpPercent", .FillWeight = 85.0F})
-        group.Controls.Add(dgvCombat)
+        layout.Controls.Add(dgvCombat, 0, 0)
+        layout.Controls.Add(New Label() With {
+            .Text = "repair role: watches unreachable_text_rect for '___ is about to break'. After 5 OCR reads it sends the key once, then waits for the warning text to clear before allowing another repair trigger. TriggerPercent is ignored for repair.",
+            .Dock = DockStyle.Fill,
+            .ForeColor = Color.LightSteelBlue,
+            .TextAlign = ContentAlignment.MiddleLeft
+        }, 0, 1)
+        group.Controls.Add(layout)
         Return group
     End Function
 
@@ -3648,26 +3664,30 @@ Public Class Form1
             "- Press Attack to start bot loop.",
             "- Press Stop Bot to hard stop movement and stop loop.",
             "- You can also toggle pause/resume with Ctrl+Shift when game or control panel is focused.",
+            "- Full mode opens on Combat Full by default. Lite and Full cannot run at the same time.",
+            "- Lite attack mode timers and Lite skill timers now allow 1 to 9999 seconds.",
             "",
-            "2) COMBAT TAB - COMBAT SKILLS GRID",
+            "2) COMBAT FULL TAB - COMBAT SKILLS GRID",
             "- Enabled: if checked, action is available.",
             "- Key: keyboard key sent to game (1-0, F1-F10 plus 3 custom rows after F10).",
             "- CooldownSec: minimum seconds between sends of this key.",
-            "- Role: attack, heal, max_health, mana, special, high_max_hp, stop.",
+            "- Role: attack, heal, max_health, mana, special, high_max_hp, repair, stop.",
             "- Priority: lower values act first inside same category checks.",
             "- TriggerPercent: role threshold (heal/mana/max_health use this heavily).",
             "- MinHpPercent / MinMpPercent: minimum self HP/MP to allow this action.",
             "- high_max_hp only fires when enabled in Vision and mob_hp_rect OCR reads Max HP above your threshold.",
+            "- repair watches unreachable_text_rect for '___ is about to break'. After 5 OCR reads it sends the configured key once, then waits until the warning clears before it can trigger again. TriggerPercent is ignored for repair.",
             "",
-            "3) COMBAT TAB - MONSTER FILTER",
+            "3) COMBAT FULL TAB - MONSTER FILTER",
             "- Enable Monster Filter (blacklist): active deny list for mob names.",
             "- Add / Remove: manage blocked mob names.",
             "- OCR + confirmation logic avoids stale or wrong-name attacks.",
             "",
-            "4) COMBAT TAB - LOOT FILTER",
+            "4) AUTO-LOOT TAB",
             "- Loot pickup toggle and interval seconds.",
             "- Add / Remove loot names to allow-list.",
             "- Loot Name Match % (Auto-Loot tab) sets fuzzy OCR matching threshold for loot names (default 80%).",
+            "- Dynamic loot pickup clicks near the matched loot label using OCR plus your X/Y click offsets.",
             "- Loot reject point can be picked from snapshot to click reject button.",
             "",
             "5) CENTER CONTROL PANEL",
@@ -3742,9 +3762,10 @@ Public Class Form1
             "- Vision stability filter to reduce capture glitch spikes.",
             "- OCR based target name reading with confirmation.",
             "- OCR based unreachable target detection and forced retarget.",
+            "- OCR based repair warning detection from unreachable_text_rect with 5-read confirmation.",
             "- Party invite / resurrection prompt OCR and auto accept click.",
             "- Party ask command automation with cooldown and in-party suppression.",
-            "- Loot scan with fuzzy OCR allow-list matching (Loot Name Match %), reject handling by click point or fallback key.",
+            "- Loot scan with fuzzy OCR allow-list matching (Loot Name Match %), dynamic label clicking, and reject handling by click point or fallback key.",
             "- Periodic snapshot save every ~15 minutes to Pictures/KathanaBot.",
             "- Prana/EXP OCR reading and hourly rate calculation.",
             "",
@@ -3774,26 +3795,30 @@ Public Class Form1
             "- Presiona Attack para iniciar el bot.",
             "- Presiona Stop Bot para detener movimiento y loop.",
             "- Tambien puedes usar Ctrl+Shift para pausar/reanudar cuando el juego o el panel tienen foco.",
+            "- Full abre por defecto en Combat Full. Lite y Full no pueden correr al mismo tiempo.",
+            "- Los tiempos de Lite para modos de ataque y skills ahora aceptan de 1 a 9999 segundos.",
             "",
-            "2) PESTANA COMBAT - TABLA COMBAT SKILLS",
+            "2) PESTANA COMBAT FULL - TABLA COMBAT SKILLS",
             "- Enabled: activa/desactiva la accion.",
             "- Key: tecla enviada al juego.",
             "- CooldownSec: tiempo minimo entre envios de la tecla.",
-            "- Role: attack, heal, max_health, mana, special, high_max_hp, stop.",
+            "- Role: attack, heal, max_health, mana, special, high_max_hp, repair, stop.",
             "- Priority: orden de prioridad.",
             "- TriggerPercent: umbral principal para roles de soporte.",
             "- MinHpPercent / MinMpPercent: minimos para permitir la accion.",
             "- high_max_hp solo dispara si esta activo en Vision y el OCR de mob_hp_rect lee Max HP arriba del umbral.",
+            "- repair vigila unreachable_text_rect para '___ is about to break'. Despues de 5 lecturas OCR envia la tecla una vez y espera a que el aviso desaparezca antes de volver a activarse. TriggerPercent no se usa en repair.",
             "",
             "3) FILTRO DE MONSTRUOS",
             "- Enable Monster Filter (blacklist): lista negra de mobs.",
             "- Add / Remove: agrega o elimina nombres.",
             "- El OCR y confirmacion reducen ataques por nombre incorrecto.",
             "",
-            "4) FILTRO DE LOOT",
+            "4) PESTANA AUTO-LOOT",
             "- Activar loot y definir intervalo en segundos.",
             "- Lista de nombres permitidos para recoger.",
             "- Loot Name Match % (pestana Auto-Loot) define el umbral de coincidencia OCR difusa para loot (80% por defecto).",
+            "- El click dinamico de loot usa la posicion OCR del nombre del item mas tus offsets X/Y.",
             "- Punto de rechazo de loot configurable desde snapshot.",
             "",
             "5) PANEL CENTRAL",
@@ -3858,9 +3883,10 @@ Public Class Form1
             "- Filtro de estabilidad de vision contra capturas defectuosas.",
             "- OCR para nombre de mob y confirmacion.",
             "- OCR para objetivo inalcanzable y retarget forzado.",
+            "- OCR para aviso de repair en unreachable_text_rect con confirmacion de 5 lecturas.",
             "- OCR para party/ress y click de auto-aceptar.",
             "- Auto comando add con cooldown y pausa si ya esta en party.",
-            "- Escaneo de loot con coincidencia OCR difusa configurable (Loot Name Match %), rechazo por click o tecla.",
+            "- Escaneo de loot con coincidencia OCR difusa configurable (Loot Name Match %), click dinamico sobre la etiqueta detectada y rechazo por click o tecla.",
             "- Solo usa la captura del Vision loop; no guarda screenshots automaticos extra.",
             "- Lectura OCR de Prana/EXP y calculo de tasa por hora.",
             "",
@@ -3889,26 +3915,30 @@ Public Class Form1
             "- Pindutin ang Attack para simulan ang bot.",
             "- Pindutin ang Stop Bot para ihinto ang movement at loop.",
             "- Puwede ring Ctrl+Shift para pause/resume kapag focused ang game o control panel.",
+            "- Default na bukas ang Full sa Combat Full tab. Hindi puwedeng sabay tumakbo ang Lite at Full.",
+            "- Ang Lite timers para sa attack modes at skills ay puwede na mula 1 hanggang 9999 seconds.",
             "",
-            "2) COMBAT TAB - COMBAT SKILLS TABLE",
+            "2) COMBAT FULL TAB - COMBAT SKILLS TABLE",
             "- Enabled: naka-on o naka-off ang action.",
             "- Key: key na ipapadala sa game.",
             "- CooldownSec: minimum na pagitan bago ulitin ang key.",
-            "- Role: attack, heal, max_health, mana, special, high_max_hp, stop.",
+            "- Role: attack, heal, max_health, mana, special, high_max_hp, repair, stop.",
             "- Priority: pagkakasunod ng aksyon.",
             "- TriggerPercent: pangunahing threshold ng support actions.",
             "- MinHpPercent / MinMpPercent: minimum HP/MP para payagan ang action.",
             "- high_max_hp gagana lang kapag naka-enable sa Vision at nabasa ng mob_hp_rect OCR ang Max HP lampas sa threshold mo.",
+            "- repair nagbabantay sa unreachable_text_rect para sa '___ is about to break'. Pag nabasa ito ng OCR ng 5 beses, isang beses nitong ipapadala ang repair key at maghihintay munang mawala ang warning bago puwedeng mag-trigger ulit. Hindi ginagamit ang TriggerPercent sa repair.",
             "",
             "3) MONSTER FILTER",
             "- Enable Monster Filter (blacklist): listahan ng bawal at i-skip na mobs.",
             "- Add / Remove: dagdag o tanggal ng pangalan.",
             "- May OCR confirm para iwas maling target dahil sa stale text.",
             "",
-            "4) LOOT FILTER",
+            "4) AUTO-LOOT TAB",
             "- Toggle ng loot pickup at interval in seconds.",
             "- Allowed loot names list.",
             "- Loot Name Match % (Auto-Loot tab) sets fuzzy OCR match threshold for loot names (default 80%).",
+            "- Ang dynamic loot click ay gumagamit ng OCR position ng matched loot label kasama ang X/Y offsets mo.",
             "- Loot reject point na puwedeng piliin mula sa snapshot image.",
             "",
             "5) CENTER CONTROL PANEL",
@@ -3974,9 +4004,10 @@ Public Class Form1
             "- Vision stability filter laban sa capture glitches.",
             "- OCR para sa mob name + confirmation logic.",
             "- OCR para sa unreachable text at forced retarget.",
+            "- OCR para sa repair warning sa unreachable_text_rect na may 5-read confirmation.",
             "- OCR party/ress detection at auto accept click.",
             "- Auto add party command na may cooldown at suppression kapag nasa party na.",
-            "- Loot scan with configurable fuzzy OCR allow-list matching (Loot Name Match %), reject handling (click point/fallback key).",
+            "- Loot scan with configurable fuzzy OCR allow-list matching (Loot Name Match %), dynamic label clicking, at reject handling (click point/fallback key).",
             "- Periodic snapshot save bawat ~15 minuto.",
             "- Prana/EXP OCR at hourly rate calculation.",
             "",
@@ -6116,7 +6147,7 @@ Public Class Form1
     Private Shared Function NormalizePersistedRole(rawRole As String) As String
         Dim role As String = If(rawRole, "").Trim().ToLowerInvariant()
         Select Case role
-            Case "attack", "heal", "max_health", "mana", "special", "high_max_hp", "stop"
+            Case "attack", "heal", "max_health", "mana", "special", "high_max_hp", "repair", "stop"
                 Return role
             Case Else
                 Return "attack"

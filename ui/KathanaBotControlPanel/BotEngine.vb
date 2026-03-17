@@ -504,6 +504,7 @@ Public Class BotEngine
     Private Const UnreachableOcrMinIntervalMs As Integer = 260
     Private Const UnreachableConfirmWindowMs As Integer = 900
     Private Const UnreachableConfirmRequiredCount As Integer = 2
+    Private Const RepairConfirmRequiredCount As Integer = 5
     Private Const UnreachableClearRequiredCount As Integer = 2
     Private Const SustainedSingleZeroConfirmRequiredCount As Integer = 6
     Private Const RetargetBufferMs As Integer = 300
@@ -581,6 +582,10 @@ Public Class BotEngine
     Private _lastUnreachableTrigger As DateTime = DateTime.MinValue
     Private _unreachableLatched As Boolean = False
     Private _unreachableClearCount As Integer = 0
+    Private _repairConfirmCount As Integer = 0
+    Private _repairLastMatchAt As DateTime = DateTime.MinValue
+    Private _repairLatched As Boolean = False
+    Private _repairClearCount As Integer = 0
     Private _lastExpPercent As Double = -1
     Private _lastExpOcrAt As DateTime = DateTime.MinValue
     Private _expOcrTask As Task(Of Double) = Nothing
@@ -780,6 +785,10 @@ Public Class BotEngine
             _lastUnreachableTrigger = DateTime.MinValue
             _unreachableLatched = False
             _unreachableClearCount = 0
+            _repairConfirmCount = 0
+            _repairLastMatchAt = DateTime.MinValue
+            _repairLatched = False
+            _repairClearCount = 0
             _lastExpPercent = -1
             _lastExpOcrAt = DateTime.MinValue
             _expOcrTask = Nothing
@@ -1376,6 +1385,12 @@ Public Class BotEngine
             If unreachableTriggered AndAlso Not actionSent Then
                 actionSent = True
                 reason = "Unable to reach target detected. Forced retarget."
+            End If
+            If Not actionSent Then
+                actionSent = TrySendRepairAction(cfg, hwnd)
+                If actionSent Then
+                    reason = "Repair warning detected in unreachable text. Repair key sent."
+                End If
             End If
             Dim forcedRetarget As Boolean = False
 
@@ -4372,6 +4387,7 @@ Public Class BotEngine
             _unreachableOcrTask = Nothing
 
             Dim matched As Boolean = IsUnreachablePrompt(_lastUnreachableCandidate)
+            Dim repairMatched As Boolean = IsRepairPrompt(_lastUnreachableCandidate)
             If matched Then
                 _unreachableClearCount = 0
                 If Not _unreachableLatched Then
@@ -4388,7 +4404,6 @@ Public Class BotEngine
             Else
                 _unreachableConfirmCount = 0
                 _unreachableLastMatchAt = DateTime.MinValue
-                _lastUnreachableCandidate = ""
                 If _unreachableLatched Then
                     _unreachableClearCount += 1
                     If _unreachableClearCount >= UnreachableClearRequiredCount Then
@@ -4396,6 +4411,34 @@ Public Class BotEngine
                         _unreachableClearCount = 0
                     End If
                 End If
+            End If
+
+            If repairMatched Then
+                _repairClearCount = 0
+                If Not _repairLatched Then
+                    If _repairLastMatchAt = DateTime.MinValue OrElse (now - _repairLastMatchAt).TotalMilliseconds > UnreachableConfirmWindowMs Then
+                        _repairConfirmCount = 1
+                    Else
+                        _repairConfirmCount += 1
+                    End If
+                    _repairLastMatchAt = now
+                Else
+                    _repairConfirmCount = 0
+                End If
+            Else
+                _repairConfirmCount = 0
+                _repairLastMatchAt = DateTime.MinValue
+                If _repairLatched Then
+                    _repairClearCount += 1
+                    If _repairClearCount >= UnreachableClearRequiredCount Then
+                        _repairLatched = False
+                        _repairClearCount = 0
+                    End If
+                End If
+            End If
+
+            If Not matched AndAlso Not repairMatched Then
+                _lastUnreachableCandidate = ""
             End If
         End If
 
@@ -4429,6 +4472,10 @@ Public Class BotEngine
         If _unreachableConfirmCount > 0 AndAlso _unreachableLastMatchAt <> DateTime.MinValue AndAlso (now - _unreachableLastMatchAt).TotalMilliseconds > UnreachableConfirmWindowMs Then
             _unreachableConfirmCount = 0
             _unreachableLastMatchAt = DateTime.MinValue
+        End If
+        If _repairConfirmCount > 0 AndAlso _repairLastMatchAt <> DateTime.MinValue AndAlso (now - _repairLastMatchAt).TotalMilliseconds > UnreachableConfirmWindowMs Then
+            _repairConfirmCount = 0
+            _repairLastMatchAt = DateTime.MinValue
         End If
 
         If _unreachableOcrTask IsNot Nothing Then
@@ -4497,6 +4544,26 @@ Public Class BotEngine
             norm.Contains("cant", StringComparison.OrdinalIgnoreCase) OrElse
             norm.Contains("can't", StringComparison.OrdinalIgnoreCase)
         Return hasReach AndAlso hasTarget AndAlso hasUnable
+    End Function
+
+    Private Shared Function IsRepairPrompt(rawText As String) As Boolean
+        If String.IsNullOrWhiteSpace(rawText) Then
+            Return False
+        End If
+
+        Dim norm As String = NormalizeMobName(rawText)
+        If norm = "" Then
+            Return False
+        End If
+
+        Dim compact As String = norm.Replace(" ", "")
+        If compact.Contains("isabouttobreak", StringComparison.OrdinalIgnoreCase) OrElse
+           compact.Contains("abouttobreak", StringComparison.OrdinalIgnoreCase) Then
+            Return True
+        End If
+
+        Return norm.Contains("about to break", StringComparison.OrdinalIgnoreCase) OrElse
+               AreTextsClose(norm, "is about to break")
     End Function
 
     Private Shared Function DetectAutoAcceptPromptKind(rawText As String) As String
@@ -5113,6 +5180,10 @@ Public Class BotEngine
         Return role = "heal" OrElse role = "max_health" OrElse role = "mana"
     End Function
 
+    Private Shared Function IsRepairRole(role As String) As Boolean
+        Return String.Equals(role, "repair", StringComparison.OrdinalIgnoreCase)
+    End Function
+
     Private Shared Function IsSupportTriggered(action As ActionRule, hpPercent As Double, mpPercent As Double) As Boolean
         Select Case action.Role
             Case "heal", "max_health"
@@ -5176,6 +5247,43 @@ Public Class BotEngine
         Next
 
         Return sentAny
+    End Function
+
+    Private Function TrySendRepairAction(cfg As BotConfig, hwnd As IntPtr) As Boolean
+        If hwnd = IntPtr.Zero OrElse cfg Is Nothing OrElse cfg.Actions Is Nothing Then
+            Return False
+        End If
+        If _repairLatched OrElse _repairConfirmCount < RepairConfirmRequiredCount Then
+            Return False
+        End If
+
+        Dim ordered = cfg.Actions.
+            Where(Function(a) a.Enabled AndAlso IsRepairRole(a.Role)).
+            OrderBy(Function(a) a.Priority).
+            ToList()
+        If ordered.Count = 0 Then
+            Return False
+        End If
+
+        For Each action In ordered
+            If Not IsReady(action) Then
+                Continue For
+            End If
+            If Not SendKey(hwnd, action.KeyName, FastKeyPressMs) Then
+                Continue For
+            End If
+
+            MarkKeyUsed(action.KeyName)
+            _repairLatched = True
+            _repairClearCount = 0
+            _repairConfirmCount = 0
+            _repairLastMatchAt = DateTime.MinValue
+            SetLastAction($"{action.KeyName} (repair)")
+            RaiseEvent LogLine("Repair role triggered after 5 OCR reads of 'is about to break'.")
+            Return True
+        Next
+
+        Return False
     End Function
 
     Private Function TrySendStopAction(cfg As BotConfig, hwnd As IntPtr, context As String, Optional includeMovementFallback As Boolean = True) As Boolean
