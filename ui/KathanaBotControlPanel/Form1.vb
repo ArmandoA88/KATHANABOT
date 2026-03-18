@@ -1,4 +1,4 @@
-﻿Imports System.Media
+Imports System.Media
 Imports System.Net.Http
 Imports System.Runtime.InteropServices
 Imports System.Text
@@ -137,7 +137,13 @@ Public Class Form1
     Private txtMapOpenKey As TextBox
     Private chkTravelPreview As CheckBox
     Private chkTravelExecute As CheckBox
-    Private chkRouteRecording As CheckBox
+    Private btnStartRouteRecording As Button
+    Private btnStopRouteRecording As Button
+    Private btnReplayRoute As Button
+    Private nudRouteRecordingIntervalMs As NumericUpDown
+    Private dgvBreadcrumbs As DataGridView
+    Private _routeRecordingActive As Boolean = False
+    Private _routeRecordingAutoStartedBot As Boolean = False
     Private txtRouteRecordingName As TextBox
     Private btnSaveRouteRecording As Button
     Private cboRecordedRoute As ComboBox
@@ -614,8 +620,14 @@ Public Class Form1
         If chkTravelExecute IsNot Nothing Then
             AddHandler chkTravelExecute.CheckedChanged, AddressOf LiveConfigChanged
         End If
-        If chkRouteRecording IsNot Nothing Then
-            AddHandler chkRouteRecording.CheckedChanged, AddressOf LiveConfigChanged
+        If btnStartRouteRecording IsNot Nothing Then
+            AddHandler btnStartRouteRecording.Click, AddressOf StartRouteRecordingClicked
+        End If
+        If btnStopRouteRecording IsNot Nothing Then
+            AddHandler btnStopRouteRecording.Click, AddressOf StopRouteRecordingClicked
+        End If
+        If nudRouteRecordingIntervalMs IsNot Nothing Then
+            AddHandler nudRouteRecordingIntervalMs.ValueChanged, AddressOf LiveConfigChanged
         End If
         If txtRouteRecordingName IsNot Nothing Then
             AddHandler txtRouteRecordingName.TextChanged, AddressOf LiveConfigChanged
@@ -752,8 +764,8 @@ Public Class Form1
         If chkTravelExecute IsNot Nothing Then
             AddHandler chkTravelExecute.CheckedChanged, AddressOf PersistListSettingsChanged
         End If
-        If chkRouteRecording IsNot Nothing Then
-            AddHandler chkRouteRecording.CheckedChanged, AddressOf PersistListSettingsChanged
+        If nudRouteRecordingIntervalMs IsNot Nothing Then
+            AddHandler nudRouteRecordingIntervalMs.ValueChanged, AddressOf PersistListSettingsChanged
         End If
         If txtRouteRecordingName IsNot Nothing Then
             AddHandler txtRouteRecordingName.TextChanged, AddressOf PersistListSettingsChanged
@@ -799,6 +811,9 @@ Public Class Form1
         End If
         If btnDeleteRecordedRouteNode IsNot Nothing Then
             AddHandler btnDeleteRecordedRouteNode.Click, AddressOf DeleteRecordedRouteNodeClicked
+        End If
+        If btnReplayRoute IsNot Nothing Then
+            AddHandler btnReplayRoute.Click, AddressOf ReplayRouteClicked
         End If
     End Sub
 
@@ -1107,7 +1122,7 @@ Public Class Form1
                (chkNavigationEnabled IsNot Nothing AndAlso chkNavigationEnabled.Checked) OrElse
                (chkTravelPreview IsNot Nothing AndAlso chkTravelPreview.Checked) OrElse
                (chkTravelExecute IsNot Nothing AndAlso chkTravelExecute.Checked) OrElse
-               (chkRouteRecording IsNot Nothing AndAlso chkRouteRecording.Checked)
+               _routeRecordingActive
     End Function
 
     Private Function HasEnabledCombatActions() As Boolean
@@ -2255,153 +2270,181 @@ Public Class Form1
 
     Private Function BuildLevelingTab() As TabPage
         Dim tab As New TabPage("Leveling") With {.BackColor = Color.FromArgb(20, 20, 20)}
-        Dim scrollPanel As New Panel() With {.Dock = DockStyle.Fill, .Padding = New Padding(8), .AutoScroll = True}
+        Dim scrollPanel As New Panel() With {.Dock = DockStyle.Fill, .Padding = New Padding(4), .AutoScroll = True}
+        ' Side-by-side root: settings left (55%), agent runtime right (45%)
         Dim root As New TableLayoutPanel() With {
-            .Dock = DockStyle.Top,
-            .AutoSize = True,
-            .AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            .ColumnCount = 1,
-            .RowCount = 2,
+            .Dock = DockStyle.Fill,
+            .ColumnCount = 2,
+            .RowCount = 1,
             .Margin = New Padding(0)
         }
-        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
-        root.RowStyles.Add(New RowStyle(SizeType.AutoSize))
-        root.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 55.0F))
+        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 45.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         scrollPanel.Controls.Add(root)
         tab.Controls.Add(scrollPanel)
 
-        Dim settingsGroup As New GroupBox() With {.Text = "Leveling Agent", .Dock = DockStyle.Top, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .Padding = New Padding(10)}
-        Dim settingsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 2, .RowCount = 23}
-        settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 220.0F))
+        ' ── LEFT: Leveling Agent Settings ──
+        Dim settingsGroup As New GroupBox() With {.Text = "Leveling Agent", .Dock = DockStyle.Fill, .Padding = New Padding(4)}
+        Dim settingsScroll As New Panel() With {.Dock = DockStyle.Fill, .AutoScroll = True}
+        Dim settingsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Top, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 2, .RowCount = 25}
+        settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 180.0F))
         settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
-        For i As Integer = 0 To 22
+        For i As Integer = 0 To 24
             settingsLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
         Next
-        settingsGroup.Controls.Add(settingsLayout)
+        settingsScroll.Controls.Add(settingsLayout)
+        settingsGroup.Controls.Add(settingsScroll)
 
-        chkLevelingAgent = New CheckBox() With {.Text = "Enable leveling agent", .Dock = DockStyle.Fill}
+        chkLevelingAgent = New CheckBox() With {.Text = "Enable leveling agent", .Dock = DockStyle.Fill, .Margin = New Padding(2)}
         settingsLayout.Controls.Add(chkLevelingAgent, 0, 0)
         settingsLayout.SetColumnSpan(chkLevelingAgent, 2)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Preferred Mobs", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
-        txtLevelingPreferredMobs = New TextBox() With {.Dock = DockStyle.Fill, .PlaceholderText = "mob1, mob2, mob3"}
+        settingsLayout.Controls.Add(New Label() With {.Text = "Preferred Mobs", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 1)
+        txtLevelingPreferredMobs = New TextBox() With {.Dock = DockStyle.Fill, .PlaceholderText = "mob1, mob2, mob3", .Margin = New Padding(2)}
         settingsLayout.Controls.Add(txtLevelingPreferredMobs, 1, 1)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Stop HP %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
-        nudLevelingStopHp = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1, .Maximum = 100, .Value = 20, .Width = 120}
+        settingsLayout.Controls.Add(New Label() With {.Text = "Stop HP %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 2)
+        nudLevelingStopHp = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1, .Maximum = 100, .Value = 20, .Width = 90, .Margin = New Padding(2)}
         settingsLayout.Controls.Add(nudLevelingStopHp, 1, 2)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Stop MP %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 3)
-        nudLevelingStopMp = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1, .Maximum = 100, .Value = 10, .Width = 120}
+        settingsLayout.Controls.Add(New Label() With {.Text = "Stop MP %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 3)
+        nudLevelingStopMp = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1, .Maximum = 100, .Value = 10, .Width = 90, .Margin = New Padding(2)}
         settingsLayout.Controls.Add(nudLevelingStopMp, 1, 3)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Max No Target (sec)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 4)
-        nudLevelingMaxNoTargetSeconds = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 5, .Maximum = 600, .Value = 45, .Width = 120}
+        settingsLayout.Controls.Add(New Label() With {.Text = "Max No Target (sec)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 4)
+        nudLevelingMaxNoTargetSeconds = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 5, .Maximum = 600, .Value = 45, .Width = 90, .Margin = New Padding(2)}
         settingsLayout.Controls.Add(nudLevelingMaxNoTargetSeconds, 1, 4)
 
-        chkNavigationEnabled = New CheckBox() With {.Text = "Enable map localization", .Dock = DockStyle.Fill}
+        chkNavigationEnabled = New CheckBox() With {.Text = "Enable map localization", .Dock = DockStyle.Fill, .Margin = New Padding(2)}
         settingsLayout.Controls.Add(chkNavigationEnabled, 0, 5)
         settingsLayout.SetColumnSpan(chkNavigationEnabled, 2)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Map Open Key", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 6)
-        txtMapOpenKey = New TextBox() With {.Dock = DockStyle.Left, .Width = 120, .Text = DefaultMapOpenKey}
+        settingsLayout.Controls.Add(New Label() With {.Text = "Map Open Key", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 6)
+        txtMapOpenKey = New TextBox() With {.Dock = DockStyle.Left, .Width = 90, .Text = DefaultMapOpenKey, .Margin = New Padding(2)}
         settingsLayout.Controls.Add(txtMapOpenKey, 1, 6)
 
-        chkTravelPreview = New CheckBox() With {.Text = "Enable travel preview route planning", .Dock = DockStyle.Fill}
+        chkTravelPreview = New CheckBox() With {.Text = "Enable travel preview", .Dock = DockStyle.Fill, .Margin = New Padding(2)}
         settingsLayout.Controls.Add(chkTravelPreview, 0, 7)
         settingsLayout.SetColumnSpan(chkTravelPreview, 2)
 
-        chkTravelExecute = New CheckBox() With {.Text = "Enable travel execution (guarded)", .Dock = DockStyle.Fill}
+        chkTravelExecute = New CheckBox() With {.Text = "Enable travel execution (guarded)", .Dock = DockStyle.Fill, .Margin = New Padding(2)}
         settingsLayout.Controls.Add(chkTravelExecute, 0, 8)
         settingsLayout.SetColumnSpan(chkTravelExecute, 2)
 
-        chkRouteRecording = New CheckBox() With {.Text = "Enable route recording mode", .Dock = DockStyle.Fill}
-        settingsLayout.Controls.Add(chkRouteRecording, 0, 9)
-        settingsLayout.SetColumnSpan(chkRouteRecording, 2)
+        ' ── Route Recording: Start / Stop buttons ──
+        Dim recordInstructionsLabel As New Label() With {
+            .Text = "HOW TO RECORD: 1) Set a route name  2) Click Start Recording  3) Walk your character path in-game with the minimap open  4) Click Stop Recording  5) Click Save Route. The bot auto-starts in passive mode (no combat). Map localization is auto-enabled.",
+            .Dock = DockStyle.Fill, .ForeColor = Color.FromArgb(255, 200, 120), .AutoSize = True, .Margin = New Padding(2, 4, 2, 4),
+            .Font = New Font("Segoe UI", 8.0F, FontStyle.Italic)
+        }
+        settingsLayout.Controls.Add(recordInstructionsLabel, 0, 9)
+        settingsLayout.SetColumnSpan(recordInstructionsLabel, 2)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Recorded Route Name", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 10)
-        Dim recordingPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True}
-        txtRouteRecordingName = New TextBox() With {.Width = 220, .Text = "jina_route"}
+        settingsLayout.Controls.Add(New Label() With {.Text = "Route Recording", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Font = New Font("Segoe UI", 9.0F, FontStyle.Bold), .ForeColor = Color.Plum, .Margin = New Padding(2)}, 0, 10)
+        Dim recordBtnPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(2)}
+        btnStartRouteRecording = New Button() With {.Text = ChrW(&H23FA) & " Start Recording", .AutoSize = True, .BackColor = Color.FromArgb(30, 140, 60), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat, .Font = New Font("Segoe UI", 8.5F, FontStyle.Bold), .Margin = New Padding(0, 0, 4, 0)}
+        btnStopRouteRecording = New Button() With {.Text = ChrW(&H23F9) & " Stop Recording", .AutoSize = True, .BackColor = Color.FromArgb(180, 40, 40), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat, .Font = New Font("Segoe UI", 8.5F, FontStyle.Bold), .Enabled = False}
+        recordBtnPanel.Controls.Add(btnStartRouteRecording)
+        recordBtnPanel.Controls.Add(btnStopRouteRecording)
+        settingsLayout.Controls.Add(recordBtnPanel, 1, 10)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Sample Interval (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 11)
+        nudRouteRecordingIntervalMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 10, .Maximum = 5000, .Increment = 10, .Value = 100, .Width = 90, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(nudRouteRecordingIntervalMs, 1, 11)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Route Name", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 12)
+        Dim recordingPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .Margin = New Padding(2)}
+        txtRouteRecordingName = New TextBox() With {.Width = 160, .Text = "jina_route"}
         recordingPanel.Controls.Add(txtRouteRecordingName)
-        btnSaveRouteRecording = New Button() With {.Text = "Save Recorded Route", .AutoSize = True}
+        btnSaveRouteRecording = New Button() With {.Text = "Save Route", .AutoSize = True}
         recordingPanel.Controls.Add(btnSaveRouteRecording)
-        settingsLayout.Controls.Add(recordingPanel, 1, 10)
+        settingsLayout.Controls.Add(recordingPanel, 1, 12)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Recorded Routes", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 11)
-        Dim recordedRoutePanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True}
-        cboRecordedRoute = New ComboBox() With {.Width = 280, .DropDownStyle = ComboBoxStyle.DropDownList}
+        settingsLayout.Controls.Add(New Label() With {.Text = "Recorded Routes", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 13)
+        Dim recordedRoutePanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .Margin = New Padding(2)}
+        cboRecordedRoute = New ComboBox() With {.Width = 200, .DropDownStyle = ComboBoxStyle.DropDownList}
         recordedRoutePanel.Controls.Add(cboRecordedRoute)
-        btnDeleteRecordedRoute = New Button() With {.Text = "Delete Route", .AutoSize = True}
+        btnDeleteRecordedRoute = New Button() With {.Text = "Delete", .AutoSize = True}
         recordedRoutePanel.Controls.Add(btnDeleteRecordedRoute)
-        settingsLayout.Controls.Add(recordedRoutePanel, 1, 11)
+        btnReplayRoute = New Button() With {.Text = "Replay", .AutoSize = True, .BackColor = Color.FromArgb(30, 100, 180), .ForeColor = Color.White}
+        recordedRoutePanel.Controls.Add(btnReplayRoute)
+        settingsLayout.Controls.Add(recordedRoutePanel, 1, 13)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Recorded Route Nodes", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 12)
-        Dim recordedNodePanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True}
-        cboRecordedRouteNode = New ComboBox() With {.Width = 280, .DropDownStyle = ComboBoxStyle.DropDownList}
+        settingsLayout.Controls.Add(New Label() With {.Text = "Route Nodes", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 14)
+        Dim recordedNodePanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .Margin = New Padding(2)}
+        cboRecordedRouteNode = New ComboBox() With {.Width = 200, .DropDownStyle = ComboBoxStyle.DropDownList}
         recordedNodePanel.Controls.Add(cboRecordedRouteNode)
         btnDeleteRecordedRouteNode = New Button() With {.Text = "Delete Node", .AutoSize = True}
         recordedNodePanel.Controls.Add(btnDeleteRecordedRouteNode)
-        settingsLayout.Controls.Add(recordedNodePanel, 1, 12)
+        settingsLayout.Controls.Add(recordedNodePanel, 1, 14)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Waypoint Radius", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 13)
-        nudNavigationWaypointRadius = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0, .Maximum = 250, .Value = 36, .Width = 120}
-        settingsLayout.Controls.Add(nudNavigationWaypointRadius, 1, 13)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Waypoint Radius", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 15)
+        nudNavigationWaypointRadius = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0, .Maximum = 250, .Value = 36, .Width = 90, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(nudNavigationWaypointRadius, 1, 15)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Move Burst (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 14)
-        nudNavigationMoveBurstMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 100, .Maximum = 1500, .Increment = 25, .Value = 350, .Width = 120}
-        settingsLayout.Controls.Add(nudNavigationMoveBurstMs, 1, 14)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Move Burst (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 16)
+        nudNavigationMoveBurstMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 10, .Maximum = 1500, .Increment = 25, .Value = 350, .Width = 90, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(nudNavigationMoveBurstMs, 1, 16)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Re-sample (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 15)
-        nudNavigationResampleMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 250, .Maximum = 10000, .Increment = 50, .Value = 1800, .Width = 120}
-        settingsLayout.Controls.Add(nudNavigationResampleMs, 1, 15)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Re-sample (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 17)
+        nudNavigationResampleMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 50, .Maximum = 10000, .Increment = 50, .Value = 1800, .Width = 90, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(nudNavigationResampleMs, 1, 17)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Stall Timeout (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 16)
-        nudNavigationStallTimeoutMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1500, .Maximum = 30000, .Increment = 250, .Value = 6500, .Width = 120}
-        settingsLayout.Controls.Add(nudNavigationStallTimeoutMs, 1, 16)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Stall Timeout (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 18)
+        nudNavigationStallTimeoutMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1500, .Maximum = 30000, .Increment = 250, .Value = 6500, .Width = 90, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(nudNavigationStallTimeoutMs, 1, 18)
 
-        chkNavigationRepathOnStuck = New CheckBox() With {.Text = "Run recovery/repath when travel stalls", .Dock = DockStyle.Fill, .Checked = True}
-        settingsLayout.Controls.Add(chkNavigationRepathOnStuck, 0, 17)
+        chkNavigationRepathOnStuck = New CheckBox() With {.Text = "Repath when travel stalls", .Dock = DockStyle.Fill, .Checked = True, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(chkNavigationRepathOnStuck, 0, 19)
         settingsLayout.SetColumnSpan(chkNavigationRepathOnStuck, 2)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Route Start", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 18)
-        cboNavigationStartNode = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList, .Enabled = False}
-        settingsLayout.Controls.Add(cboNavigationStartNode, 1, 18)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Route Start", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 20)
+        cboNavigationStartNode = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList, .Enabled = False, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(cboNavigationStartNode, 1, 20)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Travel Route", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 19)
-        cboNavigationTargetNode = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList}
-        settingsLayout.Controls.Add(cboNavigationTargetNode, 1, 19)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Travel Route", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 21)
+        cboNavigationTargetNode = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(cboNavigationTargetNode, 1, 21)
 
-        chkLevelingStopOnLowExp = New CheckBox() With {.Text = "Stop when EXP/hour is below threshold", .Dock = DockStyle.Fill}
-        settingsLayout.Controls.Add(chkLevelingStopOnLowExp, 0, 20)
+        chkLevelingStopOnLowExp = New CheckBox() With {.Text = "Stop when EXP/hr below threshold", .Dock = DockStyle.Fill, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(chkLevelingStopOnLowExp, 0, 22)
         settingsLayout.SetColumnSpan(chkLevelingStopOnLowExp, 2)
-        settingsLayout.Controls.Add(New Label() With {.Text = "Min EXP/hour %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 21)
-        nudLevelingMinExpPerHour = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0.01D, .Maximum = 100D, .DecimalPlaces = 2, .Increment = 0.05D, .Value = DefaultLevelingMinExpPerHour, .Width = 120}
-        Dim lowExpPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True}
+        settingsLayout.Controls.Add(New Label() With {.Text = "Min EXP/hr %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 23)
+        nudLevelingMinExpPerHour = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0.01D, .Maximum = 100D, .DecimalPlaces = 2, .Increment = 0.05D, .Value = DefaultLevelingMinExpPerHour, .Width = 90, .Margin = New Padding(2)}
+        Dim lowExpPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .Margin = New Padding(2)}
         lowExpPanel.Controls.Add(nudLevelingMinExpPerHour)
-        chkLevelingStopOnRepeatedUnreachable = New CheckBox() With {.Text = "Stop after repeated unreachable targets", .AutoSize = True, .Margin = New Padding(16, 4, 0, 0)}
+        chkLevelingStopOnRepeatedUnreachable = New CheckBox() With {.Text = "Stop after repeated unreachable", .AutoSize = True, .Margin = New Padding(8, 4, 0, 0)}
         lowExpPanel.Controls.Add(chkLevelingStopOnRepeatedUnreachable)
-        nudLevelingUnreachableLimit = New NumericUpDown() With {.Minimum = 1, .Maximum = 20, .Value = 4, .Width = 70, .Margin = New Padding(8, 0, 0, 0)}
+        nudLevelingUnreachableLimit = New NumericUpDown() With {.Minimum = 1, .Maximum = 20, .Value = 4, .Width = 55, .Margin = New Padding(4, 0, 0, 0)}
         lowExpPanel.Controls.Add(nudLevelingUnreachableLimit)
-        settingsLayout.Controls.Add(lowExpPanel, 1, 21)
+        settingsLayout.Controls.Add(lowExpPanel, 1, 23)
 
-        Dim statusGroup As New GroupBox() With {.Text = "Agent Runtime", .Dock = DockStyle.Top, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .Padding = New Padding(10)}
-        Dim statusLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 1, .RowCount = 11, .Padding = New Padding(6)}
+        root.Controls.Add(settingsGroup, 0, 0)
+
+        ' ── RIGHT: Agent Runtime + Breadcrumb Table ──
+        Dim rightPanel As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2, .Margin = New Padding(0)}
+        rightPanel.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+        rightPanel.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+
+        Dim statusGroup As New GroupBox() With {.Text = "Agent Runtime", .Dock = DockStyle.Top, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .Padding = New Padding(4)}
+        Dim statusLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 1, .RowCount = 11, .Padding = New Padding(2)}
         For i As Integer = 0 To 10
             statusLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
         Next
         statusGroup.Controls.Add(statusLayout)
 
-        lblLevelingState = New Label() With {.Text = "Agent State: Disabled", .Dock = DockStyle.Fill, .ForeColor = Color.Khaki, .Font = New Font("Segoe UI", 11.0F, FontStyle.Bold), .TextAlign = ContentAlignment.MiddleLeft}
-        lblLevelingReason = New Label() With {.Text = "Reason: Leveling agent is disabled.", .Dock = DockStyle.Fill, .ForeColor = Color.Gainsboro, .AutoSize = True}
-        lblMapCoordinate = New Label() With {.Text = "Map Coordinate: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.LightGreen, .AutoSize = True}
-        lblMapHeading = New Label() With {.Text = "Map Heading: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.LightSkyBlue, .AutoSize = True}
-        lblMapMarker = New Label() With {.Text = "Map Marker: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.Salmon, .AutoSize = True}
-        lblMapLocalizationConfidence = New Label() With {.Text = "Localization Confidence: 0%", .Dock = DockStyle.Fill, .ForeColor = Color.Khaki, .AutoSize = True}
-        lblTravelStatus = New Label() With {.Text = "Travel: idle", .Dock = DockStyle.Fill, .ForeColor = Color.LightSteelBlue, .AutoSize = True}
-        lblRoutePreview = New Label() With {.Text = "Route Preview: disabled", .Dock = DockStyle.Fill, .ForeColor = Color.LightCyan, .AutoSize = True}
-        lblRouteRecording = New Label() With {.Text = "Route Recording: idle", .Dock = DockStyle.Fill, .ForeColor = Color.Plum, .AutoSize = True}
-        Dim hintLabel As New Label() With {.Text = "Preferred mobs are a positive filter. When the list is not empty, the agent will skip non-matching targets.", .Dock = DockStyle.Fill, .ForeColor = Color.LightSkyBlue, .AutoSize = True}
-        Dim guardrailLabel As New Label() With {.Text = "Travel execution is still guarded: it samples the map, plans a waypoint route, and sends short movement bursts only when combat is idle.", .Dock = DockStyle.Fill, .ForeColor = Color.Silver, .AutoSize = True}
+        lblLevelingState = New Label() With {.Text = "Agent State: Disabled", .Dock = DockStyle.Fill, .ForeColor = Color.Khaki, .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold), .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}
+        lblLevelingReason = New Label() With {.Text = "Reason: Leveling agent is disabled.", .Dock = DockStyle.Fill, .ForeColor = Color.Gainsboro, .AutoSize = True, .Margin = New Padding(2)}
+        lblMapCoordinate = New Label() With {.Text = "Map Coordinate: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.LightGreen, .AutoSize = True, .Margin = New Padding(2)}
+        lblMapHeading = New Label() With {.Text = "Map Heading: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.LightSkyBlue, .AutoSize = True, .Margin = New Padding(2)}
+        lblMapMarker = New Label() With {.Text = "Map Marker: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.Salmon, .AutoSize = True, .Margin = New Padding(2)}
+        lblMapLocalizationConfidence = New Label() With {.Text = "Localization Confidence: 0%", .Dock = DockStyle.Fill, .ForeColor = Color.Khaki, .AutoSize = True, .Margin = New Padding(2)}
+        lblTravelStatus = New Label() With {.Text = "Travel: idle", .Dock = DockStyle.Fill, .ForeColor = Color.LightSteelBlue, .AutoSize = True, .Margin = New Padding(2)}
+        lblRoutePreview = New Label() With {.Text = "Route Preview: disabled", .Dock = DockStyle.Fill, .ForeColor = Color.LightCyan, .AutoSize = True, .Margin = New Padding(2)}
+        lblRouteRecording = New Label() With {.Text = "Route Recording: idle", .Dock = DockStyle.Fill, .ForeColor = Color.Plum, .AutoSize = True, .Margin = New Padding(2)}
+        Dim hintLabel As New Label() With {.Text = "Mobs filter: agent skips non-matching targets when set.", .Dock = DockStyle.Fill, .ForeColor = Color.LightSkyBlue, .AutoSize = True, .Margin = New Padding(2)}
+        Dim guardrailLabel As New Label() With {.Text = "Travel is guarded: map samples, waypoint routes, short bursts when combat idle.", .Dock = DockStyle.Fill, .ForeColor = Color.Silver, .AutoSize = True, .Margin = New Padding(2)}
         statusLayout.Controls.Add(lblLevelingState, 0, 0)
         statusLayout.Controls.Add(lblLevelingReason, 0, 1)
         statusLayout.Controls.Add(lblMapCoordinate, 0, 2)
@@ -2414,8 +2457,34 @@ Public Class Form1
         statusLayout.Controls.Add(hintLabel, 0, 9)
         statusLayout.Controls.Add(guardrailLabel, 0, 10)
 
-        root.Controls.Add(settingsGroup, 0, 0)
-        root.Controls.Add(statusGroup, 0, 1)
+        rightPanel.Controls.Add(statusGroup, 0, 0)
+
+        ' Breadcrumb coordinate table
+        Dim breadcrumbGroup As New GroupBox() With {.Text = "Breadcrumbs (Recorded Coordinates)", .Dock = DockStyle.Fill, .Padding = New Padding(4)}
+        dgvBreadcrumbs = New DataGridView() With {
+            .Dock = DockStyle.Fill,
+            .ReadOnly = False,
+            .AllowUserToAddRows = False,
+            .AllowUserToDeleteRows = False,
+            .AllowUserToResizeRows = False,
+            .MultiSelect = False,
+            .SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            .RowHeadersVisible = False,
+            .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+            .BackgroundColor = Color.FromArgb(30, 30, 30),
+            .ForeColor = Color.Gainsboro,
+            .GridColor = Color.FromArgb(50, 50, 50),
+            .BorderStyle = BorderStyle.None
+        }
+        dgvBreadcrumbs.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Idx", .HeaderText = "#", .FillWeight = 30.0F, .ReadOnly = True})
+        dgvBreadcrumbs.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "X", .HeaderText = "X", .FillWeight = 35.0F})
+        dgvBreadcrumbs.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Y", .HeaderText = "Y", .FillWeight = 35.0F})
+        dgvBreadcrumbs.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "At", .HeaderText = "Captured At", .FillWeight = 70.0F, .ReadOnly = True})
+        breadcrumbGroup.Controls.Add(dgvBreadcrumbs)
+        rightPanel.Controls.Add(breadcrumbGroup, 0, 1)
+
+        root.Controls.Add(rightPanel, 1, 0)
+
         PopulateNavigationNodeCombos()
         PopulateRecordedRouteManager()
         Return tab
@@ -4164,7 +4233,7 @@ Public Class Form1
             $"MapOpenKey: {If(txtMapOpenKey IsNot Nothing AndAlso txtMapOpenKey.Text.Trim() <> "", txtMapOpenKey.Text.Trim().ToUpperInvariant(), DefaultMapOpenKey)}{Environment.NewLine}" &
             $"TravelPreviewEnabled: {If(chkTravelPreview IsNot Nothing AndAlso chkTravelPreview.Checked, "True", "False")}{Environment.NewLine}" &
             $"TravelExecutionEnabled: {If(chkTravelExecute IsNot Nothing AndAlso chkTravelExecute.Checked, "True", "False")}{Environment.NewLine}" &
-            $"RouteRecordingEnabled: {If(chkRouteRecording IsNot Nothing AndAlso chkRouteRecording.Checked, "True", "False")}{Environment.NewLine}" &
+            $"RouteRecordingEnabled: {If(_routeRecordingActive, "True", "False")}{Environment.NewLine}" &
             $"RouteRecordingName: {If(txtRouteRecordingName IsNot Nothing, txtRouteRecordingName.Text.Trim(), "jina_route")}{Environment.NewLine}" &
             $"WaypointRadius: {If(nudNavigationWaypointRadius IsNot Nothing, nudNavigationWaypointRadius.Value.ToString(), "36")}{Environment.NewLine}" &
             $"MoveBurstMs: {If(nudNavigationMoveBurstMs IsNot Nothing, nudNavigationMoveBurstMs.Value.ToString(), "350")}{Environment.NewLine}" &
@@ -4394,6 +4463,8 @@ Public Class Form1
             lblRouteRecording.Text = $"Route Recording: {recordingText}"
             lblRouteRecording.ForeColor = If(status.RouteRecordingActive, Color.Plum, If(status.RouteRecordingSampleCount >= 1, Color.LightPink, Color.DimGray))
         End If
+        UpdateRouteRecordingButtonStates()
+        UpdateBreadcrumbsGrid(status.RouteRecordingSamples)
         If lblChatTranslationStatus IsNot Nothing Then
             Dim chatState As String
             If chkChatTranslationEnabled Is Nothing OrElse Not chkChatTranslationEnabled.Checked Then
@@ -5034,8 +5105,9 @@ Public Class Form1
         cfg.NavigationTargetNodeId = If(selectedRouteEndNode Is Nothing, "", selectedRouteEndNode.Id)
         cfg.NavigationTravelPreviewEnabled = (chkTravelPreview IsNot Nothing AndAlso chkTravelPreview.Checked)
         cfg.NavigationTravelExecutionEnabled = (chkTravelExecute IsNot Nothing AndAlso chkTravelExecute.Checked)
-        cfg.RouteRecordingEnabled = (chkRouteRecording IsNot Nothing AndAlso chkRouteRecording.Checked)
+        cfg.RouteRecordingEnabled = _routeRecordingActive
         cfg.RouteRecordingName = If(txtRouteRecordingName IsNot Nothing AndAlso txtRouteRecordingName.Text.Trim() <> "", txtRouteRecordingName.Text.Trim(), "jina_route")
+        cfg.RouteRecordingSampleIntervalMs = CInt(If(nudRouteRecordingIntervalMs IsNot Nothing, nudRouteRecordingIntervalMs.Value, 250D))
         cfg.NavigationWaypointReachRadius = CInt(If(nudNavigationWaypointRadius IsNot Nothing, nudNavigationWaypointRadius.Value, 36D))
         cfg.NavigationMoveBurstMs = CInt(If(nudNavigationMoveBurstMs IsNot Nothing, nudNavigationMoveBurstMs.Value, 350D))
         cfg.NavigationResampleIntervalMs = CInt(If(nudNavigationResampleMs IsNot Nothing, nudNavigationResampleMs.Value, 1800D))
@@ -5313,6 +5385,89 @@ Public Class Form1
         PopulateNavigationNodeCombos()
         PopulateRecordedRouteManager()
         SavePersistedListState(False)
+    End Sub
+
+    Private Sub StartRouteRecordingClicked(sender As Object, e As EventArgs)
+        _routeRecordingActive = True
+        ' Auto-enable navigation if not already enabled (needed for coordinate OCR)
+        If chkNavigationEnabled IsNot Nothing AndAlso Not chkNavigationEnabled.Checked Then
+            chkNavigationEnabled.Checked = True
+        End If
+        UpdateRouteRecordingButtonStates()
+        LiveConfigChanged(sender, e)
+        ' Auto-start bot if not running
+        If Not _fullEngine.IsRunning() Then
+            _routeRecordingAutoStartedBot = True
+            StartEdition(BotEdition.Full, False)
+            AppendLog("Route recording: auto-started bot for coordinate capture.")
+        End If
+        AppendLog("Route recording started.")
+    End Sub
+
+    Private Sub StopRouteRecordingClicked(sender As Object, e As EventArgs)
+        _routeRecordingActive = False
+        UpdateRouteRecordingButtonStates()
+        LiveConfigChanged(sender, e)
+        AppendLog("Route recording stopped.")
+        ' Auto-stop bot if we auto-started it
+        If _routeRecordingAutoStartedBot Then
+            _routeRecordingAutoStartedBot = False
+            StopEdition(BotEdition.Full, False, "route recording stopped")
+            AppendLog("Route recording: auto-stopped bot.")
+        End If
+    End Sub
+
+    Private Sub UpdateRouteRecordingButtonStates()
+        If btnStartRouteRecording IsNot Nothing Then
+            btnStartRouteRecording.Enabled = Not _routeRecordingActive
+        End If
+        If btnStopRouteRecording IsNot Nothing Then
+            btnStopRouteRecording.Enabled = _routeRecordingActive
+        End If
+    End Sub
+
+    Private Sub UpdateBreadcrumbsGrid(samples As List(Of NavigationRouteSample))
+        If dgvBreadcrumbs Is Nothing Then Return
+        Dim src As List(Of NavigationRouteSample) = If(samples, New List(Of NavigationRouteSample)())
+        ' Only update if count changed to avoid flicker during editing
+        If dgvBreadcrumbs.RowCount = src.Count AndAlso Not _routeRecordingActive Then
+            Return
+        End If
+        dgvBreadcrumbs.SuspendLayout()
+        dgvBreadcrumbs.Rows.Clear()
+        For i As Integer = 0 To src.Count - 1
+            dgvBreadcrumbs.Rows.Add((i + 1).ToString(), src(i).X.ToString(), src(i).Y.ToString(), src(i).CapturedAtUtc.ToLocalTime().ToString("HH:mm:ss.fff"))
+        Next
+        If dgvBreadcrumbs.Rows.Count > 0 Then
+            dgvBreadcrumbs.FirstDisplayedScrollingRowIndex = dgvBreadcrumbs.Rows.Count - 1
+        End If
+        dgvBreadcrumbs.ResumeLayout()
+    End Sub
+
+    Private Sub ReplayRouteClicked(sender As Object, e As EventArgs)
+        Dim routeName As String = ExtractRecordedRouteName(If(cboRecordedRoute Is Nothing, Nothing, cboRecordedRoute.SelectedItem))
+        If routeName = "" Then
+            AppendLog("Select a recorded route first to replay.")
+            Return
+        End If
+        Dim mapName As String = GetSelectedNavigationMapName()
+        Dim nodes As List(Of NavigationNode) = BotEngine.GetRecordedRouteNodeOptions(routeName, mapName)
+        If nodes Is Nothing OrElse nodes.Count = 0 Then
+            AppendLog($"No nodes found for route '{routeName}'.")
+            Return
+        End If
+        If dgvBreadcrumbs IsNot Nothing Then
+            dgvBreadcrumbs.SuspendLayout()
+            dgvBreadcrumbs.Rows.Clear()
+            For i As Integer = 0 To nodes.Count - 1
+                dgvBreadcrumbs.Rows.Add((i + 1).ToString(), nodes(i).X.ToString("0"), nodes(i).Y.ToString("0"), nodes(i).Label)
+            Next
+            If dgvBreadcrumbs.Rows.Count > 0 Then
+                dgvBreadcrumbs.FirstDisplayedScrollingRowIndex = 0
+            End If
+            dgvBreadcrumbs.ResumeLayout()
+        End If
+        AppendLog($"Replaying route '{routeName}' with {nodes.Count} nodes.")
     End Sub
 
     Private Sub RecordedRouteSelectionChanged(sender As Object, e As EventArgs)
@@ -5871,9 +6026,9 @@ Public Class Form1
         If chkTravelExecute IsNot Nothing Then
             chkTravelExecute.Checked = cfg.NavigationTravelExecutionEnabled
         End If
-        If chkRouteRecording IsNot Nothing Then
-            chkRouteRecording.Checked = cfg.RouteRecordingEnabled
-        End If
+        _routeRecordingActive = cfg.RouteRecordingEnabled
+        UpdateRouteRecordingButtonStates()
+        SetNumericControlValue(nudRouteRecordingIntervalMs, CDec(Math.Max(100, cfg.RouteRecordingSampleIntervalMs)))
         If txtRouteRecordingName IsNot Nothing Then
             txtRouteRecordingName.Text = If(String.IsNullOrWhiteSpace(cfg.RouteRecordingName), "jina_route", cfg.RouteRecordingName.Trim())
         End If

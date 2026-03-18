@@ -217,8 +217,9 @@ Public Class BotConfig
     Public Property NavigationRepathOnStuck As Boolean = True
     Public Property RouteRecordingEnabled As Boolean = False
     Public Property RouteRecordingName As String = "jina_route"
-    Public Property RouteRecordingMinSampleDistance As Integer = 8
+    Public Property RouteRecordingMinSampleDistance As Integer = 2
     Public Property RouteRecordingMinNodeSpacing As Integer = 28
+    Public Property RouteRecordingSampleIntervalMs As Integer = 100
     Public Property ChatTranslationEnabled As Boolean = False
     Public Property ChatTranslationOverlayEnabled As Boolean = True
     Public Property ChatTranslationTargetLanguage As String = "en"
@@ -324,6 +325,7 @@ Public Class BotStatus
     Public Property RouteRecordingMapName As String = ""
     Public Property RouteRecordingName As String = ""
     Public Property RouteRecordingSampleCount As Integer
+    Public Property RouteRecordingSamples As List(Of NavigationRouteSample) = New List(Of NavigationRouteSample)()
     Public Property RouteRecordingStatus As String = ""
     Public Property RouteRecordingLastSavedPath As String = ""
     Public Property LastAction As String = ""
@@ -1066,7 +1068,7 @@ Public Class BotEngine
                 ResolveVisionRegions(cfg, clientWidth, clientHeight, liteHpRegion, liteMpRegion, liteMobNameRegion, liteMobHpRegion, liteUnreachableTextRegion, litePranaExpRegion, liteRupiahsRegion, litePartyInviteScanRegion, litePartyInviteOkRegion, litePartyListRegion, liteMapRegion, liteMapCoordinateRegion, liteChatRegion)
 
                 Dim liteFrame As Bitmap = Nothing
-                If cfg.PartyAutoAcceptEnabled OrElse cfg.BlackScreenProtectionEnabled Then
+                If cfg.PartyAskEnabled Then
                     liteFrame = CaptureClient(hwnd)
                     If liteFrame IsNot Nothing Then
                         ReplaceLatestLoopFrame(liteFrame)
@@ -2680,18 +2682,24 @@ Public Class BotEngine
     End Sub
 
     Private Sub TryAppendRouteRecordingSample(cfg As BotConfig, now As DateTime)
-        If _lastMapCoordinateX < 0 OrElse _lastMapCoordinateY < 0 OrElse _lastMapCoordinateConfidence < 70 Then
+        If _lastMapCoordinateX < 0 OrElse _lastMapCoordinateY < 0 OrElse _lastMapCoordinateConfidence < 10 Then
             Return
         End If
-        Dim effectiveSampleIntervalMs As Integer = Math.Max(100, RouteRecordingMinSampleIntervalMs \ 2)
+        Dim effectiveSampleIntervalMs As Integer = Math.Max(10, If(cfg IsNot Nothing AndAlso cfg.RouteRecordingSampleIntervalMs > 0, cfg.RouteRecordingSampleIntervalMs, RouteRecordingMinSampleIntervalMs))
         If _routeRecordingLastSampleAt <> DateTime.MinValue AndAlso (now - _routeRecordingLastSampleAt).TotalMilliseconds < effectiveSampleIntervalMs Then
             Return
         End If
 
-        Dim minDistance As Double = Math.Max(1, cfg.RouteRecordingMinSampleDistance / 2.0)
+        Dim minDistance As Double = Math.Max(0.5, cfg.RouteRecordingMinSampleDistance / 4.0)
         If _routeRecordingSamples.Count > 0 Then
             Dim lastSample As NavigationRouteSample = _routeRecordingSamples(_routeRecordingSamples.Count - 1)
-            If CalculateDistance(lastSample.X, lastSample.Y, _lastMapCoordinateX, _lastMapCoordinateY) < minDistance Then
+            Dim dist As Double = CalculateDistance(lastSample.X, lastSample.Y, _lastMapCoordinateX, _lastMapCoordinateY)
+            If dist < minDistance Then
+                Return
+            End If
+            ' OCR coordinate validation: reject jumps > 20 units as likely misreads
+            If dist > 20 Then
+                RaiseEvent LogLine($"Route recording: rejected coordinate ({_lastMapCoordinateX},{_lastMapCoordinateY}) – jump of {dist:0.0} units from ({lastSample.X},{lastSample.Y}) exceeds 20-unit limit.")
                 Return
             End If
         End If
@@ -5515,6 +5523,9 @@ Public Class BotEngine
             _status.RouteRecordingMapName = _routeRecordingMapName
             _status.RouteRecordingName = _routeRecordingName
             _status.RouteRecordingSampleCount = _routeRecordingSamples.Count
+            Dim sampleSnapshotLimit As Integer = Math.Min(_routeRecordingSamples.Count, 200)
+            Dim sampleStart As Integer = _routeRecordingSamples.Count - sampleSnapshotLimit
+            _status.RouteRecordingSamples = _routeRecordingSamples.GetRange(sampleStart, sampleSnapshotLimit).Select(Function(s) New NavigationRouteSample With {.X = s.X, .Y = s.Y, .CapturedAtUtc = s.CapturedAtUtc}).ToList()
             _status.RouteRecordingStatus = _routeRecordingStatus
             _status.RouteRecordingLastSavedPath = _routeRecordingLastSavedPath
             _status.PartySize = _lastPartySize
