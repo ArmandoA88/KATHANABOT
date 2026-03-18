@@ -1,4 +1,4 @@
-﻿Imports System.Collections.Generic
+Imports System.Collections.Generic
 Imports System.Diagnostics
 Imports System.Drawing
 Imports System.Drawing.Drawing2D
@@ -163,6 +163,7 @@ Public Class BotConfig
     Public Property BypassStuckTarget As Boolean = True
     Public Property StuckTargetMs As Integer = 2200
     Public Property StuckTargetNoProgressRetargetMs As Integer = 6000
+    Public Property BlackScreenProtectionEnabled As Boolean = True
     Public Property DeniedMobs As List(Of String) = New List(Of String)()
     Public Property LootPickupEnabled As Boolean = False
     Public Property LootPickupIntervalMs As Integer = 4000
@@ -1065,7 +1066,7 @@ Public Class BotEngine
                 ResolveVisionRegions(cfg, clientWidth, clientHeight, liteHpRegion, liteMpRegion, liteMobNameRegion, liteMobHpRegion, liteUnreachableTextRegion, litePranaExpRegion, liteRupiahsRegion, litePartyInviteScanRegion, litePartyInviteOkRegion, litePartyListRegion, liteMapRegion, liteMapCoordinateRegion, liteChatRegion)
 
                 Dim liteFrame As Bitmap = Nothing
-                If cfg.PartyAutoAcceptEnabled Then
+                If cfg.PartyAutoAcceptEnabled OrElse cfg.BlackScreenProtectionEnabled Then
                     liteFrame = CaptureClient(hwnd)
                     If liteFrame IsNot Nothing Then
                         ReplaceLatestLoopFrame(liteFrame)
@@ -1074,6 +1075,17 @@ Public Class BotEngine
                     End If
                 Else
                     ClearLatestLoopFrame()
+                End If
+                
+                If cfg.BlackScreenProtectionEnabled AndAlso liteFrame IsNot Nothing AndAlso IsLikelyBlackFrame(liteFrame) Then
+                    liteFrame.Dispose()
+                    SetStatus(Sub(s)
+                                  s.WindowFound = True
+                                  s.NotAttackingReason = "Waiting for game screen (black frame detected)."
+                                  s.ErrorMessage = "Vision glitch: black screen ignored in Lite Mode."
+                              End Sub)
+                    Await Task.Delay(loopDelayMs, token)
+                    Continue While
                 End If
 
                 Dim hasLiteHpPoint As Boolean = cfg.LiteHpCheckPointX >= 0 AndAlso cfg.LiteHpCheckPointY >= 0
