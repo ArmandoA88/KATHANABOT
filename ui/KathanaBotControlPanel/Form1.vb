@@ -66,6 +66,14 @@ Public Class Form1
     Private _autoLootTab As TabPage
     Private _levelingTab As TabPage
     Private _diagnosticsTab As TabPage
+    Private Const HelpScopeAll As String = "all"
+    Private Const HelpScopeLite As String = "lite"
+    Private Const HelpScopeCombat As String = "combat"
+    Private Const HelpScopeVision As String = "vision"
+    Private Const HelpScopeAutoPot As String = "auto-pot"
+    Private Const HelpScopeAutoLoot As String = "auto-loot"
+    Private Const HelpScopeLeveling As String = "leveling"
+    Private Const HelpScopeDiagnostics As String = "diagnostics"
 
     Private txtWindowTitle As TextBox
     Private nudLoopMs As NumericUpDown
@@ -285,18 +293,12 @@ Public Class Form1
     Private ReadOnly _baseBackColors As New Dictionary(Of Control, Color)()
     Private ReadOnly _gridThemeSnapshots As New Dictionary(Of DataGridView, GridThemeSnapshot)()
     Private ReadOnly _keyActionEvents As New List(Of KeyActionEvent)()
-    Private ReadOnly _licenseHeartbeatTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _chatTranslator As New TranslationService()
     Private ReadOnly _chatTranslationLock As New SemaphoreSlim(1, 1)
     Private ReadOnly _chatSeenLineKeys As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
     Private ReadOnly _chatSeenLineOrder As New Queue(Of String)()
     Private ReadOnly _chatOverlayEntries As New List(Of ChatOverlayLine)()
     Private _lastChatOcrText As String = ""
-    Private _keygenState As New KeygenPersistedState()
-    Private _licenseSession As KeygenLicenseSession = Nothing
-    Private _licenseHeartbeatInProgress As Boolean = False
-    Private _licenseHeartbeatFailureCount As Integer = 0
-    Private _licenseShutdownRequested As Boolean = False
 
     Private Class GridThemeSnapshot
         Public Property BackgroundColor As Color
@@ -344,7 +346,6 @@ Public Class Form1
         Public Property WindowTitle As String = DefaultGameWindowTitle
         Public Property Full As PersistedListState = New PersistedListState()
         Public Property Lite As PersistedLiteState = New PersistedLiteState()
-        Public Property License As KeygenPersistedState = New KeygenPersistedState()
     End Class
 
     Private Class PersistedListState
@@ -465,9 +466,6 @@ Public Class Form1
         _enterToggleTimer.Interval = 45
         AddHandler _enterToggleTimer.Tick, AddressOf EnterToggleTimerTick
         _enterToggleTimer.Start()
-
-        _licenseHeartbeatTimer.Interval = 60000
-        AddHandler _licenseHeartbeatTimer.Tick, AddressOf LicenseHeartbeatTimerTick
 
         UpdateEditionUiState(False)
         PushLiveConfig()
@@ -950,8 +948,8 @@ Public Class Form1
         Dim banner As New Panel() With {.Dock = DockStyle.Fill, .BackColor = Color.FromArgb(251, 251, 251), .Padding = New Padding(12, 6, 12, 6), .Tag = "lite-scope"}
         Dim lblEdition As New Label() With {
             .Dock = DockStyle.Left,
-            .Width = 340,
-            .Text = "KathanaBot Lite Version",
+            .Width = 420,
+            .Text = "KathanaBot Lite Version - for slower computers",
             .Font = New Font("Segoe UI", 9.5F, FontStyle.Bold),
             .ForeColor = Color.FromArgb(46, 72, 102),
             .TextAlign = ContentAlignment.MiddleLeft
@@ -1200,7 +1198,9 @@ Public Class Form1
         Dim modeGroup As New GroupBox() With {.Text = "Version", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(251, 251, 251), .Padding = New Padding(10)}
         Dim modeLabel As New Label() With {
             .Dock = DockStyle.Fill,
-            .Text = "Lite and Full keep separate settings." & Environment.NewLine &
+            .Text = "Lite is intended for slower computers." & Environment.NewLine &
+                    "Full is for the complete feature set on more powerful computers." & Environment.NewLine &
+                    "Lite and Full keep separate settings." & Environment.NewLine &
                     "Switching tabs does not stop Full." & Environment.NewLine &
                     "Starting Lite will stop Full first.",
             .ForeColor = Color.FromArgb(150, 78, 118),
@@ -1255,7 +1255,7 @@ Public Class Form1
         lblLiteRunState = New Label() With {.Text = "LITE BOT PAUSED", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleCenter, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White, .Font = New Font("Segoe UI", 8.25F, FontStyle.Bold), .Tag = "lite-scope"}
         btnLiteAttack = New Button() With {.Text = "Start", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(40, 180, 80), .ForeColor = Color.White, .Font = New Font("Segoe UI", 8.0F, FontStyle.Bold), .Tag = "lite-scope"}
         btnLiteStop = New Button() With {.Text = "Stop", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(220, 70, 55), .ForeColor = Color.White, .Font = New Font("Segoe UI", 8.0F, FontStyle.Bold), .Tag = "lite-scope"}
-        btnLiteHelp = New Button() With {.Text = "Help (EN/ES/FIL)", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(70, 70, 70), .ForeColor = Color.White, .Font = New Font("Segoe UI", 7.75F, FontStyle.Bold), .Tag = "lite-scope"}
+        btnLiteHelp = New Button() With {.Text = "Explanation (EN/ES/FIL)", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(70, 70, 70), .ForeColor = Color.White, .Font = New Font("Segoe UI", 7.75F, FontStyle.Bold), .Tag = "lite-scope", .AccessibleDescription = HelpScopeLite}
         AddHandler btnLiteAttack.Click, AddressOf StartClicked
         AddHandler btnLiteStop.Click, AddressOf StopClicked
         AddHandler btnLiteHelp.Click, AddressOf HelpClicked
@@ -1702,6 +1702,28 @@ Public Class Form1
         Return tab
     End Function
 
+    Private Sub AddTabExplanationButton(tab As TabPage, helpScope As String)
+        Dim buttonHost As New Panel() With {
+            .Dock = DockStyle.Top,
+            .Height = 36,
+            .Padding = New Padding(8, 4, 8, 4),
+            .BackColor = If(String.Equals(helpScope, HelpScopeLite, StringComparison.OrdinalIgnoreCase), Color.FromArgb(244, 244, 244), Color.FromArgb(28, 28, 28))
+        }
+
+        Dim button As New Button() With {
+            .Text = "Explanation (EN/ES/FIL)",
+            .Dock = DockStyle.Right,
+            .Width = 190,
+            .BackColor = If(String.Equals(helpScope, HelpScopeLite, StringComparison.OrdinalIgnoreCase), Color.White, Color.FromArgb(55, 95, 145)),
+            .ForeColor = If(String.Equals(helpScope, HelpScopeLite, StringComparison.OrdinalIgnoreCase), Color.FromArgb(45, 45, 45), Color.White),
+            .AccessibleDescription = helpScope
+        }
+        AddHandler button.Click, AddressOf HelpClicked
+        buttonHost.Controls.Add(button)
+        tab.Controls.Add(buttonHost)
+        buttonHost.BringToFront()
+    End Sub
+
     Private Function BuildVisionTab() As TabPage
         Dim tab As New TabPage("Vision") With {.BackColor = Color.FromArgb(20, 20, 20)}
         Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1, .Padding = New Padding(8)}
@@ -1858,6 +1880,7 @@ Public Class Form1
 
         root.Controls.Add(right, 1, 0)
 
+        AddTabExplanationButton(tab, HelpScopeVision)
         Return tab
     End Function
 
@@ -2054,6 +2077,7 @@ Public Class Form1
         root.Controls.Add(BuildAutoPotUnstuckGroup(), 0, 1)
         UpdateNotificationProviderUi()
         tab.Controls.Add(root)
+        AddTabExplanationButton(tab, HelpScopeAutoPot)
         Return tab
     End Function
 
@@ -2156,6 +2180,7 @@ Public Class Form1
         root.Controls.Add(left, 0, 0)
         root.Controls.Add(right, 1, 0)
         tab.Controls.Add(root)
+        AddTabExplanationButton(tab, HelpScopeAutoLoot)
         Return tab
     End Function
 
@@ -2265,6 +2290,7 @@ Public Class Form1
         Dim tab As New TabPage("Diagnostics") With {.BackColor = Color.FromArgb(20, 20, 20)}
         txtDiagnostics = New TextBox() With {.Dock = DockStyle.Fill, .Multiline = True, .ScrollBars = ScrollBars.Both, .ReadOnly = True, .Font = New Font("Consolas", 9.5F, FontStyle.Regular), .BackColor = Color.FromArgb(10, 10, 10), .ForeColor = Color.LightGray}
         tab.Controls.Add(txtDiagnostics)
+        AddTabExplanationButton(tab, HelpScopeDiagnostics)
         Return tab
     End Function
 
@@ -2487,6 +2513,7 @@ Public Class Form1
 
         PopulateNavigationNodeCombos()
         PopulateRecordedRouteManager()
+        AddTabExplanationButton(tab, HelpScopeLeveling)
         Return tab
     End Function
 
@@ -2588,10 +2615,10 @@ Public Class Form1
     Private Function BuildCenterControlPanel() As Panel
         Dim panel As New Panel() With {.Dock = DockStyle.Fill, .Padding = New Padding(12), .AutoScroll = True}
         lblFullEdition = New Label() With {
-            .Text = "FULL VERSION",
+            .Text = "FULL VERSION - for more powerful computers",
             .Top = 0,
             .Left = 8,
-            .Width = 210,
+            .Width = 320,
             .Height = 24,
             .ForeColor = Color.FromArgb(80, 170, 255),
             .Font = New Font("Segoe UI", 9.0F, FontStyle.Bold),
@@ -2661,13 +2688,14 @@ Public Class Form1
             .ForeColor = Color.White
         }
         btnHelp = New Button() With {
-            .Text = "Help (EN/ES/FIL)",
+            .Text = "Explanation (EN/ES/FIL)",
             .Top = 764,
             .Left = 8,
             .Width = 210,
             .Height = 38,
             .BackColor = Color.FromArgb(70, 70, 70),
-            .ForeColor = Color.White
+            .ForeColor = Color.White,
+            .AccessibleDescription = HelpScopeCombat
         }
         AddHandler btnAttack.Click, AddressOf StartClicked
         AddHandler btnSaveSettings.Click, AddressOf SaveClicked
@@ -3006,12 +3034,6 @@ Public Class Form1
 
     Protected Overrides Sub OnShown(e As EventArgs)
         MyBase.OnShown(e)
-        If ShouldRequireKeygenLicense() Then
-            If Not EnsureKeygenLicenseOnStartup() Then
-                BeginInvoke(New Action(Sub() Close()))
-                Return
-            End If
-        End If
         RefreshProcessWindowList(False, IntPtr.Zero)
         AutoStartOnLaunch()
     End Sub
@@ -3685,8 +3707,9 @@ Public Class Form1
     End Function
 
     Private Sub HelpClicked(sender As Object, e As EventArgs)
+        Dim helpScope As String = ResolveHelpScope(sender)
         Dim helpForm As New Form() With {
-            .Text = "KathanaBot Help",
+            .Text = GetHelpWindowTitle(helpScope),
             .StartPosition = FormStartPosition.CenterParent,
             .Width = 980,
             .Height = 760,
@@ -3697,13 +3720,87 @@ Public Class Form1
         }
 
         Dim tabs As New TabControl() With {.Dock = DockStyle.Fill, .Font = New Font("Segoe UI", 9.0F, FontStyle.Bold)}
-        tabs.TabPages.Add(CreateHelpTabPage("English", BuildHelpTextEnglish()))
-        tabs.TabPages.Add(CreateHelpTabPage("Espanol", BuildHelpTextSpanish()))
-        tabs.TabPages.Add(CreateHelpTabPage("Filipino", BuildHelpTextFilipino()))
+        tabs.TabPages.Add(CreateHelpTabPage("English", BuildScopedHelpTextEnglish(helpScope)))
+        tabs.TabPages.Add(CreateHelpTabPage("Espanol", BuildScopedHelpTextSpanish(helpScope)))
+        tabs.TabPages.Add(CreateHelpTabPage("Filipino", BuildScopedHelpTextFilipino(helpScope)))
         helpForm.Controls.Add(tabs)
 
         helpForm.ShowDialog(Me)
     End Sub
+
+    Private Function ResolveHelpScope(sender As Object) As String
+        Dim control As Control = TryCast(sender, Control)
+        Dim requestedScope As String = NormalizeHelpScope(If(If(control IsNot Nothing, control.AccessibleDescription, Nothing), ""))
+        If requestedScope <> HelpScopeAll Then
+            Return requestedScope
+        End If
+
+        If _mainTabs IsNot Nothing AndAlso _mainTabs.SelectedTab IsNot Nothing Then
+            If _mainTabs.SelectedTab Is _liteTab Then
+                Return HelpScopeLite
+            End If
+            If _mainTabs.SelectedTab Is _combatTab Then
+                Return HelpScopeCombat
+            End If
+            If _mainTabs.SelectedTab Is _visionTab Then
+                Return HelpScopeVision
+            End If
+            If _mainTabs.SelectedTab Is _autoPotTab Then
+                Return HelpScopeAutoPot
+            End If
+            If _mainTabs.SelectedTab Is _autoLootTab Then
+                Return HelpScopeAutoLoot
+            End If
+            If _mainTabs.SelectedTab Is _levelingTab Then
+                Return HelpScopeLeveling
+            End If
+            If _mainTabs.SelectedTab Is _diagnosticsTab Then
+                Return HelpScopeDiagnostics
+            End If
+        End If
+
+        Return HelpScopeCombat
+    End Function
+
+    Private Shared Function NormalizeHelpScope(rawScope As String) As String
+        Select Case If(rawScope, "").Trim().ToLowerInvariant()
+            Case HelpScopeLite
+                Return HelpScopeLite
+            Case HelpScopeCombat
+                Return HelpScopeCombat
+            Case HelpScopeVision
+                Return HelpScopeVision
+            Case HelpScopeAutoPot
+                Return HelpScopeAutoPot
+            Case HelpScopeAutoLoot
+                Return HelpScopeAutoLoot
+            Case HelpScopeLeveling
+                Return HelpScopeLeveling
+            Case HelpScopeDiagnostics
+                Return HelpScopeDiagnostics
+            Case Else
+                Return HelpScopeAll
+        End Select
+    End Function
+
+    Private Shared Function GetHelpWindowTitle(helpScope As String) As String
+        Select Case NormalizeHelpScope(helpScope)
+            Case HelpScopeLite
+                Return "KathanaBot Explanation - Lite"
+            Case HelpScopeVision
+                Return "KathanaBot Explanation - Vision"
+            Case HelpScopeAutoPot
+                Return "KathanaBot Explanation - Auto-Pot"
+            Case HelpScopeAutoLoot
+                Return "KathanaBot Explanation - Auto-Loot"
+            Case HelpScopeLeveling
+                Return "KathanaBot Explanation - Leveling"
+            Case HelpScopeDiagnostics
+                Return "KathanaBot Explanation - Diagnostics"
+            Case Else
+                Return "KathanaBot Explanation - Combat Full"
+        End Select
+    End Function
 
     Private Function CreateHelpTabPage(title As String, body As String) As TabPage
         Dim tab As New TabPage(title) With {.BackColor = Color.FromArgb(20, 20, 20)}
@@ -4092,6 +4189,378 @@ Public Class Form1
             "- Walang notification: i-check ang napiling provider, webhook/channel, at internet.",
             "- Rename fail: may apps na hindi pumapayag sa window title change."
         })
+    End Function
+
+    Private Shared Function BuildScopedHelpTextEnglish(helpScope As String) As String
+        Select Case NormalizeHelpScope(helpScope)
+            Case HelpScopeLite
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - LITE TAB EXPLANATION (ENGLISH)",
+                    "============================================================",
+                    "",
+                    "- Lite is the simpler mode intended for slower computers. It uses the selected game window plus HP and MP sample points.",
+                    "- Update refreshes the process list. Always select the correct Tantra window before starting Lite.",
+                    "- Rename Process and Apply are optional. They only try to rename the selected window title.",
+                    "- Save stores the Lite preset. Load restores the saved Lite settings.",
+                    "- Basic Attack (E), Mage (R), and Pick (F) each use: checkbox = enabled, number box = seconds between sends.",
+                    "- Primary Skills are keys 1 to 8. Secondary Skills are F1 to F10. Each tile works the same way: checkbox enables the key and the number sets the cooldown in seconds.",
+                    "- Lite timers now allow 1 to 9999 seconds.",
+                    "- Start begins Lite using the selected process and the enabled Lite actions.",
+                    "- Stop ends the Lite loop.",
+                    "- Status shows whether Lite is ready or running. Lite Active tells you whether Lite is the active engine.",
+                    "- HP% and MP% are read from the Lite sample points, not from the Full OCR rectangles.",
+                    "- Enable AutoPots turns on the Lite HP and MP color check.",
+                    "- Select HP Level or Select Mana Level starts sampling. Take the sample when the bar is full, then right-click the exact point where you want the potion to trigger.",
+                    "- HP X/Y and MP X/Y show the saved trigger points.",
+                    "- Lite potion keys are fixed: 9 for Heal and 0 for Mana.",
+                    "- Auto Accept Party/Ress accepts detected party or resurrection prompts automatically.",
+                    "- Ask every (sec) sets the repeat delay for the custom party command.",
+                    "- Message text is the exact command Lite will type.",
+                    "- Auto Ask Party turns that repeating chat command on or off.",
+                    "- Recommended setup order: select the window, enable only the Lite actions you need, sample HP/MP carefully, then save the preset."
+                })
+            Case HelpScopeVision
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - VISION TAB EXPLANATION (ENGLISH)",
+                    "============================================================",
+                    "",
+                    "- Window Title is the name used to find the game client.",
+                    "- Loop (ms) sets the main scan and action speed.",
+                    "- Normal Retarget (ms) and Forced Retarget (ms) tune when the bot sends E again.",
+                    "- Mob HP Presence % is the minimum HP-bar signal required to trust the current target.",
+                    "- Show Overlay opens the live calibration overlay.",
+                    "- Capture Snapshot stores the current client image for region checking.",
+                    "- Use special key on high max HP mobs plus Max HP >= work together with the high_max_hp combat role.",
+                    "- Chat translation settings control OCR of the chat box, overlay visibility, target language, scan speed, and number of visible translated lines.",
+                    "- Calibration Regions is the editable rectangle list for HP, MP, target name, target HP, map, chat, and other OCR areas.",
+                    "- Loot Scan Area is the 4-point polygon used by Auto-Loot scanning.",
+                    "- Process List is where you refresh windows, select one, and optionally rename it.",
+                    "- Snapshot helps verify whether your rectangles actually cover the right UI areas."
+                })
+            Case HelpScopeAutoPot
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - AUTO-POT TAB EXPLANATION (ENGLISH)",
+                    "============================================================",
+                    "",
+                    "- Heal Trigger % and Mana Trigger % are quick values for heal and mana rows.",
+                    "- HP=0 Alarm Volume % only changes the death alarm volume.",
+                    "- Apply To Heal/Mana/Max-HP Rows copies those quick values into matching combat rows.",
+                    "- Notification Provider chooses ntfy or Discord.",
+                    "- Discord Webhook fields are separate endpoints for Global, Items, and Stats alerts.",
+                    "- ntfy Channel fields are separate topics for the same three alert groups.",
+                    "- Stats Interval (min) controls how often the running bot sends stat summaries.",
+                    "- Test Alarm + Notify tests both sound and the selected provider.",
+                    "- Test Notification sends only the notification test.",
+                    "- In Unstuck / Retarget, Search Retarget Delay mirrors the normal retarget delay, Stuck Detection Delay is the minimum time before a target can be considered stuck, and No-Progress Delay is how long HP can stay unchanged before retarget is allowed."
+                })
+            Case HelpScopeAutoLoot
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - AUTO-LOOT TAB EXPLANATION (ENGLISH)",
+                    "============================================================",
+                    "",
+                    "- Enable Loot Pickup (F) turns on timed F pickup.",
+                    "- Every (sec) sets that basic pickup interval.",
+                    "- The loot name list is an allow-list. Add names you want and remove names you do not want.",
+                    "- Loot Name Match % is the fuzzy OCR threshold used to decide whether text matches an allowed loot name.",
+                    "- Loot Scan Area comes from the Vision tab.",
+                    "- Loot Scanner (Alt) toggles the OCR-based loot scanner.",
+                    "- Enable pickup by matched loot name turns on the dynamic label click flow.",
+                    "- Click Offset X and Y move the click relative to the matched loot label.",
+                    "- Wait Before F, Mouse Hold, Press F Count, and F Gap tune the pickup sequence after the click.",
+                    "- Restore mouse cursor after click returns the mouse to the previous position."
+                })
+            Case HelpScopeLeveling
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - LEVELING TAB EXPLANATION (ENGLISH)",
+                    "============================================================",
+                    "",
+                    "- Enable leveling agent turns on the target preference and travel logic.",
+                    "- Preferred Mobs is a comma-separated allow-list.",
+                    "- Stop HP %, Stop MP %, and Max No Target (sec) are safety stops.",
+                    "- Enable map localization plus Map Open Key are required for map-based travel.",
+                    "- Enable travel preview shows route planning. Enable travel execution allows guarded movement.",
+                    "- Start Recording, Stop Recording, Sample Interval, Route Name, and Save Route are for route capture.",
+                    "- Recorded Routes, Replay, Delete, Route Nodes, and Delete Node manage saved routes.",
+                    "- Waypoint Radius, Move Burst, Re-sample, Stall Timeout, and Repath when travel stalls tune travel behavior.",
+                    "- Stop when EXP/hr below threshold and Stop after repeated unreachable are extra safety exits.",
+                    "- Agent Runtime and Breadcrumbs on the right show live map state and recorded coordinates."
+                })
+            Case HelpScopeDiagnostics
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - DIAGNOSTICS TAB EXPLANATION (ENGLISH)",
+                    "============================================================",
+                    "",
+                    "- Diagnostics is a live read-only text panel.",
+                    "- It shows internal runtime state, OCR values, target state, alerts, and recent engine decisions.",
+                    "- Use it together with Snapshot and Log when the bot behaves differently from your expectations."
+                })
+            Case Else
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - COMBAT FULL TAB EXPLANATION (ENGLISH)",
+                    "============================================================",
+                    "",
+                    "- Combat Full is the complete mode intended for more powerful computers. This tab controls the combat rotation, safety actions, monster filtering, start/stop flow, and live full-mode status.",
+                    "- In the Combat Skills grid: Enabled decides whether the row can run, Key is the game key, CooldownSec is the minimum delay between sends, Role defines when the row is considered, Priority orders rows inside the same category, TriggerPercent is the main threshold, and MinHpPercent / MinMpPercent are self-safety gates.",
+                    "- Role meanings: attack = normal damage, heal = healing action, max_health = HP support threshold, mana = MP support threshold, special = extra combat skill, high_max_hp = special branch for high-Max-HP targets, repair = one-shot repair key when the OCR warning is confirmed, stop = stop-movement key burst.",
+                    "- Use lower Priority numbers for more important rows within the same role group.",
+                    "- high_max_hp only works well if Vision reads the mob_hp_rect numbers correctly.",
+                    "- repair only works when unreachable_text_rect is calibrated to detect the 'is about to break' warning.",
+                    "- Monster Filter is a blacklist. If enabled, the engine rejects targets whose OCR name matches the blocked list.",
+                    "- Add lets you insert names, including comma-separated names typed in the box. Remove deletes the selected names.",
+                    "- In the center panel, Attack starts Full mode, Save Settings stores the live config, Stop Bot sends the hard-stop flow, Ignore Skill Min HP/MP bypasses row minimums, Auto Retarget If Stuck enables stuck-target recovery, and Retarget Now (E) forces a manual retarget.",
+                    "- Auto Accept Party/Ress toggles OCR-based prompt acceptance.",
+                    "- Ask Party Every (sec), Auto Ask Party Text, and Auto Ask Party control the repeating party command.",
+                    "- The live labels show run state, status, HP, MP, current mob, EXP rate, and rupiahs rate.",
+                    "- In the Log panel, Real-time shows engine events, Clear Log clears visible text only, Key Summary tracks rolling key counts, and Reset Key Summary clears that history.",
+                    "- Recommended setup order: calibrate Vision first, then build the combat rows, then tune Auto-Pot and Auto-Loot support behavior."
+                })
+        End Select
+    End Function
+
+    Private Shared Function BuildScopedHelpTextSpanish(helpScope As String) As String
+        Select Case NormalizeHelpScope(helpScope)
+            Case HelpScopeLite
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - EXPLICACION DE LA PESTANA LITE (ESPANOL)",
+                    "============================================================",
+                    "",
+                    "- Lite es el modo simple pensado para computadoras mas lentas. Usa la ventana seleccionada y puntos de muestra de HP y MP.",
+                    "- Update refresca la lista de procesos. Selecciona primero la ventana correcta de Tantra.",
+                    "- Rename Process + Apply solo intenta cambiar el titulo de la ventana seleccionada. Es opcional.",
+                    "- Save guarda el preset Lite. Load recupera la configuracion Lite guardada.",
+                    "- Basic Attack (E), Mage (R) y Pick (F) usan la misma logica: casilla = activado, numero = segundos entre usos.",
+                    "- Primary Skills cubre 1 a 8. Secondary Skills cubre F1 a F10. En cada cuadro, la casilla activa la tecla y el numero define el cooldown en segundos.",
+                    "- Los timers Lite aceptan de 1 a 9999 segundos.",
+                    "- Start inicia Lite usando el proceso seleccionado y las acciones Lite activadas.",
+                    "- Stop detiene el loop Lite.",
+                    "- Status muestra si Lite esta listo o corriendo. Lite Active indica si Lite es el motor activo.",
+                    "- HP% y MP% salen de los puntos de muestra Lite, no de los rectangulos OCR del modo Full.",
+                    "- Enable AutoPots activa el control de color de HP y MP.",
+                    "- Select HP Level y Select Mana Level inician la captura. Toma la muestra con la barra llena y luego haz clic derecho en el punto exacto donde quieres activar la pocion.",
+                    "- HP X/Y y MP X/Y muestran los puntos guardados.",
+                    "- En Lite las teclas de pocion son fijas: 9 para Heal y 0 para Mana.",
+                    "- Auto Accept Party/Ress acepta automaticamente prompts de party o ress detectados por OCR.",
+                    "- Ask every (sec) define el intervalo del comando repetido.",
+                    "- Message text es el texto exacto que Lite escribira.",
+                    "- Auto Ask Party activa o desactiva ese comando repetido."
+                })
+            Case HelpScopeVision
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - EXPLICACION DE LA PESTANA VISION (ESPANOL)",
+                    "============================================================",
+                    "",
+                    "- Window Title es el nombre usado para encontrar el cliente del juego.",
+                    "- Loop (ms) define la velocidad del ciclo principal.",
+                    "- Normal Retarget (ms) y Forced Retarget (ms) ajustan cuando el bot vuelve a usar E.",
+                    "- Mob HP Presence % es la senal minima para confiar en la barra de HP del objetivo.",
+                    "- Show Overlay abre la capa de calibracion.",
+                    "- Capture Snapshot captura la imagen actual del cliente.",
+                    "- Use special key on high max HP mobs junto con Max HP >= trabaja con el role high_max_hp.",
+                    "- Los controles de chat translation manejan OCR del chat, overlay, idioma destino, velocidad y numero de lineas.",
+                    "- Calibration Regions contiene los rectangulos OCR editables.",
+                    "- Loot Scan Area es el poligono de 4 puntos usado por Auto-Loot.",
+                    "- Process List sirve para refrescar, seleccionar y renombrar ventanas.",
+                    "- Snapshot ayuda a verificar si las regiones cubren bien la UI."
+                })
+            Case HelpScopeAutoPot
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - EXPLICACION DE LA PESTANA AUTO-POT (ESPANOL)",
+                    "============================================================",
+                    "",
+                    "- Heal Trigger % y Mana Trigger % son valores rapidos para filas heal y mana.",
+                    "- HP=0 Alarm Volume % solo cambia el volumen de la alarma de muerte.",
+                    "- Apply To Heal/Mana/Max-HP Rows copia esos valores a las filas compatibles.",
+                    "- Notification Provider elige entre ntfy y Discord.",
+                    "- Los campos Discord Webhook separan alertas Global, Items y Stats.",
+                    "- Los campos ntfy Channel hacen lo mismo mediante topics.",
+                    "- Stats Interval (min) controla cada cuanto se envian estadisticas mientras el bot corre.",
+                    "- Test Alarm + Notify prueba sonido y notificacion.",
+                    "- Test Notification prueba solo la notificacion.",
+                    "- En Unstuck / Retarget, Search Retarget Delay replica el retarget normal, Stuck Detection Delay marca cuando un objetivo puede considerarse atascado y No-Progress Delay es el tiempo sin cambio de HP antes de permitir retarget."
+                })
+            Case HelpScopeAutoLoot
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - EXPLICACION DE LA PESTANA AUTO-LOOT (ESPANOL)",
+                    "============================================================",
+                    "",
+                    "- Enable Loot Pickup (F) activa el pickup temporizado con F.",
+                    "- Every (sec) define ese intervalo basico.",
+                    "- La lista de nombres de loot es una allow-list.",
+                    "- Loot Name Match % es el umbral de OCR difuso para aceptar coincidencias.",
+                    "- Loot Scan Area se configura en Vision.",
+                    "- Loot Scanner (Alt) activa el scanner OCR.",
+                    "- Enable pickup by matched loot name activa el click dinamico sobre la etiqueta detectada.",
+                    "- Click Offset X/Y mueve el punto de click.",
+                    "- Wait Before F, Mouse Hold, Press F Count y F Gap ajustan la secuencia de pickup.",
+                    "- Restore mouse cursor after click devuelve el mouse a su posicion anterior."
+                })
+            Case HelpScopeLeveling
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - EXPLICACION DE LA PESTANA LEVELING (ESPANOL)",
+                    "============================================================",
+                    "",
+                    "- Enable leveling agent activa la logica de mobs preferidos y viaje.",
+                    "- Preferred Mobs es una allow-list separada por comas.",
+                    "- Stop HP %, Stop MP % y Max No Target (sec) son paradas de seguridad.",
+                    "- Enable map localization y Map Open Key son necesarios para viajar con mapa.",
+                    "- Enable travel preview muestra la ruta. Enable travel execution permite movimiento protegido.",
+                    "- Start Recording, Stop Recording, Sample Interval, Route Name y Save Route sirven para grabar rutas.",
+                    "- Recorded Routes, Replay, Delete, Route Nodes y Delete Node administran rutas guardadas.",
+                    "- Waypoint Radius, Move Burst, Re-sample, Stall Timeout y Repath ajustan el movimiento.",
+                    "- Agent Runtime y Breadcrumbs muestran estado y coordenadas en vivo."
+                })
+            Case HelpScopeDiagnostics
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - EXPLICACION DE LA PESTANA DIAGNOSTICS (ESPANOL)",
+                    "============================================================",
+                    "",
+                    "- Diagnostics es un panel de texto en vivo y solo lectura.",
+                    "- Muestra estado interno, OCR, objetivo, alertas y decisiones recientes del motor.",
+                    "- Usalo junto con Snapshot y Log cuando el comportamiento del bot no coincide con lo esperado."
+                })
+            Case Else
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - EXPLICACION DE LA PESTANA COMBAT FULL (ESPANOL)",
+                    "============================================================",
+                    "",
+                    "- Combat Full es el modo completo pensado para computadoras mas potentes. Esta pestana controla la rotacion de combate, acciones de seguridad, filtro de monstruos, inicio/parada y estado en vivo.",
+                    "- En Combat Skills: Enabled decide si la fila puede correr, Key es la tecla del juego, CooldownSec es el tiempo minimo entre envios, Role define cuando se considera la fila, Priority ordena filas del mismo grupo, TriggerPercent es el umbral principal y MinHpPercent / MinMpPercent son filtros de seguridad propios.",
+                    "- Roles: attack = dano normal, heal = curacion, max_health = soporte de HP, mana = soporte de MP, special = skill ofensiva extra, high_max_hp = rama especial para mobs con mucho Max HP, repair = repair por warning OCR, stop = tecla de parada.",
+                    "- Usa prioridades numericamente mas bajas para filas mas importantes dentro del mismo tipo.",
+                    "- high_max_hp depende de una lectura correcta de mob_hp_rect en Vision.",
+                    "- repair depende de que unreachable_text_rect detecte bien el warning de equipo.",
+                    "- Monster Filter funciona como blacklist. Si esta activo, el motor rechaza nombres de mobs que coincidan con la lista.",
+                    "- Add agrega nombres, incluso varios separados por coma. Remove elimina los seleccionados.",
+                    "- En el panel central, Attack inicia Full, Save Settings guarda la configuracion en vivo, Stop Bot ejecuta hard-stop, Ignore Skill Min HP/MP ignora minimos de fila, Auto Retarget If Stuck activa recuperacion por objetivo atascado y Retarget Now (E) envia retarget manual.",
+                    "- Auto Accept Party/Ress maneja prompts detectados por OCR.",
+                    "- Ask Party Every (sec), Auto Ask Party Text y Auto Ask Party controlan el comando repetido de party.",
+                    "- En Log, Real-time muestra eventos, Clear Log limpia solo el texto visible, Key Summary guarda conteo de teclas y Reset Key Summary limpia ese historial.",
+                    "- Orden recomendado: calibra Vision primero, luego arma las filas de combate y despues ajusta Auto-Pot y Auto-Loot."
+                })
+        End Select
+    End Function
+
+    Private Shared Function BuildScopedHelpTextFilipino(helpScope As String) As String
+        Select Case NormalizeHelpScope(helpScope)
+            Case HelpScopeLite
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - PALIWANAG NG LITE TAB (FILIPINO)",
+                    "============================================================",
+                    "",
+                    "- Ang Lite ay mas simpleng mode na para sa mas mababagal na computer. Gumagamit ito ng selected na game window at HP/MP sample points.",
+                    "- Update nagre-refresh ng process list. Piliin muna ang tamang Tantra window bago simulan ang Lite.",
+                    "- Rename Process + Apply ay optional lang at susubok lang magpalit ng title ng napiling window.",
+                    "- Save nagsa-save ng Lite preset. Load nagbabalik ng na-save na Lite settings.",
+                    "- Basic Attack (E), Mage (R), at Pick (F) ay pare-pareho ang gamit: checkbox = enabled, number box = seconds sa pagitan ng gamit.",
+                    "- Primary Skills ay 1 hanggang 8. Secondary Skills ay F1 hanggang F10. Sa bawat tile, ang checkbox ang on/off at ang numero ang cooldown in seconds.",
+                    "- Ang Lite timers ay puwedeng 1 hanggang 9999 seconds.",
+                    "- Start nagsisimula ng Lite gamit ang selected process at enabled Lite actions.",
+                    "- Stop humihinto sa Lite loop.",
+                    "- Status nagpapakita kung ready o running ang Lite. Lite Active nagsasabi kung Lite ang active engine.",
+                    "- HP% at MP% ay galing sa Lite sample points, hindi sa Full OCR regions.",
+                    "- Enable AutoPots binubuksan ang Lite HP/MP color check.",
+                    "- Select HP Level at Select Mana Level nagsisimula ng capture. Kumuha ng sample kapag puno ang bar, tapos right-click ang eksaktong trigger point.",
+                    "- HP X/Y at MP X/Y ang saved points.",
+                    "- Fixed ang Lite potion keys: 9 para sa Heal at 0 para sa Mana.",
+                    "- Auto Accept Party/Ress awtomatikong tumatanggap ng OCR-detected prompts.",
+                    "- Ask every (sec) ang pagitan ng paulit-ulit na party command.",
+                    "- Message text ang eksaktong ita-type ni Lite.",
+                    "- Auto Ask Party ang on/off ng paulit-ulit na command na iyon."
+                })
+            Case HelpScopeVision
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - PALIWANAG NG VISION TAB (FILIPINO)",
+                    "============================================================",
+                    "",
+                    "- Window Title ang pangalan na gamit para hanapin ang game client.",
+                    "- Loop (ms) ang bilis ng main scan/action cycle.",
+                    "- Normal Retarget (ms) at Forced Retarget (ms) ang timing kung kailan muling mag-E ang bot.",
+                    "- Mob HP Presence % ang minimum signal para paniwalaan ang HP bar ng target.",
+                    "- Show Overlay bubukas sa live calibration overlay.",
+                    "- Capture Snapshot kukuha ng kasalukuyang image ng client.",
+                    "- Use special key on high max HP mobs kasama ng Max HP >= ay para sa high_max_hp combat role.",
+                    "- Ang chat translation controls ay para sa OCR ng chat, overlay visibility, target language, bilis ng scan, at dami ng visible lines.",
+                    "- Calibration Regions ang editable OCR rectangles.",
+                    "- Loot Scan Area ang 4-point polygon na gamit ng Auto-Loot.",
+                    "- Process List ay para mag-refresh, pumili, at mag-rename ng windows.",
+                    "- Snapshot ang pang-check kung tama ang coverage ng regions."
+                })
+            Case HelpScopeAutoPot
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - PALIWANAG NG AUTO-POT TAB (FILIPINO)",
+                    "============================================================",
+                    "",
+                    "- Heal Trigger % at Mana Trigger % ay quick values para sa heal at mana rows.",
+                    "- HP=0 Alarm Volume % ay para lang sa lakas ng death alarm.",
+                    "- Apply To Heal/Mana/Max-HP Rows kokopyahin ang quick values sa tugmang combat rows.",
+                    "- Notification Provider pumipili sa ntfy o Discord.",
+                    "- Ang Discord Webhook fields ay hiwalay para sa Global, Items, at Stats.",
+                    "- Ang ntfy Channel fields ay hiwalay na topics para rin sa tatlong alert group.",
+                    "- Stats Interval (min) ang pagitan ng stats summary habang tumatakbo ang bot.",
+                    "- Test Alarm + Notify susubok sa tunog at provider.",
+                    "- Test Notification notification lang ang tine-test.",
+                    "- Sa Unstuck / Retarget, Search Retarget Delay ay katulad ng normal retarget, Stuck Detection Delay ang minimum time bago masabing stuck ang target, at No-Progress Delay ang tagal na walang HP change bago payagan ang retarget."
+                })
+            Case HelpScopeAutoLoot
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - PALIWANAG NG AUTO-LOOT TAB (FILIPINO)",
+                    "============================================================",
+                    "",
+                    "- Enable Loot Pickup (F) nagpapapindot ng F sa takdang interval.",
+                    "- Every (sec) ang basic pickup interval.",
+                    "- Ang loot name list ay allow-list ng mga gusto mong pulutin.",
+                    "- Loot Name Match % ang fuzzy OCR threshold para sa loot text.",
+                    "- Sa Vision tine-setup ang Loot Scan Area.",
+                    "- Loot Scanner (Alt) ang OCR scanner flow.",
+                    "- Enable pickup by matched loot name ang dynamic label click system.",
+                    "- Click Offset X/Y ina-adjust ang click point mula sa matched label.",
+                    "- Wait Before F, Mouse Hold, Press F Count, at F Gap ang pickup timing controls.",
+                    "- Restore mouse cursor after click ibinabalik ang dating pwesto ng mouse."
+                })
+            Case HelpScopeLeveling
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - PALIWANAG NG LEVELING TAB (FILIPINO)",
+                    "============================================================",
+                    "",
+                    "- Enable leveling agent nagpapagana sa preferred-mob at travel logic.",
+                    "- Preferred Mobs ay comma-separated allow-list.",
+                    "- Stop HP %, Stop MP %, at Max No Target (sec) ay safety limits.",
+                    "- Enable map localization at Map Open Key ay kailangan para sa map-based travel.",
+                    "- Enable travel preview nagpapakita ng route. Enable travel execution nagpapagalaw kapag ligtas.",
+                    "- Start Recording, Stop Recording, Sample Interval, Route Name, at Save Route ay para sa route capture.",
+                    "- Recorded Routes, Replay, Delete, Route Nodes, at Delete Node ay para sa route management.",
+                    "- Waypoint Radius, Move Burst, Re-sample, Stall Timeout, at Repath ang movement tuning settings.",
+                    "- Agent Runtime at Breadcrumbs ang live state at recorded coordinates sa kanang side."
+                })
+            Case HelpScopeDiagnostics
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - PALIWANAG NG DIAGNOSTICS TAB (FILIPINO)",
+                    "============================================================",
+                    "",
+                    "- Ang Diagnostics ay live at read-only na text panel.",
+                    "- Ipinapakita nito ang internal state, OCR values, target state, alerts, at recent engine decisions.",
+                    "- Gamitin ito kasama ng Snapshot at Log kapag hindi tugma ang kilos ng bot sa inaasahan mo."
+                })
+            Case Else
+                Return String.Join(Environment.NewLine, New String() {
+                    "KATHANABOT - PALIWANAG NG COMBAT FULL TAB (FILIPINO)",
+                    "============================================================",
+                    "",
+                    "- Ang Combat Full ay ang kumpletong mode na para sa mas malalakas na computer. Dito kino-control ang combat rotation, safety actions, monster filtering, start/stop flow, at live full-mode status.",
+                    "- Sa Combat Skills grid: Enabled ang on/off ng row, Key ang key na ipapadala sa game, CooldownSec ang minimum pagitan ng gamit, Role ang nagsasabi kung kailan susuriin ang row, Priority ang order sa loob ng parehong role group, TriggerPercent ang pangunahing threshold, at MinHpPercent / MinMpPercent ang sariling safety gates.",
+                    "- Mga role: attack = normal damage, heal = heal action, max_health = HP support threshold, mana = MP support threshold, special = extra skill, high_max_hp = special branch para sa high-Max-HP mobs, repair = one-shot repair kapag confirmed ang OCR warning, stop = stop-movement key burst.",
+                    "- Gumamit ng mas mababang priority number para sa mas importanteng rows sa parehong role group.",
+                    "- high_max_hp ay gagana lang kung tama ang OCR reading ng mob_hp_rect sa Vision.",
+                    "- repair ay nakadepende sa tamang calibration ng unreachable_text_rect warning text.",
+                    "- Ang Monster Filter ay blacklist. Kapag naka-enable, iiwasan ng engine ang mga target na tugma sa blocked names.",
+                    "- Add puwedeng magdagdag ng isa o maraming comma-separated names. Remove mag-aalis ng selected names.",
+                    "- Sa center panel, Attack nagsisimula ng Full mode, Save Settings nagsa-save ng live config, Stop Bot naghihinto sa hard-stop flow, Ignore Skill Min HP/MP nagba-bypass sa row minimums, Auto Retarget If Stuck nag-o-on ng stuck-target recovery, at Retarget Now (E) ay manual retarget.",
+                    "- Auto Accept Party/Ress ay para sa OCR-based prompt acceptance.",
+                    "- Ask Party Every (sec), Auto Ask Party Text, at Auto Ask Party ay para sa paulit-ulit na party command.",
+                    "- Sa Log panel, Real-time ang live events, Clear Log ang visible text lang ang nililinis, Key Summary ang rolling key counts, at Reset Key Summary ang naglilinis ng history.",
+                    "- Recommended order: unahin ang Vision calibration, sunod ang combat rows, tapos i-tune ang Auto-Pot at Auto-Loot."
+                })
+        End Select
     End Function
 
     Private Sub ManualRetargetClicked(sender As Object, e As EventArgs)
@@ -5626,7 +6095,6 @@ Public Class Form1
             If hasSeparatedState AndAlso appState IsNot Nothing Then
                 state = If(appState.Full, New PersistedListState())
                 liteState = If(appState.Lite, New PersistedLiteState())
-                _keygenState = If(appState.License, New KeygenPersistedState())
                 If txtWindowTitle IsNot Nothing Then
                     Dim sharedTitle As String = If(appState.WindowTitle, "").Trim()
                     txtWindowTitle.Text = If(sharedTitle = "", DefaultGameWindowTitle, sharedTitle)
@@ -5634,7 +6102,6 @@ Public Class Form1
             Else
                 state = JsonSerializer.Deserialize(Of PersistedListState)(raw)
                 liteState = New PersistedLiteState()
-                _keygenState = New KeygenPersistedState()
                 If txtWindowTitle IsNot Nothing AndAlso state IsNot Nothing AndAlso state.SavedConfig IsNot Nothing Then
                     Dim legacyTitle As String = If(state.SavedConfig.WindowTitle, "").Trim()
                     txtWindowTitle.Text = If(legacyTitle = "", DefaultGameWindowTitle, legacyTitle)
@@ -5870,8 +6337,7 @@ Public Class Form1
             Dim appState As New PersistedAppState With {
                 .WindowTitle = If(txtWindowTitle IsNot Nothing AndAlso txtWindowTitle.Text.Trim() <> "", txtWindowTitle.Text.Trim(), DefaultGameWindowTitle),
                 .Full = fullState,
-                .Lite = liteState,
-                .License = If(_keygenState, New KeygenPersistedState())
+                .Lite = liteState
             }
 
             Dim json As String = JsonSerializer.Serialize(appState, New JsonSerializerOptions With {.WriteIndented = True})
@@ -6497,7 +6963,7 @@ Public Class Form1
             lblRunState.ForeColor = Color.White
         End If
         If lblFullEdition IsNot Nothing Then
-            lblFullEdition.Text = If(liteRunning, "FULL VERSION - LITE BOT RUNNING", "FULL VERSION")
+            lblFullEdition.Text = If(liteRunning, "FULL VERSION - LITE BOT RUNNING", "FULL VERSION - for more powerful computers")
         End If
 
         If lblLiteRunState IsNot Nothing Then
@@ -7314,178 +7780,9 @@ Public Class Form1
         Next
     End Sub
 
-    Private Function EnsureKeygenLicenseOnStartup() As Boolean
-        Dim accountSlug As String = If(Environment.GetEnvironmentVariable("KATHANABOT_KEYGEN_ACCOUNT"), If(If(_keygenState IsNot Nothing, _keygenState.AccountSlug, Nothing), "")).Trim()
-        Dim licenseKey As String = If(Environment.GetEnvironmentVariable("KATHANABOT_KEYGEN_LICENSE"), KeygenLicenseManager.UnprotectLicenseKey(If(If(_keygenState IsNot Nothing, _keygenState.EncryptedLicenseKey, Nothing), ""))).Trim()
-        Dim fingerprint As String = KeygenLicenseManager.ComputeMachineFingerprint()
-
-        Do
-            If String.IsNullOrWhiteSpace(accountSlug) OrElse String.IsNullOrWhiteSpace(licenseKey) Then
-                If Not PromptForKeygenLicense(accountSlug, licenseKey) Then
-                    Return False
-                End If
-            End If
-
-            Try
-                _licenseSession = KeygenLicenseManager.EstablishSessionAsync(accountSlug, licenseKey, fingerprint).GetAwaiter().GetResult()
-                _licenseHeartbeatFailureCount = 0
-                _licenseShutdownRequested = False
-                _keygenState = New KeygenPersistedState With {
-                    .AccountSlug = _licenseSession.AccountSlug,
-                    .EncryptedLicenseKey = KeygenLicenseManager.ProtectLicenseKey(_licenseSession.LicenseKey),
-                    .MachineId = _licenseSession.MachineId
-                }
-                SavePersistedListState(False, False)
-                AppendLog("Keygen license validated. Single-session lock is active.")
-                StartKeygenHeartbeat()
-                Return True
-            Catch ex As KeygenApiFailureException
-                Dim retry As DialogResult = MessageBox.Show(Me, FormatKeygenFailure(ex), "License Check Failed", MessageBoxButtons.RetryCancel, MessageBoxIcon.Error)
-                If retry <> DialogResult.Retry Then
-                    Return False
-                End If
-                licenseKey = ""
-            Catch ex As Exception
-                Dim retry As DialogResult = MessageBox.Show(Me, "Unable to reach Keygen: " & ex.Message & Environment.NewLine & Environment.NewLine & "Click Retry to try again or Cancel to close the app.", "License Check Failed", MessageBoxButtons.RetryCancel, MessageBoxIcon.Error)
-                If retry <> DialogResult.Retry Then
-                    Return False
-                End If
-            End Try
-        Loop
-    End Function
-
-    Private Shared Function ShouldRequireKeygenLicense() As Boolean
-        Dim isSingleFileFlag As Object = AppContext.GetData("IsSingleFile")
-        If TypeOf isSingleFileFlag Is Boolean Then
-            Return CBool(isSingleFileFlag)
-        End If
-
-        Dim executablePath As String = ""
-        Try
-            executablePath = Process.GetCurrentProcess().MainModule.FileName
-        Catch
-        End Try
-
-        If String.IsNullOrWhiteSpace(executablePath) Then
-            Return False
-        End If
-
-        Dim baseDir As String = AppContext.BaseDirectory
-        Dim exeName As String = Path.GetFileNameWithoutExtension(executablePath)
-        If String.IsNullOrWhiteSpace(baseDir) OrElse String.IsNullOrWhiteSpace(exeName) Then
-            Return False
-        End If
-
-        Dim runtimeConfigPath As String = Path.Combine(baseDir, exeName & ".runtimeconfig.json")
-        Dim depsPath As String = Path.Combine(baseDir, exeName & ".deps.json")
-
-        Return Not File.Exists(runtimeConfigPath) AndAlso Not File.Exists(depsPath)
-    End Function
-
-    Private Function PromptForKeygenLicense(ByRef accountSlug As String, ByRef licenseKey As String) As Boolean
-        Using prompt As New KeygenLicensePromptForm(accountSlug, licenseKey)
-            If prompt.ShowDialog(Me) <> DialogResult.OK Then
-                Return False
-            End If
-
-            accountSlug = prompt.AccountSlug
-            licenseKey = prompt.LicenseKey
-            Return True
-        End Using
-    End Function
-
-    Private Function FormatKeygenFailure(ex As KeygenApiFailureException) As String
-        If ex Is Nothing Then
-            Return "The license check failed."
-        End If
-
-        Select Case ex.Code.Trim().ToUpperInvariant()
-            Case "EXPIRED"
-                Return "This Keygen license has expired." & Environment.NewLine & ex.Message
-            Case "FINGERPRINT_SCOPE_MISMATCH"
-                Return "This license is already bound to a different PC." & Environment.NewLine & ex.Message
-            Case "TOO_MANY_PROCESSES"
-                Return "This license is already running somewhere else right now." & Environment.NewLine & ex.Message
-            Case "NO_MACHINE", "NO_MACHINES"
-                Return "This PC is not activated for the license yet." & Environment.NewLine & ex.Message
-            Case Else
-                Return ex.Message
-        End Select
-    End Function
-
-    Private Sub StartKeygenHeartbeat()
-        If _licenseSession Is Nothing Then
-            Return
-        End If
-
-        _licenseHeartbeatTimer.Interval = GetKeygenHeartbeatIntervalMs(_licenseSession.HeartbeatIntervalSeconds)
-        _licenseHeartbeatFailureCount = 0
-        _licenseHeartbeatTimer.Start()
-    End Sub
-
-    Private Function GetKeygenHeartbeatIntervalMs(intervalSeconds As Integer) As Integer
-        Dim seconds As Integer = Math.Max(30, Math.Min(120, intervalSeconds))
-        Return CInt(Math.Min(Integer.MaxValue, CLng(seconds) * 1000L))
-    End Function
-
-    Private Async Sub LicenseHeartbeatTimerTick(sender As Object, e As EventArgs)
-        If _licenseHeartbeatInProgress OrElse _licenseShutdownRequested OrElse _licenseSession Is Nothing Then
-            Return
-        End If
-
-        _licenseHeartbeatInProgress = True
-        Try
-            Dim nextInterval As Integer = Await KeygenLicenseManager.PingProcessAsync(_licenseSession)
-            If nextInterval > 0 Then
-                _licenseSession.HeartbeatIntervalSeconds = nextInterval
-                _licenseHeartbeatTimer.Interval = GetKeygenHeartbeatIntervalMs(nextInterval)
-            End If
-
-            Await KeygenLicenseManager.RevalidateAsync(_licenseSession)
-            _licenseHeartbeatFailureCount = 0
-        Catch ex As KeygenApiFailureException
-            AppendLog("Keygen license ended: " & ex.Message)
-            CloseForLicenseFailure(FormatKeygenFailure(ex))
-        Catch ex As Exception
-            _licenseHeartbeatFailureCount += 1
-            AppendLog("Keygen heartbeat failed: " & ex.Message)
-            If _licenseHeartbeatFailureCount >= 3 Then
-                CloseForLicenseFailure("The app could not confirm the Keygen session for 3 checks in a row." & Environment.NewLine & ex.Message)
-            End If
-        Finally
-            _licenseHeartbeatInProgress = False
-        End Try
-    End Sub
-
-    Private Sub CloseForLicenseFailure(message As String)
-        If _licenseShutdownRequested Then
-            Return
-        End If
-
-        _licenseShutdownRequested = True
-        _licenseHeartbeatTimer.Stop()
-        MessageBox.Show(Me, message, "License Ended", MessageBoxButtons.OK, MessageBoxIcon.Warning)
-        BeginInvoke(New Action(Sub() Close()))
-    End Sub
-
-    Private Sub ReleaseKeygenSession()
-        If _licenseSession Is Nothing Then
-            Return
-        End If
-
-        Try
-            KeygenLicenseManager.KillProcessAsync(_licenseSession).GetAwaiter().GetResult()
-        Catch
-        Finally
-            _licenseSession = Nothing
-        End Try
-    End Sub
-
     Protected Overrides Sub OnFormClosing(e As FormClosingEventArgs)
-        _licenseShutdownRequested = True
         _uiTimer.Stop()
         _enterToggleTimer.Stop()
-        _licenseHeartbeatTimer.Stop()
         SavePersistedListState(False)
         StopHpZeroAlarm()
         If _overlayForm IsNot Nothing AndAlso Not _overlayForm.IsDisposed Then
@@ -7493,7 +7790,6 @@ Public Class Form1
         End If
         _fullEngine.Stop()
         _liteEngine.Stop()
-        ReleaseKeygenSession()
         MyBase.OnFormClosing(e)
     End Sub
 End Class

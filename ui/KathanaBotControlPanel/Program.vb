@@ -4,12 +4,17 @@ Public Enum BotEdition
 End Enum
 
 Friend Module Program
+    Private Const StartupNotice As String =
+"Espero que esto te ayude a disfrutar más el juego. Recuerda que el tiempo aquí es tiempo que no usas en lo importante, pero por ahora diviértete. Te quiero mucho, Andrake." & vbCrLf & vbCrLf &
+"I hope this helps you enjoy the game more. Remember that time here is time you are not using for important things, but for now, have fun. I love you very much, Andrake." & vbCrLf & vbCrLf &
+"Sana ay makatulong ito para mas ma-enjoy mo ang laro. Tandaan mo na ang oras dito ay oras na hindi mo nagagamit sa mahahalagang bagay, pero sa ngayon, magsaya ka. Mahal na mahal kita, Andrake."
 
     <STAThread()>
     Friend Sub Main(args As String())
         Application.SetHighDpiMode(HighDpiMode.SystemAware)
         Application.EnableVisualStyles()
         Application.SetCompatibleTextRenderingDefault(False)
+        MessageBox.Show(StartupNotice, "Notice", MessageBoxButtons.OK, MessageBoxIcon.Information)
         Application.Run(New Form1())
     End Sub
 
