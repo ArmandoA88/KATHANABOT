@@ -20,6 +20,7 @@ Public NotInheritable Class OcrReader
     End Class
 
     Private Shared ReadOnly _sync As New Object()
+    Private Shared ReadOnly _ocrReadSync As New Object()
     Private Shared _engine As OcrEngine
     Private Shared _initAttempted As Boolean = False
     Private Shared _lastError As String = ""
@@ -254,7 +255,7 @@ Public NotInheritable Class OcrReader
 
         ' Intentionally raw and 1:1 scale to prevent massive memory and CPU bloat
         ' when scanning an entire 1080p or 4K game client window.
-        Return ReadRawTextAsync(engine, source).GetAwaiter().GetResult()
+        Return ReadRawTextBlocking(engine, source)
     End Function
 
     Private Shared Function ReadScreenTextRegionsInternal(source As Bitmap, Optional isolatedEngine As Boolean = False) As List(Of OcrTextRegion)
@@ -263,7 +264,7 @@ Public NotInheritable Class OcrReader
             Return New List(Of OcrTextRegion)()
         End If
 
-        Return ReadRawRegionsAsync(engine, source).GetAwaiter().GetResult()
+        Return ReadRawRegionsBlocking(engine, source)
     End Function
 
     Public Shared Function LastError() As String
@@ -334,7 +335,7 @@ Public NotInheritable Class OcrReader
 
         Try
             For Each candidate In candidates
-                Dim text As String = ReadNameAsync(engine, candidate).GetAwaiter().GetResult()
+                Dim text As String = ReadNameBlocking(engine, candidate)
                 Dim score As Integer = ScoreText(text)
                 If score > bestScore Then
                     bestScore = score
@@ -365,7 +366,7 @@ Public NotInheritable Class OcrReader
 
         Try
             For Each candidate In candidates
-                Dim text As String = ReadRawTextAsync(engine, candidate).GetAwaiter().GetResult()
+                Dim text As String = ReadRawTextBlocking(engine, candidate)
                 Dim value As Double = ParsePercentFromText(text)
                 Dim score As Integer = ScorePercentText(text, value)
                 If score > bestScore Then
@@ -397,7 +398,7 @@ Public NotInheritable Class OcrReader
 
         Try
             For Each candidate In candidates
-                Dim text As String = NormalizeHpFractionText(ReadRawTextAsync(engine, candidate).GetAwaiter().GetResult())
+                Dim text As String = NormalizeHpFractionText(ReadRawTextBlocking(engine, candidate))
                 Dim score As Integer = ScoreHpFractionText(text)
                 If score > bestScore Then
                     bestScore = score
@@ -428,7 +429,7 @@ Public NotInheritable Class OcrReader
 
         Try
             For Each candidate In candidates
-                Dim text As String = NormalizeIntegerText(ReadRawTextAsync(engine, candidate).GetAwaiter().GetResult())
+                Dim text As String = NormalizeIntegerText(ReadRawTextBlocking(engine, candidate))
                 Dim value As Long = ParseIntegerFromText(text)
                 Dim score As Integer = ScoreDigitText(text, value)
                 If score > bestScore Then
@@ -467,6 +468,12 @@ Public NotInheritable Class OcrReader
         Return cleaned
     End Function
 
+    Private Shared Function ReadNameBlocking(engine As OcrEngine, prepared As Bitmap) As String
+        SyncLock _ocrReadSync
+            Return ReadNameAsync(engine, prepared).GetAwaiter().GetResult()
+        End SyncLock
+    End Function
+
     Private Shared Async Function ReadRawTextAsync(engine As OcrEngine, prepared As Bitmap) As Task(Of String)
         Dim soft As SoftwareBitmap = Await ConvertBitmapAsync(prepared)
         If soft Is Nothing Then
@@ -479,6 +486,12 @@ Public NotInheritable Class OcrReader
         End If
 
         Return result.Text.Trim()
+    End Function
+
+    Private Shared Function ReadRawTextBlocking(engine As OcrEngine, prepared As Bitmap) As String
+        SyncLock _ocrReadSync
+            Return ReadRawTextAsync(engine, prepared).GetAwaiter().GetResult()
+        End SyncLock
     End Function
 
     Private Shared Async Function ReadRawRegionsAsync(engine As OcrEngine, prepared As Bitmap) As Task(Of List(Of OcrTextRegion))
@@ -538,6 +551,12 @@ Public NotInheritable Class OcrReader
         Next
 
         Return items
+    End Function
+
+    Private Shared Function ReadRawRegionsBlocking(engine As OcrEngine, prepared As Bitmap) As List(Of OcrTextRegion)
+        SyncLock _ocrReadSync
+            Return ReadRawRegionsAsync(engine, prepared).GetAwaiter().GetResult()
+        End SyncLock
     End Function
 
     Private Shared Function GetEngine() As OcrEngine

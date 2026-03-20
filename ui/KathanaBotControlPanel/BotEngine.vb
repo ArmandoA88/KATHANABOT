@@ -516,11 +516,17 @@ Public Class BotEngine
     Private Const MaxPartyMembers As Integer = 7
     Private Const PartyListBarBandGapRows As Integer = 2
     Private Const FastKeyPressMs As Integer = 12
-    Private Const AttackBurstKeysPerLoop As Integer = 3
+    ' Sending multiple attack rows in the same frame can immediately exhaust
+    ' every eligible attack key and cause long retarget/cooldown stalls.
+    Private Const AttackBurstKeysPerLoop As Integer = 1
+    Private Const RecentTargetGraceMs As Integer = 350
     Private Const AttackBurstGapMs As Integer = 4
     Private Const StopKeyRepeatGapMs As Integer = 10
     Private Const ForegroundInputSettleMs As Integer = 15
-    Private Const CombatLockLostTargetConfirmFrames As Integer = 4
+    Private Const CombatLockLostTargetConfirmFrames As Integer = 2
+    Private Const DeadTargetHpThreshold As Double = 0.35
+    Private Const StartupVisionWarmupMs As Integer = 2500
+    Private Const NoDamageRetargetAttackCount As Integer = 5
 
     Private ReadOnly _sync As New Object()
     Private ReadOnly _frameSync As New Object()
@@ -680,6 +686,7 @@ Public Class BotEngine
     Private _lootScannerCaptureRequestedAt As DateTime = DateTime.MinValue
     Private _lootScannerAltHeld As Boolean = False
     Private _lootScannerProcessingTask As Task = Nothing
+    Private _loopStartedAt As DateTime = DateTime.MinValue
     Private _agentState As LevelingAgentState = LevelingAgentState.Disabled
     Private _agentReason As String = ""
     Private _agentGuardrailTriggered As Boolean = False
@@ -881,6 +888,7 @@ Public Class BotEngine
             _lootScannerCaptureRequestedAt = DateTime.MinValue
             _lootScannerAltHeld = False
             _lootScannerProcessingTask = Nothing
+            _loopStartedAt = DateTime.UtcNow
             _agentState = If(_config.LevelingAgentEnabled, LevelingAgentState.Searching, LevelingAgentState.Disabled)
             _agentReason = ""
             _agentGuardrailTriggered = False
@@ -914,6 +922,7 @@ Public Class BotEngine
             _lootScannerAltHeld = False
             _lootScannerProcessingTask = Nothing
             _pendingLootPickupVerifyAt = DateTime.MinValue
+            _loopStartedAt = DateTime.MinValue
         End SyncLock
         ReleaseLootScannerAltKey()
         ClearLatestLoopFrame()
@@ -1277,13 +1286,14 @@ Public Class BotEngine
             End If
             ReadPartyListIfNeeded(frame, partyListRegion, now)
             Dim targetWindowVisible As Boolean = HasTargetWindowSignal(frame, mobHpRegion, mobName, mobHpPct)
+            Dim currentTargetAliveSignal As Boolean = HasLivingTargetSignal(targetWindowVisible, mobHpPct, cfg)
             Dim hasHighMaxHpAction As Boolean = HasHighMaxHpAttackAction(cfg)
             Dim mobMaxHp As Integer = UpdateMobMaxHpTracking(cfg, frame, mobHpRegion, targetWindowVisible, mobHpPct, now)
             Dim highMaxHpAttackActive As Boolean =
                 cfg.HighMaxHpSpecialEnabled AndAlso
                 hasHighMaxHpAction AndAlso
                 mobMaxHp >= Math.Max(1, cfg.HighMaxHpThreshold)
-            If targetWindowVisible Then
+            If currentTargetAliveSignal Then
                 _lastTargetWindowSeen = now
                 _noTargetBeganAt = DateTime.MinValue
             ElseIf _noTargetBeganAt = DateTime.MinValue Then
@@ -1350,8 +1360,14 @@ Public Class BotEngine
             Dim nameConfirmedForAttack As Boolean = (Not monsterFilterActive) OrElse (normMobName <> "" AndAlso _nameConfirmConfirmedName.Equals(normMobName, StringComparison.OrdinalIgnoreCase))
             Dim missingNameBlockedByFilter As Boolean = monsterFilterActive AndAlso targetWindowVisible AndAlso normMobName = ""
             Dim nameConfirmationBlockedByFilter As Boolean = monsterFilterActive AndAlso targetWindowVisible AndAlso (Not missingNameBlockedByFilter) AndAlso (Not deniedTarget) AndAlso (Not nameConfirmedForAttack)
-            Dim currentTargetAliveSignal As Boolean = HasLivingTargetSignal(targetWindowVisible, mobHpPct, cfg)
             Dim combatLockActive As Boolean = UpdateCombatLockState(now, cfg, currentTargetAliveSignal, normMobName)
+            Dim recentTargetGraceWindowMs As Integer = Math.Max(200, Math.Min(RecentTargetGraceMs, Math.Max(250, If(cfg?.RetargetMs, 550))))
+            Dim recentTargetGraceActive As Boolean =
+                _lastTargetWindowSeen <> DateTime.MinValue AndAlso
+                (now - _lastTargetWindowSeen).TotalMilliseconds < recentTargetGraceWindowMs
+            ' Use a short grace window to smooth OCR flicker, but do not let the
+            ' combat lock itself authorize attacks with no current target signal.
+            Dim effectiveTargetAliveSignal As Boolean = currentTargetAliveSignal OrElse recentTargetGraceActive
             Dim canTrackFirstHitTarget As Boolean = currentTargetAliveSignal AndAlso (Not deniedTarget) AndAlso (Not missingNameBlockedByFilter)
             Dim currentFirstHitSignature As String = normMobName
             If canTrackFirstHitTarget Then
@@ -1368,7 +1384,7 @@ Public Class BotEngine
             End If
             Dim firstHitWindowActive As Boolean = _firstHitPending AndAlso now < _firstHitWindowUntil
             Dim targetValid As Boolean =
-                currentTargetAliveSignal AndAlso
+                effectiveTargetAliveSignal AndAlso
                 (Not deniedTarget) AndAlso
                 (Not missingNameBlockedByFilter) AndAlso
                 (Not missingNameBlockedByPreference) AndAlso
@@ -1901,6 +1917,7 @@ Public Class BotEngine
     End Function
 
     Private Sub ApplyVisionStabilityFilter(ByRef hpPct As Double, ByRef mpPct As Double, ByRef mobHpPct As Double, ByRef mobName As String, captureGlitch As Boolean)
+        Dim now As DateTime = DateTime.UtcNow
         Dim hasBaseline As Boolean = _lastGoodHpPercent >= 0 AndAlso _lastGoodMpPercent >= 0
         Dim bothNearZero As Boolean = hpPct <= 0.25 AndAlso mpPct <= 0.25
         Dim suspiciousSingleHpZero As Boolean =
@@ -1930,6 +1947,21 @@ Public Class BotEngine
         End If
         If sustainedSingleMpZero Then
             suspiciousSingleMpZero = False
+        End If
+
+        Dim startupWarmupActive As Boolean =
+            Not hasBaseline AndAlso
+            _loopStartedAt <> DateTime.MinValue AndAlso
+            (now - _loopStartedAt).TotalMilliseconds < StartupVisionWarmupMs
+
+        If startupWarmupActive AndAlso (captureGlitch OrElse bothNearZero OrElse suspiciousSingleHpZero OrElse suspiciousSingleMpZero) Then
+            hpPct = 100.0
+            mpPct = 100.0
+            mobHpPct = Math.Max(0.0, mobHpPct)
+            If String.IsNullOrWhiteSpace(mobName) Then
+                mobName = ""
+            End If
+            Return
         End If
 
         If bothNearZero Then
@@ -4065,14 +4097,14 @@ Public Class BotEngine
             Using g As Graphics = Graphics.FromImage(crop)
                 g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
             End Using
+            Dim workerCrop As Bitmap = DirectCast(crop.Clone(), Bitmap)
+            crop.Dispose()
             _lastExpOcrAt = now
             _expOcrTask = Task.Run(
                 Function()
-                    Try
-                        Return OcrReader.ReadPercent(crop)
-                    Finally
-                        crop.Dispose()
-                    End Try
+                    Using workerCrop
+                        Return OcrReader.ReadPercent(workerCrop)
+                    End Using
                 End Function)
             Return _lastExpPercent
         Catch
@@ -4152,14 +4184,14 @@ Public Class BotEngine
             Using g As Graphics = Graphics.FromImage(crop)
                 g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
             End Using
+            Dim workerCrop As Bitmap = DirectCast(crop.Clone(), Bitmap)
+            crop.Dispose()
             _lastRupiahsOcrAt = now
             _rupiahsOcrTask = Task.Run(
                 Function()
-                    Try
-                        Return OcrReader.ReadInteger(crop)
-                    Finally
-                        crop.Dispose()
-                    End Try
+                    Using workerCrop
+                        Return OcrReader.ReadInteger(workerCrop)
+                    End Using
                 End Function)
             Return _lastRupiahsTotal
         Catch
@@ -4265,17 +4297,19 @@ Public Class BotEngine
             Using g As Graphics = Graphics.FromImage(crop)
                 g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
             End Using
+            Dim workerCrop As Bitmap = DirectCast(crop.Clone(), Bitmap)
+            crop.Dispose()
 
             _lastPartyInviteScan = now
             _partyInviteOcrTask = Task.Run(
                 Function()
-                    Try
-                        Return OcrReader.ReadName(crop)
-                    Catch
-                        Return ""
-                    Finally
-                        crop.Dispose()
-                    End Try
+                    Using workerCrop
+                        Try
+                            Return OcrReader.ReadName(workerCrop)
+                        Catch
+                            Return ""
+                        End Try
+                    End Using
                 End Function)
         Catch
             crop.Dispose()
@@ -4516,17 +4550,19 @@ Public Class BotEngine
             Using g As Graphics = Graphics.FromImage(crop)
                 g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
             End Using
+            Dim workerCrop As Bitmap = DirectCast(crop.Clone(), Bitmap)
+            crop.Dispose()
 
             _lastUnreachableScan = now
             _unreachableOcrTask = Task.Run(
                 Function()
-                    Try
-                        Return OcrReader.ReadName(crop)
-                    Catch
-                        Return ""
-                    Finally
-                        crop.Dispose()
-                    End Try
+                    Using workerCrop
+                        Try
+                            Return OcrReader.ReadName(workerCrop)
+                        Catch
+                            Return ""
+                        End Try
+                    End Using
                 End Function)
         Catch
             crop.Dispose()
@@ -5048,7 +5084,8 @@ Public Class BotEngine
             Return True
         End If
 
-        Dim minHoldMs As Integer = Math.Max(900, Math.Max(1, If(cfg?.RetargetMs, 550)) * 2)
+        Dim configuredRetargetMs As Integer = Math.Max(1, If(cfg?.RetargetMs, 550))
+        Dim minHoldMs As Integer = Math.Max(250, Math.Min(650, configuredRetargetMs))
         If _lastAttackAction <> DateTime.MinValue AndAlso (now - _lastAttackAction).TotalMilliseconds < minHoldMs Then
             Return True
         End If
@@ -5063,12 +5100,11 @@ Public Class BotEngine
     End Function
 
     Private Shared Function HasLivingTargetSignal(targetWindowVisible As Boolean, mobHpPct As Double, cfg As BotConfig) As Boolean
-        If targetWindowVisible Then
+        Dim configuredThreshold As Double = If(cfg Is Nothing, 1.0, Math.Max(0.0, cfg.MobHpPresenceThreshold))
+        Dim lowHpKeepLockThreshold As Double = Math.Max(DeadTargetHpThreshold, Math.Min(0.6, Math.Max(0.25, configuredThreshold * 0.25)))
+        If targetWindowVisible AndAlso mobHpPct >= lowHpKeepLockThreshold Then
             Return True
         End If
-
-        Dim configuredThreshold As Double = If(cfg Is Nothing, 1.0, Math.Max(0.0, cfg.MobHpPresenceThreshold))
-        Dim lowHpKeepLockThreshold As Double = Math.Max(0.05, Math.Min(0.25, configuredThreshold * 0.25))
         Return mobHpPct >= lowHpKeepLockThreshold
     End Function
 
@@ -5151,9 +5187,6 @@ Public Class BotEngine
         If _lastAttackAction = DateTime.MinValue Then
             Return False
         End If
-        If _combatLockActive Then
-            Return False
-        End If
 
         Dim stuckMs As Integer = Math.Max(1, cfg.StuckTargetMs)
         Dim sinceAttackMs As Double = (now - _lastAttackAction).TotalMilliseconds
@@ -5163,6 +5196,18 @@ Public Class BotEngine
         End If
 
         Dim retargetCooldownMs As Integer = GetRetargetCooldownMs(cfg, 1, forced:=True)
+        Dim configuredNoProgressMs As Integer = Math.Max(1000, If(cfg?.StuckTargetNoProgressRetargetMs, 6000))
+        Dim forcedNoDamageRetarget As Boolean =
+            _noDamageAttackCount >= NoDamageRetargetAttackCount AndAlso
+            sinceAttackMs >= Math.Max(250, Math.Min(1200, configuredNoProgressMs \ 3))
+
+        If forcedNoDamageRetarget AndAlso (Not targetWindowVisible OrElse targetValid) Then
+            Return (_lastForcedRetarget = DateTime.MinValue) OrElse (now - _lastForcedRetarget).TotalMilliseconds >= retargetCooldownMs
+        End If
+
+        If _combatLockActive Then
+            Return False
+        End If
         If Not targetValid Then
             Return False
         End If
@@ -5172,7 +5217,6 @@ Public Class BotEngine
         End If
 
         Dim sinceHpMoveMs As Double = (now - _lastMobHpMovement).TotalMilliseconds
-        Dim configuredNoProgressMs As Integer = Math.Max(1000, If(cfg?.StuckTargetNoProgressRetargetMs, 6000))
         Dim requiredNoProgressMs As Integer = configuredNoProgressMs
         If sinceHpMoveMs < requiredNoProgressMs Then
             Return False
