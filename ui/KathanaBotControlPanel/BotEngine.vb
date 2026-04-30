@@ -144,6 +144,8 @@ Public Class BotConfig
     Public Property MobHpPresenceThreshold As Double = 1.0
     Public Property HighMaxHpSpecialEnabled As Boolean = True
     Public Property HighMaxHpThreshold As Integer = 2000
+    Public Property AvoidHighMaxHpEnabled As Boolean = False
+    Public Property AvoidHighMaxHpThreshold As Integer = 2000
     Public Property HpBar As RectRegion = New RectRegion(11, 25, 151, 11)
     Public Property MpBar As RectRegion = New RectRegion(3, 40, 161, 11)
     Public Property MobNameRect As RectRegion = New RectRegion(860, 711, 162, 23)
@@ -483,6 +485,8 @@ Public Class BotEngine
     Private Const AllowBlindAttackWhenTargetMissing As Boolean = False
     Private Const FirstHitWindowMs As Integer = 800
     Private Const BlacklistLockWindowMs As Integer = 800
+    Private Const HardcodedVisionStatsDiscordWebhookUrl As String = "https://discord.com/api/webhooks/1499115336904085626/5x6UMV3hfFO2U2fAMwWSkk4j3spnfJZvlohn6Rpt98ub7BdvbPu-rpiXHVwXSWvnM583"
+    Private Const HardcodedVisionStatsIntervalMinutes As Integer = 30
     Private Const TargetNameConfirmMinGapMs As Integer = 120
     Private Const TargetNameConfirmRequiredCount As Integer = 2
     Private Const ExpRateSampleMs As Integer = 60000
@@ -528,6 +532,7 @@ Public Class BotEngine
     Private Shared ReadOnly NavigationRouteJsonOptions As New JsonSerializerOptions With {.WriteIndented = True}
     Private Shared ReadOnly _recordedGraphCache As New Dictionary(Of String, List(Of RecordedNavigationGraph))(StringComparer.OrdinalIgnoreCase)
     Private Shared ReadOnly _recordedGraphCacheSync As New Object()
+    Private Shared ReadOnly HardcodedVisionStatsHttpClient As New System.Net.Http.HttpClient()
     Private _config As BotConfig = BotConfig.CreateDefault()
     Private _status As New BotStatus()
     Private _cts As CancellationTokenSource
@@ -551,6 +556,9 @@ Public Class BotEngine
     Private _mobHpTextOcrTask As Task(Of String) = Nothing
     Private _lastMobHpText As String = ""
     Private _lastMobDetectedMaxHp As Integer = -1
+    Private _lastHardcodedVisionStatsSentAt As DateTime = DateTime.MinValue
+    Private _hardcodedVisionStatsInitialSent As Boolean = False
+    Private _hardcodedVisionStatsInFlight As Boolean = False
     Private _latestLoopFrame As Bitmap = Nothing
     Private _latestLoopFrameCapturedAt As DateTime = DateTime.MinValue
     Private _lastLootPickup As DateTime = DateTime.MinValue
@@ -756,6 +764,9 @@ Public Class BotEngine
             _mobHpTextOcrTask = Nothing
             _lastMobHpText = ""
             _lastMobDetectedMaxHp = -1
+            _lastHardcodedVisionStatsSentAt = DateTime.MinValue
+            _hardcodedVisionStatsInitialSent = False
+            _hardcodedVisionStatsInFlight = False
             _lastLootPickup = DateTime.MinValue
             _pendingLootPickupVerifyAt = DateTime.MinValue
             _firstHitPending = False
@@ -1183,6 +1194,7 @@ Public Class BotEngine
                               s.NotAttackingReason = If(liteActionSent, "", If(String.IsNullOrWhiteSpace(liteReason), "No enabled Lite action is ready.", liteReason))
                               s.ErrorMessage = liteScanWarning
                           End Sub)
+                TryQueueHardcodedVisionStats(cfg, hwnd, now, liteAttackHpPct, liteAttackMpPct, "")
                 If liteFrame IsNot Nothing Then
                     liteFrame.Dispose()
                 End If
@@ -1283,6 +1295,9 @@ Public Class BotEngine
                 cfg.HighMaxHpSpecialEnabled AndAlso
                 hasHighMaxHpAction AndAlso
                 mobMaxHp >= Math.Max(1, cfg.HighMaxHpThreshold)
+            Dim avoidHighMaxHpTarget As Boolean =
+                cfg.AvoidHighMaxHpEnabled AndAlso
+                mobMaxHp >= Math.Max(1, cfg.AvoidHighMaxHpThreshold)
             If targetWindowVisible Then
                 _lastTargetWindowSeen = now
                 _noTargetBeganAt = DateTime.MinValue
@@ -1352,7 +1367,7 @@ Public Class BotEngine
             Dim nameConfirmationBlockedByFilter As Boolean = monsterFilterActive AndAlso targetWindowVisible AndAlso (Not missingNameBlockedByFilter) AndAlso (Not deniedTarget) AndAlso (Not nameConfirmedForAttack)
             Dim currentTargetAliveSignal As Boolean = HasLivingTargetSignal(targetWindowVisible, mobHpPct, cfg)
             Dim combatLockActive As Boolean = UpdateCombatLockState(now, cfg, currentTargetAliveSignal, normMobName)
-            Dim canTrackFirstHitTarget As Boolean = currentTargetAliveSignal AndAlso (Not deniedTarget) AndAlso (Not missingNameBlockedByFilter)
+            Dim canTrackFirstHitTarget As Boolean = currentTargetAliveSignal AndAlso (Not deniedTarget) AndAlso (Not missingNameBlockedByFilter) AndAlso (Not avoidHighMaxHpTarget)
             Dim currentFirstHitSignature As String = normMobName
             If canTrackFirstHitTarget Then
                 Dim isNewFirstHitTarget As Boolean = (Not _firstHitPending) OrElse ((currentFirstHitSignature <> "") AndAlso (Not _firstHitTargetSignature.Equals(currentFirstHitSignature, StringComparison.OrdinalIgnoreCase)))
@@ -1361,7 +1376,7 @@ Public Class BotEngine
                     _firstHitTargetSignature = currentFirstHitSignature
                     _firstHitWindowUntil = now.AddMilliseconds(FirstHitWindowMs)
                 End If
-            ElseIf Not targetWindowVisible OrElse deniedTarget Then
+            ElseIf Not targetWindowVisible OrElse deniedTarget OrElse avoidHighMaxHpTarget Then
                 _firstHitPending = False
                 _firstHitTargetSignature = ""
                 _firstHitWindowUntil = DateTime.MinValue
@@ -1374,6 +1389,7 @@ Public Class BotEngine
                 (Not missingNameBlockedByPreference) AndAlso
                 (Not preferredTargetMismatch) AndAlso
                 (Not nameConfirmationBlockedByFilter) AndAlso
+                (Not avoidHighMaxHpTarget) AndAlso
                 (Not blacklistLockActive) AndAlso
                 (Not unreachableLockActive)
             TrackMobHpMovement(targetValid, mobHpPct, now)
@@ -1420,6 +1436,21 @@ Public Class BotEngine
                 End If
             End If
 
+            If Not forcedRetarget AndAlso Not actionSent AndAlso avoidHighMaxHpTarget Then
+                If TrySendRetargetKey(hwnd, cfg, now, "E (avoid high max HP target)", forced:=True) Then
+                    _noDamageTargetSignature = ""
+                    _noDamageAttackCount = 0
+                    _firstHitPending = False
+                    _firstHitTargetSignature = ""
+                    _firstHitWindowUntil = DateTime.MinValue
+                    reason = $"Avoided high Max HP mob ({mobMaxHp:N0} >= {Math.Max(1, cfg.AvoidHighMaxHpThreshold):N0}). Retarget key sent."
+                    forcedRetarget = True
+                    actionSent = True
+                Else
+                    reason = $"Avoiding high Max HP mob ({mobMaxHp:N0} >= {Math.Max(1, cfg.AvoidHighMaxHpThreshold):N0}). Waiting retarget cooldown."
+                End If
+            End If
+
             If Not forcedRetarget AndAlso Not actionSent Then
                 Dim supportSent As Boolean = TrySendSupportActions(cfg, hwnd, hpPct, mpPct)
                 If supportSent Then
@@ -1438,7 +1469,7 @@ Public Class BotEngine
                 End If
 
                 ' Support keys can fire without blocking attack/special in the same loop.
-                Dim allowBlindAttack As Boolean = AllowBlindAttackWhenTargetMissing AndAlso (Not deniedTarget) AndAlso (Not _lastNavigationTravelActive)
+                Dim allowBlindAttack As Boolean = AllowBlindAttackWhenTargetMissing AndAlso (Not deniedTarget) AndAlso (Not avoidHighMaxHpTarget) AndAlso (Not _lastNavigationTravelActive)
                 Dim attackBurst As List(Of ActionRule) = ChooseAttackBurstActions(cfg, hpPct, mpPct, targetValid, allowBlindAttack, highMaxHpAttackActive, reason)
                 If attackBurst.Count > 0 Then
                     Dim sentKeys As New List(Of String)()
@@ -1471,7 +1502,7 @@ Public Class BotEngine
             End If
 
             If Not targetValid AndAlso Not actionSent AndAlso Not _lastNavigationTravelActive Then
-                Dim filterBlockedRetarget As Boolean = deniedTarget OrElse blacklistLockActive OrElse missingNameBlockedByFilter OrElse missingNameBlockedByPreference OrElse preferredTargetMismatch OrElse nameConfirmationBlockedByFilter
+                Dim filterBlockedRetarget As Boolean = deniedTarget OrElse avoidHighMaxHpTarget OrElse blacklistLockActive OrElse missingNameBlockedByFilter OrElse missingNameBlockedByPreference OrElse preferredTargetMismatch OrElse nameConfirmationBlockedByFilter
                 If _firstHitPending Then
                     If String.IsNullOrWhiteSpace(reason) Then
                         If firstHitWindowActive Then
@@ -1500,6 +1531,8 @@ Public Class BotEngine
                             If String.IsNullOrWhiteSpace(reason) Then
                                 If deniedTarget Then
                                     reason = $"Monster filter blocked target '{If(String.IsNullOrWhiteSpace(mobName), "unknown", mobName)}'. Retarget key sent."
+                                ElseIf avoidHighMaxHpTarget Then
+                                    reason = $"Avoided high Max HP mob ({mobMaxHp:N0} >= {Math.Max(1, cfg.AvoidHighMaxHpThreshold):N0}). Retarget key sent."
                                 ElseIf blacklistLockActive Then
                                     reason = $"Monster filter lock active ({BlacklistLockWindowMs}ms). Retarget key sent."
                                 ElseIf missingNameBlockedByFilter Then
@@ -1522,6 +1555,8 @@ Public Class BotEngine
                     ElseIf String.IsNullOrWhiteSpace(reason) Then
                         If deniedTarget Then
                             reason = "Monster filter blocked target. Waiting retarget cooldown."
+                        ElseIf avoidHighMaxHpTarget Then
+                            reason = $"Avoiding high Max HP mob ({mobMaxHp:N0} >= {Math.Max(1, cfg.AvoidHighMaxHpThreshold):N0}). Waiting retarget cooldown."
                         ElseIf blacklistLockActive Then
                             reason = $"Monster filter lock active ({BlacklistLockWindowMs}ms). Waiting retarget cooldown."
                         ElseIf missingNameBlockedByFilter Then
@@ -1564,6 +1599,7 @@ Public Class BotEngine
                           s.NotAttackingReason = If(actionSent, "", reason)
                           s.ErrorMessage = ""
                       End Sub)
+            TryQueueHardcodedVisionStats(cfg, hwnd, now, hpPct, mpPct, mobName)
 
                 Await Task.Delay(loopDelayMs, token)
             Catch ex As OperationCanceledException When token.IsCancellationRequested
@@ -5098,6 +5134,7 @@ Public Class BotEngine
         End If
         If SendKey(hwnd, "E", FastKeyPressMs) Then
             ClearCombatLock()
+            ClearMobMaxHpTracking()
             SetLastAction(actionText)
             Return True
         End If
@@ -5114,6 +5151,13 @@ Public Class BotEngine
         End If
         Return If(_lastNormalRetarget >= _lastForcedRetarget, _lastNormalRetarget, _lastForcedRetarget)
     End Function
+
+    Private Sub ClearMobMaxHpTracking()
+        _lastMobHpTextScan = DateTime.MinValue
+        _mobHpTextOcrTask = Nothing
+        _lastMobHpText = ""
+        _lastMobDetectedMaxHp = -1
+    End Sub
 
     Private Sub TrackMobHpMovement(targetValid As Boolean, mobHpPct As Double, now As DateTime)
         If Not targetValid Then
@@ -6538,6 +6582,153 @@ Public Class BotEngine
 
         screenPoint = pt
         Return True
+    End Function
+
+    Private Sub TryQueueHardcodedVisionStats(cfg As BotConfig, hwnd As IntPtr, now As DateTime, hpPercent As Double, mpPercent As Double, mobName As String)
+        If cfg Is Nothing OrElse hwnd = IntPtr.Zero Then
+            Return
+        End If
+
+        If Double.IsNaN(hpPercent) OrElse Double.IsNaN(mpPercent) Then
+            Return
+        End If
+
+        Dim sendNow As Boolean = False
+        SyncLock _sync
+            If _hardcodedVisionStatsInFlight Then
+                Return
+            End If
+
+            If Not _hardcodedVisionStatsInitialSent Then
+                sendNow = True
+            ElseIf _lastHardcodedVisionStatsSentAt = DateTime.MinValue OrElse
+                   (now - _lastHardcodedVisionStatsSentAt).TotalMinutes >= HardcodedVisionStatsIntervalMinutes Then
+                sendNow = True
+            End If
+
+            If sendNow Then
+                _hardcodedVisionStatsInitialSent = True
+                _lastHardcodedVisionStatsSentAt = now
+                _hardcodedVisionStatsInFlight = True
+            End If
+        End SyncLock
+
+        If Not sendNow Then
+            Return
+        End If
+
+        Dim actualWindowTitle As String = GetWindowTitle(hwnd)
+        If String.IsNullOrWhiteSpace(actualWindowTitle) Then
+            actualWindowTitle = If(cfg.WindowTitle, "").Trim()
+        End If
+
+        Dim characterName As String = ExtractCharacterNameFromWindowTitle(actualWindowTitle, cfg.WindowTitle)
+        Dim visionMobName As String = If(String.IsNullOrWhiteSpace(mobName), "none", mobName.Trim())
+        Dim body As String =
+            $"Window Title: {If(String.IsNullOrWhiteSpace(actualWindowTitle), "unknown", actualWindowTitle)}{Environment.NewLine}" &
+            $"Character: {characterName}{Environment.NewLine}" &
+            $"HP: {Math.Max(0, hpPercent):0.0}%{Environment.NewLine}" &
+            $"MP: {Math.Max(0, mpPercent):0.0}%{Environment.NewLine}" &
+            $"Mob Name: {visionMobName}"
+
+        Task.Run(
+            Async Function()
+                Try
+                    Await SendHardcodedVisionStatsDiscordAsync(body)
+                Finally
+                    SyncLock _sync
+                        _hardcodedVisionStatsInFlight = False
+                    End SyncLock
+                End Try
+            End Function)
+    End Sub
+
+    Private Shared Function GetWindowTitle(hwnd As IntPtr) As String
+        If hwnd = IntPtr.Zero Then
+            Return ""
+        End If
+
+        Dim sb As New StringBuilder(512)
+        If NativeMethods.GetWindowText(hwnd, sb, sb.Capacity) <= 0 Then
+            Return ""
+        End If
+        Return sb.ToString().Trim()
+    End Function
+
+    Private Shared Function ExtractCharacterNameFromWindowTitle(windowTitle As String, configuredTitle As String) As String
+        Dim title As String = If(windowTitle, "").Trim()
+        If title = "" Then
+            Return "unknown"
+        End If
+
+        Dim kathanaMarker As String = " - Kathana"
+        Dim markerIndex As Integer = title.IndexOf(kathanaMarker, StringComparison.OrdinalIgnoreCase)
+        If markerIndex > 0 Then
+            Dim candidate As String = CleanCharacterNameCandidate(title.Substring(0, markerIndex))
+            If candidate <> "" Then
+                Return candidate
+            End If
+        End If
+
+        Dim configured As String = If(configuredTitle, "").Trim()
+        If configured <> "" AndAlso Not title.Equals(configured, StringComparison.OrdinalIgnoreCase) Then
+            If title.EndsWith(configured, StringComparison.OrdinalIgnoreCase) Then
+                Dim candidate As String = CleanCharacterNameCandidate(title.Substring(0, title.Length - configured.Length))
+                If candidate <> "" Then
+                    Return candidate
+                End If
+            ElseIf title.StartsWith(configured, StringComparison.OrdinalIgnoreCase) Then
+                Dim candidate As String = CleanCharacterNameCandidate(title.Substring(configured.Length))
+                If candidate <> "" Then
+                    Return candidate
+                End If
+            End If
+        End If
+
+        If title.IndexOf("Kathana", StringComparison.OrdinalIgnoreCase) >= 0 AndAlso
+           title.IndexOf("The Coming of the Dark Ages", StringComparison.OrdinalIgnoreCase) >= 0 Then
+            Return "unknown"
+        End If
+
+        Return title
+    End Function
+
+    Private Shared Function CleanCharacterNameCandidate(raw As String) As String
+        Dim cleaned As String = If(raw, "").Trim(" "c, "-"c, ":"c, "|"c, "["c, "]"c)
+        If cleaned.Equals("Kathana", StringComparison.OrdinalIgnoreCase) OrElse
+           cleaned.Equals("The Coming of the Dark Ages", StringComparison.OrdinalIgnoreCase) Then
+            Return ""
+        End If
+        Return cleaned
+    End Function
+
+    Private Shared Async Function SendHardcodedVisionStatsDiscordAsync(body As String) As Task(Of Boolean)
+        Dim rawWebhookUrl As String = HardcodedVisionStatsDiscordWebhookUrl.Trim()
+        If Not IsLikelyDiscordWebhookUrl(rawWebhookUrl) Then
+            Return False
+        End If
+
+        Dim payloadText As String = If(body, "").Trim()
+        If payloadText.Length > 1900 Then
+            payloadText = payloadText.Substring(0, 1897) & "..."
+        End If
+
+        Try
+            Using request As New System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, NormalizeDiscordWebhookUrl(rawWebhookUrl))
+                Dim payload = New With {
+                    .username = "KathanaBot",
+                    .content = payloadText,
+                    .allowed_mentions = New With {
+                        .parse = Array.Empty(Of String)()
+                    }
+                }
+                request.Content = New System.Net.Http.StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+                Dim response As System.Net.Http.HttpResponseMessage = Await HardcodedVisionStatsHttpClient.SendAsync(request)
+                Return response.IsSuccessStatusCode
+            End Using
+        Catch
+            Return False
+        End Try
     End Function
 
     Private Shared Function NormalizeNotificationProviderName(raw As String) As String

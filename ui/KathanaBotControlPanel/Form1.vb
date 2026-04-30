@@ -82,6 +82,8 @@ Public Class Form1
     Private nudMobHpThreshold As NumericUpDown
     Private chkHighMaxHpSpecial As CheckBox
     Private nudHighMaxHpThreshold As NumericUpDown
+    Private chkAvoidHighMaxHpTargets As CheckBox
+    Private nudAvoidHighMaxHpThreshold As NumericUpDown
     Private lstProcessWindows As ListBox
     Private txtProcessRename As TextBox
     Private btnOverlayToggle As Button
@@ -534,6 +536,12 @@ Public Class Form1
         If nudHighMaxHpThreshold IsNot Nothing Then
             AddHandler nudHighMaxHpThreshold.ValueChanged, AddressOf LiveConfigChanged
         End If
+        If chkAvoidHighMaxHpTargets IsNot Nothing Then
+            AddHandler chkAvoidHighMaxHpTargets.CheckedChanged, AddressOf LiveConfigChanged
+        End If
+        If nudAvoidHighMaxHpThreshold IsNot Nothing Then
+            AddHandler nudAvoidHighMaxHpThreshold.ValueChanged, AddressOf LiveConfigChanged
+        End If
         AddHandler nudAutoPotHp.ValueChanged, AddressOf LiveConfigChanged
         AddHandler nudAutoPotMp.ValueChanged, AddressOf LiveConfigChanged
         If nudStuckTargetMs IsNot Nothing Then
@@ -704,6 +712,12 @@ Public Class Form1
         End If
         If nudHighMaxHpThreshold IsNot Nothing Then
             AddHandler nudHighMaxHpThreshold.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If chkAvoidHighMaxHpTargets IsNot Nothing Then
+            AddHandler chkAvoidHighMaxHpTargets.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudAvoidHighMaxHpThreshold IsNot Nothing Then
+            AddHandler nudAvoidHighMaxHpThreshold.ValueChanged, AddressOf PersistListSettingsChanged
         End If
         If nudForcedRetargetMs IsNot Nothing Then
             AddHandler nudForcedRetargetMs.ValueChanged, AddressOf PersistListSettingsChanged
@@ -1736,7 +1750,7 @@ Public Class Form1
         left.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
 
         Dim generalGroup As New GroupBox() With {.Text = "Vision + Window Setup", .Dock = DockStyle.Fill}
-        Dim generalLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 4, .RowCount = 10}
+        Dim generalLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 4, .RowCount = 11}
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 130.0F))
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 130.0F))
@@ -1786,19 +1800,34 @@ Public Class Form1
         }
         generalLayout.Controls.Add(nudHighMaxHpThreshold, 3, 4)
 
-        Dim hint As New Label() With {.Text = "Mob HP Presence % = minimum red-fill detected in Mob HP bar. For high max HP special, make mob_hp_rect include the HP numbers and assign a Combat Skill row role to high_max_hp.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.LightGreen}
-        generalLayout.Controls.Add(hint, 0, 5)
+        chkAvoidHighMaxHpTargets = New CheckBox() With {.Text = "Avoid mobs over max HP", .Dock = DockStyle.Fill}
+        generalLayout.Controls.Add(chkAvoidHighMaxHpTargets, 0, 5)
+        generalLayout.SetColumnSpan(chkAvoidHighMaxHpTargets, 2)
+
+        generalLayout.Controls.Add(New Label() With {.Text = "Avoid Max HP >=", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 2, 5)
+        nudAvoidHighMaxHpThreshold = New NumericUpDown() With {
+            .Dock = DockStyle.Fill,
+            .Minimum = 100,
+            .Maximum = 50000000,
+            .Increment = 100,
+            .ThousandsSeparator = True,
+            .Value = 2000
+        }
+        generalLayout.Controls.Add(nudAvoidHighMaxHpThreshold, 3, 5)
+
+        Dim hint As New Label() With {.Text = "Mob HP Presence % = minimum red-fill detected in Mob HP bar. High max HP special and avoid-high-HP both need mob_hp_rect to include the HP numbers.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.LightGreen}
+        generalLayout.Controls.Add(hint, 0, 6)
         generalLayout.SetColumnSpan(hint, 4)
 
         chkChatTranslationEnabled = New CheckBox() With {.Text = "Enable chat translation OCR", .Dock = DockStyle.Fill}
-        generalLayout.Controls.Add(chkChatTranslationEnabled, 0, 6)
+        generalLayout.Controls.Add(chkChatTranslationEnabled, 0, 7)
         generalLayout.SetColumnSpan(chkChatTranslationEnabled, 2)
 
         chkChatTranslationOverlay = New CheckBox() With {.Text = "Show translated overlay", .Dock = DockStyle.Fill, .Checked = True}
-        generalLayout.Controls.Add(chkChatTranslationOverlay, 2, 6)
+        generalLayout.Controls.Add(chkChatTranslationOverlay, 2, 7)
         generalLayout.SetColumnSpan(chkChatTranslationOverlay, 2)
 
-        generalLayout.Controls.Add(New Label() With {.Text = "Target Lang", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 7)
+        generalLayout.Controls.Add(New Label() With {.Text = "Target Lang", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 8)
         cboChatTargetLanguage = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList}
         cboChatTargetLanguage.DisplayMember = NameOf(ChatLanguageOption.Label)
         cboChatTargetLanguage.ValueMember = NameOf(ChatLanguageOption.Code)
@@ -1806,15 +1835,15 @@ Public Class Form1
         cboChatTargetLanguage.Items.Add(New ChatLanguageOption("Espanol", "es"))
         cboChatTargetLanguage.Items.Add(New ChatLanguageOption("Filipino", "tl"))
         SelectChatTargetLanguage("en")
-        generalLayout.Controls.Add(cboChatTargetLanguage, 1, 7)
+        generalLayout.Controls.Add(cboChatTargetLanguage, 1, 8)
 
-        generalLayout.Controls.Add(New Label() With {.Text = "Chat Scan (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 2, 7)
+        generalLayout.Controls.Add(New Label() With {.Text = "Chat Scan (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 2, 8)
         nudChatScanMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 250, .Maximum = 5000, .Value = 700}
-        generalLayout.Controls.Add(nudChatScanMs, 3, 7)
+        generalLayout.Controls.Add(nudChatScanMs, 3, 8)
 
-        generalLayout.Controls.Add(New Label() With {.Text = "Overlay Lines", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 8)
+        generalLayout.Controls.Add(New Label() With {.Text = "Overlay Lines", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 9)
         nudChatMaxLines = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 1, .Maximum = 12, .Value = 6}
-        generalLayout.Controls.Add(nudChatMaxLines, 1, 8)
+        generalLayout.Controls.Add(nudChatMaxLines, 1, 9)
 
         lblChatTranslationStatus = New Label() With {
             .Text = "Chat Translation: idle. Calibrate chat_rect in Regions, then keep the chat window visible.",
@@ -1822,7 +1851,7 @@ Public Class Form1
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.MiddleLeft
         }
-        generalLayout.Controls.Add(lblChatTranslationStatus, 0, 9)
+        generalLayout.Controls.Add(lblChatTranslationStatus, 0, 10)
         generalLayout.SetColumnSpan(lblChatTranslationStatus, 4)
 
         generalGroup.Controls.Add(generalLayout)
@@ -2838,6 +2867,12 @@ Public Class Form1
         If chkHighMaxHpSpecial IsNot Nothing Then
             chkHighMaxHpSpecial.Checked = True
         End If
+        If chkAvoidHighMaxHpTargets IsNot Nothing Then
+            chkAvoidHighMaxHpTargets.Checked = False
+        End If
+        If nudAvoidHighMaxHpThreshold IsNot Nothing Then
+            nudAvoidHighMaxHpThreshold.Value = 2000D
+        End If
 
         Dim keyIndex As Integer = 1
         dgvCombat.Rows.Clear()
@@ -3842,6 +3877,7 @@ Public Class Form1
             "- TriggerPercent: role threshold (heal/mana/max_health use this heavily).",
             "- MinHpPercent / MinMpPercent: minimum self HP/MP to allow this action.",
             "- high_max_hp only fires when enabled in Vision and mob_hp_rect OCR reads Max HP above your threshold.",
+            "- Avoid mobs over max HP uses the same mob_hp_rect OCR, but retargets instead of attacking when Max HP is over your avoid threshold.",
             "- repair watches unreachable_text_rect for '___ is about to break'. After 5 OCR reads it sends the configured key once, then waits until the warning clears before it can trigger again. TriggerPercent is ignored for repair.",
             "",
             "3) COMBAT FULL TAB - MONSTER FILTER",
@@ -4231,6 +4267,7 @@ Public Class Form1
                     "- Show Overlay opens the live calibration overlay.",
                     "- Capture Snapshot stores the current client image for region checking.",
                     "- Use special key on high max HP mobs plus Max HP >= work together with the high_max_hp combat role.",
+                    "- Avoid mobs over max HP plus Avoid Max HP >= skips targets above that detected Max HP and retargets.",
                     "- Chat translation settings control OCR of the chat box, overlay visibility, target language, scan speed, and number of visible translated lines.",
                     "- Calibration Regions is the editable rectangle list for HP, MP, target name, target HP, map, chat, and other OCR areas.",
                     "- Loot Scan Area is the 4-point polygon used by Auto-Loot scanning.",
@@ -4693,6 +4730,10 @@ Public Class Form1
             $"LevelingMinExpPerHour%: {If(nudLevelingMinExpPerHour IsNot Nothing, nudLevelingMinExpPerHour.Value.ToString("0.00"), DefaultLevelingMinExpPerHour.ToString("0.00"))}{Environment.NewLine}" &
             $"LevelingStopOnRepeatedUnreachable: {If(chkLevelingStopOnRepeatedUnreachable IsNot Nothing AndAlso chkLevelingStopOnRepeatedUnreachable.Checked, "True", "False")}{Environment.NewLine}" &
             $"LevelingUnreachableLimit: {If(nudLevelingUnreachableLimit IsNot Nothing, nudLevelingUnreachableLimit.Value.ToString(), "4")}{Environment.NewLine}" &
+            $"HighMaxHpSpecial: {If(chkHighMaxHpSpecial IsNot Nothing AndAlso chkHighMaxHpSpecial.Checked, "True", "False")}{Environment.NewLine}" &
+            $"HighMaxHpThreshold: {If(nudHighMaxHpThreshold IsNot Nothing, nudHighMaxHpThreshold.Value.ToString("N0"), "2000")}{Environment.NewLine}" &
+            $"AvoidHighMaxHp: {If(chkAvoidHighMaxHpTargets IsNot Nothing AndAlso chkAvoidHighMaxHpTargets.Checked, "True", "False")}{Environment.NewLine}" &
+            $"AvoidHighMaxHpThreshold: {If(nudAvoidHighMaxHpThreshold IsNot Nothing, nudAvoidHighMaxHpThreshold.Value.ToString("N0"), "2000")}{Environment.NewLine}" &
             $"ChatTranslationEnabled: {If(chkChatTranslationEnabled IsNot Nothing AndAlso chkChatTranslationEnabled.Checked, "True", "False")}{Environment.NewLine}" &
             $"ChatTranslationOverlay: {If(chkChatTranslationOverlay IsNot Nothing AndAlso chkChatTranslationOverlay.Checked, "True", "False")}{Environment.NewLine}" &
             $"ChatTargetLanguage: {GetSelectedChatTargetLanguageCode()}{Environment.NewLine}" &
@@ -5543,6 +5584,8 @@ Public Class Form1
         cfg.MobHpPresenceThreshold = CDbl(nudMobHpThreshold.Value)
         cfg.HighMaxHpSpecialEnabled = (chkHighMaxHpSpecial IsNot Nothing AndAlso chkHighMaxHpSpecial.Checked)
         cfg.HighMaxHpThreshold = CInt(If(nudHighMaxHpThreshold IsNot Nothing, nudHighMaxHpThreshold.Value, 2000D))
+        cfg.AvoidHighMaxHpEnabled = (chkAvoidHighMaxHpTargets IsNot Nothing AndAlso chkAvoidHighMaxHpTargets.Checked)
+        cfg.AvoidHighMaxHpThreshold = CInt(If(nudAvoidHighMaxHpThreshold IsNot Nothing, nudAvoidHighMaxHpThreshold.Value, 2000D))
         cfg.BypassHpMpLimits = _bypassHpMpLimits
         cfg.BypassStuckTarget = _bypassStuckTarget
         cfg.PartyAutoAcceptEnabled = _partyAutoAccept
@@ -6408,6 +6451,10 @@ Public Class Form1
             chkHighMaxHpSpecial.Checked = cfg.HighMaxHpSpecialEnabled
         End If
         SetNumericControlValue(nudHighMaxHpThreshold, CDec(Math.Max(100, cfg.HighMaxHpThreshold)))
+        If chkAvoidHighMaxHpTargets IsNot Nothing Then
+            chkAvoidHighMaxHpTargets.Checked = cfg.AvoidHighMaxHpEnabled
+        End If
+        SetNumericControlValue(nudAvoidHighMaxHpThreshold, CDec(Math.Max(100, cfg.AvoidHighMaxHpThreshold)))
 
         _bypassHpMpLimits = cfg.BypassHpMpLimits
         If btnBypassLimits IsNot Nothing Then
