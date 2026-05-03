@@ -451,6 +451,7 @@ Public Class Form1
         BuildUi()
         SeedDefaults()
         LoadPersistedListState()
+        ForceLevelingAgentOffForStartup()
         SetupLiveConfigBindings()
         ApplyDarkTheme(Me)
         CaptureThemeSnapshot(Me)
@@ -471,6 +472,12 @@ Public Class Form1
 
         UpdateEditionUiState(False)
         PushLiveConfig()
+    End Sub
+
+    Private Sub ForceLevelingAgentOffForStartup()
+        If chkLevelingAgent IsNot Nothing Then
+            chkLevelingAgent.Checked = False
+        End If
     End Sub
 
     Private Sub SetupLiveConfigBindings()
@@ -4780,6 +4787,7 @@ Public Class Form1
             $"Window Found: {st.WindowFound}{Environment.NewLine}" &
             $"HP%: {st.HpPercent:0.0}{Environment.NewLine}" &
             $"MP%: {st.MpPercent:0.0}{Environment.NewLine}" &
+            $"CharacterName: {If(String.IsNullOrWhiteSpace(st.CharacterName), "n/a", st.CharacterName)}{Environment.NewLine}" &
             $"Prana/EXP%: {st.ExpPercent:0.00}{Environment.NewLine}" &
             $"Prana/EXP Rate %/hr: {If(st.ExpPerHour < 0, "Calculating (1m)", st.ExpPerHour.ToString("0.00"))}{Environment.NewLine}" &
             $"MobName: {st.MobName}{Environment.NewLine}" &
@@ -7470,6 +7478,7 @@ Public Class Form1
         End If
 
         Dim body As String =
+            $"Character: {If(String.IsNullOrWhiteSpace(status.CharacterName), "n/a", status.CharacterName)}{Environment.NewLine}" &
             $"Prana/EXP: {status.ExpPercent:0.00}% | Rate: {FormatExpRateForNotification(status)}{Environment.NewLine}" &
             $"Rupiahs: {If(status.RupiahsTotal >= 0, status.RupiahsTotal.ToString("N0"), "n/a")} | Rate: {FormatRupiahsRateForNotification(status)}{Environment.NewLine}" &
             $"Party: {FormatPartyForNotification(status)}"

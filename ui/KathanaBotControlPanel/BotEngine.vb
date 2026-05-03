@@ -293,6 +293,7 @@ Public Class BotStatus
     Public Property PartyAliveCount As Integer
     Public Property PartyAllAlive As Boolean
     Public Property MobName As String = ""
+    Public Property CharacterName As String = ""
     Public Property TargetValid As Boolean
     Public Property MapCoordinateText As String = ""
     Public Property MapCoordinateX As Integer = -1
@@ -559,6 +560,7 @@ Public Class BotEngine
     Private _lastHardcodedVisionStatsSentAt As DateTime = DateTime.MinValue
     Private _hardcodedVisionStatsInitialSent As Boolean = False
     Private _hardcodedVisionStatsInFlight As Boolean = False
+    Private _lastCharacterName As String = ""
     Private _latestLoopFrame As Bitmap = Nothing
     Private _latestLoopFrameCapturedAt As DateTime = DateTime.MinValue
     Private _lastLootPickup As DateTime = DateTime.MinValue
@@ -767,6 +769,7 @@ Public Class BotEngine
             _lastHardcodedVisionStatsSentAt = DateTime.MinValue
             _hardcodedVisionStatsInitialSent = False
             _hardcodedVisionStatsInFlight = False
+            _lastCharacterName = ""
             _lastLootPickup = DateTime.MinValue
             _pendingLootPickupVerifyAt = DateTime.MinValue
             _firstHitPending = False
@@ -1194,7 +1197,6 @@ Public Class BotEngine
                               s.NotAttackingReason = If(liteActionSent, "", If(String.IsNullOrWhiteSpace(liteReason), "No enabled Lite action is ready.", liteReason))
                               s.ErrorMessage = liteScanWarning
                           End Sub)
-                TryQueueHardcodedVisionStats(cfg, hwnd, now, liteAttackHpPct, liteAttackMpPct, "")
                 If liteFrame IsNot Nothing Then
                     liteFrame.Dispose()
                 End If
@@ -1581,7 +1583,7 @@ Public Class BotEngine
             TryHandleLootPickup(cfg, hwnd, now, actionSent OrElse _firstHitPending)
             UpdateLevelingAgentRuntimeState(cfg, now, hpPct, mpPct, targetWindowVisible, targetValid, actionSent, forcedRetarget OrElse unreachableTriggered, unreachableLockActive, reason)
 
-            frame.Dispose()
+            TryQueueHardcodedVisionStats(cfg, hwnd, now, frame, hpRegion, mpRegion, hpPct, mpPct, mobName)
 
             SetStatus(Sub(s)
                           s.WindowFound = True
@@ -1599,7 +1601,7 @@ Public Class BotEngine
                           s.NotAttackingReason = If(actionSent, "", reason)
                           s.ErrorMessage = ""
                       End Sub)
-            TryQueueHardcodedVisionStats(cfg, hwnd, now, hpPct, mpPct, mobName)
+            frame.Dispose()
 
                 Await Task.Delay(loopDelayMs, token)
             Catch ex As OperationCanceledException When token.IsCancellationRequested
@@ -5575,6 +5577,7 @@ Public Class BotEngine
             _status.PartySize = _lastPartySize
             _status.PartyAliveCount = _lastPartyAliveCount
             _status.PartyAllAlive = _lastPartyAllAlive
+            _status.CharacterName = _lastCharacterName
             _status.UpdatedAt = DateTime.UtcNow
             snapshot = CloneStatus(_status)
         End SyncLock
@@ -5598,6 +5601,7 @@ Public Class BotEngine
             .PartyAliveCount = src.PartyAliveCount,
             .PartyAllAlive = src.PartyAllAlive,
             .MobName = src.MobName,
+            .CharacterName = src.CharacterName,
             .TargetValid = src.TargetValid,
             .MapCoordinateText = src.MapCoordinateText,
             .MapCoordinateX = src.MapCoordinateX,
@@ -6584,7 +6588,7 @@ Public Class BotEngine
         Return True
     End Function
 
-    Private Sub TryQueueHardcodedVisionStats(cfg As BotConfig, hwnd As IntPtr, now As DateTime, hpPercent As Double, mpPercent As Double, mobName As String)
+    Private Sub TryQueueHardcodedVisionStats(cfg As BotConfig, hwnd As IntPtr, now As DateTime, frame As Bitmap, hpRegion As RectRegion, mpRegion As RectRegion, hpPercent As Double, mpPercent As Double, mobName As String)
         If cfg Is Nothing OrElse hwnd = IntPtr.Zero Then
             Return
         End If
@@ -6617,18 +6621,35 @@ Public Class BotEngine
             Return
         End If
 
+        Dim characterNameFromOcr As String = ReadCharacterInfoFromHpBar(frame, hpRegion)
+        If Not HasDetectedCharacterName(characterNameFromOcr) Then
+            SyncLock _sync
+                _hardcodedVisionStatsInitialSent = False
+                _lastHardcodedVisionStatsSentAt = DateTime.MinValue
+                _hardcodedVisionStatsInFlight = False
+            End SyncLock
+            Return
+        End If
+
+        SyncLock _sync
+            _lastCharacterName = characterNameFromOcr
+        End SyncLock
+
         Dim actualWindowTitle As String = GetWindowTitle(hwnd)
         If String.IsNullOrWhiteSpace(actualWindowTitle) Then
             actualWindowTitle = If(cfg.WindowTitle, "").Trim()
         End If
 
-        Dim characterName As String = ExtractCharacterNameFromWindowTitle(actualWindowTitle, cfg.WindowTitle)
+        Dim titleCharacterName As String = ExtractCharacterNameFromWindowTitle(actualWindowTitle, cfg.WindowTitle)
+        Dim characterName As String = If(characterNameFromOcr <> "", characterNameFromOcr, titleCharacterName)
+        Dim hpNumbersText As String = ReadBarNumbersFromRegion(frame, hpRegion)
+        Dim mpNumbersText As String = ReadBarNumbersFromRegion(frame, mpRegion)
         Dim visionMobName As String = If(String.IsNullOrWhiteSpace(mobName), "none", mobName.Trim())
         Dim body As String =
             $"Window Title: {If(String.IsNullOrWhiteSpace(actualWindowTitle), "unknown", actualWindowTitle)}{Environment.NewLine}" &
             $"Character: {characterName}{Environment.NewLine}" &
-            $"HP: {Math.Max(0, hpPercent):0.0}%{Environment.NewLine}" &
-            $"MP: {Math.Max(0, mpPercent):0.0}%{Environment.NewLine}" &
+            $"HP: {Math.Max(0, hpPercent):0.0}% | Numbers: {If(String.IsNullOrWhiteSpace(hpNumbersText), "n/a", hpNumbersText)}{Environment.NewLine}" &
+            $"MP: {Math.Max(0, mpPercent):0.0}% | Numbers: {If(String.IsNullOrWhiteSpace(mpNumbersText), "n/a", mpNumbersText)}{Environment.NewLine}" &
             $"Mob Name: {visionMobName}"
 
         Task.Run(
@@ -6642,6 +6663,91 @@ Public Class BotEngine
                 End Try
             End Function)
     End Sub
+
+    Private Shared Function ReadCharacterInfoFromHpBar(frame As Bitmap, hpRegion As RectRegion) As String
+        If frame Is Nothing OrElse hpRegion Is Nothing Then
+            Return ""
+        End If
+
+        Dim characterRegion As RectRegion = BuildCharacterInfoRegion(hpRegion)
+        Dim rect As Rectangle = characterRegion.Clamp(frame.Width, frame.Height)
+        If rect.Width <= 1 OrElse rect.Height <= 1 Then
+            Return ""
+        End If
+
+        Using crop As New Bitmap(Math.Max(1, rect.Width), Math.Max(1, rect.Height), PixelFormat.Format24bppRgb)
+            Using g As Graphics = Graphics.FromImage(crop)
+                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
+            End Using
+            Using enlarged As Bitmap = EnlargeBitmap(crop, 4)
+                Dim text As String = NormalizeCharacterInfoText(OcrReader.ReadScreenTextIsolated(enlarged))
+                If text = "" Then
+                    text = NormalizeCharacterInfoText(OcrReader.ReadName(enlarged))
+                End If
+                Return text
+            End Using
+        End Using
+    End Function
+
+    Private Shared Function ReadBarNumbersFromRegion(frame As Bitmap, region As RectRegion) As String
+        If frame Is Nothing OrElse region Is Nothing Then
+            Return ""
+        End If
+
+        Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
+        If rect.Width <= 1 OrElse rect.Height <= 1 Then
+            Return ""
+        End If
+
+        Using crop As New Bitmap(Math.Max(1, rect.Width), Math.Max(1, rect.Height), PixelFormat.Format24bppRgb)
+            Using g As Graphics = Graphics.FromImage(crop)
+                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
+            End Using
+            Using enlarged As Bitmap = EnlargeBitmap(crop, 4)
+                Dim text As String = NormalizeMobHpText(OcrReader.ReadHpFraction(enlarged))
+                If text = "" Then
+                    text = NormalizeMobHpText(OcrReader.ReadScreenTextIsolated(enlarged))
+                End If
+                Return text
+            End Using
+        End Using
+    End Function
+
+    Private Shared Function BuildCharacterInfoRegion(hpRegion As RectRegion) As RectRegion
+        Dim width As Integer = Math.Max(1, hpRegion.W + 10)
+        Dim height As Integer = Math.Max(1, hpRegion.H + 10)
+        Return New RectRegion(hpRegion.X - 5, Math.Max(0, hpRegion.Y - height), width, height)
+    End Function
+
+    Private Shared Function EnlargeBitmap(source As Bitmap, scale As Integer) As Bitmap
+        Dim safeScale As Integer = Math.Max(1, scale)
+        Dim enlarged As New Bitmap(Math.Max(1, source.Width * safeScale), Math.Max(1, source.Height * safeScale), PixelFormat.Format24bppRgb)
+        Using g As Graphics = Graphics.FromImage(enlarged)
+            g.InterpolationMode = InterpolationMode.NearestNeighbor
+            g.PixelOffsetMode = PixelOffsetMode.Half
+            g.DrawImage(source, New Rectangle(0, 0, enlarged.Width, enlarged.Height), New Rectangle(0, 0, source.Width, source.Height), GraphicsUnit.Pixel)
+        End Using
+        Return enlarged
+    End Function
+
+    Private Shared Function NormalizeCharacterInfoText(raw As String) As String
+        Dim cleaned As String = If(raw, "").Replace(vbCr, " ").Replace(vbLf, " ").Trim()
+        cleaned = Regex.Replace(cleaned, "\s+", " ")
+        Return cleaned
+    End Function
+
+    Private Shared Function HasDetectedCharacterName(raw As String) As Boolean
+        Dim cleaned As String = NormalizeCharacterInfoText(raw)
+        If cleaned = "" Then
+            Return False
+        End If
+        If cleaned.Equals("unknown", StringComparison.OrdinalIgnoreCase) OrElse
+           cleaned.Equals("n/a", StringComparison.OrdinalIgnoreCase) OrElse
+           cleaned.Equals("none", StringComparison.OrdinalIgnoreCase) Then
+            Return False
+        End If
+        Return Regex.IsMatch(cleaned, "\p{L}|\p{N}")
+    End Function
 
     Private Shared Function GetWindowTitle(hwnd As IntPtr) As String
         If hwnd = IntPtr.Zero Then
