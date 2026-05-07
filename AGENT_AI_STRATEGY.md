@@ -73,8 +73,8 @@ Extend the agent config with navigation-specific data:
 
 - `NavigationEnabled`
 - `MapOpenKey`
-- `MapRect`
-- `MapCoordinateRect`
+- `MapCoordinateXRect`
+- `MapCoordinateYRect`
 - `PlayerMarkerColor/Profile`
 - `WorldMapName`
 - `RouteNodes`

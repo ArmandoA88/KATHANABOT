@@ -130,6 +130,54 @@ Public Class RecordedNavigationRouteInfo
 End Class
 
 Public Class BotConfig
+    Public Shared Function DefaultMapCoordinateRect() As RectRegion
+        Return New RectRegion(6, 744, 120, 22)
+    End Function
+
+    Public Shared Function DefaultMapCoordinateXRect() As RectRegion
+        Return SplitMapCoordinateRect(DefaultMapCoordinateRect(), True)
+    End Function
+
+    Public Shared Function DefaultMapCoordinateYRect() As RectRegion
+        Return SplitMapCoordinateRect(DefaultMapCoordinateRect(), False)
+    End Function
+
+    Public Shared Function SplitMapCoordinateRect(combined As RectRegion, leftAxis As Boolean) As RectRegion
+        Dim source As RectRegion = If(combined, DefaultMapCoordinateRect())
+        Dim width As Integer = Math.Max(2, source.W)
+        Dim gap As Integer = If(width >= 80, 4, If(width >= 24, 2, 0))
+        If width - gap < 2 Then
+            gap = 0
+        End If
+
+        Dim axisWidth As Integer = Math.Max(1, (width - gap) \ 2)
+        If leftAxis Then
+            Return New RectRegion(source.X, source.Y, axisWidth, Math.Max(1, source.H))
+        End If
+
+        Dim rightX As Integer = source.X + axisWidth + gap
+        Dim rightW As Integer = Math.Max(1, source.W - axisWidth - gap)
+        Return New RectRegion(rightX, source.Y, rightW, Math.Max(1, source.H))
+    End Function
+
+    Public Shared Function CombineMapCoordinateRects(xRect As RectRegion, yRect As RectRegion) As RectRegion
+        If xRect Is Nothing AndAlso yRect Is Nothing Then
+            Return DefaultMapCoordinateRect()
+        End If
+        If xRect Is Nothing Then
+            Return New RectRegion(yRect.X, yRect.Y, Math.Max(1, yRect.W), Math.Max(1, yRect.H))
+        End If
+        If yRect Is Nothing Then
+            Return New RectRegion(xRect.X, xRect.Y, Math.Max(1, xRect.W), Math.Max(1, xRect.H))
+        End If
+
+        Dim left As Integer = Math.Min(xRect.X, yRect.X)
+        Dim top As Integer = Math.Min(xRect.Y, yRect.Y)
+        Dim right As Integer = Math.Max(xRect.X + Math.Max(1, xRect.W), yRect.X + Math.Max(1, yRect.W))
+        Dim bottom As Integer = Math.Max(xRect.Y + Math.Max(1, xRect.H), yRect.Y + Math.Max(1, yRect.H))
+        Return New RectRegion(left, top, Math.Max(1, right - left), Math.Max(1, bottom - top))
+    End Function
+
     Public Property WindowTitle As String = "Kathana   The Coming of the Dark Ages"
     <JsonIgnore>
     Public Property SelectedWindowHandle As IntPtr = IntPtr.Zero
@@ -157,7 +205,9 @@ Public Class BotConfig
     Public Property PartyInviteOkRect As RectRegion = New RectRegion(463, 410, 59, 21)
     Public Property PartyListRect As RectRegion = New RectRegion(0, 24, 168, 244)
     Public Property MapRect As RectRegion = New RectRegion(0, 0, 1024, 768)
-    Public Property MapCoordinateRect As RectRegion = New RectRegion(6, 744, 120, 22)
+    Public Property MapCoordinateRect As RectRegion = DefaultMapCoordinateRect()
+    Public Property MapCoordinateXRect As RectRegion = DefaultMapCoordinateXRect()
+    Public Property MapCoordinateYRect As RectRegion = DefaultMapCoordinateYRect()
     Public Property ChatRect As RectRegion = New RectRegion(18, 548, 430, 144)
     Public Property LootScanRect As RectRegion = New RectRegion(220, 80, 584, 430)
     Public Property LootScanPoints As List(Of LootScanPoint) = CreateDefaultLootScanPoints()
@@ -198,8 +248,11 @@ Public Class BotConfig
     Public Property ItemNtfyTopic As String = ""
     Public Property LevelingAgentEnabled As Boolean = False
     Public Property LevelingPreferredMobs As List(Of String) = New List(Of String)()
+    Public Property LevelingStopHpEnabled As Boolean = True
     Public Property LevelingStopHpPercent As Integer = 20
+    Public Property LevelingStopMpEnabled As Boolean = True
     Public Property LevelingStopMpPercent As Integer = 10
+    Public Property LevelingMaxNoTargetEnabled As Boolean = True
     Public Property LevelingMaxNoTargetSeconds As Integer = 45
     Public Property LevelingStopOnLowExpRate As Boolean = False
     Public Property LevelingMinExpPerHour As Double = 0.15
@@ -219,15 +272,29 @@ Public Class BotConfig
     Public Property NavigationRepathOnStuck As Boolean = True
     Public Property RouteRecordingEnabled As Boolean = False
     Public Property RouteRecordingName As String = "jina_route"
+    Public Property RouteRecordingMinConfidencePercent As Integer = 90
     Public Property RouteRecordingMinSampleDistance As Integer = 2
-    Public Property RouteRecordingMinNodeSpacing As Integer = 28
+    Public Property RouteRecordingMinNodeSpacing As Integer = 2
     Public Property RouteRecordingSampleIntervalMs As Integer = 100
     Public Property ChatTranslationEnabled As Boolean = False
     Public Property ChatTranslationOverlayEnabled As Boolean = True
+    Public Property DisabledCalibrationRegionOverlays As List(Of String) = New List(Of String)()
     Public Property ChatTranslationTargetLanguage As String = "en"
     Public Property ChatTranslationScanIntervalMs As Integer = 700
     Public Property ChatTranslationMaxLines As Integer = 6
     Public Property Actions As List(Of ActionRule) = New List(Of ActionRule)()
+
+    Public Function IsCalibrationRegionOverlayEnabled(regionName As String) As Boolean
+        If String.IsNullOrWhiteSpace(regionName) Then
+            Return True
+        End If
+
+        If DisabledCalibrationRegionOverlays Is Nothing OrElse DisabledCalibrationRegionOverlays.Count = 0 Then
+            Return True
+        End If
+
+        Return Not DisabledCalibrationRegionOverlays.Any(Function(item) regionName.Equals(If(item, "").Trim(), StringComparison.OrdinalIgnoreCase))
+    End Function
 
     Public Shared Function CreateDefault() As BotConfig
         Dim cfg As New BotConfig()
@@ -1076,10 +1143,10 @@ Public Class BotEngine
                 Dim litePartyInviteScanRegion As New RectRegion(0, 0, 1, 1)
                 Dim litePartyInviteOkRegion As New RectRegion(0, 0, 1, 1)
                 Dim litePartyListRegion As New RectRegion(0, 0, 1, 1)
-                Dim liteMapRegion As New RectRegion(0, 0, 1, 1)
-                Dim liteMapCoordinateRegion As New RectRegion(0, 0, 1, 1)
+                Dim liteMapCoordinateXRegion As New RectRegion(0, 0, 1, 1)
+                Dim liteMapCoordinateYRegion As New RectRegion(0, 0, 1, 1)
                 Dim liteChatRegion As New RectRegion(0, 0, 1, 1)
-                ResolveVisionRegions(cfg, clientWidth, clientHeight, liteHpRegion, liteMpRegion, liteMobNameRegion, liteMobHpRegion, liteUnreachableTextRegion, litePranaExpRegion, liteRupiahsRegion, litePartyInviteScanRegion, litePartyInviteOkRegion, litePartyListRegion, liteMapRegion, liteMapCoordinateRegion, liteChatRegion)
+                ResolveVisionRegions(cfg, clientWidth, clientHeight, liteHpRegion, liteMpRegion, liteMobNameRegion, liteMobHpRegion, liteUnreachableTextRegion, litePranaExpRegion, liteRupiahsRegion, litePartyInviteScanRegion, litePartyInviteOkRegion, litePartyListRegion, liteMapCoordinateXRegion, liteMapCoordinateYRegion, liteChatRegion)
 
                 Dim liteFrame As Bitmap = Nothing
                 If cfg.PartyAskEnabled Then
@@ -1236,10 +1303,10 @@ Public Class BotEngine
             Dim partyInviteScanRegion As New RectRegion(0, 0, 1, 1)
             Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
             Dim partyListRegion As New RectRegion(0, 0, 1, 1)
-            Dim mapRegion As New RectRegion(0, 0, 1, 1)
-            Dim mapCoordinateRegion As New RectRegion(0, 0, 1, 1)
+            Dim mapCoordinateXRegion As New RectRegion(0, 0, 1, 1)
+            Dim mapCoordinateYRegion As New RectRegion(0, 0, 1, 1)
             Dim chatRegion As New RectRegion(0, 0, 1, 1)
-            ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, partyListRegion, mapRegion, mapCoordinateRegion, chatRegion)
+            ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, partyListRegion, mapCoordinateXRegion, mapCoordinateYRegion, chatRegion)
             Dim lootScanPolygon As List(Of DrawingPoint) = ResolveLootScanPolygon(cfg, frame.Width, frame.Height)
 
             Dim hpPct As Double = ComputeBarPercent(frame, hpRegion, True)
@@ -1272,7 +1339,7 @@ Public Class BotEngine
             Dim expPerHour As Double = UpdateExpRate(expPct, now)
             Dim rupiahsPerHour As Double = UpdateRupiahsRate(rupiahsTotal, now)
             If cfg.NavigationEnabled Then
-                ReadMapCoordinateIfNeeded(frame, mapCoordinateRegion, now)
+                ReadMapCoordinateIfNeeded(frame, mapCoordinateXRegion, mapCoordinateYRegion, now)
                 ScanMapPlayerMarkerIfNeeded(now)
                 UpdateMapLocalizationConfidence()
                 UpdateMapVisibleState()
@@ -1467,6 +1534,18 @@ Public Class BotEngine
                         reason = travelReason
                     ElseIf String.IsNullOrWhiteSpace(reason) AndAlso Not String.IsNullOrWhiteSpace(travelReason) Then
                         reason = travelReason
+                    End If
+
+                    If _lastNavigationTravelActive AndAlso Not targetWindowVisible AndAlso Not targetValid Then
+                        Dim travelScanReason As String = ""
+                        If TryScanForMobDuringTravel(cfg, hwnd, now, travelScanReason) Then
+                            actionSent = True
+                            If String.IsNullOrWhiteSpace(reason) Then
+                                reason = travelScanReason
+                            ElseIf Not String.IsNullOrWhiteSpace(travelScanReason) Then
+                                reason &= " " & travelScanReason
+                            End If
+                        End If
                     End If
                 End If
 
@@ -2028,12 +2107,12 @@ Public Class BotEngine
             Return False
         End If
 
-        If hpPct <= Math.Max(1, cfg.LevelingStopHpPercent) Then
+        If cfg.LevelingStopHpEnabled AndAlso hpPct <= Math.Max(1, cfg.LevelingStopHpPercent) Then
             guardrailReason = $"HP reached leveling stop threshold ({hpPct:0.0}% <= {cfg.LevelingStopHpPercent}%)."
             Return True
         End If
 
-        If mpPct <= Math.Max(1, cfg.LevelingStopMpPercent) Then
+        If cfg.LevelingStopMpEnabled AndAlso mpPct <= Math.Max(1, cfg.LevelingStopMpPercent) Then
             guardrailReason = $"MP reached leveling stop threshold ({mpPct:0.0}% <= {cfg.LevelingStopMpPercent}%)."
             Return True
         End If
@@ -2048,7 +2127,7 @@ Public Class BotEngine
             Return True
         End If
 
-        If cfg.LevelingMaxNoTargetSeconds > 0 AndAlso Not targetWindowVisible AndAlso _noTargetBeganAt <> DateTime.MinValue Then
+        If cfg.LevelingMaxNoTargetEnabled AndAlso cfg.LevelingMaxNoTargetSeconds > 0 AndAlso Not targetWindowVisible AndAlso _noTargetBeganAt <> DateTime.MinValue Then
             If (now - _noTargetBeganAt).TotalSeconds >= cfg.LevelingMaxNoTargetSeconds Then
                 guardrailReason = $"No target detected for {Math.Round((now - _noTargetBeganAt).TotalSeconds, 1):0.0}s."
                 Return True
@@ -2099,7 +2178,9 @@ Public Class BotEngine
             lastActionText = If(_status.LastAction, "")
         End SyncLock
 
-        If hpPct <= Math.Max(cfg.LevelingStopHpPercent + 5, 1) OrElse mpPct <= Math.Max(cfg.LevelingStopMpPercent + 5, 1) Then
+        Dim hpNearGuardrail As Boolean = cfg.LevelingStopHpEnabled AndAlso hpPct <= Math.Max(cfg.LevelingStopHpPercent + 5, 1)
+        Dim mpNearGuardrail As Boolean = cfg.LevelingStopMpEnabled AndAlso mpPct <= Math.Max(cfg.LevelingStopMpPercent + 5, 1)
+        If hpNearGuardrail OrElse mpNearGuardrail Then
             nextState = LevelingAgentState.Recovering
             If nextReason = "" Then
                 nextReason = "HP/MP is near leveling guardrails."
@@ -2234,13 +2315,13 @@ Public Class BotEngine
         End Property
     End Structure
 
-    Private Sub ReadMapCoordinateIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime)
+    Private Sub ReadMapCoordinateIfNeeded(frame As Bitmap, xRegion As RectRegion, yRegion As RectRegion, now As DateTime)
         If _lastMapCoordinateOcrAt <> DateTime.MinValue AndAlso (now - _lastMapCoordinateOcrAt).TotalMilliseconds < MapCoordinateOcrMinIntervalMs Then
             Return
         End If
 
         _lastMapCoordinateOcrAt = now
-        If frame Is Nothing OrElse region Is Nothing Then
+        If frame Is Nothing OrElse xRegion Is Nothing OrElse yRegion Is Nothing Then
             _lastMapCoordinateText = ""
             _lastMapCoordinateX = -1
             _lastMapCoordinateY = -1
@@ -2248,13 +2329,39 @@ Public Class BotEngine
             Return
         End If
 
-        Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
-        If rect.Width <= 0 OrElse rect.Height <= 0 Then
-            _lastMapCoordinateText = ""
+        Dim rawX As String = ""
+        Dim rawY As String = ""
+        Dim x As Integer = -1
+        Dim y As Integer = -1
+        Dim xConfidence As Integer = 0
+        Dim yConfidence As Integer = 0
+        Dim xOk As Boolean = TryReadMapCoordinateAxis(frame, xRegion, rawX, x, xConfidence)
+        Dim yOk As Boolean = TryReadMapCoordinateAxis(frame, yRegion, rawY, y, yConfidence)
+
+        If xOk AndAlso yOk Then
+            _lastMapCoordinateText = $"{x:000}/{y:000}"
+            _lastMapCoordinateX = x
+            _lastMapCoordinateY = y
+            _lastMapCoordinateConfidence = Math.Min(xConfidence, yConfidence)
+        Else
+            _lastMapCoordinateText = FormatRawMapCoordinateText(rawX, rawY)
             _lastMapCoordinateX = -1
             _lastMapCoordinateY = -1
             _lastMapCoordinateConfidence = 0
-            Return
+        End If
+    End Sub
+
+    Private Shared Function TryReadMapCoordinateAxis(frame As Bitmap, region As RectRegion, ByRef rawText As String, ByRef value As Integer, ByRef confidence As Integer) As Boolean
+        rawText = ""
+        value = -1
+        confidence = 0
+        If frame Is Nothing OrElse region Is Nothing Then
+            Return False
+        End If
+
+        Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then
+            Return False
         End If
 
         Using crop As New Bitmap(Math.Max(1, rect.Width), Math.Max(1, rect.Height), PixelFormat.Format24bppRgb)
@@ -2262,29 +2369,27 @@ Public Class BotEngine
                 g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
             End Using
 
-            Dim rawText As String = ReadMapCoordinateTextForOcr(crop)
-            Dim x As Integer = -1
-            Dim y As Integer = -1
-            Dim confidence As Integer = 0
-            Dim normalized As String = ""
-            If TryParseMapCoordinate(rawText, x, y, normalized, confidence) Then
-                _lastMapCoordinateText = normalized
-                _lastMapCoordinateX = x
-                _lastMapCoordinateY = y
-                _lastMapCoordinateConfidence = confidence
-            Else
-                _lastMapCoordinateText = If(rawText, "").Trim()
-                _lastMapCoordinateX = -1
-                _lastMapCoordinateY = -1
-                _lastMapCoordinateConfidence = 0
-            End If
+            rawText = ReadMapCoordinateTextForOcr(crop, True)
+            Return TryParseMapCoordinateAxis(rawText, value, confidence)
         End Using
-    End Sub
+    End Function
 
-    Private Shared Function ReadMapCoordinateTextForOcr(crop As Bitmap) As String
+    Private Shared Function FormatRawMapCoordinateText(rawX As String, rawY As String) As String
+        Dim xText As String = Regex.Replace(If(rawX, ""), "\s+", " ").Trim()
+        Dim yText As String = Regex.Replace(If(rawY, ""), "\s+", " ").Trim()
+        If xText = "" AndAlso yText = "" Then
+            Return ""
+        End If
+        Return $"{If(xText = "", "?", xText)}/{If(yText = "", "?", yText)}"
+    End Function
+
+    Private Shared Function ReadMapCoordinateTextForOcr(crop As Bitmap, Optional axisOnly As Boolean = False) As String
         If crop Is Nothing Then
             Return ""
         End If
+
+        Dim preferredPattern As String = If(axisOnly, "(?<!\d)\d{3}(?!\d)", "\d{3}\s*[/,]\s*\d{3}")
+        Dim acceptablePattern As String = If(axisOnly, "(?<!\d)\d{1,3}(?!\d)", preferredPattern)
 
         Using enlarged As New Bitmap(Math.Max(1, crop.Width * 3), Math.Max(1, crop.Height * 3), PixelFormat.Format24bppRgb)
             Using g As Graphics = Graphics.FromImage(enlarged)
@@ -2295,7 +2400,7 @@ Public Class BotEngine
             End Using
 
             Dim rawText As String = OcrReader.ReadScreenText(enlarged)
-            If Regex.IsMatch(If(rawText, ""), "\d{3}\s*[/,]\s*\d{3}") Then
+            If Regex.IsMatch(If(rawText, ""), preferredPattern) Then
                 Return rawText
             End If
 
@@ -2309,7 +2414,13 @@ Public Class BotEngine
                 Next
 
                 Dim thresholdText As String = OcrReader.ReadScreenText(thresholded)
-                If Regex.IsMatch(If(thresholdText, ""), "\d{3}\s*[/,]\s*\d{3}") Then
+                If Regex.IsMatch(If(thresholdText, ""), preferredPattern) Then
+                    Return thresholdText
+                End If
+                If Regex.IsMatch(If(rawText, ""), acceptablePattern) Then
+                    Return rawText
+                End If
+                If Regex.IsMatch(If(thresholdText, ""), acceptablePattern) Then
                     Return thresholdText
                 End If
 
@@ -2551,7 +2662,7 @@ Public Class BotEngine
             Return
         End If
 
-        If _lastMapCoordinateConfidence < 70 Then
+        If _lastMapCoordinateConfidence < 10 Then
             Return
         End If
 
@@ -2720,7 +2831,12 @@ Public Class BotEngine
     End Sub
 
     Private Sub TryAppendRouteRecordingSample(cfg As BotConfig, now As DateTime)
-        If _lastMapCoordinateX < 0 OrElse _lastMapCoordinateY < 0 OrElse _lastMapCoordinateConfidence < 10 Then
+        Dim requiredConfidence As Integer = Math.Max(0, Math.Min(100, If(cfg Is Nothing, 90, cfg.RouteRecordingMinConfidencePercent)))
+        If _lastMapCoordinateX < 0 OrElse _lastMapCoordinateY < 0 OrElse _lastMapLocalizationConfidence < requiredConfidence Then
+            If _routeRecordingCaptureActive Then
+                Dim rawText As String = If(String.IsNullOrWhiteSpace(_lastMapCoordinateText), "no OCR text", _lastMapCoordinateText)
+                _routeRecordingStatus = $"Recording route '{_routeRecordingName}': waiting for X/Y confidence >= {requiredConfidence}% ({rawText}, confidence {_lastMapLocalizationConfidence}%)."
+            End If
             Return
         End If
         Dim effectiveSampleIntervalMs As Integer = Math.Max(10, If(cfg IsNot Nothing AndAlso cfg.RouteRecordingSampleIntervalMs > 0, cfg.RouteRecordingSampleIntervalMs, RouteRecordingMinSampleIntervalMs))
@@ -2761,7 +2877,7 @@ Public Class BotEngine
             Dim effectiveCfg As BotConfig = If(cfg, _config)
             routeName = NormalizeRecordedRouteName(If(effectiveCfg Is Nothing, "", effectiveCfg.RouteRecordingName))
             mapName = NormalizeNavigationMapName(If(effectiveCfg Is Nothing, "", effectiveCfg.NavigationMapName))
-            minNodeSpacing = Math.Max(8, If(effectiveCfg Is Nothing, 28, effectiveCfg.RouteRecordingMinNodeSpacing))
+            minNodeSpacing = Math.Max(1, If(effectiveCfg Is Nothing, 2, effectiveCfg.RouteRecordingMinNodeSpacing))
             samples = _routeRecordingSamples.Select(Function(sample) New NavigationRouteSample With {
                 .X = sample.X,
                 .Y = sample.Y,
@@ -2795,12 +2911,64 @@ Public Class BotEngine
         Return savedPath
     End Function
 
-    Private Shared Function BuildRecordedNavigationGraph(mapName As String, routeName As String, samples As List(Of NavigationRouteSample), minNodeSpacing As Integer) As RecordedNavigationGraph
+    Public Function SaveRecordedRouteSamples(cfg As BotConfig, samples As List(Of NavigationRouteSample)) As String
+        Dim effectiveCfg As BotConfig = If(cfg, _config)
+        Dim routeName As String = NormalizeRecordedRouteName(If(effectiveCfg Is Nothing, "", effectiveCfg.RouteRecordingName))
+        Dim mapName As String = NormalizeNavigationMapName(If(effectiveCfg Is Nothing, "", effectiveCfg.NavigationMapName))
+        Dim minNodeSpacing As Integer = Math.Max(1, If(effectiveCfg Is Nothing, 2, effectiveCfg.RouteRecordingMinNodeSpacing))
+        Dim cleanSamples As List(Of NavigationRouteSample) = If(samples, New List(Of NavigationRouteSample)()).
+            Where(Function(sample) sample IsNot Nothing AndAlso sample.X >= 0 AndAlso sample.X <= 999 AndAlso sample.Y >= 0 AndAlso sample.Y <= 999).
+            Select(Function(sample) New NavigationRouteSample With {
+                .X = sample.X,
+                .Y = sample.Y,
+                .CapturedAtUtc = If(sample.CapturedAtUtc = DateTime.MinValue, DateTime.UtcNow, sample.CapturedAtUtc)
+            }).
+            ToList()
+
+        If cleanSamples.Count < 2 Then
+            SyncLock _sync
+                _routeRecordingStatus = $"Not enough manual breadcrumb rows to save route '{routeName}'. Add at least two valid X/Y rows."
+            End SyncLock
+            Return ""
+        End If
+
+        Dim graph As RecordedNavigationGraph = BuildRecordedNavigationGraph(mapName, routeName, cleanSamples, minNodeSpacing, True)
+        If graph Is Nothing OrElse graph.Nodes.Count < 2 OrElse graph.Edges.Count = 0 Then
+            SyncLock _sync
+                _routeRecordingStatus = $"Unable to build a reusable route graph from manual breadcrumbs for '{routeName}'."
+            End SyncLock
+            Return ""
+        End If
+
+        Dim savedPath As String = SaveRecordedNavigationGraph(graph)
+        If savedPath <> "" Then
+            SyncLock _sync
+                _routeRecordingLastSavedPath = savedPath
+                _routeRecordingStatus = $"Saved route '{routeName}' with {graph.Nodes.Count} manual/table nodes."
+                _routeRecordingSamples.Clear()
+                _routeRecordingSamples.AddRange(cleanSamples.Select(Function(sample) New NavigationRouteSample With {
+                    .X = sample.X,
+                    .Y = sample.Y,
+                    .CapturedAtUtc = sample.CapturedAtUtc
+                }))
+            End SyncLock
+        End If
+
+        Return savedPath
+    End Function
+
+    Private Shared Function BuildRecordedNavigationGraph(mapName As String, routeName As String, samples As List(Of NavigationRouteSample), minNodeSpacing As Integer, Optional preserveAllSamples As Boolean = False) As RecordedNavigationGraph
         If samples Is Nothing OrElse samples.Count < 2 Then
             Return Nothing
         End If
 
-        Dim simplified As List(Of NavigationRouteSample) = SimplifyRecordedRouteSamples(samples, minNodeSpacing)
+        Dim simplified As List(Of NavigationRouteSample) = If(preserveAllSamples,
+            samples.Select(Function(sample) New NavigationRouteSample With {
+                .X = sample.X,
+                .Y = sample.Y,
+                .CapturedAtUtc = sample.CapturedAtUtc
+            }).ToList(),
+            SimplifyRecordedRouteSamples(samples, minNodeSpacing))
         If simplified.Count < 2 Then
             Return Nothing
         End If
@@ -3789,6 +3957,61 @@ Public Class BotEngine
         Return False
     End Function
 
+    Private Function TryScanForMobDuringTravel(cfg As BotConfig, hwnd As IntPtr, now As DateTime, ByRef reason As String) As Boolean
+        reason = ""
+        If cfg Is Nothing OrElse Not cfg.LevelingAgentEnabled OrElse Not cfg.NavigationTravelExecutionEnabled Then
+            Return False
+        End If
+
+        If TrySendRetargetKey(hwnd, cfg, now, "E (travel mob scan)", forced:=False) Then
+            reason = $"Travel scan: checking for mobs every {Math.Max(1, cfg.RetargetMs)}ms."
+            Return True
+        End If
+
+        Return False
+    End Function
+
+    Private Shared Function TryParseMapCoordinateAxis(rawText As String, ByRef value As Integer, ByRef confidence As Integer) As Boolean
+        value = -1
+        confidence = 0
+        If String.IsNullOrWhiteSpace(rawText) Then
+            Return False
+        End If
+
+        Dim normalizedRaw As String = rawText.ToUpperInvariant()
+        normalizedRaw = normalizedRaw.Replace("O", "0").Replace("I", "1").Replace("L", "1")
+        normalizedRaw = Regex.Replace(normalizedRaw, "[^0-9]", " ")
+        normalizedRaw = Regex.Replace(normalizedRaw, "\s+", " ").Trim()
+        If normalizedRaw = "" Then
+            Return False
+        End If
+
+        Dim digitsOnly As String = Regex.Replace(normalizedRaw, "\D", "")
+        If digitsOnly.Length = 3 Then
+            value = Integer.Parse(digitsOnly)
+            confidence = 99
+            Return True
+        End If
+
+        Dim exactMatch As Match = Regex.Match(normalizedRaw, "(?<!\d)(\d{3})(?!\d)")
+        If exactMatch.Success Then
+            value = Integer.Parse(exactMatch.Groups(1).Value)
+            confidence = 99
+            Return True
+        End If
+
+        Dim fallbackMatch As Match = Regex.Match(normalizedRaw, "(?<!\d)(\d{2,3})(?!\d)")
+        If fallbackMatch.Success Then
+            value = Integer.Parse(fallbackMatch.Groups(1).Value)
+            If value >= 0 AndAlso value <= 999 Then
+                confidence = If(fallbackMatch.Groups(1).Value.Length = 3, 78, 55)
+                Return True
+            End If
+        End If
+
+        Return False
+    End Function
+
     Private Shared Function TryParseMapCoordinate(rawText As String, ByRef x As Integer, ByRef y As Integer, ByRef normalized As String, ByRef confidence As Integer) As Boolean
         x = -1
         y = -1
@@ -4760,10 +4983,62 @@ Public Class BotEngine
             If normMob.Contains(normPreferred, StringComparison.OrdinalIgnoreCase) OrElse normPreferred.Contains(normMob, StringComparison.OrdinalIgnoreCase) Then
                 Return True
             End If
+            If IsPreferredSubstringMatch(normMob, normPreferred) Then
+                Return True
+            End If
             If AreTextsClose(normMob, normPreferred) Then
                 Return True
             End If
         Next
+
+        Return False
+    End Function
+
+    Private Shared Function IsPreferredSubstringMatch(normMob As String, normPreferred As String) As Boolean
+        If String.IsNullOrWhiteSpace(normMob) OrElse String.IsNullOrWhiteSpace(normPreferred) Then
+            Return False
+        End If
+
+        Dim mobTokens As String() = normMob.Split({" "c}, StringSplitOptions.RemoveEmptyEntries)
+        Dim preferredTokens As String() = normPreferred.Split({" "c}, StringSplitOptions.RemoveEmptyEntries)
+        If mobTokens.Length = 0 OrElse preferredTokens.Length = 0 Then
+            Return False
+        End If
+
+        For Each preferredToken As String In preferredTokens
+            If preferredToken.Length < 3 Then
+                Continue For
+            End If
+
+            For Each mobToken As String In mobTokens
+                If mobToken.Length < 3 Then
+                    Continue For
+                End If
+
+                If mobToken.Contains(preferredToken, StringComparison.OrdinalIgnoreCase) OrElse preferredToken.Contains(mobToken, StringComparison.OrdinalIgnoreCase) Then
+                    Return True
+                End If
+
+                If preferredToken.Length >= 4 AndAlso mobToken.Length >= 4 Then
+                    Dim windowLength As Integer = Math.Min(mobToken.Length, preferredToken.Length)
+                    For start As Integer = 0 To mobToken.Length - windowLength
+                        Dim mobWindow As String = mobToken.Substring(start, windowLength)
+                        If AreTextsClose(mobWindow, preferredToken) Then
+                            Return True
+                        End If
+                    Next
+                End If
+            Next
+        Next
+
+        If mobTokens.Length >= preferredTokens.Length Then
+            For start As Integer = 0 To mobTokens.Length - preferredTokens.Length
+                Dim mobWindow As String = String.Join(" ", mobTokens.Skip(start).Take(preferredTokens.Length))
+                If AreTextsClose(mobWindow, normPreferred) Then
+                    Return True
+                End If
+            Next
+        End If
 
         Return False
     End Function
@@ -6180,7 +6455,7 @@ Public Class BotEngine
         Return colored / CDbl(total)
     End Function
 
-    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef unreachableTextRect As RectRegion, ByRef pranaExpRect As RectRegion, ByRef rupiahsRect As RectRegion, ByRef partyInviteScanRect As RectRegion, ByRef partyInviteOkRect As RectRegion, ByRef partyListRect As RectRegion, ByRef mapRect As RectRegion, ByRef mapCoordinateRect As RectRegion, ByRef chatRect As RectRegion)
+    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef unreachableTextRect As RectRegion, ByRef pranaExpRect As RectRegion, ByRef rupiahsRect As RectRegion, ByRef partyInviteScanRect As RectRegion, ByRef partyInviteOkRect As RectRegion, ByRef partyListRect As RectRegion, ByRef mapCoordinateXRect As RectRegion, ByRef mapCoordinateYRect As RectRegion, ByRef chatRect As RectRegion)
         hpBar = CloneRegion(cfg.HpBar)
         mpBar = CloneRegion(cfg.MpBar)
         mobNameRect = CloneRegion(cfg.MobNameRect)
@@ -6191,8 +6466,8 @@ Public Class BotEngine
         partyInviteScanRect = CloneRegion(cfg.PartyInviteScanRect)
         partyInviteOkRect = CloneRegion(cfg.PartyInviteOkRect)
         partyListRect = CloneRegion(cfg.PartyListRect)
-        mapRect = CloneRegion(cfg.MapRect)
-        mapCoordinateRect = CloneRegion(cfg.MapCoordinateRect)
+        mapCoordinateXRect = CloneRegion(GetEffectiveMapCoordinateXRect(cfg))
+        mapCoordinateYRect = CloneRegion(GetEffectiveMapCoordinateYRect(cfg))
         chatRect = CloneRegion(cfg.ChatRect)
 
         If frameWidth <= 0 OrElse frameHeight <= 0 Then
@@ -6217,8 +6492,8 @@ Public Class BotEngine
         partyInviteScanRect = ScaleRegionLeftTop(cfg.PartyInviteScanRect, sx, sy)
         partyInviteOkRect = ScaleRegionLeftTop(cfg.PartyInviteOkRect, sx, sy)
         partyListRect = ScaleRegionLeftTop(cfg.PartyListRect, sx, sy)
-        mapRect = ScaleRegionLeftTop(cfg.MapRect, sx, sy)
-        mapCoordinateRect = ScaleRegionLeftTop(cfg.MapCoordinateRect, sx, sy)
+        mapCoordinateXRect = ScaleRegionLeftTop(GetEffectiveMapCoordinateXRect(cfg), sx, sy)
+        mapCoordinateYRect = ScaleRegionLeftTop(GetEffectiveMapCoordinateYRect(cfg), sx, sy)
         chatRect = ScaleRegionLeftTop(cfg.ChatRect, sx, sy)
     End Sub
 
@@ -6237,6 +6512,42 @@ Public Class BotEngine
         Return points.Select(Function(pt) New DrawingPoint(Math.Max(0, Math.Min(frameWidth - 1, pt.X)), Math.Max(0, Math.Min(frameHeight - 1, pt.Y)))).ToList()
     End Function
 
+    Private Shared Function GetEffectiveMapCoordinateXRect(cfg As BotConfig) As RectRegion
+        If cfg Is Nothing Then
+            Return BotConfig.DefaultMapCoordinateXRect()
+        End If
+        If UsesLegacyMapCoordinateRect(cfg) Then
+            Return BotConfig.SplitMapCoordinateRect(cfg.MapCoordinateRect, True)
+        End If
+        If cfg.MapCoordinateXRect Is Nothing Then
+            Return BotConfig.DefaultMapCoordinateXRect()
+        End If
+        Return cfg.MapCoordinateXRect
+    End Function
+
+    Private Shared Function GetEffectiveMapCoordinateYRect(cfg As BotConfig) As RectRegion
+        If cfg Is Nothing Then
+            Return BotConfig.DefaultMapCoordinateYRect()
+        End If
+        If UsesLegacyMapCoordinateRect(cfg) Then
+            Return BotConfig.SplitMapCoordinateRect(cfg.MapCoordinateRect, False)
+        End If
+        If cfg.MapCoordinateYRect Is Nothing Then
+            Return BotConfig.DefaultMapCoordinateYRect()
+        End If
+        Return cfg.MapCoordinateYRect
+    End Function
+
+    Private Shared Function UsesLegacyMapCoordinateRect(cfg As BotConfig) As Boolean
+        If cfg Is Nothing OrElse cfg.MapCoordinateRect Is Nothing Then
+            Return False
+        End If
+
+        Dim xMissingOrDefault As Boolean = cfg.MapCoordinateXRect Is Nothing OrElse SameRegion(cfg.MapCoordinateXRect, BotConfig.DefaultMapCoordinateXRect())
+        Dim yMissingOrDefault As Boolean = cfg.MapCoordinateYRect Is Nothing OrElse SameRegion(cfg.MapCoordinateYRect, BotConfig.DefaultMapCoordinateYRect())
+        Return xMissingOrDefault AndAlso yMissingOrDefault AndAlso Not SameRegion(cfg.MapCoordinateRect, BotConfig.DefaultMapCoordinateRect())
+    End Function
+
     Private Shared Function IsDefaultVisionLayout(cfg As BotConfig) As Boolean
         Return SameRegion(cfg.HpBar, New RectRegion(11, 25, 151, 11)) AndAlso
                SameRegion(cfg.MpBar, New RectRegion(3, 40, 161, 11)) AndAlso
@@ -6248,8 +6559,9 @@ Public Class BotEngine
                SameRegion(cfg.PartyInviteScanRect, New RectRegion(349, 318, 328, 124)) AndAlso
                SameRegion(cfg.PartyInviteOkRect, New RectRegion(463, 410, 59, 21)) AndAlso
                SameRegion(cfg.PartyListRect, New RectRegion(0, 24, 168, 244)) AndAlso
-               SameRegion(cfg.MapRect, New RectRegion(0, 0, 1024, 768)) AndAlso
-               SameRegion(cfg.MapCoordinateRect, New RectRegion(6, 744, 120, 22)) AndAlso
+               SameRegion(cfg.MapCoordinateRect, BotConfig.DefaultMapCoordinateRect()) AndAlso
+               SameRegion(GetEffectiveMapCoordinateXRect(cfg), BotConfig.DefaultMapCoordinateXRect()) AndAlso
+               SameRegion(GetEffectiveMapCoordinateYRect(cfg), BotConfig.DefaultMapCoordinateYRect()) AndAlso
                SameRegion(cfg.ChatRect, New RectRegion(18, 548, 430, 144)) AndAlso
                SameLootScanPolygon(cfg.LootScanPoints, BotConfig.CreateDefaultLootScanPoints())
     End Function

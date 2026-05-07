@@ -136,8 +136,11 @@ Public Class Form1
     Private txtLootName As TextBox
     Private chkLevelingAgent As CheckBox
     Private txtLevelingPreferredMobs As TextBox
+    Private chkLevelingStopHp As CheckBox
     Private nudLevelingStopHp As NumericUpDown
+    Private chkLevelingStopMp As CheckBox
     Private nudLevelingStopMp As NumericUpDown
+    Private chkLevelingMaxNoTarget As CheckBox
     Private nudLevelingMaxNoTargetSeconds As NumericUpDown
     Private chkLevelingStopOnLowExp As CheckBox
     Private nudLevelingMinExpPerHour As NumericUpDown
@@ -149,11 +152,20 @@ Public Class Form1
     Private chkTravelExecute As CheckBox
     Private btnStartRouteRecording As Button
     Private btnStopRouteRecording As Button
+    Private nudManualRouteNodeX As NumericUpDown
+    Private nudManualRouteNodeY As NumericUpDown
+    Private btnAddManualRouteNode As Button
+    Private btnDeleteManualBreadcrumb As Button
+    Private btnClearManualBreadcrumbs As Button
     Private btnReplayRoute As Button
     Private nudRouteRecordingIntervalMs As NumericUpDown
+    Private nudRouteRecordingMinConfidence As NumericUpDown
+    Private nudRouteRecordingNodeSpacing As NumericUpDown
     Private dgvBreadcrumbs As DataGridView
     Private _routeRecordingActive As Boolean = False
     Private _routeRecordingAutoStartedBot As Boolean = False
+    Private _breadcrumbsManualEditMode As Boolean = False
+    Private _updatingBreadcrumbsGrid As Boolean = False
     Private txtRouteRecordingName As TextBox
     Private btnSaveRouteRecording As Button
     Private cboRecordedRoute As ComboBox
@@ -600,11 +612,20 @@ Public Class Form1
         If txtLevelingPreferredMobs IsNot Nothing Then
             AddHandler txtLevelingPreferredMobs.TextChanged, AddressOf LiveConfigChanged
         End If
+        If chkLevelingStopHp IsNot Nothing Then
+            AddHandler chkLevelingStopHp.CheckedChanged, AddressOf LevelingGuardrailToggleChanged
+        End If
         If nudLevelingStopHp IsNot Nothing Then
             AddHandler nudLevelingStopHp.ValueChanged, AddressOf LiveConfigChanged
         End If
+        If chkLevelingStopMp IsNot Nothing Then
+            AddHandler chkLevelingStopMp.CheckedChanged, AddressOf LevelingGuardrailToggleChanged
+        End If
         If nudLevelingStopMp IsNot Nothing Then
             AddHandler nudLevelingStopMp.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If chkLevelingMaxNoTarget IsNot Nothing Then
+            AddHandler chkLevelingMaxNoTarget.CheckedChanged, AddressOf LevelingGuardrailToggleChanged
         End If
         If nudLevelingMaxNoTargetSeconds IsNot Nothing Then
             AddHandler nudLevelingMaxNoTargetSeconds.ValueChanged, AddressOf LiveConfigChanged
@@ -642,6 +663,12 @@ Public Class Form1
         If nudRouteRecordingIntervalMs IsNot Nothing Then
             AddHandler nudRouteRecordingIntervalMs.ValueChanged, AddressOf LiveConfigChanged
         End If
+        If nudRouteRecordingMinConfidence IsNot Nothing Then
+            AddHandler nudRouteRecordingMinConfidence.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If nudRouteRecordingNodeSpacing IsNot Nothing Then
+            AddHandler nudRouteRecordingNodeSpacing.ValueChanged, AddressOf LiveConfigChanged
+        End If
         If txtRouteRecordingName IsNot Nothing Then
             AddHandler txtRouteRecordingName.TextChanged, AddressOf LiveConfigChanged
         End If
@@ -672,6 +699,14 @@ Public Class Form1
         AddHandler dgvCombat.CellEndEdit, AddressOf PersistListSettingsChanged
         AddHandler dgvRegions.CellValueChanged, AddressOf LiveConfigChanged
         AddHandler dgvRegions.CellEndEdit, AddressOf LiveConfigChanged
+        AddHandler dgvRegions.CellValueChanged, AddressOf PersistListSettingsChanged
+        AddHandler dgvRegions.CellEndEdit, AddressOf PersistListSettingsChanged
+        AddHandler dgvRegions.CurrentCellDirtyStateChanged,
+            Sub(_s As Object, _e As EventArgs)
+                If dgvRegions.IsCurrentCellDirty Then
+                    dgvRegions.CommitEdit(DataGridViewDataErrorContexts.Commit)
+                End If
+            End Sub
         If chkChatTranslationEnabled IsNot Nothing Then
             AddHandler chkChatTranslationEnabled.CheckedChanged, AddressOf PersistListSettingsChanged
         End If
@@ -750,11 +785,20 @@ Public Class Form1
         If txtLevelingPreferredMobs IsNot Nothing Then
             AddHandler txtLevelingPreferredMobs.TextChanged, AddressOf PersistListSettingsChanged
         End If
+        If chkLevelingStopHp IsNot Nothing Then
+            AddHandler chkLevelingStopHp.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
         If nudLevelingStopHp IsNot Nothing Then
             AddHandler nudLevelingStopHp.ValueChanged, AddressOf PersistListSettingsChanged
         End If
+        If chkLevelingStopMp IsNot Nothing Then
+            AddHandler chkLevelingStopMp.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
         If nudLevelingStopMp IsNot Nothing Then
             AddHandler nudLevelingStopMp.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If chkLevelingMaxNoTarget IsNot Nothing Then
+            AddHandler chkLevelingMaxNoTarget.CheckedChanged, AddressOf PersistListSettingsChanged
         End If
         If nudLevelingMaxNoTargetSeconds IsNot Nothing Then
             AddHandler nudLevelingMaxNoTargetSeconds.ValueChanged, AddressOf PersistListSettingsChanged
@@ -822,6 +866,21 @@ Public Class Form1
         If btnSaveRouteRecording IsNot Nothing Then
             AddHandler btnSaveRouteRecording.Click, AddressOf SaveRouteRecordingClicked
         End If
+        If btnAddManualRouteNode IsNot Nothing Then
+            AddHandler btnAddManualRouteNode.Click, AddressOf AddManualRouteNodeClicked
+        End If
+        If btnDeleteManualBreadcrumb IsNot Nothing Then
+            AddHandler btnDeleteManualBreadcrumb.Click, AddressOf DeleteManualBreadcrumbClicked
+        End If
+        If btnClearManualBreadcrumbs IsNot Nothing Then
+            AddHandler btnClearManualBreadcrumbs.Click, AddressOf ClearManualBreadcrumbsClicked
+        End If
+        If dgvBreadcrumbs IsNot Nothing Then
+            AddHandler dgvBreadcrumbs.CellValueChanged, AddressOf BreadcrumbsGridEdited
+            AddHandler dgvBreadcrumbs.UserAddedRow, AddressOf BreadcrumbsGridUserAddedRow
+            AddHandler dgvBreadcrumbs.UserDeletedRow, AddressOf BreadcrumbsGridUserDeletedRow
+            AddHandler dgvBreadcrumbs.CellEndEdit, AddressOf BreadcrumbsGridEdited
+        End If
         If cboRecordedRoute IsNot Nothing Then
             AddHandler cboRecordedRoute.SelectedIndexChanged, AddressOf RecordedRouteSelectionChanged
         End If
@@ -843,6 +902,23 @@ Public Class Form1
 
     Private Sub PersistListSettingsChanged(_sender As Object, _e As EventArgs)
         SavePersistedListState(False)
+    End Sub
+
+    Private Sub LevelingGuardrailToggleChanged(_sender As Object, _e As EventArgs)
+        UpdateLevelingGuardrailToggleUi()
+        LiveConfigChanged(_sender, _e)
+    End Sub
+
+    Private Sub UpdateLevelingGuardrailToggleUi()
+        If nudLevelingStopHp IsNot Nothing Then
+            nudLevelingStopHp.Enabled = (chkLevelingStopHp Is Nothing OrElse chkLevelingStopHp.Checked)
+        End If
+        If nudLevelingStopMp IsNot Nothing Then
+            nudLevelingStopMp.Enabled = (chkLevelingStopMp Is Nothing OrElse chkLevelingStopMp.Checked)
+        End If
+        If nudLevelingMaxNoTargetSeconds IsNot Nothing Then
+            nudLevelingMaxNoTargetSeconds.Enabled = (chkLevelingMaxNoTarget Is Nothing OrElse chkLevelingMaxNoTarget.Checked)
+        End If
     End Sub
 
     Private Sub NotificationProviderChanged(_sender As Object, _e As EventArgs)
@@ -1866,13 +1942,13 @@ Public Class Form1
 
         Dim regionGroup As New GroupBox() With {.Text = "Calibration Regions", .Dock = DockStyle.Fill}
         Dim regionLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3, .Padding = New Padding(6)}
-        regionLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 22.0F))
+        regionLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
         regionLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         regionLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 60.0F))
         regionGroup.Controls.Add(regionLayout)
 
         Dim regionHint As New Label() With {
-            .Text = "Rectangle regions stay in the grid. Loot Scan uses freeform points below: x,y | x,y | x,y | x,y",
+            .Text = "Rectangle regions stay in the grid. Map coordinates use separate 3-digit X and 3-digit Y boxes. Loot Scan uses points below: x,y | x,y | x,y | x,y",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.MiddleLeft
@@ -1880,6 +1956,7 @@ Public Class Form1
         regionLayout.Controls.Add(regionHint, 0, 0)
 
         dgvRegions = New DataGridView() With {.Dock = DockStyle.Fill, .AllowUserToAddRows = False, .AllowUserToDeleteRows = False, .RowHeadersVisible = False, .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill}
+        dgvRegions.Columns.Add(New DataGridViewCheckBoxColumn() With {.Name = "Enabled", .HeaderText = "On", .FillWeight = 28.0F})
         dgvRegions.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Region", .ReadOnly = True})
         dgvRegions.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "X"})
         dgvRegions.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Y"})
@@ -2349,10 +2426,10 @@ Public Class Form1
         ' ── LEFT: Leveling Agent Settings ──
         Dim settingsGroup As New GroupBox() With {.Text = "Leveling Agent", .Dock = DockStyle.Fill, .Padding = New Padding(4)}
         Dim settingsScroll As New Panel() With {.Dock = DockStyle.Fill, .AutoScroll = True}
-        Dim settingsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Top, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 2, .RowCount = 25}
+        Dim settingsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Top, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 2, .RowCount = 27}
         settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 180.0F))
         settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
-        For i As Integer = 0 To 24
+        For i As Integer = 0 To 26
             settingsLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
         Next
         settingsScroll.Controls.Add(settingsLayout)
@@ -2367,16 +2444,28 @@ Public Class Form1
         settingsLayout.Controls.Add(txtLevelingPreferredMobs, 1, 1)
 
         settingsLayout.Controls.Add(New Label() With {.Text = "Stop HP %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 2)
+        Dim stopHpPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(2)}
+        chkLevelingStopHp = New CheckBox() With {.Text = "On", .AutoSize = True, .Checked = True, .Margin = New Padding(0, 4, 8, 0)}
         nudLevelingStopHp = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1, .Maximum = 100, .Value = 20, .Width = 90, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(nudLevelingStopHp, 1, 2)
+        stopHpPanel.Controls.Add(chkLevelingStopHp)
+        stopHpPanel.Controls.Add(nudLevelingStopHp)
+        settingsLayout.Controls.Add(stopHpPanel, 1, 2)
 
         settingsLayout.Controls.Add(New Label() With {.Text = "Stop MP %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 3)
+        Dim stopMpPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(2)}
+        chkLevelingStopMp = New CheckBox() With {.Text = "On", .AutoSize = True, .Checked = True, .Margin = New Padding(0, 4, 8, 0)}
         nudLevelingStopMp = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1, .Maximum = 100, .Value = 10, .Width = 90, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(nudLevelingStopMp, 1, 3)
+        stopMpPanel.Controls.Add(chkLevelingStopMp)
+        stopMpPanel.Controls.Add(nudLevelingStopMp)
+        settingsLayout.Controls.Add(stopMpPanel, 1, 3)
 
         settingsLayout.Controls.Add(New Label() With {.Text = "Max No Target (sec)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 4)
+        Dim maxNoTargetPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(2)}
+        chkLevelingMaxNoTarget = New CheckBox() With {.Text = "On", .AutoSize = True, .Checked = True, .Margin = New Padding(0, 4, 8, 0)}
         nudLevelingMaxNoTargetSeconds = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 5, .Maximum = 600, .Value = 45, .Width = 90, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(nudLevelingMaxNoTargetSeconds, 1, 4)
+        maxNoTargetPanel.Controls.Add(chkLevelingMaxNoTarget)
+        maxNoTargetPanel.Controls.Add(nudLevelingMaxNoTargetSeconds)
+        settingsLayout.Controls.Add(maxNoTargetPanel, 1, 4)
 
         chkNavigationEnabled = New CheckBox() With {.Text = "Enable map localization", .Dock = DockStyle.Fill, .Margin = New Padding(2)}
         settingsLayout.Controls.Add(chkNavigationEnabled, 0, 5)
@@ -2396,7 +2485,7 @@ Public Class Form1
 
         ' ── Route Recording: Start / Stop buttons ──
         Dim recordInstructionsLabel As New Label() With {
-            .Text = "HOW TO RECORD: 1) Set a route name  2) Click Start Recording  3) Walk your character path in-game with the minimap open  4) Click Stop Recording  5) Click Save Route. The bot auto-starts in passive mode (no combat). Map localization is auto-enabled.",
+            .Text = "COORDINATES: X/Y boxes each read 3 digits. Breadcrumbs add live route nodes when localization confidence is at least Min Confidence %. Lower it to record more but expect more OCR mistakes. Node Spacing is the minimum coordinate distance between saved nodes; lower = more nodes. Map Marker is derived from confident X/Y, so unavailable means no trusted coordinate yet.",
             .Dock = DockStyle.Fill, .ForeColor = Color.FromArgb(255, 200, 120), .AutoSize = True, .Margin = New Padding(2, 4, 2, 4),
             .Font = New Font("Segoe UI", 8.0F, FontStyle.Italic)
         }
@@ -2409,21 +2498,41 @@ Public Class Form1
         btnStopRouteRecording = New Button() With {.Text = ChrW(&H23F9) & " Stop Recording", .AutoSize = True, .BackColor = Color.FromArgb(180, 40, 40), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat, .Font = New Font("Segoe UI", 8.5F, FontStyle.Bold), .Enabled = False}
         recordBtnPanel.Controls.Add(btnStartRouteRecording)
         recordBtnPanel.Controls.Add(btnStopRouteRecording)
+        recordBtnPanel.Controls.Add(New Label() With {.Text = "Manual X", .AutoSize = True, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(12, 5, 2, 0)})
+        nudManualRouteNodeX = New NumericUpDown() With {.Minimum = 0, .Maximum = 999, .Value = 0, .Width = 58, .Margin = New Padding(0, 0, 4, 0)}
+        recordBtnPanel.Controls.Add(nudManualRouteNodeX)
+        recordBtnPanel.Controls.Add(New Label() With {.Text = "Y", .AutoSize = True, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2, 5, 2, 0)})
+        nudManualRouteNodeY = New NumericUpDown() With {.Minimum = 0, .Maximum = 999, .Value = 0, .Width = 58, .Margin = New Padding(0, 0, 4, 0)}
+        recordBtnPanel.Controls.Add(nudManualRouteNodeY)
+        btnAddManualRouteNode = New Button() With {.Text = "Add Node", .AutoSize = True, .BackColor = Color.FromArgb(80, 80, 120), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat, .Font = New Font("Segoe UI", 8.5F, FontStyle.Bold), .Margin = New Padding(0, 0, 4, 0)}
+        recordBtnPanel.Controls.Add(btnAddManualRouteNode)
+        btnDeleteManualBreadcrumb = New Button() With {.Text = "Delete Row", .AutoSize = True, .Margin = New Padding(0, 0, 4, 0)}
+        recordBtnPanel.Controls.Add(btnDeleteManualBreadcrumb)
+        btnClearManualBreadcrumbs = New Button() With {.Text = "Clear Table", .AutoSize = True, .Margin = New Padding(0, 0, 4, 0)}
+        recordBtnPanel.Controls.Add(btnClearManualBreadcrumbs)
         settingsLayout.Controls.Add(recordBtnPanel, 1, 10)
 
         settingsLayout.Controls.Add(New Label() With {.Text = "Sample Interval (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 11)
         nudRouteRecordingIntervalMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 10, .Maximum = 5000, .Increment = 10, .Value = 100, .Width = 90, .Margin = New Padding(2)}
         settingsLayout.Controls.Add(nudRouteRecordingIntervalMs, 1, 11)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Route Name", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 12)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Min Confidence %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 12)
+        nudRouteRecordingMinConfidence = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0, .Maximum = 100, .Value = 90, .Width = 90, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(nudRouteRecordingMinConfidence, 1, 12)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Node Spacing", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 13)
+        nudRouteRecordingNodeSpacing = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1, .Maximum = 100, .Value = 2, .Width = 90, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(nudRouteRecordingNodeSpacing, 1, 13)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Route Name", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 14)
         Dim recordingPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .Margin = New Padding(2)}
         txtRouteRecordingName = New TextBox() With {.Width = 160, .Text = "jina_route"}
         recordingPanel.Controls.Add(txtRouteRecordingName)
         btnSaveRouteRecording = New Button() With {.Text = "Save Route", .AutoSize = True}
         recordingPanel.Controls.Add(btnSaveRouteRecording)
-        settingsLayout.Controls.Add(recordingPanel, 1, 12)
+        settingsLayout.Controls.Add(recordingPanel, 1, 14)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Recorded Routes", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 13)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Recorded Routes", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 15)
         Dim recordedRoutePanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .Margin = New Padding(2)}
         cboRecordedRoute = New ComboBox() With {.Width = 200, .DropDownStyle = ComboBoxStyle.DropDownList}
         recordedRoutePanel.Controls.Add(cboRecordedRoute)
@@ -2431,48 +2540,48 @@ Public Class Form1
         recordedRoutePanel.Controls.Add(btnDeleteRecordedRoute)
         btnReplayRoute = New Button() With {.Text = "Replay", .AutoSize = True, .BackColor = Color.FromArgb(30, 100, 180), .ForeColor = Color.White}
         recordedRoutePanel.Controls.Add(btnReplayRoute)
-        settingsLayout.Controls.Add(recordedRoutePanel, 1, 13)
+        settingsLayout.Controls.Add(recordedRoutePanel, 1, 15)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Route Nodes", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 14)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Route Nodes", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 16)
         Dim recordedNodePanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .Margin = New Padding(2)}
         cboRecordedRouteNode = New ComboBox() With {.Width = 200, .DropDownStyle = ComboBoxStyle.DropDownList}
         recordedNodePanel.Controls.Add(cboRecordedRouteNode)
         btnDeleteRecordedRouteNode = New Button() With {.Text = "Delete Node", .AutoSize = True}
         recordedNodePanel.Controls.Add(btnDeleteRecordedRouteNode)
-        settingsLayout.Controls.Add(recordedNodePanel, 1, 14)
+        settingsLayout.Controls.Add(recordedNodePanel, 1, 16)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Waypoint Radius", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 15)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Waypoint Radius", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 17)
         nudNavigationWaypointRadius = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0, .Maximum = 250, .Value = 36, .Width = 90, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(nudNavigationWaypointRadius, 1, 15)
+        settingsLayout.Controls.Add(nudNavigationWaypointRadius, 1, 17)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Move Burst (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 16)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Move Burst (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 18)
         nudNavigationMoveBurstMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 10, .Maximum = 1500, .Increment = 25, .Value = 350, .Width = 90, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(nudNavigationMoveBurstMs, 1, 16)
+        settingsLayout.Controls.Add(nudNavigationMoveBurstMs, 1, 18)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Re-sample (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 17)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Re-sample (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 19)
         nudNavigationResampleMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 50, .Maximum = 10000, .Increment = 50, .Value = 1800, .Width = 90, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(nudNavigationResampleMs, 1, 17)
+        settingsLayout.Controls.Add(nudNavigationResampleMs, 1, 19)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Stall Timeout (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 18)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Stall Timeout (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 20)
         nudNavigationStallTimeoutMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1500, .Maximum = 30000, .Increment = 250, .Value = 6500, .Width = 90, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(nudNavigationStallTimeoutMs, 1, 18)
+        settingsLayout.Controls.Add(nudNavigationStallTimeoutMs, 1, 20)
 
         chkNavigationRepathOnStuck = New CheckBox() With {.Text = "Repath when travel stalls", .Dock = DockStyle.Fill, .Checked = True, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(chkNavigationRepathOnStuck, 0, 19)
+        settingsLayout.Controls.Add(chkNavigationRepathOnStuck, 0, 21)
         settingsLayout.SetColumnSpan(chkNavigationRepathOnStuck, 2)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Route Start", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 20)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Route Start", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 22)
         cboNavigationStartNode = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList, .Enabled = False, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(cboNavigationStartNode, 1, 20)
+        settingsLayout.Controls.Add(cboNavigationStartNode, 1, 22)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Travel Route", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 21)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Travel Route", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 23)
         cboNavigationTargetNode = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(cboNavigationTargetNode, 1, 21)
+        settingsLayout.Controls.Add(cboNavigationTargetNode, 1, 23)
 
         chkLevelingStopOnLowExp = New CheckBox() With {.Text = "Stop when EXP/hr below threshold", .Dock = DockStyle.Fill, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(chkLevelingStopOnLowExp, 0, 22)
+        settingsLayout.Controls.Add(chkLevelingStopOnLowExp, 0, 24)
         settingsLayout.SetColumnSpan(chkLevelingStopOnLowExp, 2)
-        settingsLayout.Controls.Add(New Label() With {.Text = "Min EXP/hr %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 23)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Min EXP/hr %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 25)
         nudLevelingMinExpPerHour = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0.01D, .Maximum = 100D, .DecimalPlaces = 2, .Increment = 0.05D, .Value = DefaultLevelingMinExpPerHour, .Width = 90, .Margin = New Padding(2)}
         Dim lowExpPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .Margin = New Padding(2)}
         lowExpPanel.Controls.Add(nudLevelingMinExpPerHour)
@@ -2480,7 +2589,7 @@ Public Class Form1
         lowExpPanel.Controls.Add(chkLevelingStopOnRepeatedUnreachable)
         nudLevelingUnreachableLimit = New NumericUpDown() With {.Minimum = 1, .Maximum = 20, .Value = 4, .Width = 55, .Margin = New Padding(4, 0, 0, 0)}
         lowExpPanel.Controls.Add(nudLevelingUnreachableLimit)
-        settingsLayout.Controls.Add(lowExpPanel, 1, 23)
+        settingsLayout.Controls.Add(lowExpPanel, 1, 25)
 
         root.Controls.Add(settingsGroup, 0, 0)
 
@@ -2498,7 +2607,7 @@ Public Class Form1
 
         lblLevelingState = New Label() With {.Text = "Agent State: Disabled", .Dock = DockStyle.Fill, .ForeColor = Color.Khaki, .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold), .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}
         lblLevelingReason = New Label() With {.Text = "Reason: Leveling agent is disabled.", .Dock = DockStyle.Fill, .ForeColor = Color.Gainsboro, .AutoSize = True, .Margin = New Padding(2)}
-        lblMapCoordinate = New Label() With {.Text = "Map Coordinate: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.LightGreen, .AutoSize = True, .Margin = New Padding(2)}
+        lblMapCoordinate = New Label() With {.Text = "Coordinates X axis: n/a | Coordinates Y axis: n/a | Route node: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.LightGreen, .AutoSize = True, .Margin = New Padding(2)}
         lblMapHeading = New Label() With {.Text = "Map Heading: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.LightSkyBlue, .AutoSize = True, .Margin = New Padding(2)}
         lblMapMarker = New Label() With {.Text = "Map Marker: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.Salmon, .AutoSize = True, .Margin = New Padding(2)}
         lblMapLocalizationConfidence = New Label() With {.Text = "Localization Confidence: 0%", .Dock = DockStyle.Fill, .ForeColor = Color.Khaki, .AutoSize = True, .Margin = New Padding(2)}
@@ -2526,8 +2635,8 @@ Public Class Form1
         dgvBreadcrumbs = New DataGridView() With {
             .Dock = DockStyle.Fill,
             .ReadOnly = False,
-            .AllowUserToAddRows = False,
-            .AllowUserToDeleteRows = False,
+            .AllowUserToAddRows = True,
+            .AllowUserToDeleteRows = True,
             .AllowUserToResizeRows = False,
             .MultiSelect = False,
             .SelectionMode = DataGridViewSelectionMode.FullRowSelect,
@@ -2847,19 +2956,21 @@ Public Class Form1
 
     Private Sub SeedDefaults()
         txtWindowTitle.Text = DefaultGameWindowTitle
-        dgvRegions.Rows.Add("hp_bar", "11", "25", "151", "11")
-        dgvRegions.Rows.Add("mp_bar", "3", "40", "161", "11")
-        dgvRegions.Rows.Add("mob_name_rect", "860", "711", "162", "23")
-        dgvRegions.Rows.Add("mob_hp_rect", "859", "737", "165", "11")
-        dgvRegions.Rows.Add("unreachable_text_rect", "15", "582", "128", "22")
-        dgvRegions.Rows.Add("prana_exp_rect", "472", "745", "78", "21")
-        dgvRegions.Rows.Add("rupiahs_rect", "560", "745", "110", "21")
-        dgvRegions.Rows.Add("party_invite_scan_rect", "349", "318", "328", "124")
-        dgvRegions.Rows.Add("party_invite_ok_rect", "463", "410", "59", "21")
-        dgvRegions.Rows.Add("party_list_rect", "0", "24", "168", "244")
-        dgvRegions.Rows.Add("map_rect", "0", "0", "1024", "768")
-        dgvRegions.Rows.Add("map_coordinate_rect", "6", "744", "120", "22")
-        dgvRegions.Rows.Add("chat_rect", "18", "548", "430", "144")
+        dgvRegions.Rows.Add(True, "hp_bar", "11", "25", "151", "11")
+        dgvRegions.Rows.Add(True, "mp_bar", "3", "40", "161", "11")
+        dgvRegions.Rows.Add(True, "mob_name_rect", "860", "711", "162", "23")
+        dgvRegions.Rows.Add(True, "mob_hp_rect", "859", "737", "165", "11")
+        dgvRegions.Rows.Add(True, "unreachable_text_rect", "15", "582", "128", "22")
+        dgvRegions.Rows.Add(True, "prana_exp_rect", "472", "745", "78", "21")
+        dgvRegions.Rows.Add(True, "rupiahs_rect", "560", "745", "110", "21")
+        dgvRegions.Rows.Add(True, "party_invite_scan_rect", "349", "318", "328", "124")
+        dgvRegions.Rows.Add(True, "party_invite_ok_rect", "463", "410", "59", "21")
+        dgvRegions.Rows.Add(True, "party_list_rect", "0", "24", "168", "244")
+        Dim defaultMapX As RectRegion = BotConfig.DefaultMapCoordinateXRect()
+        Dim defaultMapY As RectRegion = BotConfig.DefaultMapCoordinateYRect()
+        dgvRegions.Rows.Add(True, "map_coordinate_x_rect", defaultMapX.X.ToString(), defaultMapX.Y.ToString(), defaultMapX.W.ToString(), defaultMapX.H.ToString())
+        dgvRegions.Rows.Add(True, "map_coordinate_y_rect", defaultMapY.X.ToString(), defaultMapY.Y.ToString(), defaultMapY.W.ToString(), defaultMapY.H.ToString())
+        dgvRegions.Rows.Add(True, "chat_rect", "18", "548", "430", "144")
         If txtLootScanAreaPoints IsNot Nothing Then
             txtLootScanAreaPoints.Text = FormatLootScanPoints(BotConfig.CreateDefaultLootScanPoints())
         End If
@@ -4276,7 +4387,8 @@ Public Class Form1
                     "- Use special key on high max HP mobs plus Max HP >= work together with the high_max_hp combat role.",
                     "- Avoid mobs over max HP plus Avoid Max HP >= skips targets above that detected Max HP and retargets.",
                     "- Chat translation settings control OCR of the chat box, overlay visibility, target language, scan speed, and number of visible translated lines.",
-                    "- Calibration Regions is the editable rectangle list for HP, MP, target name, target HP, map, chat, and other OCR areas.",
+                    "- Calibration Regions is the editable rectangle list for HP, MP, target name, target HP, map coordinates, chat, and other OCR areas; each On checkbox controls that region's overlay.",
+                    "- Map coordinate OCR is split into map_coordinate_x_rect for the 3-digit X axis and map_coordinate_y_rect for the 3-digit Y axis.",
                     "- Loot Scan Area is the 4-point polygon used by Auto-Loot scanning.",
                     "- Process List is where you refresh windows, select one, and optionally rename it.",
                     "- Snapshot helps verify whether your rectangles actually cover the right UI areas."
@@ -4320,9 +4432,16 @@ Public Class Form1
                     "",
                     "- Enable leveling agent turns on the target preference and travel logic.",
                     "- Preferred Mobs is a comma-separated allow-list.",
-                    "- Stop HP %, Stop MP %, and Max No Target (sec) are safety stops.",
+                    "- Stop HP %, Stop MP %, and Max No Target (sec) each have an On toggle; turn one off to ignore that guardrail.",
                     "- Enable map localization plus Map Open Key are required for map-based travel.",
+                    "- Coordinates are route nodes: X axis is 3 digits, Y axis is 3 digits, and the bot only updates leveling travel when both are read together as X/Y.",
+                    "- Min Confidence % is the localization confidence required before adding a live breadcrumb; lower values record more coordinates but can save OCR mistakes.",
+                    "- Node Spacing is the minimum coordinate distance between saved route nodes; lower values save more route nodes from the breadcrumbs.",
+                    "- Manual X/Y and Add Node append hand-entered 3-digit coordinates to Breadcrumbs; Save Route turns every valid table row into a route node.",
+                    "- Map Marker is the current position derived from trusted X/Y coordinates. It says not available until the bot has a coordinate read it trusts.",
                     "- Enable travel preview shows route planning. Enable travel execution allows guarded movement.",
+                    "- While traveling with no target, the bot sends the retarget key as a mob scan using the Vision tab Normal Retarget (ms) interval.",
+                    "- Preferred Mobs accepts correctly spelled partial names, so a substring such as vasha can match Vashabum.",
                     "- Start Recording, Stop Recording, Sample Interval, Route Name, and Save Route are for route capture.",
                     "- Recorded Routes, Replay, Delete, Route Nodes, and Delete Node manage saved routes.",
                     "- Waypoint Radius, Move Burst, Re-sample, Stall Timeout, and Repath when travel stalls tune travel behavior.",
@@ -4401,7 +4520,8 @@ Public Class Form1
                     "- Capture Snapshot captura la imagen actual del cliente.",
                     "- Use special key on high max HP mobs junto con Max HP >= trabaja con el role high_max_hp.",
                     "- Los controles de chat translation manejan OCR del chat, overlay, idioma destino, velocidad y numero de lineas.",
-                    "- Calibration Regions contiene los rectangulos OCR editables.",
+                    "- Calibration Regions contiene los rectangulos OCR editables, incluidas las coordenadas del mapa; cada checkbox On controla el overlay de esa region.",
+                    "- Las coordenadas del mapa se dividen en map_coordinate_x_rect para el eje X de 3 digitos y map_coordinate_y_rect para el eje Y de 3 digitos.",
                     "- Loot Scan Area es el poligono de 4 puntos usado por Auto-Loot.",
                     "- Process List sirve para refrescar, seleccionar y renombrar ventanas.",
                     "- Snapshot ayuda a verificar si las regiones cubren bien la UI."
@@ -4445,9 +4565,16 @@ Public Class Form1
                     "",
                     "- Enable leveling agent activa la logica de mobs preferidos y viaje.",
                     "- Preferred Mobs es una allow-list separada por comas.",
-                    "- Stop HP %, Stop MP % y Max No Target (sec) son paradas de seguridad.",
+                    "- Stop HP %, Stop MP % y Max No Target (sec) tienen un toggle On; apaga uno para ignorar esa parada.",
                     "- Enable map localization y Map Open Key son necesarios para viajar con mapa.",
+                    "- Las coordenadas son nodos de ruta: eje X de 3 digitos, eje Y de 3 digitos, y el bot actualiza el viaje solo cuando lee ambos juntos como X/Y.",
+                    "- Min Confidence % es la confianza minima para agregar un breadcrumb; bajarlo graba mas coordenadas pero puede guardar errores de OCR.",
+                    "- Node Spacing es la distancia minima entre nodos guardados; bajarlo guarda mas nodos desde los breadcrumbs.",
+                    "- Manual X/Y y Add Node agregan coordenadas de 3 digitos a Breadcrumbs; Save Route convierte cada fila valida en un nodo.",
+                    "- Map Marker es la posicion actual derivada de coordenadas X/Y confiables. Sale not available hasta que haya una lectura confiable.",
                     "- Enable travel preview muestra la ruta. Enable travel execution permite movimiento protegido.",
+                    "- Mientras viaja sin objetivo, el bot usa la tecla de retarget como escaneo de mobs segun Normal Retarget (ms) en Vision.",
+                    "- Preferred Mobs acepta nombres parciales bien escritos; por ejemplo vasha puede coincidir con Vashabum.",
                     "- Start Recording, Stop Recording, Sample Interval, Route Name y Save Route sirven para grabar rutas.",
                     "- Recorded Routes, Replay, Delete, Route Nodes y Delete Node administran rutas guardadas.",
                     "- Waypoint Radius, Move Burst, Re-sample, Stall Timeout y Repath ajustan el movimiento.",
@@ -4524,7 +4651,8 @@ Public Class Form1
                     "- Capture Snapshot kukuha ng kasalukuyang image ng client.",
                     "- Use special key on high max HP mobs kasama ng Max HP >= ay para sa high_max_hp combat role.",
                     "- Ang chat translation controls ay para sa OCR ng chat, overlay visibility, target language, bilis ng scan, at dami ng visible lines.",
-                    "- Calibration Regions ang editable OCR rectangles.",
+                    "- Calibration Regions ang editable OCR rectangles, kasama ang map coordinates; bawat On checkbox ang control ng overlay ng region.",
+                    "- Hiwalay ang map coordinates: map_coordinate_x_rect para sa 3-digit X axis at map_coordinate_y_rect para sa 3-digit Y axis.",
                     "- Loot Scan Area ang 4-point polygon na gamit ng Auto-Loot.",
                     "- Process List ay para mag-refresh, pumili, at mag-rename ng windows.",
                     "- Snapshot ang pang-check kung tama ang coverage ng regions."
@@ -4568,9 +4696,16 @@ Public Class Form1
                     "",
                     "- Enable leveling agent nagpapagana sa preferred-mob at travel logic.",
                     "- Preferred Mobs ay comma-separated allow-list.",
-                    "- Stop HP %, Stop MP %, at Max No Target (sec) ay safety limits.",
+                    "- Stop HP %, Stop MP %, at Max No Target (sec) ay may On toggle; i-off para hindi gamitin ang guardrail na iyon.",
                     "- Enable map localization at Map Open Key ay kailangan para sa map-based travel.",
+                    "- Ang coordinates ang route nodes: 3 digits sa X axis, 3 digits sa Y axis, at nag-uupdate lang ang bot kapag sabay nabasa ang X/Y.",
+                    "- Min Confidence % ang minimum confidence bago magdagdag ng breadcrumb; ibaba ito para mas maraming coordinates pero mas mataas ang chance ng OCR mistake.",
+                    "- Node Spacing ang minimum distance ng saved route nodes; ibaba ito para mas maraming nodes mula sa breadcrumbs.",
+                    "- Manual X/Y at Add Node ay nagdadagdag ng 3-digit coordinates sa Breadcrumbs; Save Route gagawing route node ang bawat valid row.",
+                    "- Map Marker ang current position galing sa trusted X/Y coordinates. Not available ito hanggat walang trusted coordinate read.",
                     "- Enable travel preview nagpapakita ng route. Enable travel execution nagpapagalaw kapag ligtas.",
+                    "- Habang traveling at walang target, ginagamit ng bot ang retarget key bilang mob scan ayon sa Normal Retarget (ms) sa Vision.",
+                    "- Preferred Mobs tumatanggap ng correctly spelled partial names; halimbawa vasha puwedeng tumugma sa Vashabum.",
                     "- Start Recording, Stop Recording, Sample Interval, Route Name, at Save Route ay para sa route capture.",
                     "- Recorded Routes, Replay, Delete, Route Nodes, at Delete Node ay para sa route management.",
                     "- Waypoint Radius, Move Burst, Re-sample, Stall Timeout, at Repath ang movement tuning settings.",
@@ -4730,8 +4865,11 @@ Public Class Form1
             $"AutoAskPartyText: {GetPartyAskCommandText()}{Environment.NewLine}" &
             $"LevelingAgentEnabled: {st.AgentEnabled}{Environment.NewLine}" &
             $"LevelingPreferredMobs: {If(txtLevelingPreferredMobs IsNot Nothing, txtLevelingPreferredMobs.Text.Trim(), "")}{Environment.NewLine}" &
+            $"LevelingStopHpEnabled: {If(chkLevelingStopHp Is Nothing OrElse chkLevelingStopHp.Checked, "True", "False")}{Environment.NewLine}" &
             $"LevelingStopHp%: {If(nudLevelingStopHp IsNot Nothing, nudLevelingStopHp.Value.ToString(), "20")}{Environment.NewLine}" &
+            $"LevelingStopMpEnabled: {If(chkLevelingStopMp Is Nothing OrElse chkLevelingStopMp.Checked, "True", "False")}{Environment.NewLine}" &
             $"LevelingStopMp%: {If(nudLevelingStopMp IsNot Nothing, nudLevelingStopMp.Value.ToString(), "10")}{Environment.NewLine}" &
+            $"LevelingMaxNoTargetEnabled: {If(chkLevelingMaxNoTarget Is Nothing OrElse chkLevelingMaxNoTarget.Checked, "True", "False")}{Environment.NewLine}" &
             $"LevelingMaxNoTargetSec: {If(nudLevelingMaxNoTargetSeconds IsNot Nothing, nudLevelingMaxNoTargetSeconds.Value.ToString(), "45")}{Environment.NewLine}" &
             $"LevelingStopOnLowExp: {If(chkLevelingStopOnLowExp IsNot Nothing AndAlso chkLevelingStopOnLowExp.Checked, "True", "False")}{Environment.NewLine}" &
             $"LevelingMinExpPerHour%: {If(nudLevelingMinExpPerHour IsNot Nothing, nudLevelingMinExpPerHour.Value.ToString("0.00"), DefaultLevelingMinExpPerHour.ToString("0.00"))}{Environment.NewLine}" &
@@ -4743,6 +4881,7 @@ Public Class Form1
             $"AvoidHighMaxHpThreshold: {If(nudAvoidHighMaxHpThreshold IsNot Nothing, nudAvoidHighMaxHpThreshold.Value.ToString("N0"), "2000")}{Environment.NewLine}" &
             $"ChatTranslationEnabled: {If(chkChatTranslationEnabled IsNot Nothing AndAlso chkChatTranslationEnabled.Checked, "True", "False")}{Environment.NewLine}" &
             $"ChatTranslationOverlay: {If(chkChatTranslationOverlay IsNot Nothing AndAlso chkChatTranslationOverlay.Checked, "True", "False")}{Environment.NewLine}" &
+            $"DisabledRegionOverlays: {String.Join(", ", BuildDisabledCalibrationRegionOverlays())}{Environment.NewLine}" &
             $"ChatTargetLanguage: {GetSelectedChatTargetLanguageCode()}{Environment.NewLine}" &
             $"ChatScanMs: {If(nudChatScanMs IsNot Nothing, nudChatScanMs.Value.ToString(), "700")}{Environment.NewLine}" &
             $"ChatMaxLines: {If(nudChatMaxLines IsNot Nothing, nudChatMaxLines.Value.ToString(), "6")}{Environment.NewLine}" &
@@ -4804,7 +4943,7 @@ Public Class Form1
             $"ChatOcrUpdatedAt: {If(st.ChatOcrUpdatedAt = DateTime.MinValue, "n/a", st.ChatOcrUpdatedAt.ToLocalTime().ToString("HH:mm:ss"))}{Environment.NewLine}" &
             $"ChatOcrText: {If(String.IsNullOrWhiteSpace(st.ChatOcrText), "n/a", st.ChatOcrText.Replace(Environment.NewLine, " | "))}{Environment.NewLine}" &
             $"MapCoordinateText: {If(String.IsNullOrWhiteSpace(st.MapCoordinateText), "n/a", st.MapCoordinateText)}{Environment.NewLine}" &
-            $"MapCoordinateXY: {If(st.MapCoordinateX >= 0 AndAlso st.MapCoordinateY >= 0, st.MapCoordinateX.ToString() & "," & st.MapCoordinateY.ToString(), "n/a")}{Environment.NewLine}" &
+            $"MapCoordinateXY: {If(st.MapCoordinateX >= 0 AndAlso st.MapCoordinateY >= 0, st.MapCoordinateX.ToString("000") & "," & st.MapCoordinateY.ToString("000"), "n/a")}{Environment.NewLine}" &
             $"MapHeading: {If(String.IsNullOrWhiteSpace(st.MapHeading), "n/a", st.MapHeading)}{Environment.NewLine}" &
             $"MapCoordinateConfidence: {st.MapCoordinateConfidence}{Environment.NewLine}" &
             $"MapVisible: {st.MapVisible}{Environment.NewLine}" &
@@ -4934,14 +5073,18 @@ Public Class Form1
             lblLevelingReason.ForeColor = If(status.AgentGuardrailTriggered, Color.FromArgb(255, 160, 160), Color.Gainsboro)
         End If
         If lblMapCoordinate IsNot Nothing Then
-            Dim coordText As String = If(status.MapCoordinateX >= 0 AndAlso status.MapCoordinateY >= 0, $"{status.MapCoordinateX}/{status.MapCoordinateY}", If(String.IsNullOrWhiteSpace(status.MapCoordinateText), "n/a", status.MapCoordinateText))
-            lblMapCoordinate.Text = $"Map Coordinate: {coordText} (confidence {status.MapCoordinateConfidence}%)"
+            If status.MapCoordinateX >= 0 AndAlso status.MapCoordinateY >= 0 Then
+                lblMapCoordinate.Text = $"Coordinates X axis: {status.MapCoordinateX:000} | Coordinates Y axis: {status.MapCoordinateY:000} | Route node: {status.MapCoordinateX:000}/{status.MapCoordinateY:000} (confidence {status.MapCoordinateConfidence}%)"
+            Else
+                Dim rawCoordinateText As String = If(String.IsNullOrWhiteSpace(status.MapCoordinateText), "n/a", status.MapCoordinateText)
+                lblMapCoordinate.Text = $"Coordinates X axis: n/a | Coordinates Y axis: n/a | Route node waits for both 3-digit reads ({rawCoordinateText})"
+            End If
         End If
         If lblMapHeading IsNot Nothing Then
             lblMapHeading.Text = $"Map Heading: {If(String.IsNullOrWhiteSpace(status.MapHeading), "n/a", status.MapHeading)}"
         End If
         If lblMapMarker IsNot Nothing Then
-            Dim markerText As String = If(status.MapMarkerDetected, $"{status.MapMarkerX}/{status.MapMarkerY} (from coordinates)", "not available")
+            Dim markerText As String = If(status.MapMarkerDetected, $"{status.MapMarkerX}/{status.MapMarkerY} (from coordinates)", "not available (waiting for trusted X/Y coordinates)")
             lblMapMarker.Text = $"Map Marker: {markerText}"
             lblMapMarker.ForeColor = If(status.MapMarkerDetected, Color.FromArgb(255, 140, 120), Color.DimGray)
         End If
@@ -5609,8 +5752,11 @@ Public Class Form1
         cfg.ItemNtfyTopic = If(txtItemNtfyTopic IsNot Nothing, txtItemNtfyTopic.Text.Trim(), "")
         cfg.LevelingAgentEnabled = (chkLevelingAgent IsNot Nothing AndAlso chkLevelingAgent.Checked)
         cfg.LevelingPreferredMobs = ParseCommaSeparatedList(If(txtLevelingPreferredMobs IsNot Nothing, txtLevelingPreferredMobs.Text, ""))
+        cfg.LevelingStopHpEnabled = (chkLevelingStopHp Is Nothing OrElse chkLevelingStopHp.Checked)
         cfg.LevelingStopHpPercent = CInt(If(nudLevelingStopHp IsNot Nothing, nudLevelingStopHp.Value, 20D))
+        cfg.LevelingStopMpEnabled = (chkLevelingStopMp Is Nothing OrElse chkLevelingStopMp.Checked)
         cfg.LevelingStopMpPercent = CInt(If(nudLevelingStopMp IsNot Nothing, nudLevelingStopMp.Value, 10D))
+        cfg.LevelingMaxNoTargetEnabled = (chkLevelingMaxNoTarget Is Nothing OrElse chkLevelingMaxNoTarget.Checked)
         cfg.LevelingMaxNoTargetSeconds = CInt(If(nudLevelingMaxNoTargetSeconds IsNot Nothing, nudLevelingMaxNoTargetSeconds.Value, 45D))
         cfg.LevelingStopOnLowExpRate = (chkLevelingStopOnLowExp IsNot Nothing AndAlso chkLevelingStopOnLowExp.Checked)
         cfg.LevelingMinExpPerHour = CDbl(If(nudLevelingMinExpPerHour IsNot Nothing, nudLevelingMinExpPerHour.Value, DefaultLevelingMinExpPerHour))
@@ -5628,6 +5774,8 @@ Public Class Form1
         cfg.RouteRecordingEnabled = _routeRecordingActive
         cfg.RouteRecordingName = If(txtRouteRecordingName IsNot Nothing AndAlso txtRouteRecordingName.Text.Trim() <> "", txtRouteRecordingName.Text.Trim(), "jina_route")
         cfg.RouteRecordingSampleIntervalMs = CInt(If(nudRouteRecordingIntervalMs IsNot Nothing, nudRouteRecordingIntervalMs.Value, 250D))
+        cfg.RouteRecordingMinConfidencePercent = CInt(If(nudRouteRecordingMinConfidence IsNot Nothing, nudRouteRecordingMinConfidence.Value, 90D))
+        cfg.RouteRecordingMinNodeSpacing = CInt(If(nudRouteRecordingNodeSpacing IsNot Nothing, nudRouteRecordingNodeSpacing.Value, 2D))
         cfg.NavigationWaypointReachRadius = CInt(If(nudNavigationWaypointRadius IsNot Nothing, nudNavigationWaypointRadius.Value, 36D))
         cfg.NavigationMoveBurstMs = CInt(If(nudNavigationMoveBurstMs IsNot Nothing, nudNavigationMoveBurstMs.Value, 350D))
         cfg.NavigationResampleIntervalMs = CInt(If(nudNavigationResampleMs IsNot Nothing, nudNavigationResampleMs.Value, 1800D))
@@ -5635,6 +5783,7 @@ Public Class Form1
         cfg.NavigationRepathOnStuck = (chkNavigationRepathOnStuck IsNot Nothing AndAlso chkNavigationRepathOnStuck.Checked)
         cfg.ChatTranslationEnabled = (chkChatTranslationEnabled IsNot Nothing AndAlso chkChatTranslationEnabled.Checked)
         cfg.ChatTranslationOverlayEnabled = (chkChatTranslationOverlay IsNot Nothing AndAlso chkChatTranslationOverlay.Checked)
+        cfg.DisabledCalibrationRegionOverlays = BuildDisabledCalibrationRegionOverlays()
         cfg.ChatTranslationTargetLanguage = GetSelectedChatTargetLanguageCode()
         cfg.ChatTranslationScanIntervalMs = CInt(If(nudChatScanMs IsNot Nothing, nudChatScanMs.Value, 700D))
         cfg.ChatTranslationMaxLines = CInt(If(nudChatMaxLines IsNot Nothing, nudChatMaxLines.Value, 6D))
@@ -5648,8 +5797,11 @@ Public Class Form1
         cfg.PartyInviteScanRect = BuildRect("party_invite_scan_rect")
         cfg.PartyInviteOkRect = BuildRect("party_invite_ok_rect")
         cfg.PartyListRect = BuildRect("party_list_rect")
-        cfg.MapRect = BuildRect("map_rect")
-        cfg.MapCoordinateRect = BuildRect("map_coordinate_rect")
+        cfg.MapRect = BuildRectOrFallback("map_rect", New RectRegion(0, 0, 1024, 768))
+        Dim legacyMapCoordinateRect As RectRegion = BuildRectOrFallback("map_coordinate_rect", BotConfig.DefaultMapCoordinateRect())
+        cfg.MapCoordinateXRect = BuildRectOrFallback("map_coordinate_x_rect", BotConfig.SplitMapCoordinateRect(legacyMapCoordinateRect, True))
+        cfg.MapCoordinateYRect = BuildRectOrFallback("map_coordinate_y_rect", BotConfig.SplitMapCoordinateRect(legacyMapCoordinateRect, False))
+        cfg.MapCoordinateRect = BotConfig.CombineMapCoordinateRects(cfg.MapCoordinateXRect, cfg.MapCoordinateYRect)
         cfg.ChatRect = BuildRect("chat_rect")
         cfg.LootScanPoints = BuildLootScanPoints()
         cfg.LootScanRect = BuildLootScanBoundingRect(cfg.LootScanPoints)
@@ -5722,17 +5874,69 @@ Public Class Form1
     End Function
 
     Private Function BuildRect(regionName As String) As RectRegion
+        Dim region As RectRegion = Nothing
+        If TryBuildRect(regionName, region) Then
+            Return region
+        End If
+        Return New RectRegion(0, 0, 1, 1)
+    End Function
+
+    Private Function BuildRectOrFallback(regionName As String, fallback As RectRegion) As RectRegion
+        Dim region As RectRegion = Nothing
+        If TryBuildRect(regionName, region) Then
+            Return region
+        End If
+
+        Dim source As RectRegion = If(fallback, New RectRegion(0, 0, 1, 1))
+        Return New RectRegion(source.X, source.Y, Math.Max(1, source.W), Math.Max(1, source.H))
+    End Function
+
+    Private Function TryBuildRect(regionName As String, ByRef region As RectRegion) As Boolean
         For Each row As DataGridViewRow In dgvRegions.Rows
             Dim name As String = SafeCell(row, "Region", "").ToLowerInvariant()
             If name = regionName.ToLowerInvariant() Then
-                Return New RectRegion(
+                region = New RectRegion(
                     ParseInt(SafeCell(row, "X", "0"), 0),
                     ParseInt(SafeCell(row, "Y", "0"), 0),
                     Math.Max(1, ParseInt(SafeCell(row, "W", "1"), 1)),
                     Math.Max(1, ParseInt(SafeCell(row, "H", "1"), 1)))
+                Return True
             End If
         Next
-        Return New RectRegion(0, 0, 1, 1)
+        region = Nothing
+        Return False
+    End Function
+
+    Private Function BuildDisabledCalibrationRegionOverlays() As List(Of String)
+        Dim disabled As New List(Of String)()
+        If dgvRegions Is Nothing Then
+            Return disabled
+        End If
+
+        For Each row As DataGridViewRow In dgvRegions.Rows
+            If row.IsNewRow Then
+                Continue For
+            End If
+
+            Dim regionName As String = SafeCell(row, "Region", "").Trim()
+            If regionName = "" Then
+                Continue For
+            End If
+
+            Dim enabled As Boolean = True
+            If dgvRegions.Columns.Contains("Enabled") Then
+                Dim raw As Object = row.Cells("Enabled").Value
+                If raw IsNot Nothing Then
+                    Boolean.TryParse(raw.ToString(), enabled)
+                End If
+            End If
+
+            If Not enabled Then
+                disabled.Add(regionName)
+            End If
+        Next
+
+        Return disabled
     End Function
 
     Private Function BuildLootScanPoints() As List(Of LootScanPoint)
@@ -5790,6 +5994,41 @@ Public Class Form1
     Private Shared Function CloneLootScanPoints(points As IEnumerable(Of LootScanPoint)) As List(Of LootScanPoint)
         Dim source As IEnumerable(Of LootScanPoint) = If(points, Enumerable.Empty(Of LootScanPoint)())
         Return source.Where(Function(pt) pt IsNot Nothing).Select(Function(pt) New LootScanPoint(pt.X, pt.Y)).ToList()
+    End Function
+
+    Private Shared Function CloneRectRegion(region As RectRegion) As RectRegion
+        If region Is Nothing Then
+            Return New RectRegion(0, 0, 1, 1)
+        End If
+        Return New RectRegion(region.X, region.Y, Math.Max(1, region.W), Math.Max(1, region.H))
+    End Function
+
+    Private Shared Function SameRegion(a As RectRegion, b As RectRegion) As Boolean
+        Return a IsNot Nothing AndAlso b IsNot Nothing AndAlso a.X = b.X AndAlso a.Y = b.Y AndAlso a.W = b.W AndAlso a.H = b.H
+    End Function
+
+    Private Shared Function ShouldSplitLegacyMapCoordinateRect(cfg As BotConfig) As Boolean
+        If cfg Is Nothing OrElse cfg.MapCoordinateRect Is Nothing Then
+            Return False
+        End If
+
+        Dim xMissingOrDefault As Boolean = cfg.MapCoordinateXRect Is Nothing OrElse SameRegion(cfg.MapCoordinateXRect, BotConfig.DefaultMapCoordinateXRect())
+        Dim yMissingOrDefault As Boolean = cfg.MapCoordinateYRect Is Nothing OrElse SameRegion(cfg.MapCoordinateYRect, BotConfig.DefaultMapCoordinateYRect())
+        Return xMissingOrDefault AndAlso yMissingOrDefault AndAlso Not SameRegion(cfg.MapCoordinateRect, BotConfig.DefaultMapCoordinateRect())
+    End Function
+
+    Private Shared Function ResolveMapCoordinateXRect(cfg As BotConfig) As RectRegion
+        If ShouldSplitLegacyMapCoordinateRect(cfg) Then
+            Return BotConfig.SplitMapCoordinateRect(cfg.MapCoordinateRect, True)
+        End If
+        Return CloneRectRegion(If(cfg?.MapCoordinateXRect, BotConfig.DefaultMapCoordinateXRect()))
+    End Function
+
+    Private Shared Function ResolveMapCoordinateYRect(cfg As BotConfig) As RectRegion
+        If ShouldSplitLegacyMapCoordinateRect(cfg) Then
+            Return BotConfig.SplitMapCoordinateRect(cfg.MapCoordinateRect, False)
+        End If
+        Return CloneRectRegion(If(cfg?.MapCoordinateYRect, BotConfig.DefaultMapCoordinateYRect()))
     End Function
 
     Private Shared Function ParseCommaSeparatedList(raw As String) As List(Of String)
@@ -5894,9 +6133,12 @@ Public Class Form1
 
     Private Sub SaveRouteRecordingClicked(sender As Object, e As EventArgs)
         Dim cfg As BotConfig = BuildConfig()
-        Dim savedPath As String = _fullEngine.SaveRecordedRoute(cfg)
+        Dim tableSamples As List(Of NavigationRouteSample) = ReadBreadcrumbSamplesFromGrid()
+        Dim savedPath As String = If(tableSamples.Count >= 2,
+            _fullEngine.SaveRecordedRouteSamples(cfg, tableSamples),
+            _fullEngine.SaveRecordedRoute(cfg))
         If String.IsNullOrWhiteSpace(savedPath) Then
-            AppendLog("Recorded route save failed. Make sure recording mode captured enough coordinate samples first.")
+            AppendLog("Recorded route save failed. Add at least two valid X/Y breadcrumb rows or record enough coordinate samples first.")
             Return
         End If
 
@@ -5907,8 +6149,71 @@ Public Class Form1
         SavePersistedListState(False)
     End Sub
 
+    Private Sub AddManualRouteNodeClicked(sender As Object, e As EventArgs)
+        If dgvBreadcrumbs Is Nothing Then
+            Return
+        End If
+
+        _breadcrumbsManualEditMode = True
+        AppendBreadcrumbRow(CInt(nudManualRouteNodeX.Value), CInt(nudManualRouteNodeY.Value), "manual " & DateTime.Now.ToString("HH:mm:ss"))
+        AppendLog($"Manual route node added: X={CInt(nudManualRouteNodeX.Value):000}, Y={CInt(nudManualRouteNodeY.Value):000}.")
+    End Sub
+
+    Private Sub DeleteManualBreadcrumbClicked(sender As Object, e As EventArgs)
+        If dgvBreadcrumbs Is Nothing OrElse dgvBreadcrumbs.SelectedRows.Count = 0 Then
+            AppendLog("Select a breadcrumb row first.")
+            Return
+        End If
+
+        _breadcrumbsManualEditMode = True
+        For Each row As DataGridViewRow In dgvBreadcrumbs.SelectedRows
+            If Not row.IsNewRow Then
+                dgvBreadcrumbs.Rows.Remove(row)
+            End If
+        Next
+        RenumberBreadcrumbRows()
+    End Sub
+
+    Private Sub ClearManualBreadcrumbsClicked(sender As Object, e As EventArgs)
+        If dgvBreadcrumbs Is Nothing Then
+            Return
+        End If
+
+        _breadcrumbsManualEditMode = True
+        dgvBreadcrumbs.Rows.Clear()
+        AppendLog("Breadcrumb table cleared for manual route entry.")
+    End Sub
+
+    Private Sub BreadcrumbsGridEdited(sender As Object, e As EventArgs)
+        If _updatingBreadcrumbsGrid Then
+            Return
+        End If
+
+        _breadcrumbsManualEditMode = True
+        RenumberBreadcrumbRows()
+    End Sub
+
+    Private Sub BreadcrumbsGridUserAddedRow(sender As Object, e As DataGridViewRowEventArgs)
+        If _updatingBreadcrumbsGrid Then
+            Return
+        End If
+
+        _breadcrumbsManualEditMode = True
+        RenumberBreadcrumbRows()
+    End Sub
+
+    Private Sub BreadcrumbsGridUserDeletedRow(sender As Object, e As DataGridViewRowEventArgs)
+        If _updatingBreadcrumbsGrid Then
+            Return
+        End If
+
+        _breadcrumbsManualEditMode = True
+        RenumberBreadcrumbRows()
+    End Sub
+
     Private Sub StartRouteRecordingClicked(sender As Object, e As EventArgs)
         _routeRecordingActive = True
+        _breadcrumbsManualEditMode = False
         ' Auto-enable navigation if not already enabled (needed for coordinate OCR)
         If chkNavigationEnabled IsNot Nothing AndAlso Not chkNavigationEnabled.Checked Then
             chkNavigationEnabled.Checked = True
@@ -5949,20 +6254,99 @@ Public Class Form1
     Private Sub UpdateBreadcrumbsGrid(samples As List(Of NavigationRouteSample))
         If dgvBreadcrumbs Is Nothing Then Return
         Dim src As List(Of NavigationRouteSample) = If(samples, New List(Of NavigationRouteSample)())
-        ' Only update if count changed to avoid flicker during editing
-        If dgvBreadcrumbs.RowCount = src.Count AndAlso Not _routeRecordingActive Then
+        If _breadcrumbsManualEditMode AndAlso Not _routeRecordingActive Then
             Return
         End If
+        ' Only update if count changed to avoid flicker during editing
+        If CountBreadcrumbDataRows() = src.Count AndAlso Not _routeRecordingActive Then
+            Return
+        End If
+        _updatingBreadcrumbsGrid = True
         dgvBreadcrumbs.SuspendLayout()
         dgvBreadcrumbs.Rows.Clear()
         For i As Integer = 0 To src.Count - 1
-            dgvBreadcrumbs.Rows.Add((i + 1).ToString(), src(i).X.ToString(), src(i).Y.ToString(), src(i).CapturedAtUtc.ToLocalTime().ToString("HH:mm:ss.fff"))
+            dgvBreadcrumbs.Rows.Add((i + 1).ToString(), src(i).X.ToString("000"), src(i).Y.ToString("000"), src(i).CapturedAtUtc.ToLocalTime().ToString("HH:mm:ss.fff"))
         Next
         If dgvBreadcrumbs.Rows.Count > 0 Then
             dgvBreadcrumbs.FirstDisplayedScrollingRowIndex = dgvBreadcrumbs.Rows.Count - 1
         End If
         dgvBreadcrumbs.ResumeLayout()
+        _updatingBreadcrumbsGrid = False
     End Sub
+
+    Private Sub AppendBreadcrumbRow(x As Integer, y As Integer, capturedAt As String)
+        If dgvBreadcrumbs Is Nothing Then
+            Return
+        End If
+
+        _updatingBreadcrumbsGrid = True
+        dgvBreadcrumbs.Rows.Add((CountBreadcrumbDataRows() + 1).ToString(), x.ToString("000"), y.ToString("000"), capturedAt)
+        If dgvBreadcrumbs.Rows.Count > 0 Then
+            dgvBreadcrumbs.FirstDisplayedScrollingRowIndex = Math.Max(0, dgvBreadcrumbs.Rows.Count - 1)
+        End If
+        _updatingBreadcrumbsGrid = False
+    End Sub
+
+    Private Function CountBreadcrumbDataRows() As Integer
+        If dgvBreadcrumbs Is Nothing Then
+            Return 0
+        End If
+
+        Dim count As Integer = 0
+        For Each row As DataGridViewRow In dgvBreadcrumbs.Rows
+            If Not row.IsNewRow Then
+                count += 1
+            End If
+        Next
+        Return count
+    End Function
+
+    Private Sub RenumberBreadcrumbRows()
+        If dgvBreadcrumbs Is Nothing Then
+            Return
+        End If
+
+        _updatingBreadcrumbsGrid = True
+        Dim idx As Integer = 1
+        For Each row As DataGridViewRow In dgvBreadcrumbs.Rows
+            If row.IsNewRow Then
+                Continue For
+            End If
+            row.Cells("Idx").Value = idx.ToString()
+            If String.IsNullOrWhiteSpace(Convert.ToString(row.Cells("At").Value)) Then
+                row.Cells("At").Value = "manual"
+            End If
+            idx += 1
+        Next
+        _updatingBreadcrumbsGrid = False
+    End Sub
+
+    Private Function ReadBreadcrumbSamplesFromGrid() As List(Of NavigationRouteSample)
+        Dim samples As New List(Of NavigationRouteSample)()
+        If dgvBreadcrumbs Is Nothing Then
+            Return samples
+        End If
+
+        For Each row As DataGridViewRow In dgvBreadcrumbs.Rows
+            If row.IsNewRow Then
+                Continue For
+            End If
+
+            Dim x As Integer
+            Dim y As Integer
+            If Integer.TryParse(Convert.ToString(row.Cells("X").Value).Trim(), x) AndAlso
+               Integer.TryParse(Convert.ToString(row.Cells("Y").Value).Trim(), y) AndAlso
+               x >= 0 AndAlso x <= 999 AndAlso y >= 0 AndAlso y <= 999 Then
+                samples.Add(New NavigationRouteSample With {
+                    .X = x,
+                    .Y = y,
+                    .CapturedAtUtc = DateTime.UtcNow.AddMilliseconds(samples.Count)
+                })
+            End If
+        Next
+
+        Return samples
+    End Function
 
     Private Sub ReplayRouteClicked(sender As Object, e As EventArgs)
         Dim routeName As String = ExtractRecordedRouteName(If(cboRecordedRoute Is Nothing, Nothing, cboRecordedRoute.SelectedItem))
@@ -5977,15 +6361,18 @@ Public Class Form1
             Return
         End If
         If dgvBreadcrumbs IsNot Nothing Then
+            _breadcrumbsManualEditMode = True
+            _updatingBreadcrumbsGrid = True
             dgvBreadcrumbs.SuspendLayout()
             dgvBreadcrumbs.Rows.Clear()
             For i As Integer = 0 To nodes.Count - 1
-                dgvBreadcrumbs.Rows.Add((i + 1).ToString(), nodes(i).X.ToString("0"), nodes(i).Y.ToString("0"), nodes(i).Label)
+                dgvBreadcrumbs.Rows.Add((i + 1).ToString(), nodes(i).X.ToString("000"), nodes(i).Y.ToString("000"), nodes(i).Label)
             Next
             If dgvBreadcrumbs.Rows.Count > 0 Then
                 dgvBreadcrumbs.FirstDisplayedScrollingRowIndex = 0
             End If
             dgvBreadcrumbs.ResumeLayout()
+            _updatingBreadcrumbsGrid = False
         End If
         AppendLog($"Replaying route '{routeName}' with {nodes.Count} nodes.")
     End Sub
@@ -6524,9 +6911,19 @@ Public Class Form1
         If txtLevelingPreferredMobs IsNot Nothing Then
             txtLevelingPreferredMobs.Text = String.Join(", ", If(cfg.LevelingPreferredMobs, New List(Of String)()))
         End If
+        If chkLevelingStopHp IsNot Nothing Then
+            chkLevelingStopHp.Checked = cfg.LevelingStopHpEnabled
+        End If
         SetNumericControlValue(nudLevelingStopHp, CDec(Math.Max(1, cfg.LevelingStopHpPercent)))
+        If chkLevelingStopMp IsNot Nothing Then
+            chkLevelingStopMp.Checked = cfg.LevelingStopMpEnabled
+        End If
         SetNumericControlValue(nudLevelingStopMp, CDec(Math.Max(1, cfg.LevelingStopMpPercent)))
+        If chkLevelingMaxNoTarget IsNot Nothing Then
+            chkLevelingMaxNoTarget.Checked = cfg.LevelingMaxNoTargetEnabled
+        End If
         SetNumericControlValue(nudLevelingMaxNoTargetSeconds, CDec(Math.Max(5, cfg.LevelingMaxNoTargetSeconds)))
+        UpdateLevelingGuardrailToggleUi()
         If chkLevelingStopOnLowExp IsNot Nothing Then
             chkLevelingStopOnLowExp.Checked = cfg.LevelingStopOnLowExpRate
         End If
@@ -6550,6 +6947,8 @@ Public Class Form1
         _routeRecordingActive = cfg.RouteRecordingEnabled
         UpdateRouteRecordingButtonStates()
         SetNumericControlValue(nudRouteRecordingIntervalMs, CDec(Math.Max(100, cfg.RouteRecordingSampleIntervalMs)))
+        SetNumericControlValue(nudRouteRecordingMinConfidence, CDec(Math.Max(0, Math.Min(100, cfg.RouteRecordingMinConfidencePercent))))
+        SetNumericControlValue(nudRouteRecordingNodeSpacing, CDec(Math.Max(1, cfg.RouteRecordingMinNodeSpacing)))
         If txtRouteRecordingName IsNot Nothing Then
             txtRouteRecordingName.Text = If(String.IsNullOrWhiteSpace(cfg.RouteRecordingName), "jina_route", cfg.RouteRecordingName.Trim())
         End If
@@ -6634,9 +7033,17 @@ Public Class Form1
         UpsertRegionRow("party_invite_scan_rect", cfg.PartyInviteScanRect)
         UpsertRegionRow("party_invite_ok_rect", cfg.PartyInviteOkRect)
         UpsertRegionRow("party_list_rect", cfg.PartyListRect)
-        UpsertRegionRow("map_rect", cfg.MapRect)
-        UpsertRegionRow("map_coordinate_rect", cfg.MapCoordinateRect)
+        RemoveRegionRow("map_rect")
+        Dim mapCoordinateXRect As RectRegion = ResolveMapCoordinateXRect(cfg)
+        Dim mapCoordinateYRect As RectRegion = ResolveMapCoordinateYRect(cfg)
+        cfg.MapCoordinateXRect = mapCoordinateXRect
+        cfg.MapCoordinateYRect = mapCoordinateYRect
+        cfg.MapCoordinateRect = BotConfig.CombineMapCoordinateRects(mapCoordinateXRect, mapCoordinateYRect)
+        UpsertRegionRow("map_coordinate_x_rect", mapCoordinateXRect)
+        UpsertRegionRow("map_coordinate_y_rect", mapCoordinateYRect)
+        RemoveRegionRow("map_coordinate_rect")
         UpsertRegionRow("chat_rect", cfg.ChatRect)
+        ApplyCalibrationRegionOverlayStates(cfg)
         If txtLootScanAreaPoints IsNot Nothing Then
             Dim lootPoints As List(Of LootScanPoint) = GetEffectiveLootScanPoints(cfg)
             txtLootScanAreaPoints.Text = FormatLootScanPoints(lootPoints)
@@ -6678,6 +7085,30 @@ Public Class Form1
         UpdateMainTabIndicators()
     End Sub
 
+    Private Sub ApplyCalibrationRegionOverlayStates(cfg As BotConfig)
+        If dgvRegions Is Nothing OrElse Not dgvRegions.Columns.Contains("Enabled") Then
+            Return
+        End If
+
+        Dim disabled As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+        If cfg IsNot Nothing AndAlso cfg.DisabledCalibrationRegionOverlays IsNot Nothing Then
+            For Each regionName As String In cfg.DisabledCalibrationRegionOverlays
+                If Not String.IsNullOrWhiteSpace(regionName) Then
+                    disabled.Add(regionName.Trim())
+                End If
+            Next
+        End If
+
+        For Each row As DataGridViewRow In dgvRegions.Rows
+            If row.IsNewRow Then
+                Continue For
+            End If
+
+            Dim regionName As String = SafeCell(row, "Region", "").Trim()
+            row.Cells("Enabled").Value = Not disabled.Contains(regionName)
+        Next
+    End Sub
+
     Private Sub UpsertRegionRow(regionName As String, region As RectRegion)
         If dgvRegions Is Nothing OrElse String.IsNullOrWhiteSpace(regionName) OrElse region Is Nothing Then
             Return
@@ -6686,6 +7117,9 @@ Public Class Form1
         For Each row As DataGridViewRow In dgvRegions.Rows
             Dim name As String = SafeCell(row, "Region", "").ToLowerInvariant()
             If name = regionName.ToLowerInvariant() Then
+                If dgvRegions.Columns.Contains("Enabled") AndAlso row.Cells("Enabled").Value Is Nothing Then
+                    row.Cells("Enabled").Value = True
+                End If
                 row.Cells("X").Value = region.X.ToString()
                 row.Cells("Y").Value = region.Y.ToString()
                 row.Cells("W").Value = Math.Max(1, region.W).ToString()
@@ -6694,7 +7128,21 @@ Public Class Form1
             End If
         Next
 
-        dgvRegions.Rows.Add(regionName, region.X.ToString(), region.Y.ToString(), Math.Max(1, region.W).ToString(), Math.Max(1, region.H).ToString())
+        dgvRegions.Rows.Add(True, regionName, region.X.ToString(), region.Y.ToString(), Math.Max(1, region.W).ToString(), Math.Max(1, region.H).ToString())
+    End Sub
+
+    Private Sub RemoveRegionRow(regionName As String)
+        If dgvRegions Is Nothing OrElse String.IsNullOrWhiteSpace(regionName) Then
+            Return
+        End If
+
+        For i As Integer = dgvRegions.Rows.Count - 1 To 0 Step -1
+            Dim row As DataGridViewRow = dgvRegions.Rows(i)
+            Dim name As String = SafeCell(row, "Region", "").ToLowerInvariant()
+            If name = regionName.ToLowerInvariant() Then
+                dgvRegions.Rows.RemoveAt(i)
+            End If
+        Next
     End Sub
 
     Private Shared Sub SetNumericControlValue(control As NumericUpDown, rawValue As Decimal)
