@@ -558,8 +558,8 @@ Public Class BotEngine
     Private Const TargetNameConfirmMinGapMs As Integer = 120
     Private Const TargetNameConfirmRequiredCount As Integer = 2
     Private Const ExpRateSampleMs As Integer = 60000
-    Private Const ExpOcrMinIntervalMs As Integer = 900
-    Private Const RupiahsOcrMinIntervalMs As Integer = 900
+    Private Const ExpOcrMinIntervalMs As Integer = 5000
+    Private Const RupiahsOcrMinIntervalMs As Integer = 5000
     Private Const MapCoordinateOcrMinIntervalMs As Integer = 900
     Private Const MapMarkerScanMinIntervalMs As Integer = 250
     Private Const NavigationMapToggleCooldownMs As Integer = 450
@@ -593,6 +593,7 @@ Public Class BotEngine
     Private Const StopKeyRepeatGapMs As Integer = 10
     Private Const ForegroundInputSettleMs As Integer = 15
     Private Const CombatLockLostTargetConfirmFrames As Integer = 4
+    Private Const LootScannerIntervalMs As Integer = 10000
 
     Private ReadOnly _sync As New Object()
     Private ReadOnly _frameSync As New Object()
@@ -620,6 +621,8 @@ Public Class BotEngine
     Private _noDamageAttackCount As Integer = 0
     Private _lastMobNameRead As DateTime = DateTime.MinValue
     Private _cachedMobName As String = ""
+    Private _mobNameOcrStartedAt As DateTime = DateTime.MinValue
+    Private _mobNameOcrTask As Task(Of String) = Nothing
     Private _lastMobHpTextScan As DateTime = DateTime.MinValue
     Private _mobHpTextOcrTask As Task(Of String) = Nothing
     Private _lastMobHpText As String = ""
@@ -829,6 +832,8 @@ Public Class BotEngine
             _noDamageAttackCount = 0
             _lastMobNameRead = DateTime.MinValue
             _cachedMobName = ""
+            _mobNameOcrStartedAt = DateTime.MinValue
+            _mobNameOcrTask = Nothing
             _lastMobHpTextScan = DateTime.MinValue
             _mobHpTextOcrTask = Nothing
             _lastMobHpText = ""
@@ -962,6 +967,7 @@ Public Class BotEngine
             _lootScannerCaptureRequestedAt = DateTime.MinValue
             _lootScannerAltHeld = False
             _lootScannerProcessingTask = Nothing
+            _lastKeyTime.Clear()
             _agentState = If(_config.LevelingAgentEnabled, LevelingAgentState.Searching, LevelingAgentState.Disabled)
             _agentReason = ""
             _agentGuardrailTriggered = False
@@ -1312,14 +1318,14 @@ Public Class BotEngine
             Dim hpPct As Double = ComputeBarPercent(frame, hpRegion, True)
             Dim mpPct As Double = ComputeBarPercent(frame, mpRegion, False)
             Dim mobHpPct As Double = ComputeBarPercent(frame, mobHpRegion, True)
-            Dim expPct As Double = ReadPranaExpPercent(frame, pranaExpRegion)
-            Dim rupiahsTotal As Long = ReadRupiahsTotal(frame, rupiahsRegion)
+            Dim expPct As Double = GetCachedPranaExpPercent()
+            Dim rupiahsTotal As Long = GetCachedRupiahsTotal()
             Dim captureGlitch As Boolean = IsLikelyVisionCaptureGlitch(frame, hpRegion, mpRegion, hpPct, mpPct)
 
             Dim activeHwnd As IntPtr = NativeMethods.GetForegroundWindow()
             TryHandlePendingLootScannerCapture(cfg, hwnd, activeHwnd, frame, lootScanPolygon, now)
             TryHandlePendingLootPickupVerification(cfg, hwnd, frame, now, mobNameRegion)
-            If cfg.LootScannerEnabled AndAlso activeHwnd = hwnd AndAlso (Not _lootScannerCapturePending) AndAlso (now - _lastRightAltAt).TotalMilliseconds >= 10000 Then
+            If cfg.LootScannerEnabled AndAlso activeHwnd = hwnd AndAlso (Not _lootScannerCapturePending) AndAlso (now - _lastRightAltAt).TotalMilliseconds >= LootScannerIntervalMs Then
                 BeginLootScannerCapture(now)
             End If
             Dim monsterFilterActive As Boolean = (cfg.DeniedMobs IsNot Nothing AndAlso cfg.DeniedMobs.Count > 0)
@@ -1333,6 +1339,8 @@ Public Class BotEngine
                 ' Avoid stale-name attacks after target switches.
                 _cachedMobName = ""
                 _lastMobNameRead = DateTime.MinValue
+                _mobNameOcrStartedAt = DateTime.MinValue
+                _mobNameOcrTask = Nothing
                 mobName = ""
             End If
             ApplyVisionStabilityFilter(hpPct, mpPct, mobHpPct, mobName, captureGlitch)
@@ -1597,11 +1605,12 @@ Public Class BotEngine
                         reason = "Current mob still considered engaged. Waiting for death confirmation before retarget."
                     End If
                 Else
+                    Dim firstRetargetReady As Boolean = _lastNormalRetarget = DateTime.MinValue AndAlso _lastForcedRetarget = DateTime.MinValue AndAlso _lastTargetWindowSeen = DateTime.MinValue
                     If (Not filterBlockedRetarget) AndAlso _lastTargetWindowSeen <> DateTime.MinValue AndAlso (now - _lastTargetWindowSeen).TotalMilliseconds < retargetDelayMs Then
                         If String.IsNullOrWhiteSpace(reason) Then
                             reason = $"Target window just changed. Waiting {retargetDelayMs}ms before retarget."
                         End If
-                    ElseIf _noTargetBeganAt <> DateTime.MinValue AndAlso (now - _noTargetBeganAt).TotalMilliseconds < noTargetStableMs Then
+                    ElseIf (Not firstRetargetReady) AndAlso _noTargetBeganAt <> DateTime.MinValue AndAlso (now - _noTargetBeganAt).TotalMilliseconds < noTargetStableMs Then
                         If String.IsNullOrWhiteSpace(reason) Then
                             reason = $"No target not stable yet. Waiting {noTargetStableMs}ms."
                         End If
@@ -1663,6 +1672,11 @@ Public Class BotEngine
             UpdateLevelingAgentRuntimeState(cfg, now, hpPct, mpPct, targetWindowVisible, targetValid, actionSent, forcedRetarget OrElse unreachableTriggered, unreachableLockActive, reason)
 
             TryQueueHardcodedVisionStats(cfg, hwnd, now, frame, hpRegion, mpRegion, hpPct, mpPct, mobName)
+
+            expPct = ReadPranaExpPercent(frame, pranaExpRegion)
+            rupiahsTotal = ReadRupiahsTotal(frame, rupiahsRegion)
+            expPerHour = UpdateExpRate(expPct, now)
+            rupiahsPerHour = UpdateRupiahsRate(rupiahsTotal, now)
 
             SetStatus(Sub(s)
                           s.WindowFound = True
@@ -4114,28 +4128,54 @@ Public Class BotEngine
             Return ""
         End If
 
-        If (Not forceRefresh) AndAlso (now - _lastMobNameRead).TotalMilliseconds < 650 Then
+        If _mobNameOcrTask IsNot Nothing AndAlso _mobNameOcrTask.IsCompleted Then
+            Try
+                Dim candidate As String = If(_mobNameOcrTask.Result, "").Trim()
+                If Not String.IsNullOrWhiteSpace(candidate) Then
+                    _cachedMobName = candidate
+                ElseIf (now - _lastMobNameRead).TotalMilliseconds > 1200 Then
+                    _cachedMobName = ""
+                End If
+                _lastMobNameRead = now
+            Catch
+            End Try
+            _mobNameOcrTask = Nothing
+        End If
+
+        If _mobNameOcrTask IsNot Nothing Then
+            Return _cachedMobName
+        End If
+
+        If (Not forceRefresh) AndAlso _mobNameOcrStartedAt <> DateTime.MinValue AndAlso (now - _mobNameOcrStartedAt).TotalMilliseconds < 650 Then
             Return _cachedMobName
         End If
 
         Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
+        If rect.Width <= 1 OrElse rect.Height <= 1 Then
+            Return _cachedMobName
+        End If
+
         Dim crop As New Bitmap(Math.Max(1, rect.Width), Math.Max(1, rect.Height), PixelFormat.Format24bppRgb)
         Try
             Using g As Graphics = Graphics.FromImage(crop)
                 g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
             End Using
 
-            Dim candidate As String = OcrReader.ReadName(crop)
-            If Not String.IsNullOrWhiteSpace(candidate) Then
-                _cachedMobName = candidate.Trim()
-            ElseIf (now - _lastMobNameRead).TotalMilliseconds > 1200 Then
-                _cachedMobName = ""
-            End If
-            _lastMobNameRead = now
+            _mobNameOcrStartedAt = now
+            _mobNameOcrTask = Task.Run(
+                Function()
+                    Try
+                        Return OcrReader.ReadName(crop)
+                    Finally
+                        crop.Dispose()
+                    End Try
+                End Function)
             Return _cachedMobName
-        Finally
+        Catch
             crop.Dispose()
         End Try
+
+        Return _cachedMobName
     End Function
 
     Private Shared Function HasHighMaxHpAttackAction(cfg As BotConfig) As Boolean
@@ -4291,8 +4331,7 @@ Public Class BotEngine
         _pendingLootPickupVerifyAt = now.AddMilliseconds(Math.Max(120, cfg.LootPickupVerifyDelayMs))
     End Sub
 
-    Private Function ReadPranaExpPercent(frame As Bitmap, pranaExpRegion As RectRegion) As Double
-        Dim now As DateTime = DateTime.UtcNow
+    Private Function GetCachedPranaExpPercent() As Double
         If _expOcrTask IsNot Nothing AndAlso _expOcrTask.IsCompleted Then
             Try
                 Dim parsed As Double = _expOcrTask.Result
@@ -4303,6 +4342,13 @@ Public Class BotEngine
             End Try
             _expOcrTask = Nothing
         End If
+
+        Return _lastExpPercent
+    End Function
+
+    Private Function ReadPranaExpPercent(frame As Bitmap, pranaExpRegion As RectRegion) As Double
+        Dim now As DateTime = DateTime.UtcNow
+        GetCachedPranaExpPercent()
 
         If _expOcrTask IsNot Nothing Then
             Return _lastExpPercent
@@ -4378,8 +4424,7 @@ Public Class BotEngine
         Return _lastExpPerHour
     End Function
 
-    Private Function ReadRupiahsTotal(frame As Bitmap, rupiahsRegion As RectRegion) As Long
-        Dim now As DateTime = DateTime.UtcNow
+    Private Function GetCachedRupiahsTotal() As Long
         If _rupiahsOcrTask IsNot Nothing AndAlso _rupiahsOcrTask.IsCompleted Then
             Try
                 Dim parsed As Long = _rupiahsOcrTask.Result
@@ -4390,6 +4435,13 @@ Public Class BotEngine
             End Try
             _rupiahsOcrTask = Nothing
         End If
+
+        Return _lastRupiahsTotal
+    End Function
+
+    Private Function ReadRupiahsTotal(frame As Bitmap, rupiahsRegion As RectRegion) As Long
+        Dim now As DateTime = DateTime.UtcNow
+        GetCachedRupiahsTotal()
 
         If _rupiahsOcrTask IsNot Nothing Then
             Return _lastRupiahsTotal

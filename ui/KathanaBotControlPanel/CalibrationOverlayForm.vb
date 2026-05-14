@@ -98,7 +98,9 @@ Public Class CalibrationOverlayForm
         End If
 
         e.Graphics.SmoothingMode = SmoothingMode.None
-        DrawLootScanArea(e.Graphics, "loot_scan_area", GetLootScanPoints(), Color.FromArgb(80, 70, 255, 255), "Loot Scan")
+        If IsLootScanOverlayEnabled() Then
+            DrawLootScanArea(e.Graphics, "loot_scan_area", GetLootScanPoints(), Color.FromArgb(80, 70, 255, 255), "Loot Scan")
+        End If
         DrawRegion(e.Graphics, "hp_bar", _currentConfig.HpBar, Color.FromArgb(170, 220, 70, 70), "HP")
         DrawRegion(e.Graphics, "mp_bar", _currentConfig.MpBar, Color.FromArgb(170, 70, 130, 240), "MP")
         DrawRegion(e.Graphics, "mob_name_rect", _currentConfig.MobNameRect, Color.FromArgb(170, 250, 230, 80), "Mob Name")
@@ -201,7 +203,7 @@ Public Class CalibrationOverlayForm
             Return
         End If
 
-        Dim lootVertexIndex As Integer = HitTestLootScanHandle(e.Location)
+        Dim lootVertexIndex As Integer = If(IsLootScanOverlayEnabled(), HitTestLootScanHandle(e.Location), -1)
         If lootVertexIndex >= 0 Then
             _selectedRegion = "loot_scan_area"
             _dragMode = DragMode.MoveLootScanVertex
@@ -214,7 +216,7 @@ Public Class CalibrationOverlayForm
             Return
         End If
 
-        If IsPointInLootScanArea(e.Location) Then
+        If IsLootScanOverlayEnabled() AndAlso IsPointInLootScanArea(e.Location) Then
             _selectedRegion = "loot_scan_area"
             _dragMode = DragMode.MoveLootScanArea
             _dragStart = e.Location
@@ -294,11 +296,11 @@ Public Class CalibrationOverlayForm
             Return
         End If
 
-        If HitTestLootScanHandle(e.Location) >= 0 Then
+        If IsLootScanOverlayEnabled() AndAlso HitTestLootScanHandle(e.Location) >= 0 Then
             Cursor = Cursors.SizeAll
             Return
         End If
-        If IsPointInLootScanArea(e.Location) Then
+        If IsLootScanOverlayEnabled() AndAlso IsPointInLootScanArea(e.Location) Then
             Cursor = Cursors.SizeAll
             Return
         End If
@@ -362,6 +364,10 @@ Public Class CalibrationOverlayForm
         End If
 
         Return _currentConfig.IsCalibrationRegionOverlayEnabled(regionKey)
+    End Function
+
+    Private Function IsLootScanOverlayEnabled() As Boolean
+        Return _currentConfig IsNot Nothing AndAlso _currentConfig.LootScannerEnabled
     End Function
 
     Private Function GetRegionRect(regionKey As String) As System.Drawing.Rectangle
@@ -564,6 +570,7 @@ Public Class CalibrationOverlayForm
         cfg.ChatRect = CloneRegion(src.ChatRect)
         cfg.LootScanRect = CloneRegion(src.LootScanRect)
         cfg.LootScanPoints = CloneLootScanPoints(src.LootScanPoints)
+        cfg.LootScannerEnabled = src.LootScannerEnabled
         cfg.DisabledCalibrationRegionOverlays = If(src.DisabledCalibrationRegionOverlays, New List(Of String)()).ToList()
         Return cfg
     End Function

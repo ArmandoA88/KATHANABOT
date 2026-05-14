@@ -6,6 +6,7 @@
     <RootNamespace>KathanaBotControlPanel</RootNamespace>
     <StartupObject>Sub Main</StartupObject>
     <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>assets\KathanaBot.ico</ApplicationIcon>
     <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
 

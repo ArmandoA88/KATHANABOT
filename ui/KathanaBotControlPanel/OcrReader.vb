@@ -23,8 +23,37 @@ Public NotInheritable Class OcrReader
     Private Shared _engine As OcrEngine
     Private Shared _initAttempted As Boolean = False
     Private Shared _lastError As String = ""
+    Private Shared _prewarmStarted As Integer = 0
 
     Private Sub New()
+    End Sub
+
+    Public Shared Sub PrewarmAsync()
+        If Interlocked.Exchange(_prewarmStarted, 1) = 1 Then
+            Return
+        End If
+
+        Dim worker As New Thread(
+            Sub()
+                Try
+                    Dim engine As OcrEngine = GetEngine()
+                    If engine Is Nothing Then
+                        Return
+                    End If
+
+                    Using bmp As New Bitmap(8, 8, PixelFormat.Format24bppRgb)
+                        Using g As Graphics = Graphics.FromImage(bmp)
+                            g.Clear(Color.White)
+                        End Using
+                        ReadRawTextAsync(engine, bmp).GetAwaiter().GetResult()
+                    End Using
+                Catch ex As Exception
+                    SetLastError(ex.Message)
+                End Try
+            End Sub)
+        worker.IsBackground = True
+        worker.SetApartmentState(ApartmentState.STA)
+        worker.Start()
     End Sub
 
     Public Shared Function ReadName(source As Bitmap) As String

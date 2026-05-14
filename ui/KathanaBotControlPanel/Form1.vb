@@ -207,6 +207,7 @@ Public Class Form1
     Private btnRetargetNow As Button
     Private btnPartyAutoAccept As Button
     Private btnPartyAsk As Button
+    Private btnVisionLootScanner As Button
     Private btnLootScanner As Button
     Private tblNotificationSettings As TableLayoutPanel
     Private cboNotificationProvider As ComboBox
@@ -296,6 +297,8 @@ Public Class Form1
     Private Const StartupNotificationWarmupSeconds As Integer = 20
     Private Const NotificationProviderNtfy As String = "ntfy"
     Private Const NotificationProviderDiscord As String = "discord"
+    Private Shared ReadOnly StatusAliveColor As Color = Color.FromArgb(0, 230, 65)
+    Private Shared ReadOnly StatusStoppedOrDeadColor As Color = Color.FromArgb(235, 0, 0)
     Private Const DefaultNtfyTopicName As String = "Katana12345"
     Private Const DefaultPartyAskCommand As String = "add"
     Private Const DefaultLootNameMatchThresholdPercent As Integer = 80
@@ -313,6 +316,36 @@ Public Class Form1
     Private ReadOnly _chatSeenLineOrder As New Queue(Of String)()
     Private ReadOnly _chatOverlayEntries As New List(Of ChatOverlayLine)()
     Private _lastChatOcrText As String = ""
+    Private _taskbarList As ITaskbarList3 = Nothing
+    Private _taskbarUnavailable As Boolean = False
+
+    Private Enum TaskbarProgressState
+        NoProgress = 0
+        Indeterminate = 1
+        Normal = 2
+        [Error] = 4
+        Paused = 8
+    End Enum
+
+    <ComImport>
+    <Guid("56FDF344-FD6D-11D0-958A-006097C9A090")>
+    <ClassInterface(ClassInterfaceType.None)>
+    Private Class TaskbarList
+    End Class
+
+    <ComImport>
+    <Guid("EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF")>
+    <InterfaceType(ComInterfaceType.InterfaceIsIUnknown)>
+    Private Interface ITaskbarList3
+        Sub HrInit()
+        Sub AddTab(hwnd As IntPtr)
+        Sub DeleteTab(hwnd As IntPtr)
+        Sub ActivateTab(hwnd As IntPtr)
+        Sub SetActiveAlt(hwnd As IntPtr)
+        Sub MarkFullscreenWindow(hwnd As IntPtr, <MarshalAs(UnmanagedType.Bool)> fullscreen As Boolean)
+        Sub SetProgressValue(hwnd As IntPtr, completed As ULong, total As ULong)
+        Sub SetProgressState(hwnd As IntPtr, state As TaskbarProgressState)
+    End Interface
 
     Private Class GridThemeSnapshot
         Public Property BackgroundColor As Color
@@ -460,6 +493,7 @@ Public Class Form1
         Me.DoubleBuffered = True
         SetStyle(ControlStyles.AllPaintingInWmPaint Or ControlStyles.OptimizedDoubleBuffer Or ControlStyles.UserPaint, True)
         UpdateStyles()
+        ApplyApplicationIcon()
         BuildUi()
         SeedDefaults()
         LoadPersistedListState()
@@ -490,6 +524,18 @@ Public Class Form1
         If chkLevelingAgent IsNot Nothing Then
             chkLevelingAgent.Checked = False
         End If
+    End Sub
+
+    Private Sub ApplyApplicationIcon()
+        Try
+            Dim appIcon As Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath)
+            If appIcon IsNot Nothing Then
+                Icon = DirectCast(appIcon.Clone(), Icon)
+                ShowIcon = True
+                appIcon.Dispose()
+            End If
+        Catch
+        End Try
     End Sub
 
     Private Sub SetupLiveConfigBindings()
@@ -857,12 +903,8 @@ Public Class Form1
         If txtLootScanAreaPoints IsNot Nothing Then
             AddHandler txtLootScanAreaPoints.TextChanged, AddressOf PersistListSettingsChanged
         End If
-        AddHandler dgvCombat.CurrentCellDirtyStateChanged,
-            Sub(_s As Object, _e As EventArgs)
-                If dgvCombat.IsCurrentCellDirty Then
-                    dgvCombat.CommitEdit(DataGridViewDataErrorContexts.Commit)
-                End If
-            End Sub
+        AddHandler dgvCombat.CurrentCellDirtyStateChanged, AddressOf CombatGridCurrentCellDirtyStateChanged
+        AddHandler dgvCombat.EditingControlShowing, AddressOf CombatGridEditingControlShowing
         If btnSaveRouteRecording IsNot Nothing Then
             AddHandler btnSaveRouteRecording.Click, AddressOf SaveRouteRecordingClicked
         End If
@@ -1964,12 +2006,22 @@ Public Class Form1
         dgvRegions.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "H"})
         regionLayout.Controls.Add(dgvRegions, 0, 1)
 
-        Dim lootAreaPanel As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1, .Margin = New Padding(0, 6, 0, 0)}
+        Dim lootAreaPanel As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 1, .Margin = New Padding(0, 6, 0, 0)}
         lootAreaPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 150.0F))
         lootAreaPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        lootAreaPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 190.0F))
         lootAreaPanel.Controls.Add(New Label() With {.Text = "Loot Scan Area", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
         txtLootScanAreaPoints = New TextBox() With {.Dock = DockStyle.Fill}
         lootAreaPanel.Controls.Add(txtLootScanAreaPoints, 1, 0)
+        btnVisionLootScanner = New Button() With {
+            .Text = If(_lootScannerEnabled, "Loot Scan Area: ON", "Loot Scan Area: OFF"),
+            .Dock = DockStyle.Fill,
+            .Margin = New Padding(8, 0, 0, 0),
+            .BackColor = If(_lootScannerEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
+            .ForeColor = Color.White
+        }
+        AddHandler btnVisionLootScanner.Click, AddressOf ToggleLootScannerClicked
+        lootAreaPanel.Controls.Add(btnVisionLootScanner, 2, 0)
         regionLayout.Controls.Add(lootAreaPanel, 0, 2)
         left.Controls.Add(regionGroup, 0, 1)
 
@@ -2667,7 +2719,14 @@ Public Class Form1
         Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
         layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
-        dgvCombat = New DataGridView() With {.Dock = DockStyle.Fill, .AllowUserToAddRows = False, .AllowUserToDeleteRows = False, .RowHeadersVisible = False, .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill}
+        dgvCombat = New DataGridView() With {
+            .Dock = DockStyle.Fill,
+            .AllowUserToAddRows = False,
+            .AllowUserToDeleteRows = False,
+            .RowHeadersVisible = False,
+            .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+            .EditMode = DataGridViewEditMode.EditOnEnter
+        }
         dgvCombat.Columns.Add(New DataGridViewCheckBoxColumn() With {.Name = "Enabled"})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Key", .ReadOnly = True, .FillWeight = 60.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "CooldownSec", .FillWeight = 90.0F})
@@ -2998,6 +3057,7 @@ Public Class Form1
         _partyAskEnabled = False
         _litePartyAskEnabled = False
         _lootScannerEnabled = False
+        UpdateLootScannerButtons()
         For Each key In PrimaryKeys
             dgvCombat.Rows.Add(False, key, "1", "attack", keyIndex * 10, 1, 1, 1)
             keyIndex += 1
@@ -3187,8 +3247,11 @@ Public Class Form1
 
     Protected Overrides Sub OnShown(e As EventArgs)
         MyBase.OnShown(e)
-        RefreshProcessWindowList(False, IntPtr.Zero)
         AutoStartOnLaunch()
+        RefreshProcessWindowList(False, IntPtr.Zero)
+        BeginInvoke(New Action(Sub()
+                                   MessageBox.Show(Me, Program.StartupNotice, "Notice", MessageBoxButtons.OK, MessageBoxIcon.Information)
+                               End Sub))
     End Sub
 
     Private Sub StopClicked(sender As Object, e As EventArgs)
@@ -3222,6 +3285,26 @@ Public Class Form1
             Catch
             End Try
         End If
+    End Sub
+
+    Private Sub CombatGridCurrentCellDirtyStateChanged(sender As Object, e As EventArgs)
+        If dgvCombat Is Nothing OrElse dgvCombat.CurrentCell Is Nothing OrElse Not dgvCombat.IsCurrentCellDirty Then
+            Return
+        End If
+
+        Dim column As DataGridViewColumn = dgvCombat.Columns(dgvCombat.CurrentCell.ColumnIndex)
+        If TypeOf column Is DataGridViewCheckBoxColumn OrElse TypeOf column Is DataGridViewComboBoxColumn Then
+            dgvCombat.CommitEdit(DataGridViewDataErrorContexts.Commit)
+        End If
+    End Sub
+
+    Private Sub CombatGridEditingControlShowing(sender As Object, e As DataGridViewEditingControlShowingEventArgs)
+        Dim textEditor As TextBox = TryCast(e.Control, TextBox)
+        If textEditor Is Nothing Then
+            Return
+        End If
+
+        textEditor.MaxLength = 1024
     End Sub
 
     Private Function CaptureSnapshotIntoPreview(Optional logWhenUnavailable As Boolean = True) As Boolean
@@ -3801,13 +3884,26 @@ Public Class Form1
 
     Private Sub ToggleLootScannerClicked(sender As Object, e As EventArgs)
         _lootScannerEnabled = Not _lootScannerEnabled
-        If btnLootScanner IsNot Nothing Then
-            btnLootScanner.Text = If(_lootScannerEnabled, "Loot Scanner (Alt): ON", "Loot Scanner (Alt): OFF")
-            btnLootScanner.BackColor = If(_lootScannerEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
-        End If
+        UpdateLootScannerButtons()
         PushLiveConfig()
+        If _overlayForm IsNot Nothing AndAlso Not _overlayForm.IsDisposed Then
+            _overlayForm.Invalidate()
+        End If
         SavePersistedListState(False)
         UpdateMainTabIndicators()
+    End Sub
+
+    Private Sub UpdateLootScannerButtons()
+        UpdateLootScannerButtonCore(btnVisionLootScanner, "Loot Scan Area", _lootScannerEnabled)
+        UpdateLootScannerButtonCore(btnLootScanner, "Loot Scanner (Alt)", _lootScannerEnabled)
+    End Sub
+
+    Private Shared Sub UpdateLootScannerButtonCore(target As Button, label As String, isEnabled As Boolean)
+        If target Is Nothing Then
+            Return
+        End If
+        target.Text = If(isEnabled, $"{label}: ON", $"{label}: OFF")
+        target.BackColor = If(isEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
     End Sub
 
     Private Sub UpdatePartyAskButton()
@@ -5045,6 +5141,7 @@ Public Class Form1
             _liteStatus = status
             UpdateLiteStatus(statusText, status)
             UpdateAttackButtonAppearance(False)
+            UpdateTaskbarStatusIndicator()
             Return
         End If
 
@@ -5146,6 +5243,7 @@ Public Class Form1
         HandleHpZeroAlarm(status)
         HandleWindowMissingAlarm(status)
         ApplyHealthUiTint(status.HpPercent, status.Running AndAlso status.WindowFound)
+        UpdateTaskbarStatusIndicator()
 
         If Not String.IsNullOrWhiteSpace(status.RouteRecordingLastSavedPath) AndAlso Not status.RouteRecordingLastSavedPath.Equals(_lastRouteRecordingSavedPath, StringComparison.OrdinalIgnoreCase) Then
             _lastRouteRecordingSavedPath = status.RouteRecordingLastSavedPath
@@ -6622,10 +6720,7 @@ Public Class Form1
             UpdatePartyAskButton()
 
             _lootScannerEnabled = state.LootScannerEnabled
-            If btnLootScanner IsNot Nothing Then
-                btnLootScanner.Text = If(_lootScannerEnabled, "Loot Scanner (Alt): ON", "Loot Scanner (Alt): OFF")
-                btnLootScanner.BackColor = If(_lootScannerEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
-            End If
+            UpdateLootScannerButtons()
             If txtNtfyTopic IsNot Nothing Then
                 Dim topic As String = If(state.NtfyTopic, "").Trim()
                 txtNtfyTopic.Text = If(topic = "", DefaultNtfyTopicName, topic)
@@ -6873,10 +6968,7 @@ Public Class Form1
         UpdatePartyAskButton()
 
         _lootScannerEnabled = cfg.LootScannerEnabled
-        If btnLootScanner IsNot Nothing Then
-            btnLootScanner.Text = If(_lootScannerEnabled, "Loot Scanner (Alt): ON", "Loot Scanner (Alt): OFF")
-            btnLootScanner.BackColor = If(_lootScannerEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
-        End If
+        UpdateLootScannerButtons()
         If cboNotificationProvider IsNot Nothing Then
             cboNotificationProvider.SelectedItem = NormalizeNotificationProviderName(cfg.NotificationProvider)
         End If
@@ -7462,7 +7554,7 @@ Public Class Form1
 
         If lblRunState IsNot Nothing Then
             lblRunState.Text = If(fullRunning, "FULL BOT RUNNING", "FULL BOT PAUSED")
-            lblRunState.BackColor = If(fullRunning, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+            lblRunState.BackColor = If(fullRunning, StatusAliveColor, StatusStoppedOrDeadColor)
             lblRunState.ForeColor = Color.White
         End If
         If lblFullEdition IsNot Nothing Then
@@ -7471,7 +7563,7 @@ Public Class Form1
 
         If lblLiteRunState IsNot Nothing Then
             lblLiteRunState.Text = If(liteRunning, "LITE BOT RUNNING", "LITE BOT PAUSED")
-            lblLiteRunState.BackColor = If(liteRunning, Color.FromArgb(86, 168, 123), Color.FromArgb(187, 108, 108))
+            lblLiteRunState.BackColor = If(liteRunning, StatusAliveColor, StatusStoppedOrDeadColor)
             lblLiteRunState.ForeColor = Color.White
         End If
 
@@ -7496,6 +7588,7 @@ Public Class Form1
             End If
         End If
         UpdateMainTabIndicators()
+        UpdateTaskbarStatusIndicator()
     End Sub
 
     Private Sub UpdateLiteStatus(statusText As String, status As BotStatus)
@@ -8117,21 +8210,69 @@ Public Class Form1
             Return
         End If
 
-        If Not active Then
-            pnlWindowFrame.BackColor = Color.FromArgb(55, 55, 55)
-            If pnlHealthBanner IsNot Nothing Then
-                pnlHealthBanner.BackColor = Color.FromArgb(55, 55, 55)
-            End If
-            Return
-        End If
-
         Dim safePercent As Double = If(Double.IsNaN(percent) OrElse Double.IsInfinity(percent), 100.0, percent)
         Dim bounded As Double = Math.Max(0.0, Math.Min(100.0, safePercent))
-        Dim tint As Color = HpColor(bounded)
+        Dim alive As Boolean = active AndAlso bounded > DeadZeroThreshold
+        Dim tint As Color = If(alive, StatusAliveColor, StatusStoppedOrDeadColor)
         pnlWindowFrame.BackColor = tint
         If pnlHealthBanner IsNot Nothing Then
             pnlHealthBanner.BackColor = tint
         End If
+    End Sub
+
+    Private Sub UpdateTaskbarStatusIndicator()
+        Dim runningEdition As BotEdition? = GetRunningEdition()
+        Dim active As Boolean = runningEdition.HasValue
+        Dim status As BotStatus = If(active, GetStatusForEdition(runningEdition.Value), Nothing)
+        Dim alive As Boolean =
+            active AndAlso
+            status IsNot Nothing AndAlso
+            status.Running AndAlso
+            status.WindowFound AndAlso
+            status.HpPercent > DeadZeroThreshold AndAlso
+            Not _deathNotificationLatched
+
+        If active AndAlso status IsNot Nothing Then
+            ApplyHealthUiTint(status.HpPercent, status.Running AndAlso status.WindowFound)
+        Else
+            ApplyHealthUiTint(0.0, False)
+        End If
+
+        SetTaskbarProgressState(If(alive, TaskbarProgressState.Normal, TaskbarProgressState.Error))
+    End Sub
+
+    Private Function TryGetTaskbarList() As ITaskbarList3
+        If _taskbarUnavailable Then
+            Return Nothing
+        End If
+        If _taskbarList IsNot Nothing Then
+            Return _taskbarList
+        End If
+
+        Try
+            _taskbarList = CType(New TaskbarList(), ITaskbarList3)
+            _taskbarList.HrInit()
+            Return _taskbarList
+        Catch
+            _taskbarUnavailable = True
+            _taskbarList = Nothing
+            Return Nothing
+        End Try
+    End Function
+
+    Private Sub SetTaskbarProgressState(state As TaskbarProgressState)
+        Dim taskbar As ITaskbarList3 = TryGetTaskbarList()
+        If taskbar Is Nothing OrElse IsDisposed OrElse Not IsHandleCreated Then
+            Return
+        End If
+
+        Try
+            taskbar.SetProgressState(Handle, state)
+            taskbar.SetProgressValue(Handle, 100UL, 100UL)
+        Catch
+            _taskbarUnavailable = True
+            _taskbarList = Nothing
+        End Try
     End Sub
 
     Private Sub RestoreThemeSnapshot(control As Control)
