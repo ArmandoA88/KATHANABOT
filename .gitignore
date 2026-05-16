@@ -1,6 +1,7 @@
 # Build outputs
 **/bin/
 **/obj/
+dist/
 
 # User files
 **/*.user
@@ -12,12 +13,13 @@
 # OCR runtime data can be placed here if desired
 # tessdata/
 
-# Root-level UI build artifacts copied by project target
+# Root-level UI build artifacts
 KathanaBotControlPanel.exe
 KathanaBotControlPanel.dll
 KathanaBotControlPanel.deps.json
 KathanaBotControlPanel.runtimeconfig.json
 KathanaBotControlPanel.pdb
+KathanaBotControlPanel-v*.exe
 KathanaBotControlPanel - Copy*.exe
 KathanaBotControlPanel - Copy*.dll
 KathanaBotControlPanel.deps - Copy*.json
@@ -26,6 +28,20 @@ KathanaBotControlPanel.runtimeconfig - Copy*.json
 # Standalone/self-contained publish artifacts
 KathanaBotControlPanel-standalone*.exe
 publish-standalone/
+
+# Local backup/generated files
+**/* - Copy.*
+**/*.log
+**/__pycache__/
+**/*.pyc
+*.disabled
+corehost_trace*.txt
+patch*.ps1
+patch*.py
+Automatic.exe
+
+# Obsolete Python backend
+backend/
 
 # Root-level runtime/publish binaries
 Accessibility.dll
@@ -37,3 +53,18 @@ clr*.dll
 mscor*.dll
 msquic.dll
 netstandard.dll
+
+# Root-level satellite assemblies copied from framework-dependent builds
+cs/
+de/
+es/
+fr/
+it/
+ja/
+ko/
+pl/
+pt-BR/
+ru/
+tr/
+zh-Hans/
+zh-Hant/

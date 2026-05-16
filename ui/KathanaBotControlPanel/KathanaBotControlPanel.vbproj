@@ -22,24 +22,4 @@
     <None Remove="**\* - Copy.*" />
   </ItemGroup>
 
-  <Target Name="CopyUiArtifactsToRepoRoot" AfterTargets="Build">
-    <PropertyGroup>
-      <RepoRoot>$(MSBuildProjectDirectory)\..\..\</RepoRoot>
-      <ArtifactSourceDir>$(TargetDir)</ArtifactSourceDir>
-    </PropertyGroup>
-
-    <ItemGroup>
-      <!-- Copy all first-level build outputs so runtime dependencies are present in repo root. -->
-      <UiArtifacts Include="$(ArtifactSourceDir)*.*" />
-      <!-- Remove stale app-local host files so the EXE uses the installed Desktop runtime. -->
-      <StaleHostArtifacts Include="$(RepoRoot)hostfxr.dll" />
-      <StaleHostArtifacts Include="$(RepoRoot)hostpolicy.dll" />
-      <StaleHostArtifacts Include="$(RepoRoot)coreclr.dll" />
-      <StaleHostArtifacts Include="$(RepoRoot)createdump.exe" />
-    </ItemGroup>
-
-    <Copy SourceFiles="@(UiArtifacts)" DestinationFolder="$(RepoRoot)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true" ContinueOnError="WarnAndContinue" />
-    <Delete Files="@(StaleHostArtifacts)" TreatErrorsAsWarnings="true" />
-  </Target>
-
 </Project>

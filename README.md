@@ -9,11 +9,17 @@ This app now runs as a single VB WinForms executable.
 ## Build / Rebuild
 
 ```powershell
-cd ui\KathanaBotControlPanel
-dotnet build -t:Rebuild
+dotnet build .\ui\KathanaBotControlPanel\KathanaBotControlPanel.vbproj -c Release
 ```
 
-After build/rebuild, output is copied to:
+## Publish Standalone EXE
+
+```powershell
+dotnet publish .\ui\KathanaBotControlPanel\KathanaBotControlPanel.vbproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -p:DebugSymbols=false -o .\dist\standalone
+Copy-Item .\dist\standalone\KathanaBotControlPanel.exe .\KathanaBotControlPanel.exe -Force
+```
+
+The standalone output is copied to:
 
 - `KATHANABOT\KathanaBotControlPanel.exe`
 

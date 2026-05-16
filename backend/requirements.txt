@@ -1,6 +1,0 @@
-flask==3.0.3
-numpy==2.2.1
-opencv-python==4.10.0.84
-pillow==11.1.0
-pywin32==308
-pytesseract==0.3.13
