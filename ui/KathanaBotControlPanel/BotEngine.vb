@@ -594,6 +594,7 @@ Public Class BotEngine
     Private Const ForegroundInputSettleMs As Integer = 15
     Private Const CombatLockLostTargetConfirmFrames As Integer = 4
     Private Const LootScannerIntervalMs As Integer = 10000
+    Private Const StartupCombatPriorityMs As Integer = 3000
 
     Private ReadOnly _sync As New Object()
     Private ReadOnly _frameSync As New Object()
@@ -611,6 +612,7 @@ Public Class BotEngine
     Private _lastTargetWindowSeen As DateTime = DateTime.MinValue
     Private _noTargetBeganAt As DateTime = DateTime.MinValue
     Private _lastAttackAction As DateTime = DateTime.MinValue
+    Private _loopStartedAt As DateTime = DateTime.MinValue
     Private _combatLockActive As Boolean = False
     Private _combatLockTargetSignature As String = ""
     Private _combatLockLostSignalCount As Integer = 0
@@ -822,6 +824,7 @@ Public Class BotEngine
             _lastTargetWindowSeen = DateTime.MinValue
             _noTargetBeganAt = DateTime.MinValue
             _lastAttackAction = DateTime.MinValue
+            _loopStartedAt = DateTime.UtcNow
             _combatLockActive = False
             _combatLockTargetSignature = ""
             _combatLockLostSignalCount = 0
@@ -1120,6 +1123,9 @@ Public Class BotEngine
                 End If
 
                 Dim now As DateTime = DateTime.UtcNow
+                Dim startupCombatPriorityActive As Boolean =
+                    _loopStartedAt <> DateTime.MinValue AndAlso
+                    (now - _loopStartedAt).TotalMilliseconds < StartupCombatPriorityMs
 
                 If cfg.LiteModeEnabled Then
                 Dim clientRect As NativeMethods.RECT
@@ -1346,7 +1352,7 @@ Public Class BotEngine
             ApplyVisionStabilityFilter(hpPct, mpPct, mobHpPct, mobName, captureGlitch)
             Dim expPerHour As Double = UpdateExpRate(expPct, now)
             Dim rupiahsPerHour As Double = UpdateRupiahsRate(rupiahsTotal, now)
-            If cfg.NavigationEnabled Then
+            If cfg.NavigationEnabled AndAlso Not startupCombatPriorityActive Then
                 ReadMapCoordinateIfNeeded(frame, mapCoordinateXRegion, mapCoordinateYRegion, now)
                 ScanMapPlayerMarkerIfNeeded(now)
                 UpdateMapLocalizationConfidence()
@@ -1359,15 +1365,17 @@ Public Class BotEngine
                 ClearNavigationPreviewRuntime()
                 ClearNavigationTravelRuntime()
             End If
-            If cfg.ChatTranslationEnabled Then
+            If cfg.ChatTranslationEnabled AndAlso Not startupCombatPriorityActive Then
                 ReadChatTextIfNeeded(frame, chatRegion, cfg, now)
             Else
                 ClearChatTranslationRuntime()
             End If
-            ReadPartyListIfNeeded(frame, partyListRegion, now)
+            If Not startupCombatPriorityActive Then
+                ReadPartyListIfNeeded(frame, partyListRegion, now)
+            End If
             Dim targetWindowVisible As Boolean = HasTargetWindowSignal(frame, mobHpRegion, mobName, mobHpPct)
             Dim hasHighMaxHpAction As Boolean = HasHighMaxHpAttackAction(cfg)
-            Dim mobMaxHp As Integer = UpdateMobMaxHpTracking(cfg, frame, mobHpRegion, targetWindowVisible, mobHpPct, now)
+            Dim mobMaxHp As Integer = If(startupCombatPriorityActive, _lastMobDetectedMaxHp, UpdateMobMaxHpTracking(cfg, frame, mobHpRegion, targetWindowVisible, mobHpPct, now))
             Dim highMaxHpAttackActive As Boolean =
                 cfg.HighMaxHpSpecialEnabled AndAlso
                 hasHighMaxHpAction AndAlso
@@ -1386,7 +1394,7 @@ Public Class BotEngine
             Dim preferredMobFilterActive As Boolean = cfg.LevelingAgentEnabled AndAlso cfg.LevelingPreferredMobs IsNot Nothing AndAlso cfg.LevelingPreferredMobs.Count > 0
             Dim missingNameBlockedByPreference As Boolean = preferredMobFilterActive AndAlso targetWindowVisible AndAlso normMobName = ""
             Dim preferredTargetMismatch As Boolean = preferredMobFilterActive AndAlso normMobName <> "" AndAlso Not IsPreferredMob(mobName, cfg.LevelingPreferredMobs)
-            Dim unreachableTriggered As Boolean = TryHandleUnreachableTarget(cfg, hwnd, frame, now, unreachableTextRegion)
+            Dim unreachableTriggered As Boolean = If(startupCombatPriorityActive, False, TryHandleUnreachableTarget(cfg, hwnd, frame, now, unreachableTextRegion))
             Dim unreachableLockActive As Boolean = (_unreachableLockUntil <> DateTime.MinValue AndAlso now < _unreachableLockUntil)
             If unreachableTriggered Then
                 _agentUnreachableEvents += 1

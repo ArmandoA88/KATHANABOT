@@ -3197,17 +3197,20 @@ Public Class Form1
             AppendLog("Overlay hidden while bot is running.")
         End If
 
-        SavePersistedListState(False)
         If edition = BotEdition.Full Then
             ResetHpZeroAlarmState("Alarm state reset for bot start.")
             BeginNotificationWarmup()
         End If
+        CommitPendingGridEdits()
         PushLiveConfig()
         engine.Start()
         UpdateAttackButtonAppearance(False)
         If autoStart Then
             AppendLog($"Auto-start on launch enabled for {edition}.")
         End If
+        BeginInvoke(New Action(Sub()
+                                   SavePersistedListState(False)
+                               End Sub))
     End Sub
 
     Private Sub StopEdition(edition As BotEdition, triggeredByButton As Boolean, context As String)
@@ -8210,35 +8213,78 @@ Public Class Form1
             Return
         End If
 
-        Dim safePercent As Double = If(Double.IsNaN(percent) OrElse Double.IsInfinity(percent), 100.0, percent)
-        Dim bounded As Double = Math.Max(0.0, Math.Min(100.0, safePercent))
+        Dim bounded As Double = NormalizePercent(percent, 100.0)
         Dim alive As Boolean = active AndAlso bounded > DeadZeroThreshold
-        Dim tint As Color = If(alive, StatusAliveColor, StatusStoppedOrDeadColor)
+        Dim tint As Color = If(alive, HealthPercentColor(bounded), StatusStoppedOrDeadColor)
         pnlWindowFrame.BackColor = tint
         If pnlHealthBanner IsNot Nothing Then
             pnlHealthBanner.BackColor = tint
         End If
     End Sub
 
+    Private Shared Function NormalizePercent(value As Double, fallback As Double) As Double
+        Dim safeValue As Double = If(Double.IsNaN(value) OrElse Double.IsInfinity(value), fallback, value)
+        If safeValue < 0.0 Then
+            Return 0.0
+        End If
+        If safeValue > 100.0 Then
+            Return 100.0
+        End If
+        Return safeValue
+    End Function
+
+    Private Shared Function HealthPercentColor(percent As Double) As Color
+        Dim bounded As Double = NormalizePercent(percent, 0.0)
+        If bounded <= DeadZeroThreshold Then
+            Return StatusStoppedOrDeadColor
+        End If
+
+        If bounded < 50.0 Then
+            Return BlendColor(Color.FromArgb(235, 0, 0), Color.FromArgb(255, 215, 0), bounded / 50.0)
+        End If
+
+        Return BlendColor(Color.FromArgb(255, 215, 0), StatusAliveColor, (bounded - 50.0) / 50.0)
+    End Function
+
+    Private Shared Function BlendColor(low As Color, high As Color, amount As Double) As Color
+        Dim t As Double = NormalizePercent(amount * 100.0, 0.0) / 100.0
+        Dim r As Integer = BlendChannel(CInt(low.R), CInt(high.R), t)
+        Dim g As Integer = BlendChannel(CInt(low.G), CInt(high.G), t)
+        Dim b As Integer = BlendChannel(CInt(low.B), CInt(high.B), t)
+        Return Color.FromArgb(r, g, b)
+    End Function
+
     Private Sub UpdateTaskbarStatusIndicator()
         Dim runningEdition As BotEdition? = GetRunningEdition()
         Dim active As Boolean = runningEdition.HasValue
         Dim status As BotStatus = If(active, GetStatusForEdition(runningEdition.Value), Nothing)
+        Dim hpPercent As Double = If(status Is Nothing, 0.0, NormalizePercent(status.HpPercent, 0.0))
         Dim alive As Boolean =
             active AndAlso
             status IsNot Nothing AndAlso
             status.Running AndAlso
             status.WindowFound AndAlso
-            status.HpPercent > DeadZeroThreshold AndAlso
+            hpPercent > DeadZeroThreshold AndAlso
             Not _deathNotificationLatched
 
         If active AndAlso status IsNot Nothing Then
-            ApplyHealthUiTint(status.HpPercent, status.Running AndAlso status.WindowFound)
+            ApplyHealthUiTint(hpPercent, status.Running AndAlso status.WindowFound)
         Else
             ApplyHealthUiTint(0.0, False)
         End If
 
-        SetTaskbarProgressState(If(alive, TaskbarProgressState.Normal, TaskbarProgressState.Error))
+        Dim taskbarState As TaskbarProgressState
+        If Not alive Then
+            taskbarState = TaskbarProgressState.Error
+        ElseIf hpPercent < 35.0 Then
+            taskbarState = TaskbarProgressState.Error
+        ElseIf hpPercent < 70.0 Then
+            taskbarState = TaskbarProgressState.Paused
+        Else
+            taskbarState = TaskbarProgressState.Normal
+        End If
+
+        SetTaskbarProgressSolid(taskbarState)
     End Sub
 
     Private Function TryGetTaskbarList() As ITaskbarList3
@@ -8260,7 +8306,7 @@ Public Class Form1
         End Try
     End Function
 
-    Private Sub SetTaskbarProgressState(state As TaskbarProgressState)
+    Private Sub SetTaskbarProgressSolid(state As TaskbarProgressState)
         Dim taskbar As ITaskbarList3 = TryGetTaskbarList()
         If taskbar Is Nothing OrElse IsDisposed OrElse Not IsHandleCreated Then
             Return
