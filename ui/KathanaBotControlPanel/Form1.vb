@@ -318,6 +318,9 @@ Public Class Form1
     Private _lastChatOcrText As String = ""
     Private _taskbarList As ITaskbarList3 = Nothing
     Private _taskbarUnavailable As Boolean = False
+    Private _uiTimingCount As Long = 0
+    Private _uiTimingAverageMs As Double = 0
+    Private _uiTimingMaxMs As Double = 0
 
     Private Enum TaskbarProgressState
         NoProgress = 0
@@ -4947,7 +4950,26 @@ Public Class Form1
         txtLootScanAreaPoints.Text = FormatLootScanPoints(points)
     End Sub
 
+    Private Sub RecordUiTiming(elapsedMs As Double)
+        Dim safeMs As Double = If(Double.IsNaN(elapsedMs) OrElse Double.IsInfinity(elapsedMs), 0.0R, Math.Max(0.0R, elapsedMs))
+        _uiTimingCount += 1
+        If _uiTimingCount = 1 Then
+            _uiTimingAverageMs = safeMs
+            _uiTimingMaxMs = safeMs
+        Else
+            _uiTimingAverageMs += (safeMs - _uiTimingAverageMs) * 0.12R
+            If safeMs > _uiTimingMaxMs Then
+                _uiTimingMaxMs = safeMs
+            End If
+        End If
+    End Sub
+
+    Private Function FormatUiTiming() As String
+        Return $"UI Update: avg {_uiTimingAverageMs:0.0}ms | max {_uiTimingMaxMs:0.0}ms | n={_uiTimingCount}"
+    End Function
+
     Private Sub UiTimerTick(sender As Object, e As EventArgs)
+        Dim uiWatch As Stopwatch = Stopwatch.StartNew()
         PushLiveConfig()
         Dim st As BotStatus = GetStatusForEdition(_edition)
         HandlePendingLitePointCapture()
@@ -5030,6 +5052,8 @@ Public Class Form1
             $"Prana/EXP Rate %/hr: {If(st.ExpPerHour < 0, "Calculating (1m)", st.ExpPerHour.ToString("0.00"))}{Environment.NewLine}" &
             $"MobName: {st.MobName}{Environment.NewLine}" &
             $"MobHpText: {If(String.IsNullOrWhiteSpace(st.MobHpText), "n/a", st.MobHpText)}{Environment.NewLine}" &
+            $"Performance:{Environment.NewLine}{If(String.IsNullOrWhiteSpace(st.PerformanceDiagnostics), "n/a", st.PerformanceDiagnostics)}{Environment.NewLine}" &
+            $"{FormatUiTiming()}{Environment.NewLine}" &
             $"OcrError: {OcrReader.LastError()}{Environment.NewLine}" &
             $"MobHP%: {st.MobHpPercent:0.0}{Environment.NewLine}" &
             $"MobMaxHP: {If(st.MobMaxHp > 0, st.MobMaxHp.ToString(), "n/a")}{Environment.NewLine}" &
@@ -5064,6 +5088,8 @@ Public Class Form1
              $"NotAttackingReason: {st.NotAttackingReason}{Environment.NewLine}" &
              $"Error: {st.ErrorMessage}"
         RefreshKeyActionSummary()
+        uiWatch.Stop()
+        RecordUiTiming(uiWatch.Elapsed.TotalMilliseconds)
     End Sub
 
     Private Sub EnterToggleTimerTick(sender As Object, e As EventArgs)

@@ -405,6 +405,7 @@ Public Class BotStatus
     Public Property AgentState As String = "Disabled"
     Public Property AgentReason As String = ""
     Public Property AgentGuardrailTriggered As Boolean
+    Public Property PerformanceDiagnostics As String = ""
     Public Property UpdatedAt As DateTime = DateTime.UtcNow
 End Class
 
@@ -412,6 +413,8 @@ Friend Module NativeMethods
     Friend Const PW_CLIENTONLY As UInteger = 1UI
     Friend Const PW_RENDERFULLCONTENT As UInteger = 2UI
     Friend Const CAPTUREBLT As CopyPixelOperation = CType(&H40000000, CopyPixelOperation)
+    Friend Const SRCCOPY As UInteger = &HCC0020UI
+    Friend Const CAPTUREBLT_ROP As UInteger = &H40000000UI
     Friend Const GA_ROOT As UInteger = 2UI
     Friend Const WM_KEYDOWN As Integer = &H100
     Friend Const WM_KEYUP As Integer = &H101
@@ -538,6 +541,10 @@ Friend Module NativeMethods
     Friend Function GetPixel(hdc As IntPtr, nXPos As Integer, nYPos As Integer) As UInteger
     End Function
 
+    <DllImport("gdi32.dll", SetLastError:=True)>
+    Friend Function BitBlt(hdcDest As IntPtr, nXDest As Integer, nYDest As Integer, nWidth As Integer, nHeight As Integer, hdcSrc As IntPtr, nXSrc As Integer, nYSrc As Integer, dwRop As UInteger) As Boolean
+    End Function
+
 
 
     <DllImport("user32.dll", SetLastError:=True)>
@@ -595,9 +602,61 @@ Public Class BotEngine
     Private Const CombatLockLostTargetConfirmFrames As Integer = 4
     Private Const LootScannerIntervalMs As Integer = 10000
     Private Const StartupCombatPriorityMs As Integer = 3000
+    Private Const FullFrameRefreshMs As Integer = 500
+    Private Const StatusUpdateMinIntervalMs As Integer = 200
+    Private Const AdaptiveSlowLoopConfirmCount As Integer = 5
+    Private Const AdaptiveRecoveryLoopConfirmCount As Integer = 14
+
+    Private Enum CaptureClientMethod
+        PrintClientOnly
+        PrintRenderFullContent
+        PrintClientAndRenderFullContent
+        PrintDefault
+        CopyFromScreen
+    End Enum
+
+    Private NotInheritable Class TimingBucket
+        Public Property Count As Long
+        Public Property AverageMs As Double
+        Public Property MaxMs As Double
+
+        Public Sub Add(elapsedMs As Double)
+            Dim safeMs As Double = If(Double.IsNaN(elapsedMs) OrElse Double.IsInfinity(elapsedMs), 0.0R, Math.Max(0.0R, elapsedMs))
+            Count += 1
+            If Count = 1 Then
+                AverageMs = safeMs
+                MaxMs = safeMs
+            Else
+                AverageMs += (safeMs - AverageMs) * 0.12R
+                If safeMs > MaxMs Then
+                    MaxMs = safeMs
+                End If
+            End If
+        End Sub
+
+        Public Function Format(label As String) As String
+            Return $"{label}: avg {AverageMs:0.0}ms | max {MaxMs:0.0}ms | n={Count}"
+        End Function
+    End Class
 
     Private ReadOnly _sync As New Object()
     Private ReadOnly _frameSync As New Object()
+    Private ReadOnly _perfSync As New Object()
+    Private ReadOnly _loopTiming As New TimingBucket()
+    Private ReadOnly _captureTiming As New TimingBucket()
+    Private ReadOnly _hpMpScanTiming As New TimingBucket()
+    Private ReadOnly _mobOcrTiming As New TimingBucket()
+    Private ReadOnly _chatOcrTiming As New TimingBucket()
+    Private ReadOnly _lootScanTiming As New TimingBucket()
+    Private _adaptivePerformanceActive As Boolean = False
+    Private _adaptiveSlowLoopCount As Integer = 0
+    Private _adaptiveRecoveryLoopCount As Integer = 0
+    Private _adaptiveDeferredOptionalScans As Long = 0
+    Private _lastCaptureMethodName As String = "none"
+    Private _lastStatusRaisedAt As DateTime = DateTime.MinValue
+    Private _lastStatusRaisedSignature As String = ""
+    Private Shared ReadOnly _captureMethodSync As New Object()
+    Private Shared ReadOnly _captureMethodByWindow As New Dictionary(Of IntPtr, CaptureClientMethod)()
     Private Shared ReadOnly NavigationRouteStorageRoot As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel", "navigation_routes")
     Private Shared ReadOnly NavigationRouteJsonOptions As New JsonSerializerOptions With {.WriteIndented = True}
     Private Shared ReadOnly _recordedGraphCache As New Dictionary(Of String, List(Of RecordedNavigationGraph))(StringComparer.OrdinalIgnoreCase)
@@ -971,6 +1030,15 @@ Public Class BotEngine
             _lootScannerAltHeld = False
             _lootScannerProcessingTask = Nothing
             _lastKeyTime.Clear()
+            _lastStatusRaisedAt = DateTime.MinValue
+            _lastStatusRaisedSignature = ""
+            SyncLock _perfSync
+                _adaptivePerformanceActive = False
+                _adaptiveSlowLoopCount = 0
+                _adaptiveRecoveryLoopCount = 0
+                _adaptiveDeferredOptionalScans = 0
+                _lastCaptureMethodName = "none"
+            End SyncLock
             _agentState = If(_config.LevelingAgentEnabled, LevelingAgentState.Searching, LevelingAgentState.Disabled)
             _agentReason = ""
             _agentGuardrailTriggered = False
@@ -1081,6 +1149,7 @@ Public Class BotEngine
 
     Private Async Function LoopAsync(token As CancellationToken) As Task
         While Not token.IsCancellationRequested
+            Dim loopWatch As Stopwatch = Stopwatch.StartNew()
             Dim cfg As BotConfig = Nothing
             Dim loopDelayMs As Integer = 80
             Try
@@ -1118,6 +1187,7 @@ Public Class BotEngine
                                   s.NotAttackingReason = "Window not found."
                                   s.ErrorMessage = "Game window not found."
                               End Sub)
+                    RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
                     Await Task.Delay(loopDelayMs, token)
                     Continue While
                 End If
@@ -1126,6 +1196,7 @@ Public Class BotEngine
                 Dim startupCombatPriorityActive As Boolean =
                     _loopStartedAt <> DateTime.MinValue AndAlso
                     (now - _loopStartedAt).TotalMilliseconds < StartupCombatPriorityMs
+                Dim deferOptionalWork As Boolean = IsAdaptiveOptionalWorkDeferred()
 
                 If cfg.LiteModeEnabled Then
                 Dim clientRect As NativeMethods.RECT
@@ -1139,6 +1210,7 @@ Public Class BotEngine
                                   s.NotAttackingReason = "Lite HP/MP scan failed."
                                   s.ErrorMessage = "Unable to read Lite bar coordinates."
                               End Sub)
+                    RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
                     Await Task.Delay(loopDelayMs, token)
                     Continue While
                 End If
@@ -1162,7 +1234,13 @@ Public Class BotEngine
 
                 Dim liteFrame As Bitmap = Nothing
                 If cfg.PartyAskEnabled Then
+                    Dim captureWatch As Stopwatch = Stopwatch.StartNew()
                     liteFrame = CaptureClient(hwnd)
+                    captureWatch.Stop()
+                    RecordTiming(_captureTiming, captureWatch.Elapsed.TotalMilliseconds)
+                    SyncLock _perfSync
+                        _lastCaptureMethodName = GetCachedCaptureMethodName(hwnd)
+                    End SyncLock
                     If liteFrame IsNot Nothing Then
                         ReplaceLatestLoopFrame(liteFrame)
                     Else
@@ -1179,6 +1257,7 @@ Public Class BotEngine
                                   s.NotAttackingReason = "Waiting for game screen (black frame detected)."
                                   s.ErrorMessage = "Vision glitch: black screen ignored in Lite Mode."
                               End Sub)
+                    RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
                     Await Task.Delay(loopDelayMs, token)
                     Continue While
                 End If
@@ -1279,31 +1358,10 @@ Public Class BotEngine
                 If liteFrame IsNot Nothing Then
                     liteFrame.Dispose()
                 End If
+                RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
                 Await Task.Delay(loopDelayMs, token)
                 Continue While
             End If
-
-            Dim frame As Bitmap = CaptureClient(hwnd)
-            If frame Is Nothing Then
-                ClearLatestLoopFrame()
-                ReleaseLootScannerAltKey()
-                ClearMapLocalizationRuntime()
-                ClearChatTranslationRuntime()
-                ClearPartyListRuntimeState()
-                UpdateLevelingAgentState(cfg, LevelingAgentState.Searching, "Unable to capture game client.")
-                SetStatus(Sub(s)
-                              s.WindowFound = True
-                              s.MobMaxHp = -1
-                              s.MobHpText = ""
-                              s.RupiahsTotal = -1
-                              s.RupiahsPerHour = -1
-                              s.NotAttackingReason = "Capture failed."
-                              s.ErrorMessage = "Unable to capture game client."
-                          End Sub)
-                Await Task.Delay(loopDelayMs, token)
-                Continue While
-            End If
-            ReplaceLatestLoopFrame(frame)
 
             Dim hpRegion As New RectRegion(0, 0, 1, 1)
             Dim mpRegion As New RectRegion(0, 0, 1, 1)
@@ -1318,29 +1376,152 @@ Public Class BotEngine
             Dim mapCoordinateXRegion As New RectRegion(0, 0, 1, 1)
             Dim mapCoordinateYRegion As New RectRegion(0, 0, 1, 1)
             Dim chatRegion As New RectRegion(0, 0, 1, 1)
-            ResolveVisionRegions(cfg, frame.Width, frame.Height, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, partyListRegion, mapCoordinateXRegion, mapCoordinateYRegion, chatRegion)
-            Dim lootScanPolygon As List(Of DrawingPoint) = ResolveLootScanPolygon(cfg, frame.Width, frame.Height)
+            Dim fullClientRect As NativeMethods.RECT
+            If Not NativeMethods.GetClientRect(hwnd, fullClientRect) Then
+                ClearLatestLoopFrame()
+                ReleaseLootScannerAltKey()
+                ClearMapLocalizationRuntime()
+                ClearChatTranslationRuntime()
+                ClearPartyListRuntimeState()
+                UpdateLevelingAgentState(cfg, LevelingAgentState.Searching, "Unable to read game client size.")
+                SetStatus(Sub(s)
+                              s.WindowFound = True
+                              s.MobMaxHp = -1
+                              s.MobHpText = ""
+                              s.RupiahsTotal = -1
+                              s.RupiahsPerHour = -1
+                              s.NotAttackingReason = "Capture failed."
+                              s.ErrorMessage = "Unable to read game client size."
+                          End Sub)
+                RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
+                Await Task.Delay(loopDelayMs, token)
+                Continue While
+            End If
 
-            Dim hpPct As Double = ComputeBarPercent(frame, hpRegion, True)
-            Dim mpPct As Double = ComputeBarPercent(frame, mpRegion, False)
-            Dim mobHpPct As Double = ComputeBarPercent(frame, mobHpRegion, True)
+            Dim fullClientWidth As Integer = Math.Max(1, fullClientRect.Right - fullClientRect.Left)
+            Dim fullClientHeight As Integer = Math.Max(1, fullClientRect.Bottom - fullClientRect.Top)
+            ResolveVisionRegions(cfg, fullClientWidth, fullClientHeight, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, partyListRegion, mapCoordinateXRegion, mapCoordinateYRegion, chatRegion)
+            Dim lootScanPolygon As List(Of DrawingPoint) = ResolveLootScanPolygon(cfg, fullClientWidth, fullClientHeight)
+            Dim activeHwnd As IntPtr = NativeMethods.GetForegroundWindow()
+            Dim fullFrameIntervalMs As Integer = If(deferOptionalWork, FullFrameRefreshMs * 3, FullFrameRefreshMs)
+            Dim fullFrameDue As Boolean =
+                _latestLoopFrameCapturedAt = DateTime.MinValue OrElse
+                (now - _latestLoopFrameCapturedAt).TotalMilliseconds >= fullFrameIntervalMs
+            Dim pendingLootScannerReady As Boolean =
+                _lootScannerCapturePending AndAlso
+                activeHwnd = hwnd AndAlso
+                _lootScannerCaptureRequestedAt <> DateTime.MinValue AndAlso
+                (now - _lootScannerCaptureRequestedAt).TotalMilliseconds >= Math.Max(20, loopDelayMs)
+            Dim pendingLootVerifyReady As Boolean =
+                _pendingLootPickupVerifyAt <> DateTime.MinValue AndAlso
+                now >= _pendingLootPickupVerifyAt
+            Dim shouldCaptureFullFrame As Boolean = fullFrameDue OrElse pendingLootScannerReady OrElse pendingLootVerifyReady
+            Dim frame As Bitmap = Nothing
+
+            If shouldCaptureFullFrame Then
+                Dim mainCaptureWatch As Stopwatch = Stopwatch.StartNew()
+                frame = CaptureClient(hwnd)
+                mainCaptureWatch.Stop()
+                RecordTiming(_captureTiming, mainCaptureWatch.Elapsed.TotalMilliseconds)
+                SyncLock _perfSync
+                    _lastCaptureMethodName = GetCachedCaptureMethodName(hwnd)
+                End SyncLock
+
+                If frame IsNot Nothing Then
+                    ReplaceLatestLoopFrame(frame)
+                    If cfg.BlackScreenProtectionEnabled AndAlso IsLikelyBlackFrame(frame) Then
+                        frame.Dispose()
+                        SetStatus(Sub(s)
+                                      s.WindowFound = True
+                                      s.NotAttackingReason = "Waiting for game screen (black frame detected)."
+                                      s.ErrorMessage = "Vision glitch: black screen ignored."
+                                  End Sub)
+                        RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
+                        Await Task.Delay(loopDelayMs, token)
+                        Continue While
+                    End If
+                End If
+            End If
+
+            Dim hpScanWatch As Stopwatch = Stopwatch.StartNew()
+            Dim hpPct As Double = 0
+            Dim mpPct As Double = 0
+            Dim mobHpPct As Double = 0
+            Dim fullHpScanOk As Boolean = True
+            Dim fullMpScanOk As Boolean = True
+            Dim mobHpScanOk As Boolean = True
+            Dim mobHpRegionFrame As Bitmap = Nothing
+            Dim localMobHpRegion As RectRegion = Nothing
+
+            If frame IsNot Nothing Then
+                hpPct = ComputeBarPercent(frame, hpRegion, True)
+                mpPct = ComputeBarPercent(frame, mpRegion, False)
+                mobHpPct = ComputeBarPercent(frame, mobHpRegion, True)
+            Else
+                hpPct = ComputeClientBarPercent(hwnd, hpRegion, True, fullHpScanOk)
+                mpPct = ComputeClientBarPercent(hwnd, mpRegion, False, fullMpScanOk)
+                mobHpRegionFrame = CaptureClientRegion(hwnd, mobHpRegion)
+                If mobHpRegionFrame IsNot Nothing Then
+                    localMobHpRegion = New RectRegion(0, 0, mobHpRegionFrame.Width, mobHpRegionFrame.Height)
+                    mobHpPct = ComputeBarPercent(mobHpRegionFrame, localMobHpRegion, True)
+                Else
+                    mobHpScanOk = False
+                End If
+            End If
+            hpScanWatch.Stop()
+            RecordTiming(_hpMpScanTiming, hpScanWatch.Elapsed.TotalMilliseconds)
             Dim expPct As Double = GetCachedPranaExpPercent()
             Dim rupiahsTotal As Long = GetCachedRupiahsTotal()
-            Dim captureGlitch As Boolean = IsLikelyVisionCaptureGlitch(frame, hpRegion, mpRegion, hpPct, mpPct)
+            If frame Is Nothing AndAlso Not (fullHpScanOk OrElse fullMpScanOk OrElse mobHpScanOk) Then
+                ClearLatestLoopFrame()
+                ReleaseLootScannerAltKey()
+                ClearMapLocalizationRuntime()
+                ClearChatTranslationRuntime()
+                ClearPartyListRuntimeState()
+                If mobHpRegionFrame IsNot Nothing Then
+                    mobHpRegionFrame.Dispose()
+                End If
+                UpdateLevelingAgentState(cfg, LevelingAgentState.Searching, "Unable to capture game client.")
+                SetStatus(Sub(s)
+                              s.WindowFound = True
+                              s.MobMaxHp = -1
+                              s.MobHpText = ""
+                              s.RupiahsTotal = -1
+                              s.RupiahsPerHour = -1
+                              s.NotAttackingReason = "Capture failed."
+                              s.ErrorMessage = "Unable to capture game client."
+                          End Sub)
+                RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
+                Await Task.Delay(loopDelayMs, token)
+                Continue While
+            End If
+            Dim captureGlitch As Boolean = If(frame IsNot Nothing, IsLikelyVisionCaptureGlitch(frame, hpRegion, mpRegion, hpPct, mpPct), (Not fullHpScanOk OrElse Not fullMpScanOk))
 
-            Dim activeHwnd As IntPtr = NativeMethods.GetForegroundWindow()
+            Dim lootScanWatch As Stopwatch = Stopwatch.StartNew()
             TryHandlePendingLootScannerCapture(cfg, hwnd, activeHwnd, frame, lootScanPolygon, now)
+            lootScanWatch.Stop()
+            RecordTiming(_lootScanTiming, lootScanWatch.Elapsed.TotalMilliseconds)
             TryHandlePendingLootPickupVerification(cfg, hwnd, frame, now, mobNameRegion)
-            If cfg.LootScannerEnabled AndAlso activeHwnd = hwnd AndAlso (Not _lootScannerCapturePending) AndAlso (now - _lastRightAltAt).TotalMilliseconds >= LootScannerIntervalMs Then
+            If cfg.LootScannerEnabled AndAlso deferOptionalWork AndAlso activeHwnd = hwnd AndAlso (Not _lootScannerCapturePending) Then
+                MarkOptionalWorkDeferred()
+            ElseIf cfg.LootScannerEnabled AndAlso activeHwnd = hwnd AndAlso (Not _lootScannerCapturePending) AndAlso (now - _lastRightAltAt).TotalMilliseconds >= LootScannerIntervalMs Then
                 BeginLootScannerCapture(now)
             End If
+            Dim mobOcrWatch As Stopwatch = Stopwatch.StartNew()
             Dim monsterFilterActive As Boolean = (cfg.DeniedMobs IsNot Nothing AndAlso cfg.DeniedMobs.Count > 0)
-            Dim targetWindowSignalNoName As Boolean = HasTargetWindowSignal(frame, mobHpRegion, "", mobHpPct)
+            Dim targetWindowSignalNoName As Boolean =
+                If(frame IsNot Nothing,
+                   HasTargetWindowSignal(frame, mobHpRegion, "", mobHpPct),
+                   If(mobHpRegionFrame IsNot Nothing AndAlso localMobHpRegion IsNot Nothing,
+                      HasTargetWindowSignal(mobHpRegionFrame, localMobHpRegion, "", mobHpPct),
+                      mobHpPct >= Math.Max(0.6, cfg.MobHpPresenceThreshold * 0.7)))
             Dim shouldReadMobName As Boolean = targetWindowSignalNoName OrElse (mobHpPct >= Math.Max(0.6, cfg.MobHpPresenceThreshold * 0.7))
             Dim forceMobNameRefresh As Boolean = monsterFilterActive AndAlso targetWindowSignalNoName AndAlso ((now - _lastMobNameRead).TotalMilliseconds >= 180)
             Dim mobName As String
             If shouldReadMobName Then
-                mobName = ReadMobNameIfNeeded(frame, mobNameRegion, now, forceMobNameRefresh)
+                mobName = If(frame IsNot Nothing,
+                             ReadMobNameIfNeeded(frame, mobNameRegion, now, forceMobNameRefresh),
+                             ReadMobNameFromClientRegionIfNeeded(hwnd, mobNameRegion, now, forceMobNameRefresh))
             Else
                 ' Avoid stale-name attacks after target switches.
                 _cachedMobName = ""
@@ -1352,7 +1533,7 @@ Public Class BotEngine
             ApplyVisionStabilityFilter(hpPct, mpPct, mobHpPct, mobName, captureGlitch)
             Dim expPerHour As Double = UpdateExpRate(expPct, now)
             Dim rupiahsPerHour As Double = UpdateRupiahsRate(rupiahsTotal, now)
-            If cfg.NavigationEnabled AndAlso Not startupCombatPriorityActive Then
+            If cfg.NavigationEnabled AndAlso Not startupCombatPriorityActive AndAlso Not deferOptionalWork Then
                 ReadMapCoordinateIfNeeded(frame, mapCoordinateXRegion, mapCoordinateYRegion, now)
                 ScanMapPlayerMarkerIfNeeded(now)
                 UpdateMapLocalizationConfidence()
@@ -1360,22 +1541,43 @@ Public Class BotEngine
                 UpdateLastKnownNavigationPose(now)
                 UpdateRouteRecording(cfg, now)
                 UpdateNavigationPreview(cfg, now)
+            ElseIf cfg.NavigationEnabled AndAlso Not startupCombatPriorityActive AndAlso deferOptionalWork Then
+                MarkOptionalWorkDeferred()
             Else
                 ClearMapLocalizationRuntime()
                 ClearNavigationPreviewRuntime()
                 ClearNavigationTravelRuntime()
             End If
-            If cfg.ChatTranslationEnabled AndAlso Not startupCombatPriorityActive Then
+            If cfg.ChatTranslationEnabled AndAlso Not startupCombatPriorityActive AndAlso Not deferOptionalWork Then
+                Dim chatOcrWatch As Stopwatch = Stopwatch.StartNew()
                 ReadChatTextIfNeeded(frame, chatRegion, cfg, now)
+                chatOcrWatch.Stop()
+                RecordTiming(_chatOcrTiming, chatOcrWatch.Elapsed.TotalMilliseconds)
+            ElseIf cfg.ChatTranslationEnabled AndAlso Not startupCombatPriorityActive AndAlso deferOptionalWork Then
+                MarkOptionalWorkDeferred()
             Else
                 ClearChatTranslationRuntime()
             End If
-            If Not startupCombatPriorityActive Then
+            If Not startupCombatPriorityActive AndAlso Not deferOptionalWork Then
                 ReadPartyListIfNeeded(frame, partyListRegion, now)
+            ElseIf Not startupCombatPriorityActive AndAlso deferOptionalWork Then
+                MarkOptionalWorkDeferred()
             End If
-            Dim targetWindowVisible As Boolean = HasTargetWindowSignal(frame, mobHpRegion, mobName, mobHpPct)
+            Dim targetWindowVisible As Boolean =
+                If(frame IsNot Nothing,
+                   HasTargetWindowSignal(frame, mobHpRegion, mobName, mobHpPct),
+                   If(mobHpRegionFrame IsNot Nothing AndAlso localMobHpRegion IsNot Nothing,
+                      HasTargetWindowSignal(mobHpRegionFrame, localMobHpRegion, mobName, mobHpPct),
+                      targetWindowSignalNoName))
             Dim hasHighMaxHpAction As Boolean = HasHighMaxHpAttackAction(cfg)
-            Dim mobMaxHp As Integer = If(startupCombatPriorityActive, _lastMobDetectedMaxHp, UpdateMobMaxHpTracking(cfg, frame, mobHpRegion, targetWindowVisible, mobHpPct, now))
+            Dim mobMaxHp As Integer =
+                If(startupCombatPriorityActive,
+                   _lastMobDetectedMaxHp,
+                   If(frame IsNot Nothing,
+                      UpdateMobMaxHpTracking(cfg, frame, mobHpRegion, targetWindowVisible, mobHpPct, now),
+                      UpdateMobMaxHpTrackingFromClientRegion(cfg, hwnd, mobHpRegion, targetWindowVisible, mobHpPct, now)))
+            mobOcrWatch.Stop()
+            RecordTiming(_mobOcrTiming, mobOcrWatch.Elapsed.TotalMilliseconds)
             Dim highMaxHpAttackActive As Boolean =
                 cfg.HighMaxHpSpecialEnabled AndAlso
                 hasHighMaxHpAction AndAlso
@@ -1394,7 +1596,12 @@ Public Class BotEngine
             Dim preferredMobFilterActive As Boolean = cfg.LevelingAgentEnabled AndAlso cfg.LevelingPreferredMobs IsNot Nothing AndAlso cfg.LevelingPreferredMobs.Count > 0
             Dim missingNameBlockedByPreference As Boolean = preferredMobFilterActive AndAlso targetWindowVisible AndAlso normMobName = ""
             Dim preferredTargetMismatch As Boolean = preferredMobFilterActive AndAlso normMobName <> "" AndAlso Not IsPreferredMob(mobName, cfg.LevelingPreferredMobs)
-            Dim unreachableTriggered As Boolean = If(startupCombatPriorityActive, False, TryHandleUnreachableTarget(cfg, hwnd, frame, now, unreachableTextRegion))
+            Dim unreachableTriggered As Boolean =
+                If(startupCombatPriorityActive,
+                   False,
+                   If(frame IsNot Nothing,
+                      TryHandleUnreachableTarget(cfg, hwnd, frame, now, unreachableTextRegion),
+                      TryHandleUnreachableTargetFromClientRegion(cfg, hwnd, now, unreachableTextRegion)))
             Dim unreachableLockActive As Boolean = (_unreachableLockUntil <> DateTime.MinValue AndAlso now < _unreachableLockUntil)
             If unreachableTriggered Then
                 _agentUnreachableEvents += 1
@@ -1481,7 +1688,12 @@ Public Class BotEngine
 
             Dim guardrailReason As String = ""
             If ShouldTriggerLevelingGuardrail(cfg, hpPct, mpPct, expPerHour, now, targetWindowVisible, guardrailReason) Then
-                frame.Dispose()
+                If frame IsNot Nothing Then
+                    frame.Dispose()
+                End If
+                If mobHpRegionFrame IsNot Nothing Then
+                    mobHpRegionFrame.Dispose()
+                End If
                 TriggerLevelingGuardrailStop(cfg, guardrailReason)
                 Exit While
             End If
@@ -1679,12 +1891,18 @@ Public Class BotEngine
             TryHandleLootPickup(cfg, hwnd, now, actionSent OrElse _firstHitPending)
             UpdateLevelingAgentRuntimeState(cfg, now, hpPct, mpPct, targetWindowVisible, targetValid, actionSent, forcedRetarget OrElse unreachableTriggered, unreachableLockActive, reason)
 
-            TryQueueHardcodedVisionStats(cfg, hwnd, now, frame, hpRegion, mpRegion, hpPct, mpPct, mobName)
+            If deferOptionalWork Then
+                MarkOptionalWorkDeferred()
+            Else
+                If frame IsNot Nothing Then
+                    TryQueueHardcodedVisionStats(cfg, hwnd, now, frame, hpRegion, mpRegion, hpPct, mpPct, mobName)
+                End If
 
-            expPct = ReadPranaExpPercent(frame, pranaExpRegion)
-            rupiahsTotal = ReadRupiahsTotal(frame, rupiahsRegion)
-            expPerHour = UpdateExpRate(expPct, now)
-            rupiahsPerHour = UpdateRupiahsRate(rupiahsTotal, now)
+                expPct = ReadPranaExpPercent(frame, pranaExpRegion)
+                rupiahsTotal = ReadRupiahsTotal(frame, rupiahsRegion)
+                expPerHour = UpdateExpRate(expPct, now)
+                rupiahsPerHour = UpdateRupiahsRate(rupiahsTotal, now)
+            End If
 
             SetStatus(Sub(s)
                           s.WindowFound = True
@@ -1702,8 +1920,14 @@ Public Class BotEngine
                           s.NotAttackingReason = If(actionSent, "", reason)
                           s.ErrorMessage = ""
                       End Sub)
-            frame.Dispose()
+            If frame IsNot Nothing Then
+                frame.Dispose()
+            End If
+            If mobHpRegionFrame IsNot Nothing Then
+                mobHpRegionFrame.Dispose()
+            End If
 
+                RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
                 Await Task.Delay(loopDelayMs, token)
             Catch ex As OperationCanceledException When token.IsCancellationRequested
                 Exit While
@@ -1715,6 +1939,7 @@ Public Class BotEngine
                               s.NotAttackingReason = "Loop recovered from error."
                               s.ErrorMessage = ex.Message
                           End Sub)
+                RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
                 Thread.Sleep(Math.Max(50, loopDelayMs))
             End Try
         End While
@@ -1744,6 +1969,11 @@ Public Class BotEngine
         End If
 
         If frame Is Nothing OrElse hwnd = IntPtr.Zero Then
+            If _lootScannerCaptureRequestedAt <> DateTime.MinValue AndAlso (now - _lootScannerCaptureRequestedAt).TotalMilliseconds >= 500 Then
+                ReleaseLootScannerAltKey()
+                _lootScannerCapturePending = False
+                _lootScannerCaptureRequestedAt = DateTime.MinValue
+            End If
             Return
         End If
 
@@ -4186,6 +4416,23 @@ Public Class BotEngine
         Return _cachedMobName
     End Function
 
+    Private Function ReadMobNameFromClientRegionIfNeeded(hwnd As IntPtr, region As RectRegion, now As DateTime, Optional forceRefresh As Boolean = False) As String
+        If hwnd = IntPtr.Zero OrElse region Is Nothing Then
+            Return _cachedMobName
+        End If
+
+        Dim crop As Bitmap = CaptureClientRegion(hwnd, region)
+        If crop Is Nothing Then
+            Return _cachedMobName
+        End If
+
+        Try
+            Return ReadMobNameIfNeeded(crop, New RectRegion(0, 0, crop.Width, crop.Height), now, forceRefresh)
+        Finally
+            crop.Dispose()
+        End Try
+    End Function
+
     Private Shared Function HasHighMaxHpAttackAction(cfg As BotConfig) As Boolean
         Return cfg IsNot Nothing AndAlso
             cfg.Actions IsNot Nothing AndAlso
@@ -4254,6 +4501,23 @@ Public Class BotEngine
         End Try
 
         Return _lastMobDetectedMaxHp
+    End Function
+
+    Private Function UpdateMobMaxHpTrackingFromClientRegion(cfg As BotConfig, hwnd As IntPtr, region As RectRegion, targetWindowVisible As Boolean, mobHpPercent As Double, now As DateTime) As Integer
+        If hwnd = IntPtr.Zero OrElse region Is Nothing Then
+            Return _lastMobDetectedMaxHp
+        End If
+
+        Dim crop As Bitmap = CaptureClientRegion(hwnd, region)
+        If crop Is Nothing Then
+            Return _lastMobDetectedMaxHp
+        End If
+
+        Try
+            Return UpdateMobMaxHpTracking(cfg, crop, New RectRegion(0, 0, crop.Width, crop.Height), targetWindowVisible, mobHpPercent, now)
+        Finally
+            crop.Dispose()
+        End Try
     End Function
 
     Private Shared Function ParseMobMaxHpFromText(raw As String) As Integer
@@ -4854,6 +5118,23 @@ Public Class BotEngine
         End Try
 
         Return False
+    End Function
+
+    Private Function TryHandleUnreachableTargetFromClientRegion(cfg As BotConfig, hwnd As IntPtr, now As DateTime, unreachableTextRegion As RectRegion) As Boolean
+        If cfg Is Nothing OrElse hwnd = IntPtr.Zero OrElse unreachableTextRegion Is Nothing Then
+            Return False
+        End If
+
+        Dim crop As Bitmap = CaptureClientRegion(hwnd, unreachableTextRegion)
+        If crop Is Nothing Then
+            Return False
+        End If
+
+        Try
+            Return TryHandleUnreachableTarget(cfg, hwnd, crop, now, New RectRegion(0, 0, crop.Width, crop.Height))
+        Finally
+            crop.Dispose()
+        End Try
     End Function
 
     Private Shared Function IsUnreachablePrompt(rawText As String) As Boolean
@@ -5863,8 +6144,84 @@ Public Class BotEngine
         RaiseEvent LogLine($"Key action: {text}")
     End Sub
 
+    Private Sub RecordTiming(bucket As TimingBucket, elapsedMs As Double)
+        If bucket Is Nothing Then
+            Return
+        End If
+
+        SyncLock _perfSync
+            bucket.Add(elapsedMs)
+        End SyncLock
+    End Sub
+
+    Private Function IsAdaptiveOptionalWorkDeferred() As Boolean
+        SyncLock _perfSync
+            Return _adaptivePerformanceActive
+        End SyncLock
+    End Function
+
+    Private Sub MarkOptionalWorkDeferred()
+        SyncLock _perfSync
+            _adaptiveDeferredOptionalScans += 1
+        End SyncLock
+    End Sub
+
+    Private Sub RecordLoopCompletion(elapsedMs As Double, targetLoopMs As Integer)
+        Dim becameActive As Boolean = False
+        Dim recovered As Boolean = False
+        Dim targetMs As Double = Math.Max(1, targetLoopMs)
+        Dim slowThresholdMs As Double = Math.Max(140.0R, targetMs * 1.8R)
+        Dim recoveryThresholdMs As Double = Math.Max(90.0R, targetMs * 1.25R)
+
+        SyncLock _perfSync
+            _loopTiming.Add(elapsedMs)
+            If elapsedMs >= slowThresholdMs Then
+                _adaptiveSlowLoopCount += 1
+                _adaptiveRecoveryLoopCount = 0
+            ElseIf elapsedMs <= recoveryThresholdMs Then
+                _adaptiveRecoveryLoopCount += 1
+                If _adaptiveSlowLoopCount > 0 Then
+                    _adaptiveSlowLoopCount -= 1
+                End If
+            End If
+
+            If (Not _adaptivePerformanceActive) AndAlso _adaptiveSlowLoopCount >= AdaptiveSlowLoopConfirmCount Then
+                _adaptivePerformanceActive = True
+                _adaptiveRecoveryLoopCount = 0
+                becameActive = True
+            ElseIf _adaptivePerformanceActive AndAlso _adaptiveRecoveryLoopCount >= AdaptiveRecoveryLoopConfirmCount Then
+                _adaptivePerformanceActive = False
+                _adaptiveSlowLoopCount = 0
+                recovered = True
+            End If
+        End SyncLock
+
+        If becameActive Then
+            RaiseEvent LogLine("Adaptive performance mode active: optional OCR/capture work will be deferred while combat stays live.")
+        ElseIf recovered Then
+            RaiseEvent LogLine("Adaptive performance mode recovered: optional OCR/capture work resumed.")
+        End If
+    End Sub
+
+    Private Function BuildPerformanceDiagnosticsText() As String
+        SyncLock _perfSync
+            Dim text As String =
+                $"AdaptivePerformanceActive: {_adaptivePerformanceActive}{Environment.NewLine}" &
+                $"AdaptiveDeferredOptionalScans: {_adaptiveDeferredOptionalScans}{Environment.NewLine}" &
+                $"CaptureMethod: {_lastCaptureMethodName}{Environment.NewLine}" &
+                _loopTiming.Format("LoopTotal") & Environment.NewLine &
+                _captureTiming.Format("Capture") & Environment.NewLine &
+                _hpMpScanTiming.Format("HP/MP Scan") & Environment.NewLine &
+                _mobOcrTiming.Format("Mob OCR") & Environment.NewLine &
+                _chatOcrTiming.Format("Chat OCR") & Environment.NewLine &
+                _lootScanTiming.Format("Loot Scan")
+            Return text
+        End SyncLock
+    End Function
+
     Private Sub SetStatus(updateAction As Action(Of BotStatus))
-        Dim snapshot As BotStatus
+        Dim snapshot As BotStatus = Nothing
+        Dim shouldRaise As Boolean = False
         SyncLock _sync
             updateAction(_status)
             _status.AgentEnabled = _config IsNot Nothing AndAlso _config.LevelingAgentEnabled
@@ -5913,11 +6270,32 @@ Public Class BotEngine
             _status.PartyAliveCount = _lastPartyAliveCount
             _status.PartyAllAlive = _lastPartyAllAlive
             _status.CharacterName = _lastCharacterName
+            _status.PerformanceDiagnostics = BuildPerformanceDiagnosticsText()
             _status.UpdatedAt = DateTime.UtcNow
-            snapshot = CloneStatus(_status)
+            Dim statusSignature As String = BuildStatusRaiseSignature(_status)
+            shouldRaise =
+                _lastStatusRaisedAt = DateTime.MinValue OrElse
+                statusSignature <> _lastStatusRaisedSignature OrElse
+                (_status.UpdatedAt - _lastStatusRaisedAt).TotalMilliseconds >= StatusUpdateMinIntervalMs
+
+            If shouldRaise Then
+                _lastStatusRaisedAt = _status.UpdatedAt
+                _lastStatusRaisedSignature = statusSignature
+                snapshot = CloneStatus(_status)
+            End If
         End SyncLock
-        RaiseEvent StatusUpdated(snapshot)
+        If shouldRaise Then
+            RaiseEvent StatusUpdated(snapshot)
+        End If
     End Sub
+
+    Private Shared Function BuildStatusRaiseSignature(status As BotStatus) As String
+        If status Is Nothing Then
+            Return ""
+        End If
+
+        Return $"{status.Running}|{status.WindowFound}|{status.LastAction}|{status.NotAttackingReason}|{status.ErrorMessage}|{status.AgentState}|{status.AgentReason}|{status.AgentGuardrailTriggered}|{status.TargetValid}|{status.MobName}|{status.MobHpText}"
+    End Function
 
     Private Function CloneStatus(src As BotStatus) As BotStatus
         Return New BotStatus With {
@@ -5980,6 +6358,7 @@ Public Class BotEngine
             .AgentState = src.AgentState,
             .AgentReason = src.AgentReason,
             .AgentGuardrailTriggered = src.AgentGuardrailTriggered,
+            .PerformanceDiagnostics = src.PerformanceDiagnostics,
             .UpdatedAt = src.UpdatedAt
         }
     End Function
@@ -6088,6 +6467,10 @@ Public Class BotEngine
     End Function
 
     Public Shared Function CaptureClient(hwnd As IntPtr) As Bitmap
+        If hwnd = IntPtr.Zero Then
+            Return Nothing
+        End If
+
         Dim rc As NativeMethods.RECT
         If Not NativeMethods.GetClientRect(hwnd, rc) Then
             Return Nothing
@@ -6098,28 +6481,41 @@ Public Class BotEngine
         Dim bmp As New Bitmap(width, height, PixelFormat.Format24bppRgb)
 
         Try
+            Dim cachedMethod As CaptureClientMethod
+            If TryGetCachedCaptureMethod(hwnd, cachedMethod) AndAlso TryCaptureWithMethod(hwnd, bmp, width, height, cachedMethod) Then
+                Return bmp
+            End If
+
+            ClearCachedCaptureMethod(hwnd)
+
             If TryCaptureWithPrintWindow(hwnd, bmp, NativeMethods.PW_CLIENTONLY) Then
+                SetCachedCaptureMethod(hwnd, CaptureClientMethod.PrintClientOnly)
                 Return bmp
             End If
 
             If TryCaptureWithPrintWindow(hwnd, bmp, NativeMethods.PW_RENDERFULLCONTENT) Then
+                SetCachedCaptureMethod(hwnd, CaptureClientMethod.PrintRenderFullContent)
                 Return bmp
             End If
 
             If TryCaptureWithPrintWindow(hwnd, bmp, NativeMethods.PW_CLIENTONLY Or NativeMethods.PW_RENDERFULLCONTENT) Then
+                SetCachedCaptureMethod(hwnd, CaptureClientMethod.PrintClientAndRenderFullContent)
                 Return bmp
             End If
 
             If TryCaptureWithPrintWindow(hwnd, bmp, 0UI) Then
+                SetCachedCaptureMethod(hwnd, CaptureClientMethod.PrintDefault)
                 Return bmp
             End If
 
             If TryCaptureWithCopyFromScreen(hwnd, bmp, width, height) Then
+                SetCachedCaptureMethod(hwnd, CaptureClientMethod.CopyFromScreen)
                 Return bmp
             End If
 
             Thread.Sleep(10)
             If TryCaptureWithCopyFromScreen(hwnd, bmp, width, height) Then
+                SetCachedCaptureMethod(hwnd, CaptureClientMethod.CopyFromScreen)
                 Return bmp
             End If
 
@@ -6129,6 +6525,66 @@ Public Class BotEngine
             bmp.Dispose()
             Return Nothing
         End Try
+    End Function
+
+    Private Shared Function TryGetCachedCaptureMethod(hwnd As IntPtr, ByRef method As CaptureClientMethod) As Boolean
+        SyncLock _captureMethodSync
+            Return _captureMethodByWindow.TryGetValue(hwnd, method)
+        End SyncLock
+    End Function
+
+    Private Shared Sub SetCachedCaptureMethod(hwnd As IntPtr, method As CaptureClientMethod)
+        SyncLock _captureMethodSync
+            _captureMethodByWindow(hwnd) = method
+        End SyncLock
+    End Sub
+
+    Private Shared Sub ClearCachedCaptureMethod(hwnd As IntPtr)
+        SyncLock _captureMethodSync
+            _captureMethodByWindow.Remove(hwnd)
+        End SyncLock
+    End Sub
+
+    Public Shared Function GetCachedCaptureMethodName(hwnd As IntPtr) As String
+        Dim method As CaptureClientMethod
+        If TryGetCachedCaptureMethod(hwnd, method) Then
+            Return CaptureMethodName(method)
+        End If
+        Return "uncached"
+    End Function
+
+    Private Shared Function CaptureMethodName(method As CaptureClientMethod) As String
+        Select Case method
+            Case CaptureClientMethod.PrintClientOnly
+                Return "PrintWindow(PW_CLIENTONLY)"
+            Case CaptureClientMethod.PrintRenderFullContent
+                Return "PrintWindow(PW_RENDERFULLCONTENT)"
+            Case CaptureClientMethod.PrintClientAndRenderFullContent
+                Return "PrintWindow(PW_CLIENTONLY|PW_RENDERFULLCONTENT)"
+            Case CaptureClientMethod.PrintDefault
+                Return "PrintWindow(0)"
+            Case CaptureClientMethod.CopyFromScreen
+                Return "CopyFromScreen"
+            Case Else
+                Return "unknown"
+        End Select
+    End Function
+
+    Private Shared Function TryCaptureWithMethod(hwnd As IntPtr, bmp As Bitmap, width As Integer, height As Integer, method As CaptureClientMethod) As Boolean
+        Select Case method
+            Case CaptureClientMethod.PrintClientOnly
+                Return TryCaptureWithPrintWindow(hwnd, bmp, NativeMethods.PW_CLIENTONLY)
+            Case CaptureClientMethod.PrintRenderFullContent
+                Return TryCaptureWithPrintWindow(hwnd, bmp, NativeMethods.PW_RENDERFULLCONTENT)
+            Case CaptureClientMethod.PrintClientAndRenderFullContent
+                Return TryCaptureWithPrintWindow(hwnd, bmp, NativeMethods.PW_CLIENTONLY Or NativeMethods.PW_RENDERFULLCONTENT)
+            Case CaptureClientMethod.PrintDefault
+                Return TryCaptureWithPrintWindow(hwnd, bmp, 0UI)
+            Case CaptureClientMethod.CopyFromScreen
+                Return TryCaptureWithCopyFromScreen(hwnd, bmp, width, height)
+            Case Else
+                Return False
+        End Select
     End Function
 
     Public Shared Function CaptureClientRegion(hwnd As IntPtr, region As RectRegion) As Bitmap
@@ -6155,6 +6611,10 @@ Public Class BotEngine
 
         Dim bmp As New Bitmap(clamped.Width, clamped.Height, PixelFormat.Format24bppRgb)
         Try
+            If TryCaptureClientRegionWithBitBlt(hwnd, clamped, bmp) Then
+                Return bmp
+            End If
+
             Using g As Graphics = Graphics.FromImage(bmp)
                 g.CopyFromScreen(pt.X + clamped.X, pt.Y + clamped.Y, 0, 0, New Size(clamped.Width, clamped.Height), CopyPixelOperation.SourceCopy Or NativeMethods.CAPTUREBLT)
             End Using
@@ -6163,6 +6623,23 @@ Public Class BotEngine
             bmp.Dispose()
             Return Nothing
         End Try
+    End Function
+
+    Private Shared Function TryCaptureClientRegionWithBitBlt(hwnd As IntPtr, clamped As Rectangle, bmp As Bitmap) As Boolean
+        Dim srcHdc As IntPtr = NativeMethods.GetDC(hwnd)
+        If srcHdc = IntPtr.Zero Then
+            Return False
+        End If
+
+        Using g As Graphics = Graphics.FromImage(bmp)
+            Dim destHdc As IntPtr = g.GetHdc()
+            Try
+                Return NativeMethods.BitBlt(destHdc, 0, 0, clamped.Width, clamped.Height, srcHdc, clamped.X, clamped.Y, NativeMethods.SRCCOPY Or NativeMethods.CAPTUREBLT_ROP)
+            Finally
+                g.ReleaseHdc(destHdc)
+                NativeMethods.ReleaseDC(hwnd, srcHdc)
+            End Try
+        End Using
     End Function
 
     Private Shared Function ComputeClientBarPercent(hwnd As IntPtr, region As RectRegion, isHp As Boolean, ByRef success As Boolean) As Double
@@ -6258,6 +6735,40 @@ Public Class BotEngine
         Return Not IsLikelyBlackFrame(bmp)
     End Function
 
+    Private NotInheritable Class BitmapReadBuffer
+        Implements IDisposable
+
+        Private ReadOnly _bmp As Bitmap
+        Private ReadOnly _data As BitmapData
+        Private ReadOnly _bytes As Byte()
+
+        Public ReadOnly Property Width As Integer
+        Public ReadOnly Property Height As Integer
+        Public ReadOnly Property Stride As Integer
+
+        Public Sub New(bmp As Bitmap)
+            _bmp = bmp
+            Width = bmp.Width
+            Height = bmp.Height
+            _data = bmp.LockBits(New Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb)
+            Stride = _data.Stride
+            _bytes = New Byte(Math.Abs(Stride) * Height - 1) {}
+            Marshal.Copy(_data.Scan0, _bytes, 0, _bytes.Length)
+        End Sub
+
+        Public Sub GetRgb(x As Integer, y As Integer, ByRef r As Integer, ByRef g As Integer, ByRef b As Integer)
+            Dim row As Integer = If(Stride >= 0, y * Stride, (Height - 1 - y) * Math.Abs(Stride))
+            Dim index As Integer = row + (x * 3)
+            b = _bytes(index)
+            g = _bytes(index + 1)
+            r = _bytes(index + 2)
+        End Sub
+
+        Public Sub Dispose() Implements IDisposable.Dispose
+            _bmp.UnlockBits(_data)
+        End Sub
+    End Class
+
     Private Shared Function IsLikelyBlackFrame(bmp As Bitmap) As Boolean
         Dim stepX As Integer = Math.Max(1, bmp.Width \ 10)
         Dim stepY As Integer = Math.Max(1, bmp.Height \ 10)
@@ -6265,17 +6776,22 @@ Public Class BotEngine
         Dim darkSamples As Integer = 0
         Dim sumLuma As Long = 0
 
-        For y As Integer = 0 To bmp.Height - 1 Step stepY
-            For x As Integer = 0 To bmp.Width - 1 Step stepX
-                Dim c As Color = bmp.GetPixel(x, y)
-                samples += 1
-                Dim luma As Integer = (CInt(c.R) * 30 + CInt(c.G) * 59 + CInt(c.B) * 11) \ 100
-                sumLuma += luma
-                If luma <= 8 Then
-                    darkSamples += 1
-                End If
+        Using buffer As New BitmapReadBuffer(bmp)
+            For y As Integer = 0 To bmp.Height - 1 Step stepY
+                For x As Integer = 0 To bmp.Width - 1 Step stepX
+                    Dim r As Integer = 0
+                    Dim g As Integer = 0
+                    Dim b As Integer = 0
+                    buffer.GetRgb(x, y, r, g, b)
+                    samples += 1
+                    Dim luma As Integer = (r * 30 + g * 59 + b * 11) \ 100
+                    sumLuma += luma
+                    If luma <= 8 Then
+                        darkSamples += 1
+                    End If
+                Next
             Next
-        Next
+        End Using
 
         If samples = 0 Then
             Return True
@@ -6302,7 +6818,13 @@ Public Class BotEngine
             rect.Height -= 2
         End If
 
-        Dim leadingEdgeRatio As Double = ComputeLeadingEdgeFillRatio(frame, rect, isHp)
+        Using buffer As New BitmapReadBuffer(frame)
+            Return ComputeBarPercent(buffer, rect, isHp)
+        End Using
+    End Function
+
+    Private Shared Function ComputeBarPercent(buffer As BitmapReadBuffer, rect As Rectangle, isHp As Boolean) As Double
+        Dim leadingEdgeRatio As Double = ComputeLeadingEdgeFillRatio(buffer, rect, isHp)
 
         Dim columnMinPixels As Integer = Math.Max(1, CInt(Math.Ceiling(rect.Height * 0.1)))
         Dim gapTolerance As Integer = Math.Max(2, CInt(Math.Ceiling(rect.Width * 0.02)))
@@ -6314,15 +6836,12 @@ Public Class BotEngine
             Dim colored As Integer = 0
             Dim px As Integer = rect.Left + x
             For y As Integer = rect.Top To rect.Bottom - 1
-                Dim c As Color = frame.GetPixel(px, y)
-                If isHp Then
-                    If IsHpColor(c) Then
-                        colored += 1
-                    End If
-                Else
-                    If IsMpColor(c) Then
-                        colored += 1
-                    End If
+                Dim r As Integer = 0
+                Dim g As Integer = 0
+                Dim b As Integer = 0
+                buffer.GetRgb(px, y, r, g, b)
+                If If(isHp, IsHpColorRgb(r, g, b), IsMpColorRgb(r, g, b)) Then
+                    colored += 1
                 End If
             Next
 
@@ -6340,7 +6859,7 @@ Public Class BotEngine
         Next
 
         If rightMost < 0 OrElse rect.Width <= 0 Then
-            Return ComputeBarPercentAdaptive(frame, rect, isHp)
+            Return ComputeBarPercentAdaptive(buffer, rect, isHp)
         End If
 
         Dim colorPercent As Double = Math.Max(0, Math.Min(100, (rightMost + 1) * 100.0 / rect.Width))
@@ -6348,7 +6867,7 @@ Public Class BotEngine
             Return 0
         End If
         If colorPercent < 2.0 Then
-            Dim adaptive As Double = ComputeBarPercentAdaptive(frame, rect, isHp)
+            Dim adaptive As Double = ComputeBarPercentAdaptive(buffer, rect, isHp)
             If adaptive > colorPercent Then
                 Return adaptive
             End If
@@ -6361,7 +6880,17 @@ Public Class BotEngine
             Return 0
         End If
 
-        Dim leadingEdgeRatio As Double = ComputeLeadingEdgeFillRatio(frame, rect, isHp)
+        Using buffer As New BitmapReadBuffer(frame)
+            Return ComputeBarPercentAdaptive(buffer, rect, isHp)
+        End Using
+    End Function
+
+    Private Shared Function ComputeBarPercentAdaptive(buffer As BitmapReadBuffer, rect As Rectangle, isHp As Boolean) As Double
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then
+            Return 0
+        End If
+
+        Dim leadingEdgeRatio As Double = ComputeLeadingEdgeFillRatio(buffer, rect, isHp)
 
         Dim scores(rect.Width - 1) As Long
         Dim maxScore As Long = 0
@@ -6370,10 +6899,10 @@ Public Class BotEngine
             Dim score As Long = 0
             Dim px As Integer = rect.Left + x
             For y As Integer = rect.Top To rect.Bottom - 1
-                Dim c As Color = frame.GetPixel(px, y)
-                Dim r As Integer = CInt(c.R)
-                Dim g As Integer = CInt(c.G)
-                Dim b As Integer = CInt(c.B)
+                Dim r As Integer = 0
+                Dim g As Integer = 0
+                Dim b As Integer = 0
+                buffer.GetRgb(px, y, r, g, b)
                 Dim dominance As Integer
                 If isHp Then
                     dominance = r - ((g + b) \ 2)
@@ -6429,6 +6958,12 @@ Public Class BotEngine
             Return 0
         End If
 
+        Using buffer As New BitmapReadBuffer(frame)
+            Return ComputeLeadingEdgeFillRatio(buffer, rect, isHp)
+        End Using
+    End Function
+
+    Private Shared Function ComputeLeadingEdgeFillRatio(buffer As BitmapReadBuffer, rect As Rectangle, isHp As Boolean) As Double
         Dim edgeCols As Integer = Math.Max(2, Math.Min(rect.Width, CInt(Math.Ceiling(rect.Width * 0.12))))
         Dim colored As Integer = 0
         Dim total As Integer = edgeCols * rect.Height
@@ -6439,15 +6974,12 @@ Public Class BotEngine
         For x As Integer = 0 To edgeCols - 1
             Dim px As Integer = rect.Left + x
             For y As Integer = rect.Top To rect.Bottom - 1
-                Dim c As Color = frame.GetPixel(px, y)
-                If isHp Then
-                    If IsHpColor(c) Then
-                        colored += 1
-                    End If
-                Else
-                    If IsMpColor(c) Then
-                        colored += 1
-                    End If
+                Dim r As Integer = 0
+                Dim g As Integer = 0
+                Dim b As Integer = 0
+                buffer.GetRgb(px, y, r, g, b)
+                If If(isHp, IsHpColorRgb(r, g, b), IsMpColorRgb(r, g, b)) Then
+                    colored += 1
                 End If
             Next
         Next
@@ -6491,6 +7023,12 @@ Public Class BotEngine
             Return 0
         End If
 
+        Using buffer As New BitmapReadBuffer(frame)
+            Return ComputeColorFillRatio(buffer, rect, isHp)
+        End Using
+    End Function
+
+    Private Shared Function ComputeColorFillRatio(buffer As BitmapReadBuffer, rect As Rectangle, isHp As Boolean) As Double
         Dim colored As Integer = 0
         Dim total As Integer = rect.Width * rect.Height
         If total <= 0 Then
@@ -6499,15 +7037,12 @@ Public Class BotEngine
 
         For y As Integer = rect.Top To rect.Bottom - 1
             For x As Integer = rect.Left To rect.Right - 1
-                Dim c As Color = frame.GetPixel(x, y)
-                If isHp Then
-                    If IsHpColor(c) Then
-                        colored += 1
-                    End If
-                Else
-                    If IsMpColor(c) Then
-                        colored += 1
-                    End If
+                Dim r As Integer = 0
+                Dim g As Integer = 0
+                Dim b As Integer = 0
+                buffer.GetRgb(x, y, r, g, b)
+                If If(isHp, IsHpColorRgb(r, g, b), IsMpColorRgb(r, g, b)) Then
+                    colored += 1
                 End If
             Next
         Next
@@ -6711,6 +7246,10 @@ Public Class BotEngine
         Return redHue AndAlso redDominant
     End Function
 
+    Private Shared Function IsHpColorRgb(r As Integer, g As Integer, b As Integer) As Boolean
+        Return IsHpColor(Color.FromArgb(r, g, b))
+    End Function
+
     Private Shared Function IsMpColor(c As Color) As Boolean
         Dim sat As Double = c.GetSaturation()
         Dim bright As Double = c.GetBrightness()
@@ -6722,6 +7261,10 @@ Public Class BotEngine
         Dim blueHue As Boolean = (hue >= 185.0 AndAlso hue <= 255.0)
         Dim blueDominant As Boolean = c.B >= (c.R + 8) AndAlso c.B >= (c.G + 6)
         Return blueHue AndAlso blueDominant
+    End Function
+
+    Private Shared Function IsMpColorRgb(r As Integer, g As Integer, b As Integer) As Boolean
+        Return IsMpColor(Color.FromArgb(r, g, b))
     End Function
 
 

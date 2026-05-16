@@ -3,7 +3,9 @@ Imports System.Drawing.Drawing2D
 Imports System.Drawing.Imaging
 Imports System.IO
 Imports System.Globalization
+Imports System.Runtime.InteropServices
 Imports System.Runtime.InteropServices.WindowsRuntime
+Imports System.Collections.Concurrent
 Imports System.Collections.Generic
 Imports System.Text.RegularExpressions
 Imports System.Threading
@@ -24,6 +26,14 @@ Public NotInheritable Class OcrReader
     Private Shared _initAttempted As Boolean = False
     Private Shared _lastError As String = ""
     Private Shared _prewarmStarted As Integer = 0
+    Private Shared ReadOnly _staQueue As New BlockingCollection(Of OcrStaWorkItem)()
+    Private Shared _staWorkerStarted As Integer = 0
+    Private Shared _staWorkerThreadId As Integer = -1
+
+    Private NotInheritable Class OcrStaWorkItem
+        Public Property Work As Func(Of Object)
+        Public Property Completion As TaskCompletionSource(Of Object)
+    End Class
 
     Private Sub New()
     End Sub
@@ -33,27 +43,30 @@ Public NotInheritable Class OcrReader
             Return
         End If
 
-        Dim worker As New Thread(
+        Task.Run(
             Sub()
                 Try
-                    Dim engine As OcrEngine = GetEngine()
-                    If engine Is Nothing Then
-                        Return
-                    End If
+                    RunOnStaWorker(
+                        Function()
+                            Dim engine As OcrEngine = GetEngine()
+                            If engine Is Nothing Then
+                                Return False
+                            End If
 
-                    Using bmp As New Bitmap(8, 8, PixelFormat.Format24bppRgb)
-                        Using g As Graphics = Graphics.FromImage(bmp)
-                            g.Clear(Color.White)
-                        End Using
-                        ReadRawTextAsync(engine, bmp).GetAwaiter().GetResult()
-                    End Using
+                            Using bmp As New Bitmap(8, 8, PixelFormat.Format24bppRgb)
+                                Using g As Graphics = Graphics.FromImage(bmp)
+                                    g.Clear(Color.White)
+                                End Using
+                                ReadRawTextAsync(engine, bmp).GetAwaiter().GetResult()
+                            End Using
+                            Return True
+                        End Function,
+                        3000,
+                        False)
                 Catch ex As Exception
                     SetLastError(ex.Message)
                 End Try
             End Sub)
-        worker.IsBackground = True
-        worker.SetApartmentState(ApartmentState.STA)
-        worker.Start()
     End Sub
 
     Public Shared Function ReadName(source As Bitmap) As String
@@ -176,102 +189,19 @@ Public NotInheritable Class OcrReader
     End Function
 
     Private Shared Function ReadHpFractionStaFallback(source As Bitmap) As String
-        Dim output As String = ""
-        Dim done As New ManualResetEventSlim(False)
-
-        Dim worker As New Thread(
-            Sub()
-                Try
-                    output = ReadHpFractionInternal(source)
-                Catch ex As Exception
-                    SetLastError(ex.Message)
-                Finally
-                    done.Set()
-                End Try
-            End Sub)
-        worker.IsBackground = True
-        worker.SetApartmentState(ApartmentState.STA)
-        worker.Start()
-
-        If Not done.Wait(900) Then
-            SetLastError("OCR timeout.")
-            Return ""
-        End If
-        Return output
+        Return RunOnStaWorker(Function() ReadHpFractionInternal(source), 900, "")
     End Function
 
     Private Shared Function ReadIntegerStaFallback(source As Bitmap) As Long
-        Dim output As Long = -1
-        Dim done As New ManualResetEventSlim(False)
-
-        Dim worker As New Thread(
-            Sub()
-                Try
-                    output = ReadIntegerInternal(source)
-                Catch ex As Exception
-                    SetLastError(ex.Message)
-                Finally
-                    done.Set()
-                End Try
-            End Sub)
-        worker.IsBackground = True
-        worker.SetApartmentState(ApartmentState.STA)
-        worker.Start()
-
-        If Not done.Wait(900) Then
-            SetLastError("OCR timeout.")
-            Return -1
-        End If
-        Return output
+        Return RunOnStaWorker(Function() ReadIntegerInternal(source), 900, CLng(-1))
     End Function
 
     Private Shared Function ReadScreenTextStaFallback(source As Bitmap, Optional isolatedEngine As Boolean = False) As String
-        Dim output As String = ""
-        Dim done As New ManualResetEventSlim(False)
-
-        Dim worker As New Thread(
-            Sub()
-                Try
-                    output = ReadScreenTextInternal(source, isolatedEngine)
-                Catch ex As Exception
-                    SetLastError(ex.Message)
-                Finally
-                    done.Set()
-                End Try
-            End Sub)
-        worker.IsBackground = True
-        worker.SetApartmentState(ApartmentState.STA)
-        worker.Start()
-
-        If Not done.Wait(1500) Then ' Provide slightly more time for full screen
-            SetLastError("OCR timeout.")
-            Return ""
-        End If
-        Return output
+        Return RunOnStaWorker(Function() ReadScreenTextInternal(source, isolatedEngine), 1500, "")
     End Function
 
     Private Shared Function ReadScreenTextRegionsStaFallback(source As Bitmap, Optional isolatedEngine As Boolean = False) As List(Of OcrTextRegion)
-        Dim output As List(Of OcrTextRegion) = New List(Of OcrTextRegion)()
-        Dim done As New ManualResetEventSlim(False)
-
-        Dim worker As New Thread(
-            Sub()
-                Try
-                    output = ReadScreenTextRegionsInternal(source, isolatedEngine)
-                Catch ex As Exception
-                    SetLastError(ex.Message)
-                Finally
-                    done.Set()
-                End Try
-            End Sub)
-        worker.IsBackground = True
-        worker.SetApartmentState(ApartmentState.STA)
-        worker.Start()
-
-        If Not done.Wait(1500) Then
-            SetLastError("OCR timeout.")
-            Return New List(Of OcrTextRegion)()
-        End If
+        Dim output As List(Of OcrTextRegion) = RunOnStaWorker(Function() ReadScreenTextRegionsInternal(source, isolatedEngine), 1500, New List(Of OcrTextRegion)())
         Return If(output, New List(Of OcrTextRegion)())
     End Function
 
@@ -302,54 +232,83 @@ Public NotInheritable Class OcrReader
     End Function
 
     Private Shared Function ReadNameStaFallback(source As Bitmap) As String
-        Dim output As String = ""
-        Dim done As New ManualResetEventSlim(False)
-
-        Dim worker As New Thread(
-            Sub()
-                Try
-                    output = ReadNameInternal(source)
-                Catch ex As Exception
-                    SetLastError(ex.Message)
-                Finally
-                    done.Set()
-                End Try
-            End Sub)
-        worker.IsBackground = True
-        worker.SetApartmentState(ApartmentState.STA)
-        worker.Start()
-
-        If Not done.Wait(700) Then
-            SetLastError("OCR timeout.")
-            Return ""
-        End If
-        Return output
+        Return RunOnStaWorker(Function() ReadNameInternal(source), 700, "")
     End Function
 
     Private Shared Function ReadPercentStaFallback(source As Bitmap) As Double
-        Dim output As Double = -1
-        Dim done As New ManualResetEventSlim(False)
+        Return RunOnStaWorker(Function() ReadPercentInternal(source), 700, -1.0R)
+    End Function
 
-        Dim worker As New Thread(
-            Sub()
-                Try
-                    output = ReadPercentInternal(source)
-                Catch ex As Exception
-                    SetLastError(ex.Message)
-                Finally
-                    done.Set()
-                End Try
-            End Sub)
+    Private Shared Function RunOnStaWorker(Of T)(work As Func(Of T), timeoutMs As Integer, fallbackValue As T) As T
+        If work Is Nothing Then
+            Return fallbackValue
+        End If
+
+        If Thread.CurrentThread.ManagedThreadId = _staWorkerThreadId Then
+            Try
+                Return work()
+            Catch ex As Exception
+                SetLastError(ex.Message)
+                Return fallbackValue
+            End Try
+        End If
+
+        EnsureStaWorkerStarted()
+
+        Dim completion As New TaskCompletionSource(Of Object)(TaskCreationOptions.RunContinuationsAsynchronously)
+        Dim item As New OcrStaWorkItem With {
+            .Work = Function() DirectCast(work(), Object),
+            .Completion = completion
+        }
+
+        Try
+            _staQueue.Add(item)
+        Catch ex As Exception
+            SetLastError(ex.Message)
+            Return fallbackValue
+        End Try
+
+        If Not completion.Task.Wait(Math.Max(1, timeoutMs)) Then
+            SetLastError("OCR timeout.")
+            Return fallbackValue
+        End If
+
+        Try
+            Return DirectCast(completion.Task.Result, T)
+        Catch ex As Exception
+            Dim message As String = ex.Message
+            If TypeOf ex Is AggregateException AndAlso DirectCast(ex, AggregateException).InnerException IsNot Nothing Then
+                message = DirectCast(ex, AggregateException).InnerException.Message
+            End If
+            SetLastError(message)
+            Return fallbackValue
+        End Try
+    End Function
+
+    Private Shared Sub EnsureStaWorkerStarted()
+        If Interlocked.Exchange(_staWorkerStarted, 1) = 1 Then
+            Return
+        End If
+
+        Dim worker As New Thread(AddressOf StaWorkerLoop)
         worker.IsBackground = True
+        worker.Name = "KathanaBot OCR STA Worker"
         worker.SetApartmentState(ApartmentState.STA)
         worker.Start()
+    End Sub
 
-        If Not done.Wait(700) Then
-            SetLastError("OCR timeout.")
-            Return -1
-        End If
-        Return output
-    End Function
+    Private Shared Sub StaWorkerLoop()
+        _staWorkerThreadId = Thread.CurrentThread.ManagedThreadId
+        For Each item As OcrStaWorkItem In _staQueue.GetConsumingEnumerable()
+            Try
+                Dim result As Object = If(item.Work Is Nothing, Nothing, item.Work())
+                item.Completion.TrySetResult(result)
+            Catch ex As Exception
+                SetLastError(ex.Message)
+                item.Completion.TrySetException(ex)
+            End Try
+        Next
+    End Sub
 
     Private Shared Function ReadNameInternal(source As Bitmap) As String
         Dim engine = GetEngine()
@@ -657,64 +616,177 @@ Public NotInheritable Class OcrReader
 
     Private Shared Function ToGrayHighContrast(source As Bitmap) As Bitmap
         Dim outBmp As New Bitmap(source.Width, source.Height, PixelFormat.Format24bppRgb)
-        For y As Integer = 0 To source.Height - 1
-            For x As Integer = 0 To source.Width - 1
-                Dim c As Color = source.GetPixel(x, y)
-                Dim gray As Integer = CInt(Math.Min(255, Math.Max(0, (c.R * 0.299) + (c.G * 0.587) + (c.B * 0.114))))
-                gray = CInt(Math.Min(255, Math.Max(0, (gray - 80) * 2.2)))
-                outBmp.SetPixel(x, y, Color.FromArgb(gray, gray, gray))
+        Dim rect As New Rectangle(0, 0, source.Width, source.Height)
+        Dim srcData As BitmapData = Nothing
+        Dim dstData As BitmapData = Nothing
+        Try
+            srcData = source.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb)
+            dstData = outBmp.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb)
+            Dim srcBytes(Math.Abs(srcData.Stride) * source.Height - 1) As Byte
+            Dim dstBytes(Math.Abs(dstData.Stride) * outBmp.Height - 1) As Byte
+            Marshal.Copy(srcData.Scan0, srcBytes, 0, srcBytes.Length)
+
+            For y As Integer = 0 To source.Height - 1
+                Dim srcRow As Integer = y * srcData.Stride
+                Dim dstRow As Integer = y * dstData.Stride
+                For x As Integer = 0 To source.Width - 1
+                    Dim si As Integer = srcRow + (x * 3)
+                    Dim b As Integer = srcBytes(si)
+                    Dim g As Integer = srcBytes(si + 1)
+                    Dim r As Integer = srcBytes(si + 2)
+                    Dim gray As Integer = CInt(Math.Min(255, Math.Max(0, (r * 0.299R) + (g * 0.587R) + (b * 0.114R))))
+                    gray = CInt(Math.Min(255, Math.Max(0, (gray - 80) * 2.2R)))
+                    Dim di As Integer = dstRow + (x * 3)
+                    Dim value As Byte = CByte(gray)
+                    dstBytes(di) = value
+                    dstBytes(di + 1) = value
+                    dstBytes(di + 2) = value
+                Next
             Next
-        Next
+
+            Marshal.Copy(dstBytes, 0, dstData.Scan0, dstBytes.Length)
+        Finally
+            If srcData IsNot Nothing Then
+                source.UnlockBits(srcData)
+            End If
+            If dstData IsNot Nothing Then
+                outBmp.UnlockBits(dstData)
+            End If
+        End Try
         Return outBmp
     End Function
 
     Private Shared Function ToBinary(source As Bitmap, threshold As Integer, invert As Boolean) As Bitmap
         Dim outBmp As New Bitmap(source.Width, source.Height, PixelFormat.Format24bppRgb)
-        For y As Integer = 0 To source.Height - 1
-            For x As Integer = 0 To source.Width - 1
-                Dim c As Color = source.GetPixel(x, y)
-                Dim gray As Integer = CInt((c.R * 0.299) + (c.G * 0.587) + (c.B * 0.114))
-                Dim isLight As Boolean = gray >= threshold
-                If invert Then
-                    isLight = Not isLight
-                End If
-                If isLight Then
-                    outBmp.SetPixel(x, y, Color.White)
-                Else
-                    outBmp.SetPixel(x, y, Color.Black)
-                End If
+        Dim rect As New Rectangle(0, 0, source.Width, source.Height)
+        Dim srcData As BitmapData = Nothing
+        Dim dstData As BitmapData = Nothing
+        Try
+            srcData = source.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb)
+            dstData = outBmp.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb)
+            Dim srcBytes(Math.Abs(srcData.Stride) * source.Height - 1) As Byte
+            Dim dstBytes(Math.Abs(dstData.Stride) * outBmp.Height - 1) As Byte
+            Marshal.Copy(srcData.Scan0, srcBytes, 0, srcBytes.Length)
+
+            For y As Integer = 0 To source.Height - 1
+                Dim srcRow As Integer = y * srcData.Stride
+                Dim dstRow As Integer = y * dstData.Stride
+                For x As Integer = 0 To source.Width - 1
+                    Dim si As Integer = srcRow + (x * 3)
+                    Dim b As Integer = srcBytes(si)
+                    Dim g As Integer = srcBytes(si + 1)
+                    Dim r As Integer = srcBytes(si + 2)
+                    Dim gray As Integer = CInt((r * 0.299R) + (g * 0.587R) + (b * 0.114R))
+                    Dim isLight As Boolean = gray >= threshold
+                    If invert Then
+                        isLight = Not isLight
+                    End If
+
+                    Dim value As Byte = If(isLight, CByte(255), CByte(0))
+                    Dim di As Integer = dstRow + (x * 3)
+                    dstBytes(di) = value
+                    dstBytes(di + 1) = value
+                    dstBytes(di + 2) = value
+                Next
             Next
-        Next
+
+            Marshal.Copy(dstBytes, 0, dstData.Scan0, dstBytes.Length)
+        Finally
+            If srcData IsNot Nothing Then
+                source.UnlockBits(srcData)
+            End If
+            If dstData IsNot Nothing Then
+                outBmp.UnlockBits(dstData)
+            End If
+        End Try
         Return outBmp
     End Function
 
     Private Shared Function IsolateLightText(source As Bitmap) As Bitmap
         Dim outBmp As New Bitmap(source.Width, source.Height, PixelFormat.Format24bppRgb)
-        For y As Integer = 0 To source.Height - 1
-            For x As Integer = 0 To source.Width - 1
-                Dim c As Color = source.GetPixel(x, y)
-                Dim bright As Integer = CInt(c.R) + CInt(c.G) + CInt(c.B)
-                Dim isText As Boolean =
-                    bright >= 350 OrElse
-                    (c.R >= 150 AndAlso c.G >= 150) OrElse
-                    (c.R >= 170 AndAlso c.G >= 130)
-                outBmp.SetPixel(x, y, If(isText, Color.White, Color.Black))
+        Dim rect As New Rectangle(0, 0, source.Width, source.Height)
+        Dim srcData As BitmapData = Nothing
+        Dim dstData As BitmapData = Nothing
+        Try
+            srcData = source.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb)
+            dstData = outBmp.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb)
+            Dim srcBytes(Math.Abs(srcData.Stride) * source.Height - 1) As Byte
+            Dim dstBytes(Math.Abs(dstData.Stride) * outBmp.Height - 1) As Byte
+            Marshal.Copy(srcData.Scan0, srcBytes, 0, srcBytes.Length)
+
+            For y As Integer = 0 To source.Height - 1
+                Dim srcRow As Integer = y * srcData.Stride
+                Dim dstRow As Integer = y * dstData.Stride
+                For x As Integer = 0 To source.Width - 1
+                    Dim si As Integer = srcRow + (x * 3)
+                    Dim b As Integer = srcBytes(si)
+                    Dim g As Integer = srcBytes(si + 1)
+                    Dim r As Integer = srcBytes(si + 2)
+                    Dim bright As Integer = r + g + b
+                    Dim isText As Boolean =
+                        bright >= 350 OrElse
+                        (r >= 150 AndAlso g >= 150) OrElse
+                        (r >= 170 AndAlso g >= 130)
+                    Dim value As Byte = If(isText, CByte(255), CByte(0))
+                    Dim di As Integer = dstRow + (x * 3)
+                    dstBytes(di) = value
+                    dstBytes(di + 1) = value
+                    dstBytes(di + 2) = value
+                Next
             Next
-        Next
+
+            Marshal.Copy(dstBytes, 0, dstData.Scan0, dstBytes.Length)
+        Finally
+            If srcData IsNot Nothing Then
+                source.UnlockBits(srcData)
+            End If
+            If dstData IsNot Nothing Then
+                outBmp.UnlockBits(dstData)
+            End If
+        End Try
         Return outBmp
     End Function
 
     Private Shared Function IsolateWhiteDigits(source As Bitmap) As Bitmap
         Dim outBmp As New Bitmap(source.Width, source.Height, PixelFormat.Format24bppRgb)
-        For y As Integer = 0 To source.Height - 1
-            For x As Integer = 0 To source.Width - 1
-                Dim c As Color = source.GetPixel(x, y)
-                Dim maxChannel As Integer = Math.Max(c.R, Math.Max(c.G, c.B))
-                Dim minChannel As Integer = Math.Min(c.R, Math.Min(c.G, c.B))
-                Dim isNearWhite As Boolean = maxChannel >= 165 AndAlso (maxChannel - minChannel) <= 65
-                outBmp.SetPixel(x, y, If(isNearWhite, Color.White, Color.Black))
+        Dim rect As New Rectangle(0, 0, source.Width, source.Height)
+        Dim srcData As BitmapData = Nothing
+        Dim dstData As BitmapData = Nothing
+        Try
+            srcData = source.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb)
+            dstData = outBmp.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb)
+            Dim srcBytes(Math.Abs(srcData.Stride) * source.Height - 1) As Byte
+            Dim dstBytes(Math.Abs(dstData.Stride) * outBmp.Height - 1) As Byte
+            Marshal.Copy(srcData.Scan0, srcBytes, 0, srcBytes.Length)
+
+            For y As Integer = 0 To source.Height - 1
+                Dim srcRow As Integer = y * srcData.Stride
+                Dim dstRow As Integer = y * dstData.Stride
+                For x As Integer = 0 To source.Width - 1
+                    Dim si As Integer = srcRow + (x * 3)
+                    Dim b As Integer = srcBytes(si)
+                    Dim g As Integer = srcBytes(si + 1)
+                    Dim r As Integer = srcBytes(si + 2)
+                    Dim maxChannel As Integer = Math.Max(r, Math.Max(g, b))
+                    Dim minChannel As Integer = Math.Min(r, Math.Min(g, b))
+                    Dim isNearWhite As Boolean = maxChannel >= 165 AndAlso (maxChannel - minChannel) <= 65
+                    Dim value As Byte = If(isNearWhite, CByte(255), CByte(0))
+                    Dim di As Integer = dstRow + (x * 3)
+                    dstBytes(di) = value
+                    dstBytes(di + 1) = value
+                    dstBytes(di + 2) = value
+                Next
             Next
-        Next
+
+            Marshal.Copy(dstBytes, 0, dstData.Scan0, dstBytes.Length)
+        Finally
+            If srcData IsNot Nothing Then
+                source.UnlockBits(srcData)
+            End If
+            If dstData IsNot Nothing Then
+                outBmp.UnlockBits(dstData)
+            End If
+        End Try
         Return outBmp
     End Function
 
