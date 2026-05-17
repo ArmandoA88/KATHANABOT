@@ -3,6 +3,7 @@ Imports System.Drawing.Drawing2D
 Imports System.Drawing.Imaging
 Imports System.IO
 Imports System.Globalization
+Imports System.Buffers
 Imports System.Runtime.InteropServices
 Imports System.Runtime.InteropServices.WindowsRuntime
 Imports System.Collections.Concurrent
@@ -33,6 +34,8 @@ Public NotInheritable Class OcrReader
     Private NotInheritable Class OcrStaWorkItem
         Public Property Work As Func(Of Object)
         Public Property Completion As TaskCompletionSource(Of Object)
+        Public Property CreatedAtUtc As DateTime = DateTime.UtcNow
+        Public Property TimeoutMs As Integer = 1000
     End Class
 
     Private Sub New()
@@ -258,7 +261,8 @@ Public NotInheritable Class OcrReader
         Dim completion As New TaskCompletionSource(Of Object)(TaskCreationOptions.RunContinuationsAsynchronously)
         Dim item As New OcrStaWorkItem With {
             .Work = Function() DirectCast(work(), Object),
-            .Completion = completion
+            .Completion = completion,
+            .TimeoutMs = Math.Max(1, timeoutMs)
         }
 
         Try
@@ -270,6 +274,7 @@ Public NotInheritable Class OcrReader
 
         If Not completion.Task.Wait(Math.Max(1, timeoutMs)) Then
             SetLastError("OCR timeout.")
+            completion.TrySetCanceled()
             Return fallbackValue
         End If
 
@@ -301,6 +306,14 @@ Public NotInheritable Class OcrReader
         _staWorkerThreadId = Thread.CurrentThread.ManagedThreadId
         For Each item As OcrStaWorkItem In _staQueue.GetConsumingEnumerable()
             Try
+                If item Is Nothing OrElse item.Completion Is Nothing OrElse item.Completion.Task.IsCompleted Then
+                    Continue For
+                End If
+                If item.CreatedAtUtc <> DateTime.MinValue AndAlso (DateTime.UtcNow - item.CreatedAtUtc).TotalMilliseconds > Math.Max(1, item.TimeoutMs) Then
+                    item.Completion.TrySetCanceled()
+                    Continue For
+                End If
+
                 Dim result As Object = If(item.Work Is Nothing, Nothing, item.Work())
                 item.Completion.TrySetResult(result)
             Catch ex As Exception
@@ -316,27 +329,32 @@ Public NotInheritable Class OcrReader
             Return ""
         End If
 
-        Dim candidates As List(Of Bitmap) = BuildCandidates(source)
         Dim bestText As String = ""
         Dim bestScore As Integer = -1
 
-        Try
-            For Each candidate In candidates
-                Dim text As String = ReadNameAsync(engine, candidate).GetAwaiter().GetResult()
-                Dim score As Integer = ScoreText(text)
-                If score > bestScore Then
-                    bestScore = score
-                    bestText = text
+        Using baseScaled As Bitmap = ScaleBitmap(source, 4)
+            If TryReadNameCandidate(engine, baseScaled, bestText, bestScore, 20) Then
+                Return bestText
+            End If
+            Using candidate As Bitmap = ToGrayHighContrast(baseScaled)
+                If TryReadNameCandidate(engine, candidate, bestText, bestScore, 20) Then
+                    Return bestText
                 End If
-                If score >= 20 Then
-                    Exit For
+            End Using
+            Using candidate As Bitmap = ToBinary(baseScaled, 150, False)
+                If TryReadNameCandidate(engine, candidate, bestText, bestScore, 20) Then
+                    Return bestText
                 End If
-            Next
-        Finally
-            For Each candidate In candidates
-                candidate.Dispose()
-            Next
-        End Try
+            End Using
+            Using candidate As Bitmap = ToBinary(baseScaled, 150, True)
+                If TryReadNameCandidate(engine, candidate, bestText, bestScore, 20) Then
+                    Return bestText
+                End If
+            End Using
+            Using candidate As Bitmap = IsolateLightText(baseScaled)
+                TryReadNameCandidate(engine, candidate, bestText, bestScore, 20)
+            End Using
+        End Using
 
         Return bestText
     End Function
@@ -347,28 +365,32 @@ Public NotInheritable Class OcrReader
             Return -1
         End If
 
-        Dim candidates As List(Of Bitmap) = BuildCandidates(source)
         Dim bestPercent As Double = -1
         Dim bestScore As Integer = -1
 
-        Try
-            For Each candidate In candidates
-                Dim text As String = ReadRawTextAsync(engine, candidate).GetAwaiter().GetResult()
-                Dim value As Double = ParsePercentFromText(text)
-                Dim score As Integer = ScorePercentText(text, value)
-                If score > bestScore Then
-                    bestScore = score
-                    bestPercent = value
+        Using baseScaled As Bitmap = ScaleBitmap(source, 4)
+            If TryReadPercentCandidate(engine, baseScaled, bestPercent, bestScore, 40) Then
+                Return bestPercent
+            End If
+            Using candidate As Bitmap = ToGrayHighContrast(baseScaled)
+                If TryReadPercentCandidate(engine, candidate, bestPercent, bestScore, 40) Then
+                    Return bestPercent
                 End If
-                If value >= 0 AndAlso score >= 40 Then
-                    Exit For
+            End Using
+            Using candidate As Bitmap = ToBinary(baseScaled, 150, False)
+                If TryReadPercentCandidate(engine, candidate, bestPercent, bestScore, 40) Then
+                    Return bestPercent
                 End If
-            Next
-        Finally
-            For Each candidate In candidates
-                candidate.Dispose()
-            Next
-        End Try
+            End Using
+            Using candidate As Bitmap = ToBinary(baseScaled, 150, True)
+                If TryReadPercentCandidate(engine, candidate, bestPercent, bestScore, 40) Then
+                    Return bestPercent
+                End If
+            End Using
+            Using candidate As Bitmap = IsolateLightText(baseScaled)
+                TryReadPercentCandidate(engine, candidate, bestPercent, bestScore, 40)
+            End Using
+        End Using
 
         Return bestPercent
     End Function
@@ -379,27 +401,32 @@ Public NotInheritable Class OcrReader
             Return ""
         End If
 
-        Dim candidates As List(Of Bitmap) = BuildHpFractionCandidates(source)
         Dim bestText As String = ""
         Dim bestScore As Integer = -1
 
-        Try
-            For Each candidate In candidates
-                Dim text As String = NormalizeHpFractionText(ReadRawTextAsync(engine, candidate).GetAwaiter().GetResult())
-                Dim score As Integer = ScoreHpFractionText(text)
-                If score > bestScore Then
-                    bestScore = score
-                    bestText = text
+        Using baseScaled As Bitmap = ScaleBitmap(source, 5)
+            If TryReadHpFractionCandidate(engine, baseScaled, bestText, bestScore, 60) Then
+                Return bestText
+            End If
+            Using candidate As Bitmap = ToGrayHighContrast(baseScaled)
+                If TryReadHpFractionCandidate(engine, candidate, bestText, bestScore, 60) Then
+                    Return bestText
                 End If
-                If score >= 60 Then
-                    Exit For
+            End Using
+            Using whiteDigits As Bitmap = IsolateWhiteDigits(baseScaled)
+                If TryReadHpFractionCandidate(engine, whiteDigits, bestText, bestScore, 60) Then
+                    Return bestText
                 End If
-            Next
-        Finally
-            For Each candidate In candidates
-                candidate.Dispose()
-            Next
-        End Try
+                Using candidate As Bitmap = ToBinary(whiteDigits, 120, False)
+                    If TryReadHpFractionCandidate(engine, candidate, bestText, bestScore, 60) Then
+                        Return bestText
+                    End If
+                End Using
+            End Using
+            Using candidate As Bitmap = ToBinary(baseScaled, 165, False)
+                TryReadHpFractionCandidate(engine, candidate, bestText, bestScore, 60)
+            End Using
+        End Using
 
         Return bestText
     End Function
@@ -410,30 +437,76 @@ Public NotInheritable Class OcrReader
             Return -1
         End If
 
-        Dim candidates As List(Of Bitmap) = BuildDigitCandidates(source)
         Dim bestValue As Long = -1
         Dim bestScore As Integer = -1
 
-        Try
-            For Each candidate In candidates
-                Dim text As String = NormalizeIntegerText(ReadRawTextAsync(engine, candidate).GetAwaiter().GetResult())
-                Dim value As Long = ParseIntegerFromText(text)
-                Dim score As Integer = ScoreDigitText(text, value)
-                If score > bestScore Then
-                    bestScore = score
-                    bestValue = value
+        Using baseScaled As Bitmap = ScaleBitmap(source, 5)
+            If TryReadIntegerCandidate(engine, baseScaled, bestValue, bestScore, 45) Then
+                Return bestValue
+            End If
+            Using candidate As Bitmap = ToGrayHighContrast(baseScaled)
+                If TryReadIntegerCandidate(engine, candidate, bestValue, bestScore, 45) Then
+                    Return bestValue
                 End If
-                If value >= 0 AndAlso score >= 45 Then
-                    Exit For
+            End Using
+            Using whiteDigits As Bitmap = IsolateWhiteDigits(baseScaled)
+                If TryReadIntegerCandidate(engine, whiteDigits, bestValue, bestScore, 45) Then
+                    Return bestValue
                 End If
-            Next
-        Finally
-            For Each candidate In candidates
-                candidate.Dispose()
-            Next
-        End Try
+                Using candidate As Bitmap = ToBinary(whiteDigits, 120, False)
+                    If TryReadIntegerCandidate(engine, candidate, bestValue, bestScore, 45) Then
+                        Return bestValue
+                    End If
+                End Using
+            End Using
+            Using candidate As Bitmap = ToBinary(baseScaled, 165, False)
+                TryReadIntegerCandidate(engine, candidate, bestValue, bestScore, 45)
+            End Using
+        End Using
 
         Return bestValue
+    End Function
+
+    Private Shared Function TryReadNameCandidate(engine As OcrEngine, candidate As Bitmap, ByRef bestText As String, ByRef bestScore As Integer, acceptScore As Integer) As Boolean
+        Dim text As String = ReadNameAsync(engine, candidate).GetAwaiter().GetResult()
+        Dim score As Integer = ScoreText(text)
+        If score > bestScore Then
+            bestScore = score
+            bestText = text
+        End If
+        Return score >= acceptScore
+    End Function
+
+    Private Shared Function TryReadPercentCandidate(engine As OcrEngine, candidate As Bitmap, ByRef bestPercent As Double, ByRef bestScore As Integer, acceptScore As Integer) As Boolean
+        Dim text As String = ReadRawTextAsync(engine, candidate).GetAwaiter().GetResult()
+        Dim value As Double = ParsePercentFromText(text)
+        Dim score As Integer = ScorePercentText(text, value)
+        If score > bestScore Then
+            bestScore = score
+            bestPercent = value
+        End If
+        Return value >= 0 AndAlso score >= acceptScore
+    End Function
+
+    Private Shared Function TryReadHpFractionCandidate(engine As OcrEngine, candidate As Bitmap, ByRef bestText As String, ByRef bestScore As Integer, acceptScore As Integer) As Boolean
+        Dim text As String = NormalizeHpFractionText(ReadRawTextAsync(engine, candidate).GetAwaiter().GetResult())
+        Dim score As Integer = ScoreHpFractionText(text)
+        If score > bestScore Then
+            bestScore = score
+            bestText = text
+        End If
+        Return score >= acceptScore
+    End Function
+
+    Private Shared Function TryReadIntegerCandidate(engine As OcrEngine, candidate As Bitmap, ByRef bestValue As Long, ByRef bestScore As Integer, acceptScore As Integer) As Boolean
+        Dim text As String = NormalizeIntegerText(ReadRawTextAsync(engine, candidate).GetAwaiter().GetResult())
+        Dim value As Long = ParseIntegerFromText(text)
+        Dim score As Integer = ScoreDigitText(text, value)
+        If score > bestScore Then
+            bestScore = score
+            bestValue = value
+        End If
+        Return value >= 0 AndAlso score >= acceptScore
     End Function
 
     Private Shared Async Function ReadNameAsync(engine As OcrEngine, prepared As Bitmap) As Task(Of String)
@@ -619,12 +692,16 @@ Public NotInheritable Class OcrReader
         Dim rect As New Rectangle(0, 0, source.Width, source.Height)
         Dim srcData As BitmapData = Nothing
         Dim dstData As BitmapData = Nothing
+        Dim srcBytes As Byte() = Nothing
+        Dim dstBytes As Byte() = Nothing
         Try
             srcData = source.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb)
             dstData = outBmp.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb)
-            Dim srcBytes(Math.Abs(srcData.Stride) * source.Height - 1) As Byte
-            Dim dstBytes(Math.Abs(dstData.Stride) * outBmp.Height - 1) As Byte
-            Marshal.Copy(srcData.Scan0, srcBytes, 0, srcBytes.Length)
+            Dim srcLength As Integer = Math.Abs(srcData.Stride) * source.Height
+            Dim dstLength As Integer = Math.Abs(dstData.Stride) * outBmp.Height
+            srcBytes = ArrayPool(Of Byte).Shared.Rent(srcLength)
+            dstBytes = ArrayPool(Of Byte).Shared.Rent(dstLength)
+            Marshal.Copy(srcData.Scan0, srcBytes, 0, srcLength)
 
             For y As Integer = 0 To source.Height - 1
                 Dim srcRow As Integer = y * srcData.Stride
@@ -644,13 +721,19 @@ Public NotInheritable Class OcrReader
                 Next
             Next
 
-            Marshal.Copy(dstBytes, 0, dstData.Scan0, dstBytes.Length)
+            Marshal.Copy(dstBytes, 0, dstData.Scan0, dstLength)
         Finally
             If srcData IsNot Nothing Then
                 source.UnlockBits(srcData)
             End If
             If dstData IsNot Nothing Then
                 outBmp.UnlockBits(dstData)
+            End If
+            If srcBytes IsNot Nothing Then
+                ArrayPool(Of Byte).Shared.Return(srcBytes)
+            End If
+            If dstBytes IsNot Nothing Then
+                ArrayPool(Of Byte).Shared.Return(dstBytes)
             End If
         End Try
         Return outBmp
@@ -661,12 +744,16 @@ Public NotInheritable Class OcrReader
         Dim rect As New Rectangle(0, 0, source.Width, source.Height)
         Dim srcData As BitmapData = Nothing
         Dim dstData As BitmapData = Nothing
+        Dim srcBytes As Byte() = Nothing
+        Dim dstBytes As Byte() = Nothing
         Try
             srcData = source.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb)
             dstData = outBmp.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb)
-            Dim srcBytes(Math.Abs(srcData.Stride) * source.Height - 1) As Byte
-            Dim dstBytes(Math.Abs(dstData.Stride) * outBmp.Height - 1) As Byte
-            Marshal.Copy(srcData.Scan0, srcBytes, 0, srcBytes.Length)
+            Dim srcLength As Integer = Math.Abs(srcData.Stride) * source.Height
+            Dim dstLength As Integer = Math.Abs(dstData.Stride) * outBmp.Height
+            srcBytes = ArrayPool(Of Byte).Shared.Rent(srcLength)
+            dstBytes = ArrayPool(Of Byte).Shared.Rent(dstLength)
+            Marshal.Copy(srcData.Scan0, srcBytes, 0, srcLength)
 
             For y As Integer = 0 To source.Height - 1
                 Dim srcRow As Integer = y * srcData.Stride
@@ -690,13 +777,19 @@ Public NotInheritable Class OcrReader
                 Next
             Next
 
-            Marshal.Copy(dstBytes, 0, dstData.Scan0, dstBytes.Length)
+            Marshal.Copy(dstBytes, 0, dstData.Scan0, dstLength)
         Finally
             If srcData IsNot Nothing Then
                 source.UnlockBits(srcData)
             End If
             If dstData IsNot Nothing Then
                 outBmp.UnlockBits(dstData)
+            End If
+            If srcBytes IsNot Nothing Then
+                ArrayPool(Of Byte).Shared.Return(srcBytes)
+            End If
+            If dstBytes IsNot Nothing Then
+                ArrayPool(Of Byte).Shared.Return(dstBytes)
             End If
         End Try
         Return outBmp
@@ -707,12 +800,16 @@ Public NotInheritable Class OcrReader
         Dim rect As New Rectangle(0, 0, source.Width, source.Height)
         Dim srcData As BitmapData = Nothing
         Dim dstData As BitmapData = Nothing
+        Dim srcBytes As Byte() = Nothing
+        Dim dstBytes As Byte() = Nothing
         Try
             srcData = source.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb)
             dstData = outBmp.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb)
-            Dim srcBytes(Math.Abs(srcData.Stride) * source.Height - 1) As Byte
-            Dim dstBytes(Math.Abs(dstData.Stride) * outBmp.Height - 1) As Byte
-            Marshal.Copy(srcData.Scan0, srcBytes, 0, srcBytes.Length)
+            Dim srcLength As Integer = Math.Abs(srcData.Stride) * source.Height
+            Dim dstLength As Integer = Math.Abs(dstData.Stride) * outBmp.Height
+            srcBytes = ArrayPool(Of Byte).Shared.Rent(srcLength)
+            dstBytes = ArrayPool(Of Byte).Shared.Rent(dstLength)
+            Marshal.Copy(srcData.Scan0, srcBytes, 0, srcLength)
 
             For y As Integer = 0 To source.Height - 1
                 Dim srcRow As Integer = y * srcData.Stride
@@ -735,13 +832,19 @@ Public NotInheritable Class OcrReader
                 Next
             Next
 
-            Marshal.Copy(dstBytes, 0, dstData.Scan0, dstBytes.Length)
+            Marshal.Copy(dstBytes, 0, dstData.Scan0, dstLength)
         Finally
             If srcData IsNot Nothing Then
                 source.UnlockBits(srcData)
             End If
             If dstData IsNot Nothing Then
                 outBmp.UnlockBits(dstData)
+            End If
+            If srcBytes IsNot Nothing Then
+                ArrayPool(Of Byte).Shared.Return(srcBytes)
+            End If
+            If dstBytes IsNot Nothing Then
+                ArrayPool(Of Byte).Shared.Return(dstBytes)
             End If
         End Try
         Return outBmp
@@ -752,12 +855,16 @@ Public NotInheritable Class OcrReader
         Dim rect As New Rectangle(0, 0, source.Width, source.Height)
         Dim srcData As BitmapData = Nothing
         Dim dstData As BitmapData = Nothing
+        Dim srcBytes As Byte() = Nothing
+        Dim dstBytes As Byte() = Nothing
         Try
             srcData = source.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb)
             dstData = outBmp.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb)
-            Dim srcBytes(Math.Abs(srcData.Stride) * source.Height - 1) As Byte
-            Dim dstBytes(Math.Abs(dstData.Stride) * outBmp.Height - 1) As Byte
-            Marshal.Copy(srcData.Scan0, srcBytes, 0, srcBytes.Length)
+            Dim srcLength As Integer = Math.Abs(srcData.Stride) * source.Height
+            Dim dstLength As Integer = Math.Abs(dstData.Stride) * outBmp.Height
+            srcBytes = ArrayPool(Of Byte).Shared.Rent(srcLength)
+            dstBytes = ArrayPool(Of Byte).Shared.Rent(dstLength)
+            Marshal.Copy(srcData.Scan0, srcBytes, 0, srcLength)
 
             For y As Integer = 0 To source.Height - 1
                 Dim srcRow As Integer = y * srcData.Stride
@@ -778,13 +885,19 @@ Public NotInheritable Class OcrReader
                 Next
             Next
 
-            Marshal.Copy(dstBytes, 0, dstData.Scan0, dstBytes.Length)
+            Marshal.Copy(dstBytes, 0, dstData.Scan0, dstLength)
         Finally
             If srcData IsNot Nothing Then
                 source.UnlockBits(srcData)
             End If
             If dstData IsNot Nothing Then
                 outBmp.UnlockBits(dstData)
+            End If
+            If srcBytes IsNot Nothing Then
+                ArrayPool(Of Byte).Shared.Return(srcBytes)
+            End If
+            If dstBytes IsNot Nothing Then
+                ArrayPool(Of Byte).Shared.Return(dstBytes)
             End If
         End Try
         Return outBmp

@@ -9,6 +9,7 @@ Imports System.Threading.Tasks
 Imports System.Collections.Generic
 Imports System.IO
 Imports System.Diagnostics
+Imports System.Linq
 
 Public Class Form1
     Private Shared ReadOnly PrimaryKeys As String() = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"}
@@ -26,6 +27,20 @@ Public Class Form1
     Private ReadOnly _liteEngine As New BotEngine()
     Private ReadOnly _uiTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _enterToggleTimer As New System.Windows.Forms.Timer()
+    Private ReadOnly _logFlushTimer As New System.Windows.Forms.Timer()
+    Private ReadOnly _logQueueSync As New Object()
+    Private ReadOnly _logThrottleSync As New Object()
+    Private ReadOnly _logQueue As New Queue(Of String)()
+    Private _droppedLogLineCount As Integer = 0
+    Private _lastLogTrimUtc As DateTime = DateTime.MinValue
+    Private Const LogFlushIntervalMs As Integer = 250
+    Private Const MaxPendingLogLines As Integer = 2000
+    Private Const MaxLogFlushLines As Integer = 120
+    Private Const MaxRealtimeLogChars As Integer = 160000
+    Private Const TargetRealtimeLogChars As Integer = 120000
+    Private Const MaxLogLineChars As Integer = 2000
+    Private Const LogTrimIntervalSeconds As Integer = 5
+    Private Const HighFrequencyLogMinIntervalMs As Integer = 1000
     Private ReadOnly _liteActionEnabledChecks As New Dictionary(Of String, CheckBox)(StringComparer.OrdinalIgnoreCase)
     Private ReadOnly _liteActionCooldownInputs As New Dictionary(Of String, NumericUpDown)(StringComparer.OrdinalIgnoreCase)
     Private _liteSyncInProgress As Boolean = False
@@ -230,6 +245,16 @@ Public Class Form1
     Private lblKeySummaryInfo As Label
     Private txtDiagnostics As TextBox
     Private pnlHealthBanner As Panel
+    Private chkAdaptivePerformance As CheckBox
+    Private chkPixelChangeGate As CheckBox
+    Private nudAdaptiveSlowMinMs As NumericUpDown
+    Private nudAdaptiveSlowMultiplier As NumericUpDown
+    Private nudAdaptiveRecoveryMultiplier As NumericUpDown
+    Private nudAdaptiveSlowConfirm As NumericUpDown
+    Private nudAdaptiveRecoveryConfirm As NumericUpDown
+    Private cboCaptureBackend As ComboBox
+    Private btnRunBenchmark As Button
+    Private btnExportDiagnostics As Button
 
     Private nudAutoPotHp As NumericUpDown
     Private nudAutoPotMp As NumericUpDown
@@ -310,6 +335,14 @@ Public Class Form1
     Private ReadOnly _baseBackColors As New Dictionary(Of Control, Color)()
     Private ReadOnly _gridThemeSnapshots As New Dictionary(Of DataGridView, GridThemeSnapshot)()
     Private ReadOnly _keyActionEvents As New List(Of KeyActionEvent)()
+    Private ReadOnly _keyActionEventsSync As New Object()
+    Private Const MaxKeyActionEvents As Integer = 30000
+    Private _lastEngineKeyActionLogUtc As DateTime = DateTime.MinValue
+    Private _suppressedEngineKeyActionLogCount As Integer = 0
+    Private _lastStateLogUtc As DateTime = DateTime.MinValue
+    Private _suppressedStateLogCount As Integer = 0
+    Private _lastNoAttackReasonLogUtc As DateTime = DateTime.MinValue
+    Private _suppressedNoAttackReasonLogCount As Integer = 0
     Private ReadOnly _chatTranslator As New TranslationService()
     Private ReadOnly _chatTranslationLock As New SemaphoreSlim(1, 1)
     Private ReadOnly _chatSeenLineKeys As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
@@ -321,6 +354,8 @@ Public Class Form1
     Private _uiTimingCount As Long = 0
     Private _uiTimingAverageMs As Double = 0
     Private _uiTimingMaxMs As Double = 0
+    Private ReadOnly _diagnosticsHistory As New Queue(Of String)()
+    Private Const DiagnosticsHistoryLimit As Integer = 600
 
     Private Enum TaskbarProgressState
         NoProgress = 0
@@ -519,6 +554,10 @@ Public Class Form1
         AddHandler _enterToggleTimer.Tick, AddressOf EnterToggleTimerTick
         _enterToggleTimer.Start()
 
+        _logFlushTimer.Interval = LogFlushIntervalMs
+        AddHandler _logFlushTimer.Tick, AddressOf LogFlushTimerTick
+        _logFlushTimer.Start()
+
         UpdateEditionUiState(False)
         PushLiveConfig()
     End Sub
@@ -591,6 +630,44 @@ Public Class Form1
         End If
         If nudChatMaxLines IsNot Nothing Then
             AddHandler nudChatMaxLines.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If chkAdaptivePerformance IsNot Nothing Then
+            AddHandler chkAdaptivePerformance.CheckedChanged, AddressOf LiveConfigChanged
+            AddHandler chkAdaptivePerformance.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
+        If chkPixelChangeGate IsNot Nothing Then
+            AddHandler chkPixelChangeGate.CheckedChanged, AddressOf LiveConfigChanged
+            AddHandler chkPixelChangeGate.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudAdaptiveSlowMinMs IsNot Nothing Then
+            AddHandler nudAdaptiveSlowMinMs.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler nudAdaptiveSlowMinMs.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudAdaptiveSlowMultiplier IsNot Nothing Then
+            AddHandler nudAdaptiveSlowMultiplier.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler nudAdaptiveSlowMultiplier.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudAdaptiveRecoveryMultiplier IsNot Nothing Then
+            AddHandler nudAdaptiveRecoveryMultiplier.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler nudAdaptiveRecoveryMultiplier.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudAdaptiveSlowConfirm IsNot Nothing Then
+            AddHandler nudAdaptiveSlowConfirm.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler nudAdaptiveSlowConfirm.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudAdaptiveRecoveryConfirm IsNot Nothing Then
+            AddHandler nudAdaptiveRecoveryConfirm.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler nudAdaptiveRecoveryConfirm.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If cboCaptureBackend IsNot Nothing Then
+            AddHandler cboCaptureBackend.SelectedIndexChanged, AddressOf LiveConfigChanged
+            AddHandler cboCaptureBackend.SelectedIndexChanged, AddressOf PersistListSettingsChanged
+        End If
+        If btnRunBenchmark IsNot Nothing Then
+            AddHandler btnRunBenchmark.Click, AddressOf RunBenchmarkClicked
+        End If
+        If btnExportDiagnostics IsNot Nothing Then
+            AddHandler btnExportDiagnostics.Click, AddressOf ExportDiagnosticsClicked
         End If
         AddHandler nudLoopMs.ValueChanged, AddressOf LiveConfigChanged
         AddHandler nudRetargetMs.ValueChanged, AddressOf LiveConfigChanged
@@ -2456,8 +2533,59 @@ Public Class Form1
 
     Private Function BuildDiagnosticsTab() As TabPage
         Dim tab As New TabPage("Diagnostics") With {.BackColor = Color.FromArgb(20, 20, 20)}
+        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 116))
+        root.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+
+        Dim controls As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 8, .RowCount = 3, .Padding = New Padding(6), .BackColor = Color.FromArgb(20, 20, 20)}
+        For i As Integer = 1 To 8
+            controls.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 12.5F))
+        Next
+        controls.RowStyles.Add(New RowStyle(SizeType.Absolute, 32))
+        controls.RowStyles.Add(New RowStyle(SizeType.Absolute, 32))
+        controls.RowStyles.Add(New RowStyle(SizeType.Absolute, 36))
+
+        chkAdaptivePerformance = New CheckBox() With {.Text = "Adaptive performance", .Checked = True, .Dock = DockStyle.Fill, .ForeColor = Color.Gainsboro}
+        controls.Controls.Add(chkAdaptivePerformance, 0, 0)
+        controls.SetColumnSpan(chkAdaptivePerformance, 2)
+        chkPixelChangeGate = New CheckBox() With {.Text = "Skip unchanged OCR", .Checked = True, .Dock = DockStyle.Fill, .ForeColor = Color.Gainsboro}
+        controls.Controls.Add(chkPixelChangeGate, 2, 0)
+        controls.SetColumnSpan(chkPixelChangeGate, 2)
+        controls.Controls.Add(New Label() With {.Text = "Capture backend", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.Gainsboro}, 4, 0)
+        cboCaptureBackend = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList}
+        cboCaptureBackend.Items.AddRange(New Object() {"Auto", "Cached GDI", "Windows Graphics Capture"})
+        cboCaptureBackend.SelectedIndex = 0
+        controls.Controls.Add(cboCaptureBackend, 5, 0)
+        controls.SetColumnSpan(cboCaptureBackend, 2)
+
+        controls.Controls.Add(New Label() With {.Text = "Slow min ms", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.Gainsboro}, 0, 1)
+        nudAdaptiveSlowMinMs = New NumericUpDown() With {.Minimum = 40, .Maximum = 2000, .Value = 140, .Increment = 10, .Dock = DockStyle.Fill}
+        controls.Controls.Add(nudAdaptiveSlowMinMs, 1, 1)
+        controls.Controls.Add(New Label() With {.Text = "Slow x loop", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.Gainsboro}, 2, 1)
+        nudAdaptiveSlowMultiplier = New NumericUpDown() With {.Minimum = 1D, .Maximum = 10D, .DecimalPlaces = 2, .Increment = 0.1D, .Value = 1.8D, .Dock = DockStyle.Fill}
+        controls.Controls.Add(nudAdaptiveSlowMultiplier, 3, 1)
+        controls.Controls.Add(New Label() With {.Text = "Recover x loop", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.Gainsboro}, 4, 1)
+        nudAdaptiveRecoveryMultiplier = New NumericUpDown() With {.Minimum = 1D, .Maximum = 10D, .DecimalPlaces = 2, .Increment = 0.1D, .Value = 1.25D, .Dock = DockStyle.Fill}
+        controls.Controls.Add(nudAdaptiveRecoveryMultiplier, 5, 1)
+        controls.Controls.Add(New Label() With {.Text = "Confirm", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.Gainsboro}, 6, 1)
+        Dim confirmLayout As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .Margin = New Padding(0)}
+        nudAdaptiveSlowConfirm = New NumericUpDown() With {.Minimum = 1, .Maximum = 60, .Value = 5, .Width = 58}
+        nudAdaptiveRecoveryConfirm = New NumericUpDown() With {.Minimum = 1, .Maximum = 120, .Value = 14, .Width = 58}
+        confirmLayout.Controls.Add(nudAdaptiveSlowConfirm)
+        confirmLayout.Controls.Add(nudAdaptiveRecoveryConfirm)
+        controls.Controls.Add(confirmLayout, 7, 1)
+
+        btnRunBenchmark = New Button() With {.Text = "Run Benchmark", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(45, 95, 150), .ForeColor = Color.White}
+        controls.Controls.Add(btnRunBenchmark, 0, 2)
+        controls.SetColumnSpan(btnRunBenchmark, 2)
+        btnExportDiagnostics = New Button() With {.Text = "Export Diagnostics", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(65, 85, 105), .ForeColor = Color.White}
+        controls.Controls.Add(btnExportDiagnostics, 2, 2)
+        controls.SetColumnSpan(btnExportDiagnostics, 2)
+
         txtDiagnostics = New TextBox() With {.Dock = DockStyle.Fill, .Multiline = True, .ScrollBars = ScrollBars.Both, .ReadOnly = True, .Font = New Font("Consolas", 9.5F, FontStyle.Regular), .BackColor = Color.FromArgb(10, 10, 10), .ForeColor = Color.LightGray}
-        tab.Controls.Add(txtDiagnostics)
+        root.Controls.Add(controls, 0, 0)
+        root.Controls.Add(txtDiagnostics, 0, 1)
+        tab.Controls.Add(root)
         AddTabExplanationButton(tab, HelpScopeDiagnostics)
         Return tab
     End Function
@@ -2954,7 +3082,7 @@ Public Class Form1
         rtbLog = New RichTextBox() With {.Dock = DockStyle.Fill, .ReadOnly = True, .BackColor = Color.Black, .ForeColor = Color.FromArgb(70, 255, 160), .Font = New Font("Consolas", 9.0F, FontStyle.Regular), .ScrollBars = RichTextBoxScrollBars.Vertical}
         realtimeLayout.Controls.Add(rtbLog, 0, 0)
         Dim btnClearLog As New Button() With {.Text = "Clear Log", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(130, 25, 25), .ForeColor = Color.White}
-        AddHandler btnClearLog.Click, Sub(_s As Object, _e As EventArgs) rtbLog.Clear()
+        AddHandler btnClearLog.Click, Sub(_s As Object, _e As EventArgs) ClearRealtimeLog()
         realtimeLayout.Controls.Add(btnClearLog, 0, 1)
         realtimeTab.Controls.Add(realtimeLayout)
 
@@ -3008,7 +3136,9 @@ Public Class Form1
         }
         AddHandler btnResetSummary.Click,
             Sub(_s As Object, _e As EventArgs)
-                _keyActionEvents.Clear()
+                SyncLock _keyActionEventsSync
+                    _keyActionEvents.Clear()
+                End SyncLock
                 RefreshKeyActionSummary()
             End Sub
         layout.Controls.Add(btnResetSummary, 0, 2)
@@ -4968,6 +5098,75 @@ Public Class Form1
         Return $"UI Update: avg {_uiTimingAverageMs:0.0}ms | max {_uiTimingMaxMs:0.0}ms | n={_uiTimingCount}"
     End Function
 
+    Private Function GetSelectedCaptureBackendCode() As String
+        Dim label As String = If(cboCaptureBackend IsNot Nothing AndAlso cboCaptureBackend.SelectedItem IsNot Nothing, cboCaptureBackend.SelectedItem.ToString(), "Auto")
+        Select Case label.Trim().ToLowerInvariant()
+            Case "cached gdi"
+                Return "gdi"
+            Case "windows graphics capture"
+                Return "wgc"
+            Case Else
+                Return "auto"
+        End Select
+    End Function
+
+    Private Sub SelectCaptureBackend(raw As String)
+        If cboCaptureBackend Is Nothing Then
+            Return
+        End If
+
+        Dim normalized As String = If(raw, "").Trim().ToLowerInvariant()
+        Dim label As String = "Auto"
+        If normalized = "gdi" OrElse normalized = "cached_gdi" Then
+            label = "Cached GDI"
+        ElseIf normalized = "wgc" OrElse normalized = "windows_graphics_capture" Then
+            label = "Windows Graphics Capture"
+        End If
+        cboCaptureBackend.SelectedItem = label
+    End Sub
+
+    Private Sub RunBenchmarkClicked(_sender As Object, _e As EventArgs)
+        btnRunBenchmark.Enabled = False
+        AppendLog("Performance benchmark started.")
+        Dim cfg As BotConfig = BuildFullConfig()
+        Task.Run(
+            Sub()
+                Dim report As String = BotEngine.RunPerformanceBenchmark(cfg, 30)
+                BeginInvoke(
+                    New Action(
+                        Sub()
+                            AppendLog("Performance benchmark completed.")
+                            txtDiagnostics.Text = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} Benchmark{Environment.NewLine}{report}{Environment.NewLine}{Environment.NewLine}{txtDiagnostics.Text}"
+                            btnRunBenchmark.Enabled = True
+                        End Sub))
+            End Sub)
+    End Sub
+
+    Private Sub ExportDiagnosticsClicked(_sender As Object, _e As EventArgs)
+        Try
+            Dim exportDir As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "KathanaBotDiagnostics")
+            Directory.CreateDirectory(exportDir)
+            Dim exportPath As String = Path.Combine(exportDir, $"diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.txt")
+            Dim history As String = String.Join(Environment.NewLine & Environment.NewLine, _diagnosticsHistory.Reverse())
+            Dim currentText As String = If(txtDiagnostics IsNot Nothing, txtDiagnostics.Text, "")
+            File.WriteAllText(exportPath, currentText & Environment.NewLine & Environment.NewLine & "History" & Environment.NewLine & history, Encoding.UTF8)
+            AppendLog("Diagnostics exported: " & exportPath)
+        Catch ex As Exception
+            AppendLog("Diagnostics export failed: " & ex.Message)
+        End Try
+    End Sub
+
+    Private Sub AddDiagnosticsHistory(snapshotText As String)
+        If String.IsNullOrWhiteSpace(snapshotText) Then
+            Return
+        End If
+
+        _diagnosticsHistory.Enqueue($"{DateTime.Now:yyyy-MM-dd HH:mm:ss}{Environment.NewLine}{snapshotText}")
+        While _diagnosticsHistory.Count > DiagnosticsHistoryLimit
+            _diagnosticsHistory.Dequeue()
+        End While
+    End Sub
+
     Private Sub UiTimerTick(sender As Object, e As EventArgs)
         Dim uiWatch As Stopwatch = Stopwatch.StartNew()
         PushLiveConfig()
@@ -5006,6 +5205,13 @@ Public Class Form1
             $"ChatTargetLanguage: {GetSelectedChatTargetLanguageCode()}{Environment.NewLine}" &
             $"ChatScanMs: {If(nudChatScanMs IsNot Nothing, nudChatScanMs.Value.ToString(), "700")}{Environment.NewLine}" &
             $"ChatMaxLines: {If(nudChatMaxLines IsNot Nothing, nudChatMaxLines.Value.ToString(), "6")}{Environment.NewLine}" &
+            $"AdaptivePerformanceEnabled: {If(chkAdaptivePerformance Is Nothing OrElse chkAdaptivePerformance.Checked, "True", "False")}{Environment.NewLine}" &
+            $"PixelChangeGateEnabled: {If(chkPixelChangeGate Is Nothing OrElse chkPixelChangeGate.Checked, "True", "False")}{Environment.NewLine}" &
+            $"AdaptiveSlowMinMs: {If(nudAdaptiveSlowMinMs IsNot Nothing, nudAdaptiveSlowMinMs.Value.ToString(), "140")}{Environment.NewLine}" &
+            $"AdaptiveSlowMultiplier: {If(nudAdaptiveSlowMultiplier IsNot Nothing, nudAdaptiveSlowMultiplier.Value.ToString("0.00"), "1.80")}{Environment.NewLine}" &
+            $"AdaptiveRecoveryMultiplier: {If(nudAdaptiveRecoveryMultiplier IsNot Nothing, nudAdaptiveRecoveryMultiplier.Value.ToString("0.00"), "1.25")}{Environment.NewLine}" &
+            $"AdaptiveConfirmSlow/Recover: {If(nudAdaptiveSlowConfirm IsNot Nothing, nudAdaptiveSlowConfirm.Value.ToString(), "5")}/{If(nudAdaptiveRecoveryConfirm IsNot Nothing, nudAdaptiveRecoveryConfirm.Value.ToString(), "14")}{Environment.NewLine}" &
+            $"CaptureBackendPreference: {GetSelectedCaptureBackendCode()}{Environment.NewLine}" &
             $"NavigationEnabled: {If(chkNavigationEnabled IsNot Nothing AndAlso chkNavigationEnabled.Checked, "True", "False")}{Environment.NewLine}" &
             $"MapOpenKey: {If(txtMapOpenKey IsNot Nothing AndAlso txtMapOpenKey.Text.Trim() <> "", txtMapOpenKey.Text.Trim().ToUpperInvariant(), DefaultMapOpenKey)}{Environment.NewLine}" &
             $"TravelPreviewEnabled: {If(chkTravelPreview IsNot Nothing AndAlso chkTravelPreview.Checked, "True", "False")}{Environment.NewLine}" &
@@ -5087,6 +5293,7 @@ Public Class Form1
             $"LastAction: {st.LastAction}{Environment.NewLine}" &
              $"NotAttackingReason: {st.NotAttackingReason}{Environment.NewLine}" &
              $"Error: {st.ErrorMessage}"
+        AddDiagnosticsHistory(txtDiagnostics.Text)
         RefreshKeyActionSummary()
         uiWatch.Stop()
         RecordUiTiming(uiWatch.Elapsed.TotalMilliseconds)
@@ -5153,6 +5360,9 @@ Public Class Form1
 
     Private Sub OnEngineStatusUpdated(edition As BotEdition, status As BotStatus)
         If InvokeRequired Then
+            If IsDisposed OrElse Not IsHandleCreated Then
+                Return
+            End If
             BeginInvoke(New Action(Of BotEdition, BotStatus)(AddressOf OnEngineStatusUpdated), edition, status)
             Return
         End If
@@ -5281,11 +5491,18 @@ Public Class Form1
         End If
 
         If status.LastAction <> "" AndAlso status.LastAction <> _lastAction Then
-            AppendLog("Key action: " & status.LastAction)
             _lastAction = status.LastAction
         End If
         If statusText <> _lastState Then
-            AppendLog(statusText.Replace("Status: ", "State changed to: "))
+            Dim stateLog As String = BuildRateLimitedLogMessage(
+                statusText.Replace("Status: ", "State changed to: "),
+                _lastStateLogUtc,
+                _suppressedStateLogCount,
+                HighFrequencyLogMinIntervalMs,
+                "state change")
+            If stateLog IsNot Nothing Then
+                AppendLog(stateLog)
+            End If
             _lastState = statusText
         End If
         If status.ErrorMessage <> "" AndAlso status.ErrorMessage <> _lastError Then
@@ -5293,7 +5510,15 @@ Public Class Form1
             _lastError = status.ErrorMessage
         End If
         If status.NotAttackingReason <> "" AndAlso status.NotAttackingReason <> _lastNoAttackReason Then
-            AppendLog("No attack reason: " & status.NotAttackingReason)
+            Dim reasonLog As String = BuildRateLimitedLogMessage(
+                "No attack reason: " & status.NotAttackingReason,
+                _lastNoAttackReasonLogUtc,
+                _suppressedNoAttackReasonLogCount,
+                HighFrequencyLogMinIntervalMs,
+                "no-attack reason")
+            If reasonLog IsNot Nothing Then
+                AppendLog(reasonLog)
+            End If
             _lastNoAttackReason = status.NotAttackingReason
         ElseIf status.NotAttackingReason = "" Then
             _lastNoAttackReason = ""
@@ -5605,13 +5830,21 @@ Public Class Form1
     End Sub
 
     Private Sub OnEngineLogLine(edition As BotEdition, line As String)
-        If InvokeRequired Then
-            BeginInvoke(New Action(Of BotEdition, String)(AddressOf OnEngineLogLine), edition, line)
-            Return
-        End If
         Dim prefixed As String = $"[{edition}] {line}"
-        If edition = BotEdition.Full Then
+        Dim isKeyAction As Boolean = IsKeyActionLogLine(line)
+        If edition = BotEdition.Full AndAlso isKeyAction Then
             TrackKeyActionFromEngineLog(line)
+        End If
+        If isKeyAction Then
+            prefixed = BuildRateLimitedLogMessage(
+                prefixed,
+                _lastEngineKeyActionLogUtc,
+                _suppressedEngineKeyActionLogCount,
+                HighFrequencyLogMinIntervalMs,
+                "key action")
+            If prefixed Is Nothing Then
+                Return
+            End If
         End If
         AppendLog(prefixed)
     End Sub
@@ -5914,6 +6147,14 @@ Public Class Form1
         cfg.ChatTranslationTargetLanguage = GetSelectedChatTargetLanguageCode()
         cfg.ChatTranslationScanIntervalMs = CInt(If(nudChatScanMs IsNot Nothing, nudChatScanMs.Value, 700D))
         cfg.ChatTranslationMaxLines = CInt(If(nudChatMaxLines IsNot Nothing, nudChatMaxLines.Value, 6D))
+        cfg.AdaptivePerformanceEnabled = (chkAdaptivePerformance Is Nothing OrElse chkAdaptivePerformance.Checked)
+        cfg.PixelChangeGateEnabled = (chkPixelChangeGate Is Nothing OrElse chkPixelChangeGate.Checked)
+        cfg.AdaptiveSlowLoopMinMs = CInt(If(nudAdaptiveSlowMinMs IsNot Nothing, nudAdaptiveSlowMinMs.Value, 140D))
+        cfg.AdaptiveSlowLoopMultiplier = CDbl(If(nudAdaptiveSlowMultiplier IsNot Nothing, nudAdaptiveSlowMultiplier.Value, 1.8D))
+        cfg.AdaptiveRecoveryLoopMultiplier = CDbl(If(nudAdaptiveRecoveryMultiplier IsNot Nothing, nudAdaptiveRecoveryMultiplier.Value, 1.25D))
+        cfg.AdaptiveSlowConfirmCount = CInt(If(nudAdaptiveSlowConfirm IsNot Nothing, nudAdaptiveSlowConfirm.Value, 5D))
+        cfg.AdaptiveRecoveryConfirmCount = CInt(If(nudAdaptiveRecoveryConfirm IsNot Nothing, nudAdaptiveRecoveryConfirm.Value, 14D))
+        cfg.CaptureBackendPreference = GetSelectedCaptureBackendCode()
         cfg.HpBar = BuildRect("hp_bar")
         cfg.MpBar = BuildRect("mp_bar")
         cfg.MobNameRect = BuildRect("mob_name_rect")
@@ -7091,6 +7332,18 @@ Public Class Form1
         End If
         SetNumericControlValue(nudChatScanMs, CDec(Math.Max(250, cfg.ChatTranslationScanIntervalMs)))
         SetNumericControlValue(nudChatMaxLines, CDec(Math.Max(1, cfg.ChatTranslationMaxLines)))
+        If chkAdaptivePerformance IsNot Nothing Then
+            chkAdaptivePerformance.Checked = cfg.AdaptivePerformanceEnabled
+        End If
+        If chkPixelChangeGate IsNot Nothing Then
+            chkPixelChangeGate.Checked = cfg.PixelChangeGateEnabled
+        End If
+        SetNumericControlValue(nudAdaptiveSlowMinMs, CDec(Math.Max(40, cfg.AdaptiveSlowLoopMinMs)))
+        SetNumericControlValue(nudAdaptiveSlowMultiplier, CDec(Math.Max(1.0R, cfg.AdaptiveSlowLoopMultiplier)))
+        SetNumericControlValue(nudAdaptiveRecoveryMultiplier, CDec(Math.Max(1.0R, cfg.AdaptiveRecoveryLoopMultiplier)))
+        SetNumericControlValue(nudAdaptiveSlowConfirm, CDec(Math.Max(1, cfg.AdaptiveSlowConfirmCount)))
+        SetNumericControlValue(nudAdaptiveRecoveryConfirm, CDec(Math.Max(1, cfg.AdaptiveRecoveryConfirmCount)))
+        SelectCaptureBackend(cfg.CaptureBackendPreference)
         PopulateNavigationNodeCombos()
         If cboNavigationStartNode IsNot Nothing Then
             cboNavigationStartNode.SelectedIndex = 0
@@ -7400,19 +7653,129 @@ Public Class Form1
     End Function
 
     Private Sub AppendLog(message As String)
-        Dim stamp As String = DateTime.Now.ToString("HH:mm:ss")
-        rtbLog.AppendText($"[{stamp}] {message}{Environment.NewLine}")
-        rtbLog.SelectionStart = rtbLog.TextLength
-        rtbLog.ScrollToCaret()
+        Dim text As String = If(message, "")
+        If text.Length > MaxLogLineChars Then
+            text = text.Substring(0, MaxLogLineChars) & " ... [truncated]"
+        End If
+
+        Dim stamped As String = $"[{DateTime.Now:HH:mm:ss}] {text}"
+        SyncLock _logQueueSync
+            If _logQueue.Count >= MaxPendingLogLines Then
+                _logQueue.Dequeue()
+                If _droppedLogLineCount < Integer.MaxValue Then
+                    _droppedLogLineCount += 1
+                End If
+            End If
+            _logQueue.Enqueue(stamped)
+        End SyncLock
     End Sub
 
     Private Sub AppendLogSafe(message As String)
-        If InvokeRequired Then
-            BeginInvoke(New Action(Of String)(AddressOf AppendLogSafe), message)
-            Return
-        End If
         AppendLog(message)
     End Sub
+
+    Private Sub LogFlushTimerTick(sender As Object, e As EventArgs)
+        FlushPendingLogLines()
+    End Sub
+
+    Private Sub FlushPendingLogLines()
+        If rtbLog Is Nothing OrElse rtbLog.IsDisposed Then
+            Return
+        End If
+
+        Dim batch As New List(Of String)()
+        Dim droppedCount As Integer = 0
+        SyncLock _logQueueSync
+            droppedCount = _droppedLogLineCount
+            _droppedLogLineCount = 0
+
+            While _logQueue.Count > 0 AndAlso batch.Count < MaxLogFlushLines
+                batch.Add(_logQueue.Dequeue())
+            End While
+        End SyncLock
+
+        If droppedCount > 0 Then
+            batch.Insert(0, $"[{DateTime.Now:HH:mm:ss}] UI log queue dropped {droppedCount} older line(s) to keep the control responsive.")
+        End If
+
+        If batch.Count = 0 Then
+            Return
+        End If
+
+        rtbLog.SuspendLayout()
+        Try
+            rtbLog.AppendText(String.Join(Environment.NewLine, batch) & Environment.NewLine)
+            TrimRealtimeLogIfNeeded(False)
+            rtbLog.SelectionStart = rtbLog.TextLength
+            rtbLog.ScrollToCaret()
+        Finally
+            rtbLog.ResumeLayout()
+        End Try
+    End Sub
+
+    Private Sub TrimRealtimeLogIfNeeded(force As Boolean)
+        If rtbLog Is Nothing OrElse rtbLog.IsDisposed Then
+            Return
+        End If
+
+        If Not force AndAlso rtbLog.TextLength <= MaxRealtimeLogChars Then
+            Return
+        End If
+
+        Dim nowUtc As DateTime = DateTime.UtcNow
+        If Not force AndAlso (nowUtc - _lastLogTrimUtc).TotalSeconds < LogTrimIntervalSeconds Then
+            Return
+        End If
+        _lastLogTrimUtc = nowUtc
+
+        If rtbLog.TextLength <= TargetRealtimeLogChars Then
+            Return
+        End If
+
+        Dim text As String = rtbLog.Text
+        Dim keepStart As Integer = Math.Max(0, text.Length - TargetRealtimeLogChars)
+        Dim newlineIndex As Integer = text.IndexOf(Environment.NewLine, keepStart, StringComparison.Ordinal)
+        If newlineIndex >= 0 AndAlso newlineIndex + Environment.NewLine.Length < text.Length Then
+            keepStart = newlineIndex + Environment.NewLine.Length
+        End If
+
+        rtbLog.Text = text.Substring(keepStart)
+    End Sub
+
+    Private Sub ClearRealtimeLog()
+        SyncLock _logQueueSync
+            _logQueue.Clear()
+            _droppedLogLineCount = 0
+        End SyncLock
+        If rtbLog IsNot Nothing AndAlso Not rtbLog.IsDisposed Then
+            rtbLog.Clear()
+        End If
+    End Sub
+
+    Private Shared Function IsKeyActionLogLine(line As String) As Boolean
+        Dim trimmedLine As String = If(line, "").Trim()
+        Return trimmedLine.StartsWith("Key action:", StringComparison.OrdinalIgnoreCase)
+    End Function
+
+    Private Function BuildRateLimitedLogMessage(message As String, ByRef lastLoggedUtc As DateTime, ByRef suppressedCount As Integer, minIntervalMs As Integer, suppressedLabel As String) As String
+        Dim nowUtc As DateTime = DateTime.UtcNow
+        SyncLock _logThrottleSync
+            If lastLoggedUtc = DateTime.MinValue OrElse (nowUtc - lastLoggedUtc).TotalMilliseconds >= minIntervalMs Then
+                Dim skipped As Integer = suppressedCount
+                suppressedCount = 0
+                lastLoggedUtc = nowUtc
+                If skipped > 0 Then
+                    Return $"{message} (+{skipped} {suppressedLabel} log(s) coalesced)"
+                End If
+                Return message
+            End If
+
+            If suppressedCount < Integer.MaxValue Then
+                suppressedCount += 1
+            End If
+            Return Nothing
+        End SyncLock
+    End Function
 
     Private Sub TrackKeyActionFromEngineLog(line As String)
         Dim trimmedLine As String = If(line, "").Trim()
@@ -7431,13 +7794,15 @@ Public Class Form1
             Return
         End If
 
-        _keyActionEvents.Add(New KeyActionEvent With {
-            .TimestampUtc = DateTime.UtcNow,
-            .KeyName = keyName,
-            .ActionText = actionText
-        })
-        PruneKeyActionEvents(DateTime.UtcNow)
-        RefreshKeyActionSummary()
+        Dim nowUtc As DateTime = DateTime.UtcNow
+        SyncLock _keyActionEventsSync
+            _keyActionEvents.Add(New KeyActionEvent With {
+                .TimestampUtc = nowUtc,
+                .KeyName = keyName,
+                .ActionText = actionText
+            })
+            PruneKeyActionEventsLocked(nowUtc)
+        End SyncLock
     End Sub
 
     Private Shared Function ExtractKeyNameFromAction(actionText As String) As String
@@ -7487,13 +7852,21 @@ Public Class Form1
         End If
 
         Dim nowUtc As DateTime = DateTime.UtcNow
-        PruneKeyActionEvents(nowUtc)
+        Dim actionEvents As List(Of KeyActionEvent)
+        SyncLock _keyActionEventsSync
+            PruneKeyActionEventsLocked(nowUtc)
+            actionEvents = _keyActionEvents.Select(Function(entry) New KeyActionEvent With {
+                .TimestampUtc = entry.TimestampUtc,
+                .KeyName = entry.KeyName,
+                .ActionText = entry.ActionText
+            }).ToList()
+        End SyncLock
         Dim cutoff10 As DateTime = nowUtc.AddMinutes(-10)
         Dim cutoff30 As DateTime = nowUtc.AddMinutes(-30)
         Dim cutoff60 As DateTime = nowUtc.AddHours(-1)
 
         Dim summaries As New Dictionary(Of String, KeyActionSummaryRow)(StringComparer.OrdinalIgnoreCase)
-        For Each entry As KeyActionEvent In _keyActionEvents
+        For Each entry As KeyActionEvent In actionEvents
             Dim row As KeyActionSummaryRow = Nothing
             If Not summaries.TryGetValue(entry.KeyName, row) Then
                 row = New KeyActionSummaryRow With {.KeyName = entry.KeyName}
@@ -7539,13 +7912,23 @@ Public Class Form1
         If ordered.Count = 0 Then
             lblKeySummaryInfo.Text = "No key presses tracked in the last 60 minutes."
         Else
-            lblKeySummaryInfo.Text = $"Tracked keys: {ordered.Count} | Total presses (60m): {_keyActionEvents.Count} | Updated: {DateTime.Now:HH:mm:ss}"
+            Dim capText As String = If(actionEvents.Count >= MaxKeyActionEvents, " | capped", "")
+            lblKeySummaryInfo.Text = $"Tracked keys: {ordered.Count} | Total presses (60m): {actionEvents.Count}{capText} | Updated: {DateTime.Now:HH:mm:ss}"
         End If
     End Sub
 
     Private Sub PruneKeyActionEvents(nowUtc As DateTime)
+        SyncLock _keyActionEventsSync
+            PruneKeyActionEventsLocked(nowUtc)
+        End SyncLock
+    End Sub
+
+    Private Sub PruneKeyActionEventsLocked(nowUtc As DateTime)
         Dim cutoff As DateTime = nowUtc.AddHours(-1)
         _keyActionEvents.RemoveAll(Function(x As KeyActionEvent) x.TimestampUtc < cutoff)
+        If _keyActionEvents.Count > MaxKeyActionEvents Then
+            _keyActionEvents.RemoveRange(0, _keyActionEvents.Count - MaxKeyActionEvents)
+        End If
     End Sub
 
     Private Sub UpdateAttackButtonAppearance(_ignored As Boolean)
@@ -8500,6 +8883,8 @@ Public Class Form1
     Protected Overrides Sub OnFormClosing(e As FormClosingEventArgs)
         _uiTimer.Stop()
         _enterToggleTimer.Stop()
+        _logFlushTimer.Stop()
+        FlushPendingLogLines()
         SavePersistedListState(False)
         StopHpZeroAlarm()
         If _overlayForm IsNot Nothing AndAlso Not _overlayForm.IsDisposed Then

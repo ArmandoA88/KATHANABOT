@@ -10,6 +10,7 @@ Imports System.Text.RegularExpressions
 Imports System.Text
 Imports System.Text.Json
 Imports System.Text.Json.Serialization
+Imports System.Buffers
 Imports System.Threading
 Imports System.Threading.Tasks
 Imports DrawingPoint = System.Drawing.Point
@@ -282,6 +283,14 @@ Public Class BotConfig
     Public Property ChatTranslationTargetLanguage As String = "en"
     Public Property ChatTranslationScanIntervalMs As Integer = 700
     Public Property ChatTranslationMaxLines As Integer = 6
+    Public Property AdaptivePerformanceEnabled As Boolean = True
+    Public Property AdaptiveSlowLoopMinMs As Integer = 140
+    Public Property AdaptiveSlowLoopMultiplier As Double = 1.8
+    Public Property AdaptiveRecoveryLoopMultiplier As Double = 1.25
+    Public Property AdaptiveSlowConfirmCount As Integer = 5
+    Public Property AdaptiveRecoveryConfirmCount As Integer = 14
+    Public Property PixelChangeGateEnabled As Boolean = True
+    Public Property CaptureBackendPreference As String = "auto"
     Public Property Actions As List(Of ActionRule) = New List(Of ActionRule)()
 
     Public Function IsCalibrationRegionOverlayEnabled(regionName As String) As Boolean
@@ -657,6 +666,7 @@ Public Class BotEngine
     Private _lastStatusRaisedSignature As String = ""
     Private Shared ReadOnly _captureMethodSync As New Object()
     Private Shared ReadOnly _captureMethodByWindow As New Dictionary(Of IntPtr, CaptureClientMethod)()
+    Private Shared _captureBackendPreference As String = "auto"
     Private Shared ReadOnly NavigationRouteStorageRoot As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel", "navigation_routes")
     Private Shared ReadOnly NavigationRouteJsonOptions As New JsonSerializerOptions With {.WriteIndented = True}
     Private Shared ReadOnly _recordedGraphCache As New Dictionary(Of String, List(Of RecordedNavigationGraph))(StringComparer.OrdinalIgnoreCase)
@@ -751,6 +761,10 @@ Public Class BotEngine
     Private _lastChatOcrText As String = ""
     Private _lastChatOcrNormalized As String = ""
     Private _lastChatOcrUpdatedAt As DateTime = DateTime.MinValue
+    Private _lastChatVisualSignature As ULong = 0UL
+    Private _lastPartyListVisualSignature As ULong = 0UL
+    Private _lastPartyInviteVisualSignature As ULong = 0UL
+    Private _lastLootScannerVisualSignature As ULong = 0UL
     Private _lastMapMarkerScanAt As DateTime = DateTime.MinValue
     Private _lastMapMarkerDetected As Boolean = False
     Private _lastMapMarkerX As Integer = -1
@@ -856,6 +870,7 @@ Public Class BotEngine
         SyncLock _sync
             _config = cfg
         End SyncLock
+        SetCaptureBackendPreference(If(cfg?.CaptureBackendPreference, "auto"))
     End Sub
 
     Public Function GetStatus() As BotStatus
@@ -961,6 +976,10 @@ Public Class BotEngine
             _lastChatOcrText = ""
             _lastChatOcrNormalized = ""
             _lastChatOcrUpdatedAt = DateTime.MinValue
+            _lastChatVisualSignature = 0UL
+            _lastPartyListVisualSignature = 0UL
+            _lastPartyInviteVisualSignature = 0UL
+            _lastLootScannerVisualSignature = 0UL
             _lastMapMarkerScanAt = DateTime.MinValue
             _lastMapMarkerDetected = False
             _lastMapMarkerX = -1
@@ -1559,7 +1578,7 @@ Public Class BotEngine
                 ClearChatTranslationRuntime()
             End If
             If Not startupCombatPriorityActive AndAlso Not deferOptionalWork Then
-                ReadPartyListIfNeeded(frame, partyListRegion, now)
+                ReadPartyListIfNeeded(frame, partyListRegion, cfg, now)
             ElseIf Not startupCombatPriorityActive AndAlso deferOptionalWork Then
                 MarkOptionalWorkDeferred()
             End If
@@ -2012,6 +2031,7 @@ Public Class BotEngine
         Dim topic As String = If(cfg.ItemNtfyTopic, "").Trim()
         Dim notificationProvider As String = NormalizeNotificationProviderName(cfg.NotificationProvider)
         Dim discordWebhookUrl As String = GetDiscordItemWebhookUrl(cfg)
+        Dim pixelGateEnabled As Boolean = cfg.PixelChangeGateEnabled
 
         _lootScannerProcessingTask = Task.Run(Sub()
             Dim scanFrame As Bitmap = frameClone
@@ -2022,6 +2042,14 @@ Public Class BotEngine
                 If lootScanFrame Is Nothing Then
                     lootScanFrame = DirectCast(scanFrame.Clone(), Bitmap)
                     lootScanBounds = New Rectangle(0, 0, lootScanFrame.Width, lootScanFrame.Height)
+                End If
+
+                If pixelGateEnabled Then
+                    Dim signature As ULong = ComputeVisualSignature(lootScanFrame)
+                    If signature <> 0UL AndAlso signature = _lastLootScannerVisualSignature Then
+                        Return
+                    End If
+                    _lastLootScannerVisualSignature = signature
                 End If
 
                 Dim ocrRegions As List(Of OcrReader.OcrTextRegion) = OcrReader.ReadScreenTextRegionsIsolated(lootScanFrame)
@@ -2248,17 +2276,22 @@ Public Class BotEngine
         Dim brightSamples As Integer = 0
         Dim sumLuma As Long = 0
 
-        For y As Integer = rect.Top To rect.Bottom - 1 Step stepY
-            For x As Integer = rect.Left To rect.Right - 1 Step stepX
-                Dim c As Color = frame.GetPixel(x, y)
-                Dim luma As Integer = (CInt(c.R) * 30 + CInt(c.G) * 59 + CInt(c.B) * 11) \ 100
-                samples += 1
-                sumLuma += luma
-                If luma >= 28 Then
-                    brightSamples += 1
-                End If
+        Using buffer As New BitmapReadBuffer(frame)
+            For y As Integer = rect.Top To rect.Bottom - 1 Step stepY
+                For x As Integer = rect.Left To rect.Right - 1 Step stepX
+                    Dim r As Integer = 0
+                    Dim g As Integer = 0
+                    Dim b As Integer = 0
+                    buffer.GetRgb(x, y, r, g, b)
+                    Dim luma As Integer = (r * 30 + g * 59 + b * 11) \ 100
+                    samples += 1
+                    sumLuma += luma
+                    If luma >= 28 Then
+                        brightSamples += 1
+                    End If
+                Next
             Next
-        Next
+        End Using
 
         If samples = 0 Then
             Return True
@@ -2656,15 +2689,7 @@ Public Class BotEngine
                 Return rawText
             End If
 
-            Using thresholded As New Bitmap(enlarged.Width, enlarged.Height, PixelFormat.Format24bppRgb)
-                For y As Integer = 0 To enlarged.Height - 1
-                    For x As Integer = 0 To enlarged.Width - 1
-                        Dim px As Color = enlarged.GetPixel(x, y)
-                        Dim luma As Integer = (CInt(px.R) * 30 + CInt(px.G) * 59 + CInt(px.B) * 11) \ 100
-                        thresholded.SetPixel(x, y, If(luma >= 140, Color.White, Color.Black))
-                    Next
-                Next
-
+            Using thresholded As Bitmap = ThresholdLumaBitmap(enlarged, 140)
                 Dim thresholdText As String = OcrReader.ReadScreenText(thresholded)
                 If Regex.IsMatch(If(thresholdText, ""), preferredPattern) Then
                     Return thresholdText
@@ -2708,6 +2733,14 @@ Public Class BotEngine
                 g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
             End Using
 
+            If cfg IsNot Nothing AndAlso cfg.PixelChangeGateEnabled Then
+                Dim signature As ULong = ComputeVisualSignature(crop)
+                If signature <> 0UL AndAlso signature = _lastChatVisualSignature Then
+                    Return
+                End If
+                _lastChatVisualSignature = signature
+            End If
+
             Using enlarged As New Bitmap(Math.Max(1, crop.Width * 2), Math.Max(1, crop.Height * 2), PixelFormat.Format24bppRgb)
                 Using g As Graphics = Graphics.FromImage(enlarged)
                     g.Clear(Color.Black)
@@ -2739,9 +2772,10 @@ Public Class BotEngine
         _lastChatOcrText = ""
         _lastChatOcrNormalized = ""
         _lastChatOcrUpdatedAt = DateTime.MinValue
+        _lastChatVisualSignature = 0UL
     End Sub
 
-    Private Sub ReadPartyListIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime)
+    Private Sub ReadPartyListIfNeeded(frame As Bitmap, region As RectRegion, cfg As BotConfig, now As DateTime)
         If _lastPartyListScanAt <> DateTime.MinValue AndAlso (now - _lastPartyListScanAt).TotalMilliseconds < PartyListScanMinIntervalMs Then
             Return
         End If
@@ -2763,6 +2797,14 @@ Public Class BotEngine
                 g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
             End Using
 
+            If cfg IsNot Nothing AndAlso cfg.PixelChangeGateEnabled Then
+                Dim signature As ULong = ComputeVisualSignature(crop)
+                If signature <> 0UL AndAlso signature = _lastPartyListVisualSignature Then
+                    Return
+                End If
+                _lastPartyListVisualSignature = signature
+            End If
+
             Dim summary As PartyListSummary = AnalyzePartyListVisuals(crop)
             _lastPartySize = summary.Size
             _lastPartyAliveCount = summary.AliveCount
@@ -2774,6 +2816,7 @@ Public Class BotEngine
         _lastPartySize = 0
         _lastPartyAliveCount = 0
         _lastPartyAllAlive = False
+        _lastPartyListVisualSignature = 0UL
     End Sub
 
     Private Shared Function AnalyzePartyListVisuals(crop As Bitmap) As PartyListSummary
@@ -2789,21 +2832,26 @@ Public Class BotEngine
         Dim rowRed(crop.Height - 1) As Integer
         Dim rowBlue(crop.Height - 1) As Integer
 
-        For y As Integer = 0 To crop.Height - 1
-            Dim redCount As Integer = 0
-            Dim blueCount As Integer = 0
-            For x As Integer = 0 To crop.Width - 1
-                Dim px As Color = crop.GetPixel(x, y)
-                If IsPartyHpBarPixel(px) Then
-                    redCount += 1
-                ElseIf IsPartyMpBarPixel(px) Then
-                    blueCount += 1
-                End If
-            Next
+        Using buffer As New BitmapReadBuffer(crop)
+            For y As Integer = 0 To crop.Height - 1
+                Dim redCount As Integer = 0
+                Dim blueCount As Integer = 0
+                For x As Integer = 0 To crop.Width - 1
+                    Dim r As Integer = 0
+                    Dim g As Integer = 0
+                    Dim b As Integer = 0
+                    buffer.GetRgb(x, y, r, g, b)
+                    If IsPartyHpBarPixelRgb(r, g, b) Then
+                        redCount += 1
+                    ElseIf IsPartyMpBarPixelRgb(r, g, b) Then
+                        blueCount += 1
+                    End If
+                Next
 
-            rowRed(y) = redCount
-            rowBlue(y) = blueCount
-        Next
+                rowRed(y) = redCount
+                rowBlue(y) = blueCount
+            Next
+        End Using
 
         Dim redBands As List(Of PartyListBarBandInfo) = FindPartyBarBands(rowRed, crop.Width)
         Dim blueBands As List(Of PartyListBarBandInfo) = FindPartyBarBands(rowBlue, crop.Width)
@@ -2872,8 +2920,16 @@ Public Class BotEngine
         Return px.R >= 90 AndAlso px.R >= (px.G + 16) AndAlso px.R >= (px.B + 16)
     End Function
 
+    Private Shared Function IsPartyHpBarPixelRgb(r As Integer, g As Integer, b As Integer) As Boolean
+        Return r >= 90 AndAlso r >= (g + 16) AndAlso r >= (b + 16)
+    End Function
+
     Private Shared Function IsPartyMpBarPixel(px As Color) As Boolean
         Return px.B >= 90 AndAlso px.B >= (px.R + 12) AndAlso px.B >= (px.G + 8)
+    End Function
+
+    Private Shared Function IsPartyMpBarPixelRgb(r As Integer, g As Integer, b As Integer) As Boolean
+        Return b >= 90 AndAlso b >= (r + 12) AndAlso b >= (g + 8)
     End Function
 
     Private Shared Function NormalizeChatOcrText(rawText As String) As String
@@ -4851,6 +4907,15 @@ Public Class BotEngine
                 g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
             End Using
 
+            If cfg.PixelChangeGateEnabled Then
+                Dim signature As ULong = ComputeVisualSignature(crop)
+                If signature <> 0UL AndAlso signature = _lastPartyInviteVisualSignature Then
+                    crop.Dispose()
+                    Return False
+                End If
+                _lastPartyInviteVisualSignature = signature
+            End If
+
             _lastPartyInviteScan = now
             _partyInviteOcrTask = Task.Run(
                 Function()
@@ -6170,11 +6235,36 @@ Public Class BotEngine
         Dim becameActive As Boolean = False
         Dim recovered As Boolean = False
         Dim targetMs As Double = Math.Max(1, targetLoopMs)
-        Dim slowThresholdMs As Double = Math.Max(140.0R, targetMs * 1.8R)
-        Dim recoveryThresholdMs As Double = Math.Max(90.0R, targetMs * 1.25R)
+        Dim adaptiveEnabled As Boolean = True
+        Dim slowMinMs As Integer = 140
+        Dim slowMultiplier As Double = 1.8R
+        Dim recoveryMultiplier As Double = 1.25R
+        Dim slowConfirmCount As Integer = AdaptiveSlowLoopConfirmCount
+        Dim recoveryConfirmCount As Integer = AdaptiveRecoveryLoopConfirmCount
+
+        SyncLock _sync
+            If _config IsNot Nothing Then
+                adaptiveEnabled = _config.AdaptivePerformanceEnabled
+                slowMinMs = Math.Max(40, _config.AdaptiveSlowLoopMinMs)
+                slowMultiplier = Math.Max(1.0R, _config.AdaptiveSlowLoopMultiplier)
+                recoveryMultiplier = Math.Max(1.0R, _config.AdaptiveRecoveryLoopMultiplier)
+                slowConfirmCount = Math.Max(1, _config.AdaptiveSlowConfirmCount)
+                recoveryConfirmCount = Math.Max(1, _config.AdaptiveRecoveryConfirmCount)
+            End If
+        End SyncLock
+
+        Dim slowThresholdMs As Double = Math.Max(CDbl(slowMinMs), targetMs * slowMultiplier)
+        Dim recoveryThresholdMs As Double = Math.Max(40.0R, targetMs * recoveryMultiplier)
 
         SyncLock _perfSync
             _loopTiming.Add(elapsedMs)
+            If Not adaptiveEnabled Then
+                _adaptivePerformanceActive = False
+                _adaptiveSlowLoopCount = 0
+                _adaptiveRecoveryLoopCount = 0
+                Return
+            End If
+
             If elapsedMs >= slowThresholdMs Then
                 _adaptiveSlowLoopCount += 1
                 _adaptiveRecoveryLoopCount = 0
@@ -6185,11 +6275,11 @@ Public Class BotEngine
                 End If
             End If
 
-            If (Not _adaptivePerformanceActive) AndAlso _adaptiveSlowLoopCount >= AdaptiveSlowLoopConfirmCount Then
+            If (Not _adaptivePerformanceActive) AndAlso _adaptiveSlowLoopCount >= slowConfirmCount Then
                 _adaptivePerformanceActive = True
                 _adaptiveRecoveryLoopCount = 0
                 becameActive = True
-            ElseIf _adaptivePerformanceActive AndAlso _adaptiveRecoveryLoopCount >= AdaptiveRecoveryLoopConfirmCount Then
+            ElseIf _adaptivePerformanceActive AndAlso _adaptiveRecoveryLoopCount >= recoveryConfirmCount Then
                 _adaptivePerformanceActive = False
                 _adaptiveSlowLoopCount = 0
                 recovered = True
@@ -6294,7 +6384,7 @@ Public Class BotEngine
             Return ""
         End If
 
-        Return $"{status.Running}|{status.WindowFound}|{status.LastAction}|{status.NotAttackingReason}|{status.ErrorMessage}|{status.AgentState}|{status.AgentReason}|{status.AgentGuardrailTriggered}|{status.TargetValid}|{status.MobName}|{status.MobHpText}"
+        Return $"{status.Running}|{status.WindowFound}|{status.NotAttackingReason}|{status.ErrorMessage}|{status.AgentState}|{status.AgentReason}|{status.AgentGuardrailTriggered}|{status.TargetValid}|{status.MobName}|{status.MobHpText}"
     End Function
 
     Private Function CloneStatus(src As BotStatus) As BotStatus
@@ -6481,6 +6571,10 @@ Public Class BotEngine
         Dim bmp As New Bitmap(width, height, PixelFormat.Format24bppRgb)
 
         Try
+            If GetCaptureBackendPreferenceCode() = "wgc" AndAlso TryCaptureWithWindowsGraphicsCapture(hwnd, bmp, width, height) Then
+                Return bmp
+            End If
+
             Dim cachedMethod As CaptureClientMethod
             If TryGetCachedCaptureMethod(hwnd, cachedMethod) AndAlso TryCaptureWithMethod(hwnd, bmp, width, height, cachedMethod) Then
                 Return bmp
@@ -6527,6 +6621,12 @@ Public Class BotEngine
         End Try
     End Function
 
+    Private Shared Function TryCaptureWithWindowsGraphicsCapture(hwnd As IntPtr, bmp As Bitmap, width As Integer, height As Integer) As Boolean
+        ' Windows Graphics Capture requires a Direct3D interop capture session. This hook keeps
+        ' the backend selectable while safely falling back to the cached GDI path on unsupported systems.
+        Return False
+    End Function
+
     Private Shared Function TryGetCachedCaptureMethod(hwnd As IntPtr, ByRef method As CaptureClientMethod) As Boolean
         SyncLock _captureMethodSync
             Return _captureMethodByWindow.TryGetValue(hwnd, method)
@@ -6548,9 +6648,36 @@ Public Class BotEngine
     Public Shared Function GetCachedCaptureMethodName(hwnd As IntPtr) As String
         Dim method As CaptureClientMethod
         If TryGetCachedCaptureMethod(hwnd, method) Then
-            Return CaptureMethodName(method)
+            Return $"{GetCaptureBackendPreferenceName()}:{CaptureMethodName(method)}"
         End If
-        Return "uncached"
+        Return $"{GetCaptureBackendPreferenceName()}:uncached"
+    End Function
+
+    Private Shared Sub SetCaptureBackendPreference(raw As String)
+        Dim normalized As String = If(raw, "").Trim().ToLowerInvariant()
+        If normalized <> "gdi" AndAlso normalized <> "wgc" Then
+            normalized = "auto"
+        End If
+        SyncLock _captureMethodSync
+            _captureBackendPreference = normalized
+        End SyncLock
+    End Sub
+
+    Private Shared Function GetCaptureBackendPreferenceCode() As String
+        SyncLock _captureMethodSync
+            Return _captureBackendPreference
+        End SyncLock
+    End Function
+
+    Private Shared Function GetCaptureBackendPreferenceName() As String
+        Select Case GetCaptureBackendPreferenceCode()
+            Case "gdi"
+                Return "CachedGDI"
+            Case "wgc"
+                Return "WGCPreferred"
+            Case Else
+                Return "Auto"
+        End Select
     End Function
 
     Private Shared Function CaptureMethodName(method As CaptureClientMethod) As String
@@ -6568,6 +6695,82 @@ Public Class BotEngine
             Case Else
                 Return "unknown"
         End Select
+    End Function
+
+    Public Shared Function RunPerformanceBenchmark(cfg As BotConfig, Optional iterations As Integer = 30) As String
+        Dim hwnd As IntPtr = ResolveGameWindow(cfg)
+        If hwnd = IntPtr.Zero Then
+            Return "Benchmark failed: game window not found."
+        End If
+
+        SetCaptureBackendPreference(If(cfg?.CaptureBackendPreference, "auto"))
+        Dim safeIterations As Integer = Math.Max(3, Math.Min(200, iterations))
+        Dim captureTimes As New List(Of Double)()
+        Dim regionTimes As New List(Of Double)()
+        Dim hpValues As New List(Of Double)()
+        Dim mpValues As New List(Of Double)()
+
+        Dim clientRect As NativeMethods.RECT
+        If Not NativeMethods.GetClientRect(hwnd, clientRect) Then
+            Return "Benchmark failed: unable to read game client size."
+        End If
+
+        Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
+        Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
+        Dim hpRegion As New RectRegion(0, 0, 1, 1)
+        Dim mpRegion As New RectRegion(0, 0, 1, 1)
+        Dim mobNameRegion As New RectRegion(0, 0, 1, 1)
+        Dim mobHpRegion As New RectRegion(0, 0, 1, 1)
+        Dim unreachableTextRegion As New RectRegion(0, 0, 1, 1)
+        Dim pranaExpRegion As New RectRegion(0, 0, 1, 1)
+        Dim rupiahsRegion As New RectRegion(0, 0, 1, 1)
+        Dim partyInviteScanRegion As New RectRegion(0, 0, 1, 1)
+        Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
+        Dim partyListRegion As New RectRegion(0, 0, 1, 1)
+        Dim mapCoordinateXRegion As New RectRegion(0, 0, 1, 1)
+        Dim mapCoordinateYRegion As New RectRegion(0, 0, 1, 1)
+        Dim chatRegion As New RectRegion(0, 0, 1, 1)
+        ResolveVisionRegions(If(cfg, BotConfig.CreateDefault()), clientWidth, clientHeight, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, partyListRegion, mapCoordinateXRegion, mapCoordinateYRegion, chatRegion)
+
+        For i As Integer = 1 To safeIterations
+            Dim captureWatch As Stopwatch = Stopwatch.StartNew()
+            Dim frame As Bitmap = CaptureClient(hwnd)
+            captureWatch.Stop()
+            captureTimes.Add(captureWatch.Elapsed.TotalMilliseconds)
+            If frame IsNot Nothing Then
+                frame.Dispose()
+            End If
+
+            Dim regionWatch As Stopwatch = Stopwatch.StartNew()
+            Dim hpOk As Boolean = False
+            Dim mpOk As Boolean = False
+            hpValues.Add(ComputeClientBarPercent(hwnd, hpRegion, True, hpOk))
+            mpValues.Add(ComputeClientBarPercent(hwnd, mpRegion, False, mpOk))
+            regionWatch.Stop()
+            regionTimes.Add(regionWatch.Elapsed.TotalMilliseconds)
+        Next
+
+        Dim report As String =
+            $"Benchmark iterations: {safeIterations}{Environment.NewLine}" &
+            $"Capture backend/method: {GetCachedCaptureMethodName(hwnd)}{Environment.NewLine}" &
+            $"Full capture avg/max: {Average(captureTimes):0.0}/{MaxValue(captureTimes):0.0} ms{Environment.NewLine}" &
+            $"HP/MP region avg/max: {Average(regionTimes):0.0}/{MaxValue(regionTimes):0.0} ms{Environment.NewLine}" &
+            $"Last HP/MP sample: {If(hpValues.Count = 0, 0, hpValues(hpValues.Count - 1)):0.0}/{If(mpValues.Count = 0, 0, mpValues(mpValues.Count - 1)):0.0}%"
+        Return report
+    End Function
+
+    Private Shared Function Average(values As List(Of Double)) As Double
+        If values Is Nothing OrElse values.Count = 0 Then
+            Return 0
+        End If
+        Return values.Average()
+    End Function
+
+    Private Shared Function MaxValue(values As List(Of Double)) As Double
+        If values Is Nothing OrElse values.Count = 0 Then
+            Return 0
+        End If
+        Return values.Max()
     End Function
 
     Private Shared Function TryCaptureWithMethod(hwnd As IntPtr, bmp As Bitmap, width As Integer, height As Integer, method As CaptureClientMethod) As Boolean
@@ -6752,8 +6955,9 @@ Public Class BotEngine
             Height = bmp.Height
             _data = bmp.LockBits(New Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb)
             Stride = _data.Stride
-            _bytes = New Byte(Math.Abs(Stride) * Height - 1) {}
-            Marshal.Copy(_data.Scan0, _bytes, 0, _bytes.Length)
+            Dim length As Integer = Math.Abs(Stride) * Height
+            _bytes = ArrayPool(Of Byte).Shared.Rent(length)
+            Marshal.Copy(_data.Scan0, _bytes, 0, length)
         End Sub
 
         Public Sub GetRgb(x As Integer, y As Integer, ByRef r As Integer, ByRef g As Integer, ByRef b As Integer)
@@ -6766,6 +6970,7 @@ Public Class BotEngine
 
         Public Sub Dispose() Implements IDisposable.Dispose
             _bmp.UnlockBits(_data)
+            ArrayPool(Of Byte).Shared.Return(_bytes)
         End Sub
     End Class
 
@@ -6800,6 +7005,70 @@ Public Class BotEngine
         Dim darkRatio As Double = darkSamples / CDbl(samples)
         Dim avgLuma As Double = sumLuma / CDbl(samples)
         Return darkRatio >= 0.96 AndAlso avgLuma <= 10.0
+    End Function
+
+    Private Shared Function ComputeVisualSignature(bmp As Bitmap) As ULong
+        If bmp Is Nothing OrElse bmp.Width <= 0 OrElse bmp.Height <= 0 Then
+            Return 0UL
+        End If
+
+        Dim stepX As Integer = Math.Max(1, bmp.Width \ 48)
+        Dim stepY As Integer = Math.Max(1, bmp.Height \ 24)
+        Dim hash As ULong = 1469598103934665603UL
+        Using buffer As New BitmapReadBuffer(bmp)
+            For y As Integer = 0 To bmp.Height - 1 Step stepY
+                For x As Integer = 0 To bmp.Width - 1 Step stepX
+                    Dim r As Integer = 0
+                    Dim g As Integer = 0
+                    Dim b As Integer = 0
+                    buffer.GetRgb(x, y, r, g, b)
+                    Dim luma As Integer = (r * 30 + g * 59 + b * 11) \ 100
+                    hash = (hash Xor CULng(luma And &HFF)) * 1099511628211UL
+                    hash = (hash Xor CULng((r \ 16) And &HF)) * 1099511628211UL
+                    hash = (hash Xor CULng((g \ 16) And &HF)) * 1099511628211UL
+                    hash = (hash Xor CULng((b \ 16) And &HF)) * 1099511628211UL
+                Next
+            Next
+        End Using
+        Return hash
+    End Function
+
+    Private Shared Function ThresholdLumaBitmap(source As Bitmap, threshold As Integer) As Bitmap
+        Dim output As New Bitmap(Math.Max(1, source.Width), Math.Max(1, source.Height), PixelFormat.Format24bppRgb)
+        Using src As New BitmapReadBuffer(source)
+            Dim rect As New Rectangle(0, 0, output.Width, output.Height)
+            Dim data As BitmapData = Nothing
+            Dim bytes As Byte() = Nothing
+            Try
+                data = output.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb)
+                Dim length As Integer = Math.Abs(data.Stride) * output.Height
+                bytes = ArrayPool(Of Byte).Shared.Rent(length)
+                For y As Integer = 0 To output.Height - 1
+                    Dim row As Integer = If(data.Stride >= 0, y * data.Stride, (output.Height - 1 - y) * Math.Abs(data.Stride))
+                    For x As Integer = 0 To output.Width - 1
+                        Dim r As Integer = 0
+                        Dim g As Integer = 0
+                        Dim b As Integer = 0
+                        src.GetRgb(x, y, r, g, b)
+                        Dim luma As Integer = (r * 30 + g * 59 + b * 11) \ 100
+                        Dim value As Byte = If(luma >= threshold, CByte(255), CByte(0))
+                        Dim index As Integer = row + (x * 3)
+                        bytes(index) = value
+                        bytes(index + 1) = value
+                        bytes(index + 2) = value
+                    Next
+                Next
+                Marshal.Copy(bytes, 0, data.Scan0, length)
+            Finally
+                If data IsNot Nothing Then
+                    output.UnlockBits(data)
+                End If
+                If bytes IsNot Nothing Then
+                    ArrayPool(Of Byte).Shared.Return(bytes)
+                End If
+            End Try
+        End Using
+        Return output
     End Function
 
     Private Shared Function ComputeBarPercent(frame As Bitmap, region As RectRegion, isHp As Boolean) As Double
