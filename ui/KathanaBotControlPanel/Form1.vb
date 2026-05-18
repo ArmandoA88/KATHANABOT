@@ -10,6 +10,7 @@ Imports System.Collections.Generic
 Imports System.IO
 Imports System.Diagnostics
 Imports System.Linq
+Imports System.Drawing.Imaging
 
 Public Class Form1
     Private Shared ReadOnly PrimaryKeys As String() = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"}
@@ -28,6 +29,8 @@ Public Class Form1
     Private ReadOnly _uiTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _enterToggleTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _logFlushTimer As New System.Windows.Forms.Timer()
+    Private ReadOnly _rollingScreenshotTimer As New System.Windows.Forms.Timer()
+    Private ReadOnly _discordShotTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _logQueueSync As New Object()
     Private ReadOnly _logThrottleSync As New Object()
     Private ReadOnly _logQueue As New Queue(Of String)()
@@ -165,6 +168,7 @@ Public Class Form1
     Private txtMapOpenKey As TextBox
     Private chkTravelPreview As CheckBox
     Private chkTravelExecute As CheckBox
+    Private chkNavigationReturnToStart As CheckBox
     Private btnStartRouteRecording As Button
     Private btnStopRouteRecording As Button
     Private nudManualRouteNodeX As NumericUpDown
@@ -229,9 +233,13 @@ Public Class Form1
     Private lblDiscordGlobalWebhook As Label
     Private lblDiscordItemWebhook As Label
     Private lblDiscordStatsWebhook As Label
+    Private lblDiscordShotBotToken As Label
+    Private lblDiscordShotChannelId As Label
     Private txtDiscordGlobalWebhookUrl As TextBox
     Private txtDiscordItemWebhookUrl As TextBox
     Private txtDiscordStatsWebhookUrl As TextBox
+    Private txtDiscordShotBotToken As TextBox
+    Private txtDiscordShotChannelId As TextBox
     Private lblNtfyGlobalTopic As Label
     Private txtItemNtfyTopic As TextBox
     Private lblNtfyItemTopic As Label
@@ -255,6 +263,18 @@ Public Class Form1
     Private cboCaptureBackend As ComboBox
     Private btnRunBenchmark As Button
     Private btnExportDiagnostics As Button
+    Private nudFullFrameScanMs As NumericUpDown
+    Private nudLootScannerSeconds As NumericUpDown
+    Private nudMapScanMs As NumericUpDown
+    Private nudPartyScanMs As NumericUpDown
+    Private nudMobNameScanMs As NumericUpDown
+    Private chkLogCombat As CheckBox
+    Private chkLogLoot As CheckBox
+    Private chkLogOcrVision As CheckBox
+    Private chkLogNavigation As CheckBox
+    Private chkLogWarnings As CheckBox
+    Private chkLogMisc As CheckBox
+    Private dgvLootHistory As DataGridView
 
     Private nudAutoPotHp As NumericUpDown
     Private nudAutoPotMp As NumericUpDown
@@ -317,7 +337,7 @@ Public Class Form1
     Private Const HpZeroAlarmGraceMs As Integer = 60000
     Private Const DeadZeroThreshold As Double = 0.1
     Private Const DeadRecoverThreshold As Double = 2.0
-    Private Const DeadConfirmRequiredCount As Integer = 5
+    Private Const DeadConfirmRequiredCount As Integer = 3
     Private Const DeathNotificationRetryCount As Integer = 3
     Private Const StartupNotificationWarmupSeconds As Integer = 20
     Private Const NotificationProviderNtfy As String = "ntfy"
@@ -329,20 +349,45 @@ Public Class Form1
     Private Const DefaultLootNameMatchThresholdPercent As Integer = 80
     Private Const DefaultMapOpenKey As String = "M"
     Private Const DefaultLevelingMinExpPerHour As Decimal = 0.15D
+    Private Const RollingScreenshotIntervalMs As Integer = 30000
+    Private Const RollingScreenshotRetainCount As Integer = 10
+    Private Const DiscordShotPollIntervalMs As Integer = 5000
     Private Shared ReadOnly NtfyClient As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(7)}
     Private Shared ReadOnly PersistDirectoryPath As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel")
     Private Shared ReadOnly PersistFilePath As String = Path.Combine(PersistDirectoryPath, "user_lists.json")
+    Private Shared ReadOnly RollingScreenshotDirectoryPath As String = Path.Combine(PersistDirectoryPath, "screenshots")
     Private ReadOnly _baseBackColors As New Dictionary(Of Control, Color)()
     Private ReadOnly _gridThemeSnapshots As New Dictionary(Of DataGridView, GridThemeSnapshot)()
     Private ReadOnly _keyActionEvents As New List(Of KeyActionEvent)()
     Private ReadOnly _keyActionEventsSync As New Object()
     Private Const MaxKeyActionEvents As Integer = 30000
+    Private ReadOnly _lootHistoryEvents As New List(Of LootHistoryEvent)()
+    Private ReadOnly _lootHistoryEventsSync As New Object()
+    Private Const MaxLootHistoryEvents As Integer = 500
+    Private _lootHistoryVersion As Long = 0
+    Private _lastLootHistoryRenderedVersion As Long = -1
     Private _lastEngineKeyActionLogUtc As DateTime = DateTime.MinValue
     Private _suppressedEngineKeyActionLogCount As Integer = 0
     Private _lastStateLogUtc As DateTime = DateTime.MinValue
     Private _suppressedStateLogCount As Integer = 0
     Private _lastNoAttackReasonLogUtc As DateTime = DateTime.MinValue
     Private _suppressedNoAttackReasonLogCount As Integer = 0
+    Private _totalDroppedLogLineCount As Long = 0
+    Private _lastLogFlushBatchCount As Integer = 0
+    Private _lastLogFlushAt As DateTime = DateTime.MinValue
+    Private _rollingScreenshotInProgress As Boolean = False
+    Private _rollingScreenshotSaveCount As Integer = 0
+    Private _lastRollingScreenshotErrorLogUtc As DateTime = DateTime.MinValue
+    Private _discordShotPollInProgress As Boolean = False
+    Private _discordShotInitialized As Boolean = False
+    Private _lastDiscordShotMessageId As String = ""
+    Private _lastDiscordShotErrorLogUtc As DateTime = DateTime.MinValue
+    Private _logFilterCombatEnabled As Boolean = True
+    Private _logFilterLootEnabled As Boolean = True
+    Private _logFilterOcrVisionEnabled As Boolean = True
+    Private _logFilterNavigationEnabled As Boolean = True
+    Private _logFilterWarningsEnabled As Boolean = True
+    Private _logFilterMiscEnabled As Boolean = True
     Private ReadOnly _chatTranslator As New TranslationService()
     Private ReadOnly _chatTranslationLock As New SemaphoreSlim(1, 1)
     Private ReadOnly _chatSeenLineKeys As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
@@ -410,6 +455,14 @@ Public Class Form1
         Public Property LastActionText As String = ""
     End Class
 
+    Private Class LootHistoryEvent
+        Public Property TimestampLocal As DateTime
+        Public Property Edition As BotEdition
+        Public Property ItemName As String = ""
+        Public Property ActionText As String = ""
+        Public Property DetailText As String = ""
+    End Class
+
     Private Class ProcessWindowEntry
         Public Property ProcessId As Integer
         Public Property ProcessName As String = ""
@@ -462,6 +515,8 @@ Public Class Form1
         Public Property DiscordGlobalWebhookUrl As String = ""
         Public Property DiscordItemWebhookUrl As String = ""
         Public Property DiscordStatsWebhookUrl As String = ""
+        Public Property DiscordShotBotToken As String = ""
+        Public Property DiscordShotChannelId As String = ""
         Public Property ItemNtfyTopic As String = "add"
         Public Property NtfyTopic As String = ""
         Public Property StatsNtfyTopic As String = ""
@@ -558,6 +613,14 @@ Public Class Form1
         AddHandler _logFlushTimer.Tick, AddressOf LogFlushTimerTick
         _logFlushTimer.Start()
 
+        _rollingScreenshotTimer.Interval = RollingScreenshotIntervalMs
+        AddHandler _rollingScreenshotTimer.Tick, AddressOf RollingScreenshotTimerTick
+        _rollingScreenshotTimer.Start()
+
+        _discordShotTimer.Interval = DiscordShotPollIntervalMs
+        AddHandler _discordShotTimer.Tick, AddressOf DiscordShotTimerTick
+        _discordShotTimer.Start()
+
         UpdateEditionUiState(False)
         PushLiveConfig()
     End Sub
@@ -596,6 +659,12 @@ Public Class Form1
         If txtDiscordStatsWebhookUrl IsNot Nothing Then
             AddHandler txtDiscordStatsWebhookUrl.TextChanged, AddressOf LiveConfigChanged
             AddHandler txtDiscordStatsWebhookUrl.TextChanged, AddressOf PersistListSettingsChanged
+        End If
+        If txtDiscordShotBotToken IsNot Nothing Then
+            AddHandler txtDiscordShotBotToken.TextChanged, AddressOf PersistListSettingsChanged
+        End If
+        If txtDiscordShotChannelId IsNot Nothing Then
+            AddHandler txtDiscordShotChannelId.TextChanged, AddressOf PersistListSettingsChanged
         End If
         If txtNtfyTopic IsNot Nothing Then
             AddHandler txtNtfyTopic.TextChanged, AddressOf LiveConfigChanged
@@ -668,6 +737,26 @@ Public Class Form1
         End If
         If btnExportDiagnostics IsNot Nothing Then
             AddHandler btnExportDiagnostics.Click, AddressOf ExportDiagnosticsClicked
+        End If
+        If nudFullFrameScanMs IsNot Nothing Then
+            AddHandler nudFullFrameScanMs.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler nudFullFrameScanMs.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudLootScannerSeconds IsNot Nothing Then
+            AddHandler nudLootScannerSeconds.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler nudLootScannerSeconds.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudMapScanMs IsNot Nothing Then
+            AddHandler nudMapScanMs.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler nudMapScanMs.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudPartyScanMs IsNot Nothing Then
+            AddHandler nudPartyScanMs.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler nudPartyScanMs.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudMobNameScanMs IsNot Nothing Then
+            AddHandler nudMobNameScanMs.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler nudMobNameScanMs.ValueChanged, AddressOf PersistListSettingsChanged
         End If
         AddHandler nudLoopMs.ValueChanged, AddressOf LiveConfigChanged
         AddHandler nudRetargetMs.ValueChanged, AddressOf LiveConfigChanged
@@ -818,6 +907,10 @@ Public Class Form1
         End If
         If chkNavigationRepathOnStuck IsNot Nothing Then
             AddHandler chkNavigationRepathOnStuck.CheckedChanged, AddressOf LiveConfigChanged
+        End If
+        If chkNavigationReturnToStart IsNot Nothing Then
+            AddHandler chkNavigationReturnToStart.CheckedChanged, AddressOf LiveConfigChanged
+            AddHandler chkNavigationReturnToStart.CheckedChanged, AddressOf PersistListSettingsChanged
         End If
         AddHandler dgvCombat.CellValueChanged, AddressOf LiveConfigChanged
         AddHandler dgvCombat.CellEndEdit, AddressOf LiveConfigChanged
@@ -1059,6 +1152,8 @@ Public Class Form1
         SetNotificationRowVisible(4, lblNtfyGlobalTopic, txtNtfyTopic, Not useDiscord)
         SetNotificationRowVisible(5, lblNtfyItemTopic, txtItemNtfyTopic, Not useDiscord)
         SetNotificationRowVisible(6, lblNtfyStatsTopic, txtStatsNtfyTopic, Not useDiscord)
+        SetNotificationRowVisible(7, lblDiscordShotBotToken, txtDiscordShotBotToken, useDiscord)
+        SetNotificationRowVisible(8, lblDiscordShotChannelId, txtDiscordShotChannelId, useDiscord)
     End Sub
 
     Private Sub SetNotificationRowVisible(rowIndex As Integer, label As Control, editor As Control, visible As Boolean)
@@ -2216,19 +2311,13 @@ Public Class Form1
         thresholdsGroup.Controls.Add(thresholdsLayout)
 
         Dim notifyGroup As New GroupBox() With {.Text = "Notifications + Loot Matching", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
-        Dim notifyLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 11}
+        Dim notifyLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 13}
         tblNotificationSettings = notifyLayout
         notifyLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 180.0F))
         notifyLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
-        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
-        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
-        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
-        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
-        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
-        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
-        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
-        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
-        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
+        For i As Integer = 0 To 10
+            notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
+        Next
         notifyLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 30.0F))
 
@@ -2253,6 +2342,16 @@ Public Class Form1
         txtDiscordStatsWebhookUrl = New TextBox() With {.Dock = DockStyle.Fill, .Text = ""}
         notifyLayout.Controls.Add(txtDiscordStatsWebhookUrl, 1, 3)
 
+        lblDiscordShotBotToken = New Label() With {.Text = "Discord Bot Token (Shot)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        notifyLayout.Controls.Add(lblDiscordShotBotToken, 0, 7)
+        txtDiscordShotBotToken = New TextBox() With {.Dock = DockStyle.Fill, .Text = "", .UseSystemPasswordChar = True}
+        notifyLayout.Controls.Add(txtDiscordShotBotToken, 1, 7)
+
+        lblDiscordShotChannelId = New Label() With {.Text = "Discord Data Channel ID", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        notifyLayout.Controls.Add(lblDiscordShotChannelId, 0, 8)
+        txtDiscordShotChannelId = New TextBox() With {.Dock = DockStyle.Fill, .Text = ""}
+        notifyLayout.Controls.Add(txtDiscordShotChannelId, 1, 8)
+
         lblNtfyGlobalTopic = New Label() With {.Text = "ntfy Channel (Global)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
         notifyLayout.Controls.Add(lblNtfyGlobalTopic, 0, 4)
         txtNtfyTopic = New TextBox() With {.Dock = DockStyle.Fill, .Text = DefaultNtfyTopicName}
@@ -2268,22 +2367,23 @@ Public Class Form1
         txtStatsNtfyTopic = New TextBox() With {.Dock = DockStyle.Fill, .Text = ""}
         notifyLayout.Controls.Add(txtStatsNtfyTopic, 1, 6)
 
-        notifyLayout.Controls.Add(New Label() With {.Text = "Stats Interval (min)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 7)
+        notifyLayout.Controls.Add(New Label() With {.Text = "Stats Interval (min)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 9)
         nudStatsNtfyIntervalMinutes = New NumericUpDown() With {.Minimum = 1D, .Maximum = 1440D, .DecimalPlaces = 0, .Value = 30D, .Dock = DockStyle.Left, .Width = 100}
-        notifyLayout.Controls.Add(nudStatsNtfyIntervalMinutes, 1, 7)
+        notifyLayout.Controls.Add(nudStatsNtfyIntervalMinutes, 1, 9)
 
-        notifyLayout.Controls.Add(New Label() With {.Text = "Loot Matching", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 8)
-        notifyLayout.Controls.Add(New Label() With {.Text = "Moved to Auto-Loot tab", .Dock = DockStyle.Fill, .ForeColor = Color.LightSteelBlue, .TextAlign = ContentAlignment.MiddleLeft}, 1, 8)
+        notifyLayout.Controls.Add(New Label() With {.Text = "Loot Matching", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 10)
+        notifyLayout.Controls.Add(New Label() With {.Text = "Moved to Auto-Loot tab", .Dock = DockStyle.Fill, .ForeColor = Color.LightSteelBlue, .TextAlign = ContentAlignment.MiddleLeft}, 1, 10)
 
         Dim note As New Label() With {
             .Text = "Use provider 'discord' with one webhook per alert stream (global, items, stats), or provider 'ntfy' with the topic fields below." & Environment.NewLine &
                     "Use role 'max_health' in Combat Skills if you want the max-health potion threshold controlled here. HP alarm only triggers at HP=0." & Environment.NewLine &
-                    "Stats alerts send Prana/EXP %, EXP/hr, Rupiahs total, and Rupiahs/hr on the interval you choose while the bot is running.",
+                    "Stats alerts send Prana/EXP %, EXP/hr, Rupiahs total, and Rupiahs/hr on the interval you choose while the bot is running." & Environment.NewLine &
+                    "Type shot in the Discord data channel to upload the latest rolling screenshot to the Stats webhook channel.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.TopLeft
         }
-        notifyLayout.Controls.Add(note, 0, 9)
+        notifyLayout.Controls.Add(note, 0, 11)
         notifyLayout.SetColumnSpan(note, 2)
 
         Dim notifyFoot As New Label() With {
@@ -2292,7 +2392,7 @@ Public Class Form1
             .ForeColor = Color.Gray,
             .TextAlign = ContentAlignment.MiddleLeft
         }
-        notifyLayout.Controls.Add(notifyFoot, 0, 10)
+        notifyLayout.Controls.Add(notifyFoot, 0, 12)
         notifyLayout.SetColumnSpan(notifyFoot, 2)
         notifyGroup.Controls.Add(notifyLayout)
 
@@ -2534,16 +2634,17 @@ Public Class Form1
     Private Function BuildDiagnosticsTab() As TabPage
         Dim tab As New TabPage("Diagnostics") With {.BackColor = Color.FromArgb(20, 20, 20)}
         Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
-        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 116))
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 154))
         root.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
 
-        Dim controls As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 8, .RowCount = 3, .Padding = New Padding(6), .BackColor = Color.FromArgb(20, 20, 20)}
+        Dim controls As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 8, .RowCount = 4, .Padding = New Padding(6), .BackColor = Color.FromArgb(20, 20, 20)}
         For i As Integer = 1 To 8
             controls.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 12.5F))
         Next
         controls.RowStyles.Add(New RowStyle(SizeType.Absolute, 32))
         controls.RowStyles.Add(New RowStyle(SizeType.Absolute, 32))
         controls.RowStyles.Add(New RowStyle(SizeType.Absolute, 36))
+        controls.RowStyles.Add(New RowStyle(SizeType.Absolute, 38))
 
         chkAdaptivePerformance = New CheckBox() With {.Text = "Adaptive performance", .Checked = True, .Dock = DockStyle.Fill, .ForeColor = Color.Gainsboro}
         controls.Controls.Add(chkAdaptivePerformance, 0, 0)
@@ -2582,12 +2683,29 @@ Public Class Form1
         controls.Controls.Add(btnExportDiagnostics, 2, 2)
         controls.SetColumnSpan(btnExportDiagnostics, 2)
 
+        Dim scanTimerPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .AutoScroll = True, .Margin = New Padding(0)}
+        nudFullFrameScanMs = AddScanTimerInput(scanTimerPanel, "Full ms", 100, 5000, 50, 500D)
+        nudLootScannerSeconds = AddScanTimerInput(scanTimerPanel, "Loot sec", 1, 120, 1, 10D)
+        nudMapScanMs = AddScanTimerInput(scanTimerPanel, "Map ms", 250, 10000, 50, 900D)
+        nudPartyScanMs = AddScanTimerInput(scanTimerPanel, "Party ms", 250, 10000, 50, 700D)
+        nudMobNameScanMs = AddScanTimerInput(scanTimerPanel, "Mob OCR ms", 120, 5000, 25, 650D)
+        controls.Controls.Add(scanTimerPanel, 0, 3)
+        controls.SetColumnSpan(scanTimerPanel, 8)
+
         txtDiagnostics = New TextBox() With {.Dock = DockStyle.Fill, .Multiline = True, .ScrollBars = ScrollBars.Both, .ReadOnly = True, .Font = New Font("Consolas", 9.5F, FontStyle.Regular), .BackColor = Color.FromArgb(10, 10, 10), .ForeColor = Color.LightGray}
         root.Controls.Add(controls, 0, 0)
         root.Controls.Add(txtDiagnostics, 0, 1)
         tab.Controls.Add(root)
         AddTabExplanationButton(tab, HelpScopeDiagnostics)
         Return tab
+    End Function
+
+    Private Function AddScanTimerInput(parent As FlowLayoutPanel, labelText As String, minimum As Decimal, maximum As Decimal, increment As Decimal, defaultValue As Decimal) As NumericUpDown
+        Dim label As New Label() With {.Text = labelText, .AutoSize = True, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.Gainsboro, .Margin = New Padding(8, 8, 2, 0)}
+        Dim editor As New NumericUpDown() With {.Minimum = minimum, .Maximum = maximum, .Increment = increment, .Value = defaultValue, .Width = 72, .Margin = New Padding(0, 4, 8, 0)}
+        parent.Controls.Add(label)
+        parent.Controls.Add(editor)
+        Return editor
     End Function
 
     Private Function BuildLevelingTab() As TabPage
@@ -2773,6 +2891,10 @@ Public Class Form1
         nudLevelingUnreachableLimit = New NumericUpDown() With {.Minimum = 1, .Maximum = 20, .Value = 4, .Width = 55, .Margin = New Padding(4, 0, 0, 0)}
         lowExpPanel.Controls.Add(nudLevelingUnreachableLimit)
         settingsLayout.Controls.Add(lowExpPanel, 1, 25)
+
+        chkNavigationReturnToStart = New CheckBox() With {.Text = "Return to route start after destination", .Dock = DockStyle.Fill, .Checked = False, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(chkNavigationReturnToStart, 0, 26)
+        settingsLayout.SetColumnSpan(chkNavigationReturnToStart, 2)
 
         root.Controls.Add(settingsGroup, 0, 0)
 
@@ -3076,24 +3198,93 @@ Public Class Form1
         Dim tabs As New TabControl() With {.Dock = DockStyle.Fill, .Font = New Font("Segoe UI", 9.0F, FontStyle.Bold)}
 
         Dim realtimeTab As New TabPage("Real-time")
-        Dim realtimeLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
+        Dim realtimeLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3}
+        realtimeLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
         realtimeLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         realtimeLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
+        realtimeLayout.Controls.Add(BuildLogFilterPanel(), 0, 0)
         rtbLog = New RichTextBox() With {.Dock = DockStyle.Fill, .ReadOnly = True, .BackColor = Color.Black, .ForeColor = Color.FromArgb(70, 255, 160), .Font = New Font("Consolas", 9.0F, FontStyle.Regular), .ScrollBars = RichTextBoxScrollBars.Vertical}
-        realtimeLayout.Controls.Add(rtbLog, 0, 0)
+        realtimeLayout.Controls.Add(rtbLog, 0, 1)
         Dim btnClearLog As New Button() With {.Text = "Clear Log", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(130, 25, 25), .ForeColor = Color.White}
         AddHandler btnClearLog.Click, Sub(_s As Object, _e As EventArgs) ClearRealtimeLog()
-        realtimeLayout.Controls.Add(btnClearLog, 0, 1)
+        realtimeLayout.Controls.Add(btnClearLog, 0, 2)
         realtimeTab.Controls.Add(realtimeLayout)
 
         Dim summaryTab As New TabPage("Key Summary")
         summaryTab.Controls.Add(BuildKeySummaryPanel())
+        Dim lootHistoryTab As New TabPage("Loot History")
+        lootHistoryTab.Controls.Add(BuildLootHistoryPanel())
 
         tabs.TabPages.Add(realtimeTab)
         tabs.TabPages.Add(summaryTab)
+        tabs.TabPages.Add(lootHistoryTab)
         layout.Controls.Add(tabs, 0, 0)
         group.Controls.Add(layout)
         Return group
+    End Function
+
+    Private Function BuildLogFilterPanel() As Control
+        Dim panel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .AutoScroll = True, .Padding = New Padding(4, 3, 4, 0)}
+        chkLogCombat = CreateLogFilterCheckBox("Combat", Sub(value) _logFilterCombatEnabled = value)
+        chkLogLoot = CreateLogFilterCheckBox("Loot", Sub(value) _logFilterLootEnabled = value)
+        chkLogOcrVision = CreateLogFilterCheckBox("OCR/Vision", Sub(value) _logFilterOcrVisionEnabled = value)
+        chkLogNavigation = CreateLogFilterCheckBox("Navigation", Sub(value) _logFilterNavigationEnabled = value)
+        chkLogWarnings = CreateLogFilterCheckBox("Warnings", Sub(value) _logFilterWarningsEnabled = value)
+        chkLogMisc = CreateLogFilterCheckBox("Misc", Sub(value) _logFilterMiscEnabled = value)
+        panel.Controls.Add(chkLogCombat)
+        panel.Controls.Add(chkLogLoot)
+        panel.Controls.Add(chkLogOcrVision)
+        panel.Controls.Add(chkLogNavigation)
+        panel.Controls.Add(chkLogWarnings)
+        panel.Controls.Add(chkLogMisc)
+        Return panel
+    End Function
+
+    Private Function CreateLogFilterCheckBox(text As String, setter As Action(Of Boolean)) As CheckBox
+        Dim box As New CheckBox() With {.Text = text, .Checked = True, .AutoSize = True, .ForeColor = Color.Gainsboro, .Margin = New Padding(4, 3, 8, 0)}
+        AddHandler box.CheckedChanged,
+            Sub(_s As Object, _e As EventArgs)
+                setter(box.Checked)
+            End Sub
+        setter(True)
+        Return box
+    End Function
+
+    Private Function BuildLootHistoryPanel() As Control
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2, .Padding = New Padding(6)}
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+
+        dgvLootHistory = New DataGridView() With {
+            .Dock = DockStyle.Fill,
+            .ReadOnly = True,
+            .AllowUserToAddRows = False,
+            .AllowUserToDeleteRows = False,
+            .AllowUserToResizeRows = False,
+            .MultiSelect = False,
+            .SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            .RowHeadersVisible = False,
+            .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
+        }
+        dgvLootHistory.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Time", .HeaderText = "Time"})
+        dgvLootHistory.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Edition", .HeaderText = "Bot"})
+        dgvLootHistory.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Item", .HeaderText = "Item"})
+        dgvLootHistory.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Action", .HeaderText = "Action"})
+        dgvLootHistory.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Detail", .HeaderText = "Detail"})
+        layout.Controls.Add(dgvLootHistory, 0, 0)
+
+        Dim btnClearLootHistory As New Button() With {.Text = "Clear Loot History", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(85, 95, 120), .ForeColor = Color.White}
+        AddHandler btnClearLootHistory.Click,
+            Sub(_s As Object, _e As EventArgs)
+                SyncLock _lootHistoryEventsSync
+                    _lootHistoryEvents.Clear()
+                    _lootHistoryVersion += 1
+                End SyncLock
+                _lastLootHistoryRenderedVersion = -1
+                RefreshLootHistoryGrid()
+            End Sub
+        layout.Controls.Add(btnClearLootHistory, 0, 1)
+        Return layout
     End Function
 
     Private Function BuildKeySummaryPanel() As Control
@@ -3465,6 +3656,276 @@ Public Class Form1
         AppendLog("Snapshot captured.")
         Return True
     End Function
+
+    Private Sub RollingScreenshotTimerTick(sender As Object, e As EventArgs)
+        If _rollingScreenshotInProgress Then
+            Return
+        End If
+
+        _rollingScreenshotInProgress = True
+        PushLiveConfig()
+        Dim engine As BotEngine = GetRollingScreenshotEngine()
+        Task.Run(
+            Sub()
+                Try
+                    SaveRollingScreenshot(engine)
+                Finally
+                    _rollingScreenshotInProgress = False
+                End Try
+            End Sub)
+    End Sub
+
+    Private Function GetRollingScreenshotEngine() As BotEngine
+        If _fullEngine.IsRunning() Then
+            Return _fullEngine
+        End If
+        If _liteEngine.IsRunning() Then
+            Return _liteEngine
+        End If
+        Return If(IsLiteModeActive(), _liteEngine, _fullEngine)
+    End Function
+
+    Private Sub SaveRollingScreenshot(engine As BotEngine)
+        If engine Is Nothing Then
+            Return
+        End If
+
+        Try
+            Directory.CreateDirectory(RollingScreenshotDirectoryPath)
+
+            Using bmp As Bitmap = engine.CaptureSnapshot()
+                If bmp Is Nothing Then
+                    LogRollingScreenshotIssue("Rolling screenshot skipped: game capture unavailable.")
+                    PruneRollingScreenshots()
+                    Return
+                End If
+
+                Dim fileName As String = $"kathana_{DateTime.Now:yyyyMMdd_HHmmss_fff}.png"
+                Dim screenshotPath As String = Path.Combine(RollingScreenshotDirectoryPath, fileName)
+                bmp.Save(screenshotPath, ImageFormat.Png)
+                PruneRollingScreenshots()
+
+                _rollingScreenshotSaveCount += 1
+                If _rollingScreenshotSaveCount = 1 Then
+                    AppendLogSafe($"Rolling screenshots enabled: saving every 30 seconds to {RollingScreenshotDirectoryPath}.")
+                End If
+            End Using
+        Catch ex As Exception
+            LogRollingScreenshotIssue("Rolling screenshot failed: " & ex.Message)
+        End Try
+    End Sub
+
+    Private Sub PruneRollingScreenshots()
+        Try
+            If Not Directory.Exists(RollingScreenshotDirectoryPath) Then
+                Return
+            End If
+
+            Dim files As List(Of FileInfo) =
+                Directory.GetFiles(RollingScreenshotDirectoryPath, "kathana_*.png").
+                    Select(Function(filePath) New FileInfo(filePath)).
+                    OrderByDescending(Function(file) file.Name).
+                    ToList()
+
+            For Each oldFile As FileInfo In files.Skip(RollingScreenshotRetainCount)
+                Try
+                    oldFile.Delete()
+                Catch
+                End Try
+            Next
+        Catch
+        End Try
+    End Sub
+
+    Private Function GetLatestRollingScreenshotPath() As String
+        Try
+            If Not Directory.Exists(RollingScreenshotDirectoryPath) Then
+                Return ""
+            End If
+
+            Return Directory.GetFiles(RollingScreenshotDirectoryPath, "kathana_*.png").
+                OrderByDescending(Function(filePath) Path.GetFileName(filePath)).
+                FirstOrDefault()
+        Catch
+            Return ""
+        End Try
+    End Function
+
+    Private Sub DiscordShotTimerTick(sender As Object, e As EventArgs)
+        If _discordShotPollInProgress Then
+            Return
+        End If
+        If GetNotificationProviderName() <> NotificationProviderDiscord Then
+            _discordShotInitialized = False
+            _lastDiscordShotMessageId = ""
+            Return
+        End If
+
+        Dim botToken As String = GetDiscordShotBotToken()
+        Dim channelId As String = GetDiscordShotChannelId()
+        Dim webhookUrl As String = GetDiscordStatsWebhookUrl()
+        If botToken = "" OrElse channelId = "" OrElse webhookUrl = "" Then
+            _discordShotInitialized = False
+            _lastDiscordShotMessageId = ""
+            Return
+        End If
+
+        _discordShotPollInProgress = True
+        Task.Run(
+            Async Function()
+                Try
+                    Await PollDiscordShotCommandAsync(botToken, channelId, webhookUrl)
+                Finally
+                    _discordShotPollInProgress = False
+                End Try
+            End Function)
+    End Sub
+
+    Private Async Function PollDiscordShotCommandAsync(botToken As String, channelId As String, webhookUrl As String) As Task
+        Try
+            Dim requestUrl As String = $"https://discord.com/api/v10/channels/{Uri.EscapeDataString(channelId)}/messages?limit=10"
+            Using request As New HttpRequestMessage(HttpMethod.Get, requestUrl)
+                request.Headers.Authorization = New System.Net.Http.Headers.AuthenticationHeaderValue("Bot", botToken)
+                Dim response As HttpResponseMessage = Await NtfyClient.SendAsync(request)
+                If Not response.IsSuccessStatusCode Then
+                    LogDiscordShotIssue($"Discord shot poll failed ({CInt(response.StatusCode)}). Check bot token, channel ID, and channel permissions.")
+                    Return
+                End If
+
+                Dim rawJson As String = Await response.Content.ReadAsStringAsync()
+                Using doc As JsonDocument = JsonDocument.Parse(rawJson)
+                    If doc.RootElement.ValueKind <> JsonValueKind.Array OrElse doc.RootElement.GetArrayLength() = 0 Then
+                        Return
+                    End If
+
+                    Dim newestId As String = GetJsonString(doc.RootElement(0), "id")
+                    If newestId = "" Then
+                        Return
+                    End If
+
+                    If Not _discordShotInitialized OrElse _lastDiscordShotMessageId = "" Then
+                        _lastDiscordShotMessageId = newestId
+                        _discordShotInitialized = True
+                        Return
+                    End If
+
+                    Dim pendingMessages As New List(Of JsonElement)()
+                    For Each message As JsonElement In doc.RootElement.EnumerateArray()
+                        Dim messageId As String = GetJsonString(message, "id")
+                        If messageId = "" OrElse messageId = _lastDiscordShotMessageId Then
+                            Exit For
+                        End If
+                        pendingMessages.Add(message.Clone())
+                    Next
+
+                    _lastDiscordShotMessageId = newestId
+                    pendingMessages.Reverse()
+                    For Each message As JsonElement In pendingMessages
+                        If IsDiscordShotCommand(message) Then
+                            Await SendLatestRollingScreenshotToDiscordAsync(webhookUrl)
+                        End If
+                    Next
+                End Using
+            End Using
+        Catch ex As Exception
+            LogDiscordShotIssue("Discord shot poll failed: " & ex.Message)
+        End Try
+    End Function
+
+    Private Shared Function GetJsonString(element As JsonElement, propertyName As String) As String
+        Dim value As JsonElement
+        If element.ValueKind = JsonValueKind.Object AndAlso element.TryGetProperty(propertyName, value) AndAlso value.ValueKind = JsonValueKind.String Then
+            Return If(value.GetString(), "")
+        End If
+        Return ""
+    End Function
+
+    Private Shared Function IsDiscordShotCommand(message As JsonElement) As Boolean
+        Dim author As JsonElement
+        If message.TryGetProperty("author", author) Then
+            Dim botValue As JsonElement
+            If author.TryGetProperty("bot", botValue) AndAlso botValue.ValueKind = JsonValueKind.True Then
+                Return False
+            End If
+        End If
+
+        Dim content As String = GetJsonString(message, "content").Trim()
+        Return content.Equals("shot", StringComparison.OrdinalIgnoreCase)
+    End Function
+
+    Private Async Function SendLatestRollingScreenshotToDiscordAsync(webhookUrl As String) As Task(Of Boolean)
+        Dim screenshotPath As String = GetLatestRollingScreenshotPath()
+        If String.IsNullOrWhiteSpace(screenshotPath) OrElse Not File.Exists(screenshotPath) Then
+            Return Await SendDiscordNotificationAsync("KathanaBot Shot", "No rolling screenshot is available yet. Wait for the next 30-second capture.", webhookUrl, "Discord stats webhook")
+        End If
+
+        Dim rawWebhookUrl As String = If(webhookUrl, "").Trim()
+        If rawWebhookUrl = "" OrElse Not IsLikelyDiscordWebhookUrl(rawWebhookUrl) Then
+            LogDiscordShotIssue("Discord shot upload skipped: Stats/Data webhook URL is missing or invalid.")
+            Return False
+        End If
+
+        Try
+            Using request As New HttpRequestMessage(HttpMethod.Post, NormalizeDiscordWebhookUrl(rawWebhookUrl))
+                Using content As New MultipartFormDataContent()
+                    Dim payload = New With {
+                        .username = "KathanaBot",
+                        .content = $"Latest screenshot: {Path.GetFileName(screenshotPath)}",
+                        .allowed_mentions = New With {
+                            .parse = Array.Empty(Of String)()
+                        }
+                    }
+                    content.Add(New StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"), "payload_json")
+
+                    Dim fileBytes As Byte() = File.ReadAllBytes(screenshotPath)
+                    Dim fileContent As New ByteArrayContent(fileBytes)
+                    fileContent.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse("image/png")
+                    content.Add(fileContent, "files[0]", Path.GetFileName(screenshotPath))
+                    request.Content = content
+
+                    Dim response As HttpResponseMessage = Await NtfyClient.SendAsync(request)
+                    If response.IsSuccessStatusCode Then
+                        AppendLogSafe("Discord shot command uploaded latest rolling screenshot.")
+                        Return True
+                    End If
+
+                    Dim responseText As String = ""
+                    If response.Content IsNot Nothing Then
+                        responseText = (Await response.Content.ReadAsStringAsync()).Trim()
+                    End If
+                    If responseText <> "" Then
+                        LogDiscordShotIssue($"Discord shot upload failed ({CInt(response.StatusCode)}): {responseText}")
+                    Else
+                        LogDiscordShotIssue($"Discord shot upload failed ({CInt(response.StatusCode)}).")
+                    End If
+                End Using
+            End Using
+        Catch ex As Exception
+            LogDiscordShotIssue("Discord shot upload failed: " & ex.Message)
+        End Try
+
+        Return False
+    End Function
+
+    Private Sub LogRollingScreenshotIssue(message As String)
+        Dim now As DateTime = DateTime.UtcNow
+        If _lastRollingScreenshotErrorLogUtc <> DateTime.MinValue AndAlso (now - _lastRollingScreenshotErrorLogUtc).TotalMinutes < 5 Then
+            Return
+        End If
+
+        _lastRollingScreenshotErrorLogUtc = now
+        AppendLogSafe(message)
+    End Sub
+
+    Private Sub LogDiscordShotIssue(message As String)
+        Dim now As DateTime = DateTime.UtcNow
+        If _lastDiscordShotErrorLogUtc <> DateTime.MinValue AndAlso (now - _lastDiscordShotErrorLogUtc).TotalMinutes < 2 Then
+            Return
+        End If
+
+        _lastDiscordShotErrorLogUtc = now
+        AppendLogSafe(message)
+    End Sub
 
     Private Sub SnapshotClicked(sender As Object, e As EventArgs)
         CaptureSnapshotIntoPreview(True)
@@ -5098,6 +5559,40 @@ Public Class Form1
         Return $"UI Update: avg {_uiTimingAverageMs:0.0}ms | max {_uiTimingMaxMs:0.0}ms | n={_uiTimingCount}"
     End Function
 
+    Private Function FormatUiHealth() As String
+        Dim pendingLogs As Integer = 0
+        Dim totalDropped As Long = 0
+        SyncLock _logQueueSync
+            pendingLogs = _logQueue.Count
+            totalDropped = _totalDroppedLogLineCount
+        End SyncLock
+
+        Dim lootHistoryCount As Integer = 0
+        SyncLock _lootHistoryEventsSync
+            lootHistoryCount = _lootHistoryEvents.Count
+        End SyncLock
+
+        Dim keyActionCount As Integer = 0
+        SyncLock _keyActionEventsSync
+            keyActionCount = _keyActionEvents.Count
+        End SyncLock
+
+        Dim managedMb As Double = GC.GetTotalMemory(False) / 1024.0R / 1024.0R
+        Dim privateMb As Double = 0.0R
+        Dim threadCount As Integer = 0
+        Try
+            Using proc As Process = Process.GetCurrentProcess()
+                privateMb = proc.PrivateMemorySize64 / 1024.0R / 1024.0R
+                threadCount = proc.Threads.Count
+            End Using
+        Catch
+        End Try
+
+        Dim logChars As Integer = If(rtbLog Is Nothing OrElse rtbLog.IsDisposed, 0, rtbLog.TextLength)
+        Dim lastFlush As String = If(_lastLogFlushAt = DateTime.MinValue, "n/a", _lastLogFlushAt.ToString("HH:mm:ss"))
+        Return $"UI Health: pendingLogs {pendingLogs} | droppedLogs {totalDropped} | lastFlush {lastFlush} x{_lastLogFlushBatchCount} | logChars {logChars:N0} | keyEvents {keyActionCount:N0} | lootHistory {lootHistoryCount:N0} | managed {managedMb:0.0}MB | private {privateMb:0.0}MB | threads {threadCount}"
+    End Function
+
     Private Function GetSelectedCaptureBackendCode() As String
         Dim label As String = If(cboCaptureBackend IsNot Nothing AndAlso cboCaptureBackend.SelectedItem IsNot Nothing, cboCaptureBackend.SelectedItem.ToString(), "Auto")
         Select Case label.Trim().ToLowerInvariant()
@@ -5169,6 +5664,7 @@ Public Class Form1
 
     Private Sub UiTimerTick(sender As Object, e As EventArgs)
         Dim uiWatch As Stopwatch = Stopwatch.StartNew()
+        MonitorEngineWorkers()
         PushLiveConfig()
         Dim st As BotStatus = GetStatusForEdition(_edition)
         HandlePendingLitePointCapture()
@@ -5212,6 +5708,11 @@ Public Class Form1
             $"AdaptiveRecoveryMultiplier: {If(nudAdaptiveRecoveryMultiplier IsNot Nothing, nudAdaptiveRecoveryMultiplier.Value.ToString("0.00"), "1.25")}{Environment.NewLine}" &
             $"AdaptiveConfirmSlow/Recover: {If(nudAdaptiveSlowConfirm IsNot Nothing, nudAdaptiveSlowConfirm.Value.ToString(), "5")}/{If(nudAdaptiveRecoveryConfirm IsNot Nothing, nudAdaptiveRecoveryConfirm.Value.ToString(), "14")}{Environment.NewLine}" &
             $"CaptureBackendPreference: {GetSelectedCaptureBackendCode()}{Environment.NewLine}" &
+            $"FullFrameScanMs: {If(nudFullFrameScanMs IsNot Nothing, nudFullFrameScanMs.Value.ToString(), "500")}{Environment.NewLine}" &
+            $"LootScannerIntervalSec: {If(nudLootScannerSeconds IsNot Nothing, nudLootScannerSeconds.Value.ToString("0.0"), "10")}{Environment.NewLine}" &
+            $"MapScanMs: {If(nudMapScanMs IsNot Nothing, nudMapScanMs.Value.ToString(), "900")}{Environment.NewLine}" &
+            $"PartyScanMs: {If(nudPartyScanMs IsNot Nothing, nudPartyScanMs.Value.ToString(), "700")}{Environment.NewLine}" &
+            $"MobNameScanMs: {If(nudMobNameScanMs IsNot Nothing, nudMobNameScanMs.Value.ToString(), "650")}{Environment.NewLine}" &
             $"NavigationEnabled: {If(chkNavigationEnabled IsNot Nothing AndAlso chkNavigationEnabled.Checked, "True", "False")}{Environment.NewLine}" &
             $"MapOpenKey: {If(txtMapOpenKey IsNot Nothing AndAlso txtMapOpenKey.Text.Trim() <> "", txtMapOpenKey.Text.Trim().ToUpperInvariant(), DefaultMapOpenKey)}{Environment.NewLine}" &
             $"TravelPreviewEnabled: {If(chkTravelPreview IsNot Nothing AndAlso chkTravelPreview.Checked, "True", "False")}{Environment.NewLine}" &
@@ -5223,6 +5724,7 @@ Public Class Form1
             $"ResampleMs: {If(nudNavigationResampleMs IsNot Nothing, nudNavigationResampleMs.Value.ToString(), "1800")}{Environment.NewLine}" &
             $"StallTimeoutMs: {If(nudNavigationStallTimeoutMs IsNot Nothing, nudNavigationStallTimeoutMs.Value.ToString(), "6500")}{Environment.NewLine}" &
             $"RepathOnStuck: {If(chkNavigationRepathOnStuck IsNot Nothing AndAlso chkNavigationRepathOnStuck.Checked, "True", "False")}{Environment.NewLine}" &
+            $"ReturnToStart: {If(chkNavigationReturnToStart IsNot Nothing AndAlso chkNavigationReturnToStart.Checked, "True", "False")}{Environment.NewLine}" &
             $"RouteStartNode: {ExtractNavigationNodeId(If(cboNavigationStartNode IsNot Nothing, cboNavigationStartNode.SelectedItem, Nothing))}{Environment.NewLine}" &
             $"RouteTargetNode: {ExtractNavigationNodeId(If(cboNavigationTargetNode IsNot Nothing, cboNavigationTargetNode.SelectedItem, Nothing))}{Environment.NewLine}" &
             $"RouteRecordingActive: {st.RouteRecordingActive}{Environment.NewLine}" &
@@ -5260,6 +5762,7 @@ Public Class Form1
             $"MobHpText: {If(String.IsNullOrWhiteSpace(st.MobHpText), "n/a", st.MobHpText)}{Environment.NewLine}" &
             $"Performance:{Environment.NewLine}{If(String.IsNullOrWhiteSpace(st.PerformanceDiagnostics), "n/a", st.PerformanceDiagnostics)}{Environment.NewLine}" &
             $"{FormatUiTiming()}{Environment.NewLine}" &
+            $"{FormatUiHealth()}{Environment.NewLine}" &
             $"OcrError: {OcrReader.LastError()}{Environment.NewLine}" &
             $"MobHP%: {st.MobHpPercent:0.0}{Environment.NewLine}" &
             $"MobMaxHP: {If(st.MobMaxHp > 0, st.MobMaxHp.ToString(), "n/a")}{Environment.NewLine}" &
@@ -5290,13 +5793,27 @@ Public Class Form1
             $"NavigationRecoveryCount: {st.NavigationRecoveryCount}{Environment.NewLine}" &
             $"NavigationDestinationReached: {st.NavigationDestinationReached}{Environment.NewLine}" &
             $"NavigationDestinationLabel: {If(String.IsNullOrWhiteSpace(st.NavigationDestinationLabel), "n/a", st.NavigationDestinationLabel)}{Environment.NewLine}" &
+            $"NavigationReturningToStart: {st.NavigationReturningToStart}{Environment.NewLine}" &
+            $"NavigationReturnTarget: {If(String.IsNullOrWhiteSpace(st.NavigationReturnTargetLabel), "n/a", st.NavigationReturnTargetLabel)}{Environment.NewLine}" &
+            $"EngineRestartCount: {st.EngineRestartCount}{Environment.NewLine}" &
+            $"EngineLastRestartUtc: {If(st.EngineLastRestartUtc = DateTime.MinValue, "n/a", st.EngineLastRestartUtc.ToString("yyyy-MM-dd HH:mm:ss"))}{Environment.NewLine}" &
             $"LastAction: {st.LastAction}{Environment.NewLine}" &
              $"NotAttackingReason: {st.NotAttackingReason}{Environment.NewLine}" &
              $"Error: {st.ErrorMessage}"
         AddDiagnosticsHistory(txtDiagnostics.Text)
         RefreshKeyActionSummary()
+        RefreshLootHistoryGrid()
         uiWatch.Stop()
         RecordUiTiming(uiWatch.Elapsed.TotalMilliseconds)
+    End Sub
+
+    Private Sub MonitorEngineWorkers()
+        If _fullEngine.EnsureLoopWorkerRunning() Then
+            AppendLog("Full engine worker watchdog restarted the loop.")
+        End If
+        If _liteEngine.EnsureLoopWorkerRunning() Then
+            AppendLog("Lite engine worker watchdog restarted the loop.")
+        End If
     End Sub
 
     Private Sub EnterToggleTimerTick(sender As Object, e As EventArgs)
@@ -5430,6 +5947,9 @@ Public Class Form1
         End If
         If lblTravelStatus IsNot Nothing Then
             Dim travelReason As String = If(String.IsNullOrWhiteSpace(status.NavigationTravelReason), "idle", status.NavigationTravelReason)
+            If status.NavigationReturningToStart AndAlso Not String.IsNullOrWhiteSpace(status.NavigationReturnTargetLabel) Then
+                travelReason = $"returning to start: {status.NavigationReturnTargetLabel}"
+            End If
             Dim distanceText As String = If(status.NavigationDistanceToWaypoint < 0, "n/a", status.NavigationDistanceToWaypoint.ToString("0.0"))
             Dim stallText As String = If(status.NavigationTravelStalled, $" | stalled x{Math.Max(1, status.NavigationRecoveryCount)}", If(status.NavigationRecoveryCount > 0, $" | recoveries {status.NavigationRecoveryCount}", ""))
             If status.NavigationDestinationReached AndAlso Not String.IsNullOrWhiteSpace(status.NavigationDestinationLabel) Then
@@ -5831,6 +6351,7 @@ Public Class Form1
 
     Private Sub OnEngineLogLine(edition As BotEdition, line As String)
         Dim prefixed As String = $"[{edition}] {line}"
+        RecordLootHistoryFromEngineLog(edition, line)
         Dim isKeyAction As Boolean = IsKeyActionLogLine(line)
         If edition = BotEdition.Full AndAlso isKeyAction Then
             TrackKeyActionFromEngineLog(line)
@@ -6141,6 +6662,7 @@ Public Class Form1
         cfg.NavigationResampleIntervalMs = CInt(If(nudNavigationResampleMs IsNot Nothing, nudNavigationResampleMs.Value, 1800D))
         cfg.NavigationStallTimeoutMs = CInt(If(nudNavigationStallTimeoutMs IsNot Nothing, nudNavigationStallTimeoutMs.Value, 6500D))
         cfg.NavigationRepathOnStuck = (chkNavigationRepathOnStuck IsNot Nothing AndAlso chkNavigationRepathOnStuck.Checked)
+        cfg.NavigationReturnToStartEnabled = (chkNavigationReturnToStart IsNot Nothing AndAlso chkNavigationReturnToStart.Checked)
         cfg.ChatTranslationEnabled = (chkChatTranslationEnabled IsNot Nothing AndAlso chkChatTranslationEnabled.Checked)
         cfg.ChatTranslationOverlayEnabled = (chkChatTranslationOverlay IsNot Nothing AndAlso chkChatTranslationOverlay.Checked)
         cfg.DisabledCalibrationRegionOverlays = BuildDisabledCalibrationRegionOverlays()
@@ -6155,6 +6677,12 @@ Public Class Form1
         cfg.AdaptiveSlowConfirmCount = CInt(If(nudAdaptiveSlowConfirm IsNot Nothing, nudAdaptiveSlowConfirm.Value, 5D))
         cfg.AdaptiveRecoveryConfirmCount = CInt(If(nudAdaptiveRecoveryConfirm IsNot Nothing, nudAdaptiveRecoveryConfirm.Value, 14D))
         cfg.CaptureBackendPreference = GetSelectedCaptureBackendCode()
+        cfg.FullFrameRefreshIntervalMs = CInt(If(nudFullFrameScanMs IsNot Nothing, nudFullFrameScanMs.Value, 500D))
+        cfg.LootScannerIntervalMs = CInt(Math.Round(CDbl(If(nudLootScannerSeconds IsNot Nothing, nudLootScannerSeconds.Value, 10D)) * 1000.0R))
+        cfg.MapCoordinateScanIntervalMs = CInt(If(nudMapScanMs IsNot Nothing, nudMapScanMs.Value, 900D))
+        cfg.PartyListScanIntervalMs = CInt(If(nudPartyScanMs IsNot Nothing, nudPartyScanMs.Value, 700D))
+        cfg.PartyInviteScanIntervalMs = CInt(If(nudPartyScanMs IsNot Nothing, nudPartyScanMs.Value, 900D))
+        cfg.MobNameScanIntervalMs = CInt(If(nudMobNameScanMs IsNot Nothing, nudMobNameScanMs.Value, 650D))
         cfg.HpBar = BuildRect("hp_bar")
         cfg.MpBar = BuildRect("mp_bar")
         cfg.MobNameRect = BuildRect("mob_name_rect")
@@ -7019,6 +7547,12 @@ Public Class Form1
                 End If
                 txtDiscordStatsWebhookUrl.Text = statsWebhook
             End If
+            If txtDiscordShotBotToken IsNot Nothing Then
+                txtDiscordShotBotToken.Text = If(state.DiscordShotBotToken, "").Trim()
+            End If
+            If txtDiscordShotChannelId IsNot Nothing Then
+                txtDiscordShotChannelId.Text = If(state.DiscordShotChannelId, "").Trim()
+            End If
             If txtItemNtfyTopic IsNot Nothing Then
                 txtItemNtfyTopic.Text = If(state.ItemNtfyTopic, "").Trim()
             End If
@@ -7109,6 +7643,8 @@ Public Class Form1
                 .DiscordGlobalWebhookUrl = GetDiscordGlobalWebhookUrl(),
                 .DiscordItemWebhookUrl = GetDiscordItemWebhookUrl(),
                 .DiscordStatsWebhookUrl = GetDiscordStatsWebhookUrl(),
+                .DiscordShotBotToken = GetDiscordShotBotToken(),
+                .DiscordShotChannelId = GetDiscordShotChannelId(),
                 .NtfyTopic = If(txtNtfyTopic IsNot Nothing, txtNtfyTopic.Text.Trim(), ""),
                 .ItemNtfyTopic = If(txtItemNtfyTopic IsNot Nothing, txtItemNtfyTopic.Text.Trim(), ""),
                 .StatsNtfyTopic = If(txtStatsNtfyTopic IsNot Nothing, txtStatsNtfyTopic.Text.Trim(), ""),
@@ -7321,6 +7857,9 @@ Public Class Form1
         If chkNavigationRepathOnStuck IsNot Nothing Then
             chkNavigationRepathOnStuck.Checked = cfg.NavigationRepathOnStuck
         End If
+        If chkNavigationReturnToStart IsNot Nothing Then
+            chkNavigationReturnToStart.Checked = cfg.NavigationReturnToStartEnabled
+        End If
         If chkChatTranslationEnabled IsNot Nothing Then
             chkChatTranslationEnabled.Checked = cfg.ChatTranslationEnabled
         End If
@@ -7344,6 +7883,11 @@ Public Class Form1
         SetNumericControlValue(nudAdaptiveSlowConfirm, CDec(Math.Max(1, cfg.AdaptiveSlowConfirmCount)))
         SetNumericControlValue(nudAdaptiveRecoveryConfirm, CDec(Math.Max(1, cfg.AdaptiveRecoveryConfirmCount)))
         SelectCaptureBackend(cfg.CaptureBackendPreference)
+        SetNumericControlValue(nudFullFrameScanMs, CDec(Math.Max(100, cfg.FullFrameRefreshIntervalMs)))
+        SetNumericControlValue(nudLootScannerSeconds, CDec(Math.Max(1.0R, cfg.LootScannerIntervalMs / 1000.0R)))
+        SetNumericControlValue(nudMapScanMs, CDec(Math.Max(250, cfg.MapCoordinateScanIntervalMs)))
+        SetNumericControlValue(nudPartyScanMs, CDec(Math.Max(250, cfg.PartyListScanIntervalMs)))
+        SetNumericControlValue(nudMobNameScanMs, CDec(Math.Max(120, cfg.MobNameScanIntervalMs)))
         PopulateNavigationNodeCombos()
         If cboNavigationStartNode IsNot Nothing Then
             cboNavigationStartNode.SelectedIndex = 0
@@ -7658,12 +8202,19 @@ Public Class Form1
             text = text.Substring(0, MaxLogLineChars) & " ... [truncated]"
         End If
 
+        If Not IsLogCategoryEnabled(text) Then
+            Return
+        End If
+
         Dim stamped As String = $"[{DateTime.Now:HH:mm:ss}] {text}"
         SyncLock _logQueueSync
             If _logQueue.Count >= MaxPendingLogLines Then
                 _logQueue.Dequeue()
                 If _droppedLogLineCount < Integer.MaxValue Then
                     _droppedLogLineCount += 1
+                End If
+                If _totalDroppedLogLineCount < Long.MaxValue Then
+                    _totalDroppedLogLineCount += 1
                 End If
             End If
             _logQueue.Enqueue(stamped)
@@ -7708,6 +8259,8 @@ Public Class Form1
             TrimRealtimeLogIfNeeded(False)
             rtbLog.SelectionStart = rtbLog.TextLength
             rtbLog.ScrollToCaret()
+            _lastLogFlushBatchCount = batch.Count
+            _lastLogFlushAt = DateTime.Now
         Finally
             rtbLog.ResumeLayout()
         End Try
@@ -7751,6 +8304,44 @@ Public Class Form1
             rtbLog.Clear()
         End If
     End Sub
+
+    Private Function IsLogCategoryEnabled(message As String) As Boolean
+        Dim category As String = ClassifyLogMessage(message)
+        Select Case category
+            Case "combat"
+                Return _logFilterCombatEnabled
+            Case "loot"
+                Return _logFilterLootEnabled
+            Case "ocr"
+                Return _logFilterOcrVisionEnabled
+            Case "navigation"
+                Return _logFilterNavigationEnabled
+            Case "warning"
+                Return _logFilterWarningsEnabled
+            Case Else
+                Return _logFilterMiscEnabled
+        End Select
+    End Function
+
+    Private Shared Function ClassifyLogMessage(message As String) As String
+        Dim text As String = If(message, "").ToLowerInvariant()
+        If text.Contains("warning") OrElse text.Contains("failed") OrElse text.Contains("error") OrElse text.Contains("glitch") OrElse text.Contains("not responding") Then
+            Return "warning"
+        End If
+        If text.Contains("loot") OrElse text.Contains("item notification") OrElse text.Contains("right-alt scan") Then
+            Return "loot"
+        End If
+        If text.Contains("ocr") OrElse text.Contains("vision") OrElse text.Contains("capture") OrElse text.Contains("black frame") OrElse text.Contains("screen text") Then
+            Return "ocr"
+        End If
+        If text.Contains("route") OrElse text.Contains("navigation") OrElse text.Contains("travel") OrElse text.Contains("waypoint") OrElse text.Contains("coordinate") Then
+            Return "navigation"
+        End If
+        If text.Contains("key action") OrElse text.Contains("attack") OrElse text.Contains("retarget") OrElse text.Contains("hp") OrElse text.Contains("mp") Then
+            Return "combat"
+        End If
+        Return "misc"
+    End Function
 
     Private Shared Function IsKeyActionLogLine(line As String) As Boolean
         Dim trimmedLine As String = If(line, "").Trim()
@@ -7803,6 +8394,99 @@ Public Class Form1
             })
             PruneKeyActionEventsLocked(nowUtc)
         End SyncLock
+    End Sub
+
+    Private Sub RecordLootHistoryFromEngineLog(edition As BotEdition, line As String)
+        Dim text As String = If(line, "").Trim()
+        If text = "" Then
+            Return
+        End If
+
+        Dim actionText As String = ""
+        Dim itemName As String = ""
+        Dim detailText As String = text
+
+        Dim alarmMatch As Match = Regex.Match(text, "LOOT ALARM:\s*Found\s+(.+?)\s*\(fuzzy\s+(\d+)%\)", RegexOptions.IgnoreCase)
+        If alarmMatch.Success Then
+            itemName = alarmMatch.Groups(1).Value.Trim()
+            actionText = "Found"
+            detailText = $"fuzzy {alarmMatch.Groups(2).Value}%"
+        Else
+            Dim autoPickMatch As Match = Regex.Match(text, "Loot auto-pick clicked matched label '([^']+)'", RegexOptions.IgnoreCase)
+            If autoPickMatch.Success Then
+                itemName = autoPickMatch.Groups(1).Value.Trim()
+                actionText = "Auto-pick clicked"
+            Else
+                Dim autoPickSkippedMatch As Match = Regex.Match(text, "Loot auto-pick skipped for ([^:]+):\s*(.+)", RegexOptions.IgnoreCase)
+                If autoPickSkippedMatch.Success Then
+                    itemName = autoPickSkippedMatch.Groups(1).Value.Trim()
+                    actionText = "Auto-pick skipped"
+                    detailText = autoPickSkippedMatch.Groups(2).Value.Trim()
+                Else
+                    Dim acceptedMatch As Match = Regex.Match(text, "loot accepted:\s*([^)]+)", RegexOptions.IgnoreCase)
+                    If acceptedMatch.Success Then
+                        itemName = acceptedMatch.Groups(1).Value.Trim()
+                        actionText = "Accepted"
+                    Else
+                        Dim rejectedMatch As Match = Regex.Match(text, "loot rejected:\s*([^)]+)", RegexOptions.IgnoreCase)
+                        If rejectedMatch.Success Then
+                            itemName = rejectedMatch.Groups(1).Value.Trim()
+                            actionText = "Rejected"
+                        ElseIf text.IndexOf("loot", StringComparison.OrdinalIgnoreCase) >= 0 Then
+                            itemName = "n/a"
+                            actionText = "Loot event"
+                        Else
+                            Return
+                        End If
+                    End If
+                End If
+            End If
+        End If
+
+        SyncLock _lootHistoryEventsSync
+            _lootHistoryEvents.Add(New LootHistoryEvent With {
+                .TimestampLocal = DateTime.Now,
+                .Edition = edition,
+                .ItemName = If(String.IsNullOrWhiteSpace(itemName), "unknown", itemName),
+                .ActionText = actionText,
+                .DetailText = detailText
+            })
+            If _lootHistoryEvents.Count > MaxLootHistoryEvents Then
+                _lootHistoryEvents.RemoveRange(0, _lootHistoryEvents.Count - MaxLootHistoryEvents)
+            End If
+            _lootHistoryVersion += 1
+        End SyncLock
+    End Sub
+
+    Private Sub RefreshLootHistoryGrid()
+        If dgvLootHistory Is Nothing OrElse dgvLootHistory.IsDisposed Then
+            Return
+        End If
+
+        Dim eventsSnapshot As List(Of LootHistoryEvent)
+        SyncLock _lootHistoryEventsSync
+            If _lootHistoryVersion = _lastLootHistoryRenderedVersion Then
+                Return
+            End If
+            eventsSnapshot = _lootHistoryEvents.Select(Function(entry) New LootHistoryEvent With {
+                .TimestampLocal = entry.TimestampLocal,
+                .Edition = entry.Edition,
+                .ItemName = entry.ItemName,
+                .ActionText = entry.ActionText,
+                .DetailText = entry.DetailText
+            }).ToList()
+            _lastLootHistoryRenderedVersion = _lootHistoryVersion
+        End SyncLock
+
+        dgvLootHistory.SuspendLayout()
+        Try
+            dgvLootHistory.Rows.Clear()
+            For Each entry As LootHistoryEvent In eventsSnapshot.OrderByDescending(Function(item) item.TimestampLocal).Take(200)
+                dgvLootHistory.Rows.Add(entry.TimestampLocal.ToString("HH:mm:ss"), entry.Edition.ToString(), entry.ItemName, entry.ActionText, entry.DetailText)
+            Next
+        Finally
+            dgvLootHistory.ResumeLayout()
+        End Try
     End Sub
 
     Private Shared Function ExtractKeyNameFromAction(actionText As String) As String
@@ -7936,11 +8620,13 @@ Public Class Form1
         Dim liteRunning As Boolean = _liteEngine.IsRunning()
         Dim runningEdition As BotEdition? = GetRunningEdition()
         Dim selectedEdition As BotEdition = If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full)
+        Dim fullButtonState As String = GetBotRunStateLabel(_fullStatus, fullRunning)
+        Dim liteButtonState As String = GetBotRunStateLabel(_liteStatus, liteRunning)
 
         If btnAttack IsNot Nothing Then
             If fullRunning Then
-                btnAttack.Text = "RUNNING"
-                btnAttack.BackColor = Color.FromArgb(220, 70, 55)
+                btnAttack.Text = fullButtonState
+                btnAttack.BackColor = GetBotRunStateColor(fullButtonState)
                 btnAttack.ForeColor = Color.White
             Else
                 btnAttack.Text = "PAUSED"
@@ -7950,9 +8636,9 @@ Public Class Form1
         End If
 
         If btnLiteAttack IsNot Nothing Then
-            btnLiteAttack.Text = If(liteRunning, "Running", If(fullRunning, "Start Lite", "Start"))
-            btnLiteAttack.BackColor = If(liteRunning, Color.FromArgb(255, 179, 179), Color.FromArgb(40, 180, 80))
-            btnLiteAttack.ForeColor = If(liteRunning, Color.FromArgb(120, 25, 25), Color.White)
+            btnLiteAttack.Text = If(liteRunning, liteButtonState, If(fullRunning, "Start Lite", "Start"))
+            btnLiteAttack.BackColor = If(liteRunning, GetBotRunStateColor(liteButtonState), Color.FromArgb(40, 180, 80))
+            btnLiteAttack.ForeColor = Color.White
         End If
 
         If btnStopBot IsNot Nothing Then
@@ -7965,8 +8651,8 @@ Public Class Form1
         End If
 
         If lblRunState IsNot Nothing Then
-            lblRunState.Text = If(fullRunning, "FULL BOT RUNNING", "FULL BOT PAUSED")
-            lblRunState.BackColor = If(fullRunning, StatusAliveColor, StatusStoppedOrDeadColor)
+            lblRunState.Text = If(fullRunning, "FULL BOT " & fullButtonState, "FULL BOT PAUSED")
+            lblRunState.BackColor = If(fullRunning, GetBotRunStateColor(fullButtonState), StatusStoppedOrDeadColor)
             lblRunState.ForeColor = Color.White
         End If
         If lblFullEdition IsNot Nothing Then
@@ -7974,8 +8660,8 @@ Public Class Form1
         End If
 
         If lblLiteRunState IsNot Nothing Then
-            lblLiteRunState.Text = If(liteRunning, "LITE BOT RUNNING", "LITE BOT PAUSED")
-            lblLiteRunState.BackColor = If(liteRunning, StatusAliveColor, StatusStoppedOrDeadColor)
+            lblLiteRunState.Text = If(liteRunning, "LITE BOT " & liteButtonState, "LITE BOT PAUSED")
+            lblLiteRunState.BackColor = If(liteRunning, GetBotRunStateColor(liteButtonState), StatusStoppedOrDeadColor)
             lblLiteRunState.ForeColor = Color.White
         End If
 
@@ -8002,6 +8688,61 @@ Public Class Form1
         UpdateMainTabIndicators()
         UpdateTaskbarStatusIndicator()
     End Sub
+
+    Private Function GetBotRunStateLabel(status As BotStatus, running As Boolean) As String
+        If Not running Then
+            Return "PAUSED"
+        End If
+        If status Is Nothing Then
+            Return "RUNNING"
+        End If
+        If Not status.WindowFound Then
+            Return "WAIT WINDOW"
+        End If
+        If Not String.IsNullOrWhiteSpace(status.ErrorMessage) Then
+            Dim err As String = status.ErrorMessage.ToLowerInvariant()
+            If err.Contains("black") OrElse err.Contains("capture") OrElse err.Contains("glitch") OrElse err.Contains("restarted") Then
+                Return "RECOVERING"
+            End If
+            Return "WARNING"
+        End If
+        If status.NavigationReturningToStart Then
+            Return "RETURNING"
+        End If
+        If status.NavigationTravelActive Then
+            Return "TRAVELING"
+        End If
+        If Not String.IsNullOrWhiteSpace(status.NotAttackingReason) Then
+            Dim reason As String = status.NotAttackingReason.ToLowerInvariant()
+            If reason.Contains("window") Then
+                Return "WAIT WINDOW"
+            End If
+            If reason.Contains("black") OrElse reason.Contains("capture") OrElse reason.Contains("recovery") Then
+                Return "RECOVERING"
+            End If
+            If reason.Contains("cooldown") OrElse reason.Contains("waiting") Then
+                Return "WAITING"
+            End If
+        End If
+        Return "RUNNING"
+    End Function
+
+    Private Shared Function GetBotRunStateColor(stateLabel As String) As Color
+        Select Case If(stateLabel, "").Trim().ToUpperInvariant()
+            Case "RUNNING"
+                Return Color.FromArgb(220, 70, 55)
+            Case "TRAVELING", "RETURNING"
+                Return Color.FromArgb(95, 95, 200)
+            Case "WAIT WINDOW", "WAITING"
+                Return Color.FromArgb(210, 140, 35)
+            Case "RECOVERING"
+                Return Color.FromArgb(45, 120, 180)
+            Case "WARNING"
+                Return Color.FromArgb(190, 90, 35)
+            Case Else
+                Return Color.FromArgb(220, 70, 55)
+        End Select
+    End Function
 
     Private Sub UpdateLiteStatus(statusText As String, status As BotStatus)
         If lblLiteState IsNot Nothing Then
@@ -8061,13 +8802,15 @@ Public Class Form1
 
         ' Only count usable (non-black / non-failed) frames toward death confirmation.
         Dim errorText As String = If(status.ErrorMessage, "")
-        Dim captureUnavailable As Boolean =
+        Dim unusableVisionFrame As Boolean =
             errorText.IndexOf("capture failed", StringComparison.OrdinalIgnoreCase) >= 0 OrElse
-            errorText.IndexOf("unable to capture", StringComparison.OrdinalIgnoreCase) >= 0
+            errorText.IndexOf("unable to capture", StringComparison.OrdinalIgnoreCase) >= 0 OrElse
+            errorText.IndexOf("black", StringComparison.OrdinalIgnoreCase) >= 0 OrElse
+            errorText.IndexOf("glitch", StringComparison.OrdinalIgnoreCase) >= 0
         Dim isUsableFrame As Boolean =
             status.Running AndAlso
             status.WindowFound AndAlso
-            (errorText = "" OrElse captureUnavailable)
+            Not unusableVisionFrame
 
         Dim isDeadHp As Boolean =
             isUsableFrame AndAlso
@@ -8295,6 +9038,14 @@ Public Class Form1
             Return GetDiscordGlobalWebhookUrl()
         End If
         Return raw
+    End Function
+
+    Private Function GetDiscordShotBotToken() As String
+        Return If(txtDiscordShotBotToken IsNot Nothing, txtDiscordShotBotToken.Text, "").Trim()
+    End Function
+
+    Private Function GetDiscordShotChannelId() As String
+        Return If(txtDiscordShotChannelId IsNot Nothing, txtDiscordShotChannelId.Text, "").Trim()
     End Function
 
     Private Shared Function IsLikelyDiscordWebhookUrl(rawUrl As String) As Boolean
@@ -8884,6 +9635,8 @@ Public Class Form1
         _uiTimer.Stop()
         _enterToggleTimer.Stop()
         _logFlushTimer.Stop()
+        _rollingScreenshotTimer.Stop()
+        _discordShotTimer.Stop()
         FlushPendingLogLines()
         SavePersistedListState(False)
         StopHpZeroAlarm()

@@ -271,12 +271,19 @@ Public Class BotConfig
     Public Property NavigationResampleIntervalMs As Integer = 1800
     Public Property NavigationStallTimeoutMs As Integer = 6500
     Public Property NavigationRepathOnStuck As Boolean = True
+    Public Property NavigationReturnToStartEnabled As Boolean = False
     Public Property RouteRecordingEnabled As Boolean = False
     Public Property RouteRecordingName As String = "jina_route"
     Public Property RouteRecordingMinConfidencePercent As Integer = 90
     Public Property RouteRecordingMinSampleDistance As Integer = 2
     Public Property RouteRecordingMinNodeSpacing As Integer = 2
     Public Property RouteRecordingSampleIntervalMs As Integer = 100
+    Public Property FullFrameRefreshIntervalMs As Integer = 500
+    Public Property LootScannerIntervalMs As Integer = 10000
+    Public Property MapCoordinateScanIntervalMs As Integer = 900
+    Public Property PartyListScanIntervalMs As Integer = 700
+    Public Property PartyInviteScanIntervalMs As Integer = 900
+    Public Property MobNameScanIntervalMs As Integer = 650
     Public Property ChatTranslationEnabled As Boolean = False
     Public Property ChatTranslationOverlayEnabled As Boolean = True
     Public Property DisabledCalibrationRegionOverlays As List(Of String) = New List(Of String)()
@@ -399,6 +406,8 @@ Public Class BotStatus
     Public Property NavigationRecoveryCount As Integer
     Public Property NavigationDestinationReached As Boolean
     Public Property NavigationDestinationLabel As String = ""
+    Public Property NavigationReturningToStart As Boolean
+    Public Property NavigationReturnTargetLabel As String = ""
     Public Property RouteRecordingEnabled As Boolean
     Public Property RouteRecordingActive As Boolean
     Public Property RouteRecordingMapName As String = ""
@@ -415,6 +424,8 @@ Public Class BotStatus
     Public Property AgentReason As String = ""
     Public Property AgentGuardrailTriggered As Boolean
     Public Property PerformanceDiagnostics As String = ""
+    Public Property EngineRestartCount As Integer
+    Public Property EngineLastRestartUtc As DateTime = DateTime.MinValue
     Public Property UpdatedAt As DateTime = DateTime.UtcNow
 End Class
 
@@ -597,7 +608,8 @@ Public Class BotEngine
     Private Const UnreachableConfirmRequiredCount As Integer = 2
     Private Const RepairConfirmRequiredCount As Integer = 5
     Private Const UnreachableClearRequiredCount As Integer = 2
-    Private Const SustainedSingleZeroConfirmRequiredCount As Integer = 6
+    Private Const SustainedSingleZeroConfirmRequiredCount As Integer = 3
+    Private Const NearZeroSupportConfirmRequiredCount As Integer = 3
     Private Const RetargetBufferMs As Integer = 300
     Private Const BaseClientWidth As Integer = 1024
     Private Const BaseClientHeight As Integer = 768
@@ -609,6 +621,8 @@ Public Class BotEngine
     Private Const StopKeyRepeatGapMs As Integer = 10
     Private Const ForegroundInputSettleMs As Integer = 15
     Private Const CombatLockLostTargetConfirmFrames As Integer = 4
+    Private Const TargetSignalGraceMinMs As Integer = 1800
+    Private Const TargetSignalGraceMaxMs As Integer = 5000
     Private Const LootScannerIntervalMs As Integer = 10000
     Private Const StartupCombatPriorityMs As Integer = 3000
     Private Const FullFrameRefreshMs As Integer = 500
@@ -679,6 +693,8 @@ Public Class BotEngine
     Private _lastNormalRetarget As DateTime = DateTime.MinValue
     Private _lastForcedRetarget As DateTime = DateTime.MinValue
     Private _lastTargetWindowSeen As DateTime = DateTime.MinValue
+    Private _lastLivingTargetSignalAt As DateTime = DateTime.MinValue
+    Private _lastTargetValidAt As DateTime = DateTime.MinValue
     Private _noTargetBeganAt As DateTime = DateTime.MinValue
     Private _lastAttackAction As DateTime = DateTime.MinValue
     Private _loopStartedAt As DateTime = DateTime.MinValue
@@ -704,6 +720,7 @@ Public Class BotEngine
     Private _lastCharacterName As String = ""
     Private _latestLoopFrame As Bitmap = Nothing
     Private _latestLoopFrameCapturedAt As DateTime = DateTime.MinValue
+    Private _lastFullFrameCaptureAttemptAt As DateTime = DateTime.MinValue
     Private _lastLootPickup As DateTime = DateTime.MinValue
     Private _pendingLootPickupVerifyAt As DateTime = DateTime.MinValue
     Private _firstHitPending As Boolean = False
@@ -789,6 +806,11 @@ Public Class BotEngine
     Private _lastNavigationProgressDistance As Double = -1
     Private _lastNavigationProgressAt As DateTime = DateTime.MinValue
     Private _lastNavigationRecoveryAt As DateTime = DateTime.MinValue
+    Private _navigationReturnToStartActive As Boolean = False
+    Private _navigationReturnTargetNodeId As String = ""
+    Private _navigationReturnTargetNodeLabel As String = ""
+    Private _navigationOutboundStartNodeId As String = ""
+    Private _navigationOutboundStartNodeLabel As String = ""
     Private _lastNavigationKnownPoseAt As DateTime = DateTime.MinValue
     Private _lastNavigationKnownX As Integer = -1
     Private _lastNavigationKnownY As Integer = -1
@@ -830,11 +852,15 @@ Public Class BotEngine
     Private _zeroPairConfirmCount As Integer = 0
     Private _singleHpZeroConfirmCount As Integer = 0
     Private _singleMpZeroConfirmCount As Integer = 0
+    Private _hpZeroSupportConfirmCount As Integer = 0
+    Private _mpZeroSupportConfirmCount As Integer = 0
     Private _lastRightAltAt As DateTime = DateTime.MinValue
     Private _lootScannerCapturePending As Boolean = False
     Private _lootScannerCaptureRequestedAt As DateTime = DateTime.MinValue
     Private _lootScannerAltHeld As Boolean = False
     Private _lootScannerProcessingTask As Task = Nothing
+    Private _engineRestartCount As Integer = 0
+    Private _engineLastRestartUtc As DateTime = DateTime.MinValue
     Private _agentState As LevelingAgentState = LevelingAgentState.Disabled
     Private _agentReason As String = ""
     Private _agentGuardrailTriggered As Boolean = False
@@ -885,6 +911,44 @@ Public Class BotEngine
         End SyncLock
     End Function
 
+    Public Function EnsureLoopWorkerRunning() As Boolean
+        Dim restarted As Boolean = False
+        Dim faultMessage As String = ""
+        SyncLock _sync
+            If Not _status.Running Then
+                Return False
+            End If
+            If _task IsNot Nothing AndAlso Not _task.IsCompleted Then
+                Return False
+            End If
+
+            If _task IsNot Nothing AndAlso _task.IsFaulted AndAlso _task.Exception IsNot Nothing Then
+                faultMessage = _task.Exception.GetBaseException().Message
+            End If
+
+            If _cts Is Nothing OrElse _cts.IsCancellationRequested Then
+                _cts = New CancellationTokenSource()
+            End If
+
+            _engineRestartCount += 1
+            _engineLastRestartUtc = DateTime.UtcNow
+            _status.EngineRestartCount = _engineRestartCount
+            _status.EngineLastRestartUtc = _engineLastRestartUtc
+            _status.ErrorMessage = "Engine worker restarted."
+            _task = Task.Run(Sub() LoopAsync(_cts.Token).GetAwaiter().GetResult())
+            restarted = True
+        End SyncLock
+
+        If restarted Then
+            If String.IsNullOrWhiteSpace(faultMessage) Then
+                RaiseEvent LogLine("Engine worker restarted automatically.")
+            Else
+                RaiseEvent LogLine("Engine worker restarted automatically after fault: " & faultMessage)
+            End If
+        End If
+        Return restarted
+    End Function
+
     Public Sub Start()
         SyncLock _sync
             If _task IsNot Nothing AndAlso Not _task.IsCompleted Then
@@ -896,6 +960,8 @@ Public Class BotEngine
             _lastNormalRetarget = DateTime.MinValue
             _lastForcedRetarget = DateTime.MinValue
             _lastTargetWindowSeen = DateTime.MinValue
+            _lastLivingTargetSignalAt = DateTime.MinValue
+            _lastTargetValidAt = DateTime.MinValue
             _noTargetBeganAt = DateTime.MinValue
             _lastAttackAction = DateTime.MinValue
             _loopStartedAt = DateTime.UtcNow
@@ -1015,6 +1081,11 @@ Public Class BotEngine
             _lastNavigationProgressDistance = -1
             _lastNavigationProgressAt = DateTime.MinValue
             _lastNavigationRecoveryAt = DateTime.MinValue
+            _navigationReturnToStartActive = False
+            _navigationReturnTargetNodeId = ""
+            _navigationReturnTargetNodeLabel = ""
+            _navigationOutboundStartNodeId = ""
+            _navigationOutboundStartNodeLabel = ""
             _lastNavigationKnownPoseAt = DateTime.MinValue
             _lastNavigationKnownX = -1
             _lastNavigationKnownY = -1
@@ -1043,11 +1114,14 @@ Public Class BotEngine
             _zeroPairConfirmCount = 0
             _singleHpZeroConfirmCount = 0
             _singleMpZeroConfirmCount = 0
+            _hpZeroSupportConfirmCount = 0
+            _mpZeroSupportConfirmCount = 0
             _lastRightAltAt = DateTime.MinValue
             _lootScannerCapturePending = False
             _lootScannerCaptureRequestedAt = DateTime.MinValue
             _lootScannerAltHeld = False
             _lootScannerProcessingTask = Nothing
+            _lastFullFrameCaptureAttemptAt = DateTime.MinValue
             _lastKeyTime.Clear()
             _lastStatusRaisedAt = DateTime.MinValue
             _lastStatusRaisedSignature = ""
@@ -1252,6 +1326,8 @@ Public Class BotEngine
                 ResolveVisionRegions(cfg, clientWidth, clientHeight, liteHpRegion, liteMpRegion, liteMobNameRegion, liteMobHpRegion, liteUnreachableTextRegion, litePranaExpRegion, liteRupiahsRegion, litePartyInviteScanRegion, litePartyInviteOkRegion, litePartyListRegion, liteMapCoordinateXRegion, liteMapCoordinateYRegion, liteChatRegion)
 
                 Dim liteFrame As Bitmap = Nothing
+                Dim liteScanWarning As String = ""
+                Dim liteFullFrameGlitch As Boolean = False
                 If cfg.PartyAskEnabled Then
                     Dim captureWatch As Stopwatch = Stopwatch.StartNew()
                     liteFrame = CaptureClient(hwnd)
@@ -1261,24 +1337,21 @@ Public Class BotEngine
                         _lastCaptureMethodName = GetCachedCaptureMethodName(hwnd)
                     End SyncLock
                     If liteFrame IsNot Nothing Then
-                        ReplaceLatestLoopFrame(liteFrame)
+                        If cfg.BlackScreenProtectionEnabled AndAlso IsLikelyBlackFrame(liteFrame) Then
+                            ClearCachedCaptureMethod(hwnd)
+                            ClearLatestLoopFrame()
+                            liteFrame.Dispose()
+                            liteFrame = Nothing
+                            liteFullFrameGlitch = True
+                            liteScanWarning = "Vision glitch: black full-frame capture skipped; Lite actions continue with direct HP/MP reads."
+                        Else
+                            ReplaceLatestLoopFrame(liteFrame)
+                        End If
                     Else
                         ClearLatestLoopFrame()
                     End If
                 Else
                     ClearLatestLoopFrame()
-                End If
-                
-                If cfg.BlackScreenProtectionEnabled AndAlso liteFrame IsNot Nothing AndAlso IsLikelyBlackFrame(liteFrame) Then
-                    liteFrame.Dispose()
-                    SetStatus(Sub(s)
-                                  s.WindowFound = True
-                                  s.NotAttackingReason = "Waiting for game screen (black frame detected)."
-                                  s.ErrorMessage = "Vision glitch: black screen ignored in Lite Mode."
-                              End Sub)
-                    RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
-                    Await Task.Delay(loopDelayMs, token)
-                    Continue While
                 End If
 
                 Dim hasLiteHpPoint As Boolean = cfg.LiteHpCheckPointX >= 0 AndAlso cfg.LiteHpCheckPointY >= 0
@@ -1298,7 +1371,7 @@ Public Class BotEngine
 
                 Dim liteAttackHpPct As Double = If(hpScanOk, liteHpPct, 100.0)
                 Dim liteAttackMpPct As Double = If(mpScanOk, liteMpPct, 100.0)
-                Dim liteCaptureGlitch As Boolean = (hasLiteHpPoint AndAlso Not hpScanOk) OrElse (hasLiteMpPoint AndAlso Not mpScanOk)
+                Dim liteCaptureGlitch As Boolean = liteFullFrameGlitch OrElse (hasLiteHpPoint AndAlso Not hpScanOk) OrElse (hasLiteMpPoint AndAlso Not mpScanOk)
                 ApplyVisionStabilityFilter(liteAttackHpPct, liteAttackMpPct, 0, "", liteCaptureGlitch)
 
                 Dim liteReason As String = ""
@@ -1318,7 +1391,7 @@ Public Class BotEngine
                 End If
 
                 If Not liteActionSent AndAlso (hpScanOk OrElse mpScanOk) Then
-                    liteActionSent = TrySendSupportActions(cfg, hwnd, liteHpPct, liteMpPct)
+                    liteActionSent = TrySendSupportActions(cfg, hwnd, liteAttackHpPct, liteAttackMpPct)
                 End If
 
                 If Not liteActionSent Then
@@ -1347,9 +1420,8 @@ Public Class BotEngine
                     End If
                 End If
 
-                Dim liteScanWarning As String = ""
                 If cfg.PartyAutoAcceptEnabled AndAlso liteFrame Is Nothing Then
-                    liteScanWarning = "Unable to capture Lite window for party prompt scan."
+                    liteScanWarning = If(liteScanWarning = "", "Unable to capture Lite window for party prompt scan.", liteScanWarning & " Party prompt scan skipped.")
                 End If
                 If hasLiteHpPoint AndAlso Not hpScanOk Then
                     liteScanWarning = If(liteScanWarning = "", "Unable to read Lite HP AutoPots point.", liteScanWarning & " Unable to read Lite HP AutoPots point.")
@@ -1422,10 +1494,12 @@ Public Class BotEngine
             ResolveVisionRegions(cfg, fullClientWidth, fullClientHeight, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, partyListRegion, mapCoordinateXRegion, mapCoordinateYRegion, chatRegion)
             Dim lootScanPolygon As List(Of DrawingPoint) = ResolveLootScanPolygon(cfg, fullClientWidth, fullClientHeight)
             Dim activeHwnd As IntPtr = NativeMethods.GetForegroundWindow()
-            Dim fullFrameIntervalMs As Integer = If(deferOptionalWork, FullFrameRefreshMs * 3, FullFrameRefreshMs)
+            Dim configuredFullFrameMs As Integer = Math.Max(100, If(cfg Is Nothing, FullFrameRefreshMs, cfg.FullFrameRefreshIntervalMs))
+            Dim fullFrameIntervalMs As Integer = If(deferOptionalWork, configuredFullFrameMs * 3, configuredFullFrameMs)
+            Dim lastFullFrameTime As DateTime = If(_latestLoopFrameCapturedAt <> DateTime.MinValue, _latestLoopFrameCapturedAt, _lastFullFrameCaptureAttemptAt)
             Dim fullFrameDue As Boolean =
-                _latestLoopFrameCapturedAt = DateTime.MinValue OrElse
-                (now - _latestLoopFrameCapturedAt).TotalMilliseconds >= fullFrameIntervalMs
+                lastFullFrameTime = DateTime.MinValue OrElse
+                (now - lastFullFrameTime).TotalMilliseconds >= fullFrameIntervalMs
             Dim pendingLootScannerReady As Boolean =
                 _lootScannerCapturePending AndAlso
                 activeHwnd = hwnd AndAlso
@@ -1436,8 +1510,10 @@ Public Class BotEngine
                 now >= _pendingLootPickupVerifyAt
             Dim shouldCaptureFullFrame As Boolean = fullFrameDue OrElse pendingLootScannerReady OrElse pendingLootVerifyReady
             Dim frame As Bitmap = Nothing
+            Dim visionWarning As String = ""
 
             If shouldCaptureFullFrame Then
+                _lastFullFrameCaptureAttemptAt = now
                 Dim mainCaptureWatch As Stopwatch = Stopwatch.StartNew()
                 frame = CaptureClient(hwnd)
                 mainCaptureWatch.Stop()
@@ -1447,17 +1523,14 @@ Public Class BotEngine
                 End SyncLock
 
                 If frame IsNot Nothing Then
-                    ReplaceLatestLoopFrame(frame)
                     If cfg.BlackScreenProtectionEnabled AndAlso IsLikelyBlackFrame(frame) Then
+                        ClearCachedCaptureMethod(hwnd)
+                        ClearLatestLoopFrame()
                         frame.Dispose()
-                        SetStatus(Sub(s)
-                                      s.WindowFound = True
-                                      s.NotAttackingReason = "Waiting for game screen (black frame detected)."
-                                      s.ErrorMessage = "Vision glitch: black screen ignored."
-                                  End Sub)
-                        RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
-                        Await Task.Delay(loopDelayMs, token)
-                        Continue While
+                        frame = Nothing
+                        visionWarning = "Vision glitch: black full-frame capture skipped; combat is using direct region reads."
+                    Else
+                        ReplaceLatestLoopFrame(frame)
                     End If
                 End If
             End If
@@ -1523,7 +1596,7 @@ Public Class BotEngine
             TryHandlePendingLootPickupVerification(cfg, hwnd, frame, now, mobNameRegion)
             If cfg.LootScannerEnabled AndAlso deferOptionalWork AndAlso activeHwnd = hwnd AndAlso (Not _lootScannerCapturePending) Then
                 MarkOptionalWorkDeferred()
-            ElseIf cfg.LootScannerEnabled AndAlso activeHwnd = hwnd AndAlso (Not _lootScannerCapturePending) AndAlso (now - _lastRightAltAt).TotalMilliseconds >= LootScannerIntervalMs Then
+            ElseIf cfg.LootScannerEnabled AndAlso activeHwnd = hwnd AndAlso (Not _lootScannerCapturePending) AndAlso (now - _lastRightAltAt).TotalMilliseconds >= Math.Max(1000, cfg.LootScannerIntervalMs) Then
                 BeginLootScannerCapture(now)
             End If
             Dim mobOcrWatch As Stopwatch = Stopwatch.StartNew()
@@ -1539,8 +1612,8 @@ Public Class BotEngine
             Dim mobName As String
             If shouldReadMobName Then
                 mobName = If(frame IsNot Nothing,
-                             ReadMobNameIfNeeded(frame, mobNameRegion, now, forceMobNameRefresh),
-                             ReadMobNameFromClientRegionIfNeeded(hwnd, mobNameRegion, now, forceMobNameRefresh))
+                             ReadMobNameIfNeeded(frame, mobNameRegion, now, forceMobNameRefresh, cfg.MobNameScanIntervalMs),
+                             ReadMobNameFromClientRegionIfNeeded(hwnd, mobNameRegion, now, forceMobNameRefresh, cfg.MobNameScanIntervalMs))
             Else
                 ' Avoid stale-name attacks after target switches.
                 _cachedMobName = ""
@@ -1553,7 +1626,7 @@ Public Class BotEngine
             Dim expPerHour As Double = UpdateExpRate(expPct, now)
             Dim rupiahsPerHour As Double = UpdateRupiahsRate(rupiahsTotal, now)
             If cfg.NavigationEnabled AndAlso Not startupCombatPriorityActive AndAlso Not deferOptionalWork Then
-                ReadMapCoordinateIfNeeded(frame, mapCoordinateXRegion, mapCoordinateYRegion, now)
+                ReadMapCoordinateIfNeeded(frame, mapCoordinateXRegion, mapCoordinateYRegion, cfg, now)
                 ScanMapPlayerMarkerIfNeeded(now)
                 UpdateMapLocalizationConfidence()
                 UpdateMapVisibleState()
@@ -1676,7 +1749,11 @@ Public Class BotEngine
             Dim nameConfirmedForAttack As Boolean = (Not monsterFilterActive) OrElse (normMobName <> "" AndAlso _nameConfirmConfirmedName.Equals(normMobName, StringComparison.OrdinalIgnoreCase))
             Dim missingNameBlockedByFilter As Boolean = monsterFilterActive AndAlso targetWindowVisible AndAlso normMobName = ""
             Dim nameConfirmationBlockedByFilter As Boolean = monsterFilterActive AndAlso targetWindowVisible AndAlso (Not missingNameBlockedByFilter) AndAlso (Not deniedTarget) AndAlso (Not nameConfirmedForAttack)
-            Dim currentTargetAliveSignal As Boolean = HasLivingTargetSignal(targetWindowVisible, mobHpPct, cfg)
+            Dim currentTargetAliveSignal As Boolean = HasLivingTargetSignal(targetWindowVisible, mobHpPct, cfg) OrElse normMobName <> ""
+            If currentTargetAliveSignal Then
+                _lastLivingTargetSignalAt = now
+                _noTargetBeganAt = DateTime.MinValue
+            End If
             Dim combatLockActive As Boolean = UpdateCombatLockState(now, cfg, currentTargetAliveSignal, normMobName)
             Dim canTrackFirstHitTarget As Boolean = currentTargetAliveSignal AndAlso (Not deniedTarget) AndAlso (Not missingNameBlockedByFilter) AndAlso (Not avoidHighMaxHpTarget)
             Dim currentFirstHitSignature As String = normMobName
@@ -1703,6 +1780,20 @@ Public Class BotEngine
                 (Not avoidHighMaxHpTarget) AndAlso
                 (Not blacklistLockActive) AndAlso
                 (Not unreachableLockActive)
+            If targetValid Then
+                _lastTargetValidAt = now
+            End If
+            Dim targetActionBlocked As Boolean =
+                deniedTarget OrElse
+                avoidHighMaxHpTarget OrElse
+                blacklistLockActive OrElse
+                missingNameBlockedByFilter OrElse
+                missingNameBlockedByPreference OrElse
+                preferredTargetMismatch OrElse
+                nameConfirmationBlockedByFilter OrElse
+                unreachableLockActive
+            Dim targetSignalHoldActive As Boolean = (Not targetActionBlocked) AndAlso IsRecentTargetSignalHoldActive(now, cfg)
+            Dim effectiveTargetValid As Boolean = targetValid OrElse targetSignalHoldActive OrElse (combatLockActive AndAlso Not targetActionBlocked)
             TrackMobHpMovement(targetValid, mobHpPct, now)
 
             Dim guardrailReason As String = ""
@@ -1768,13 +1859,13 @@ Public Class BotEngine
             End If
 
             If Not forcedRetarget AndAlso Not actionSent Then
-                Dim supportSent As Boolean = TrySendSupportActions(cfg, hwnd, hpPct, mpPct)
+                Dim supportSent As Boolean = TrySendSupportActions(cfg, hwnd, hpPct, mpPct, hpRegion, mpRegion)
                 If supportSent Then
                     actionSent = True
                     reason = ""
                 End If
 
-                If Not actionSent AndAlso Not targetWindowVisible AndAlso Not combatLockActive Then
+                If Not actionSent AndAlso Not targetWindowVisible AndAlso Not combatLockActive AndAlso Not targetSignalHoldActive Then
                     Dim travelReason As String = ""
                     If TryHandleNavigationTravel(cfg, hwnd, now, targetWindowVisible, targetValid, travelReason) Then
                         actionSent = True
@@ -1798,7 +1889,7 @@ Public Class BotEngine
 
                 ' Support keys can fire without blocking attack/special in the same loop.
                 Dim allowBlindAttack As Boolean = AllowBlindAttackWhenTargetMissing AndAlso (Not deniedTarget) AndAlso (Not avoidHighMaxHpTarget) AndAlso (Not _lastNavigationTravelActive)
-                Dim attackBurst As List(Of ActionRule) = ChooseAttackBurstActions(cfg, hpPct, mpPct, targetValid, allowBlindAttack, highMaxHpAttackActive, reason)
+                Dim attackBurst As List(Of ActionRule) = ChooseAttackBurstActions(cfg, hpPct, mpPct, effectiveTargetValid, allowBlindAttack, highMaxHpAttackActive, reason)
                 If attackBurst.Count > 0 Then
                     Dim sentKeys As New List(Of String)()
                     Dim targetSignature As String = If(normMobName <> "", normMobName, If(mobName <> "", mobName, $"{mobHpPct:0.0}"))
@@ -1829,8 +1920,8 @@ Public Class BotEngine
                 End If
             End If
 
-            If Not targetValid AndAlso Not actionSent AndAlso Not _lastNavigationTravelActive Then
-                Dim filterBlockedRetarget As Boolean = deniedTarget OrElse avoidHighMaxHpTarget OrElse blacklistLockActive OrElse missingNameBlockedByFilter OrElse missingNameBlockedByPreference OrElse preferredTargetMismatch OrElse nameConfirmationBlockedByFilter
+            If Not effectiveTargetValid AndAlso Not actionSent AndAlso Not _lastNavigationTravelActive Then
+                Dim filterBlockedRetarget As Boolean = targetActionBlocked
                 If _firstHitPending Then
                     If String.IsNullOrWhiteSpace(reason) Then
                         If firstHitWindowActive Then
@@ -1908,17 +1999,18 @@ Public Class BotEngine
             End If
 
             TryHandleLootPickup(cfg, hwnd, now, actionSent OrElse _firstHitPending)
-            UpdateLevelingAgentRuntimeState(cfg, now, hpPct, mpPct, targetWindowVisible, targetValid, actionSent, forcedRetarget OrElse unreachableTriggered, unreachableLockActive, reason)
+            UpdateLevelingAgentRuntimeState(cfg, now, hpPct, mpPct, targetWindowVisible, effectiveTargetValid, actionSent, forcedRetarget OrElse unreachableTriggered, unreachableLockActive, reason)
 
-            If deferOptionalWork Then
+            Dim statsOcrDue As Boolean = IsStatsOcrDue(now)
+            If deferOptionalWork AndAlso Not statsOcrDue Then
                 MarkOptionalWorkDeferred()
             Else
                 If frame IsNot Nothing Then
                     TryQueueHardcodedVisionStats(cfg, hwnd, now, frame, hpRegion, mpRegion, hpPct, mpPct, mobName)
                 End If
 
-                expPct = ReadPranaExpPercent(frame, pranaExpRegion)
-                rupiahsTotal = ReadRupiahsTotal(frame, rupiahsRegion)
+                expPct = ReadPranaExpPercent(hwnd, frame, pranaExpRegion)
+                rupiahsTotal = ReadRupiahsTotal(hwnd, frame, rupiahsRegion)
                 expPerHour = UpdateExpRate(expPct, now)
                 rupiahsPerHour = UpdateRupiahsRate(rupiahsTotal, now)
             End If
@@ -1935,9 +2027,9 @@ Public Class BotEngine
                           s.RupiahsTotal = rupiahsTotal
                           s.RupiahsPerHour = If(rupiahsPerHour < 0, -1, Math.Round(rupiahsPerHour, 0))
                           s.MobName = mobName
-                          s.TargetValid = targetValid
+                          s.TargetValid = effectiveTargetValid
                           s.NotAttackingReason = If(actionSent, "", reason)
-                          s.ErrorMessage = ""
+                          s.ErrorMessage = visionWarning
                       End Sub)
             If frame IsNot Nothing Then
                 frame.Dispose()
@@ -2303,6 +2395,8 @@ Public Class BotEngine
     End Function
 
     Private Sub ApplyVisionStabilityFilter(ByRef hpPct As Double, ByRef mpPct As Double, ByRef mobHpPct As Double, ByRef mobName As String, captureGlitch As Boolean)
+        UpdateNearZeroSupportConfirmations(hpPct, mpPct, captureGlitch)
+
         Dim hasBaseline As Boolean = _lastGoodHpPercent >= 0 AndAlso _lastGoodMpPercent >= 0
         Dim bothNearZero As Boolean = hpPct <= 0.25 AndAlso mpPct <= 0.25
         Dim suspiciousSingleHpZero As Boolean =
@@ -2340,13 +2434,14 @@ Public Class BotEngine
             _zeroPairConfirmCount = 0
         End If
 
-        Dim suspiciousZeroSpike As Boolean =
-            hasBaseline AndAlso
+        Dim invalidZeroPair As Boolean =
             bothNearZero AndAlso
-            (_lastGoodHpPercent >= 5.0 OrElse _lastGoodMpPercent >= 5.0) AndAlso
-            _zeroPairConfirmCount < 12
+            (captureGlitch OrElse
+             Not hasBaseline OrElse
+             _lastGoodHpPercent >= 5.0 OrElse
+             _lastGoodMpPercent >= 5.0)
 
-        If captureGlitch OrElse suspiciousZeroSpike OrElse suspiciousSingleHpZero OrElse suspiciousSingleMpZero Then
+        If captureGlitch OrElse invalidZeroPair OrElse suspiciousSingleHpZero OrElse suspiciousSingleMpZero Then
             _zeroSpikeHoldCount += 1
             If hasBaseline Then
                 hpPct = _lastGoodHpPercent
@@ -2359,6 +2454,12 @@ Public Class BotEngine
                 End If
                 Return
             End If
+
+            hpPct = 100.0
+            mpPct = 100.0
+            mobHpPct = 0.0
+            mobName = ""
+            Return
         Else
             _zeroSpikeHoldCount = 0
         End If
@@ -2368,6 +2469,33 @@ Public Class BotEngine
         _lastGoodMobHpPercent = mobHpPct
         If Not String.IsNullOrWhiteSpace(mobName) Then
             _lastGoodMobName = mobName
+        End If
+    End Sub
+
+    Private Sub UpdateNearZeroSupportConfirmations(hpPct As Double, mpPct As Double, captureGlitch As Boolean)
+        Dim hpNearZero As Boolean = hpPct <= 0.25R
+        Dim mpNearZero As Boolean = mpPct <= 0.25R
+        Dim impossibleZeroPair As Boolean =
+            hpNearZero AndAlso
+            mpNearZero AndAlso
+            (_lastGoodHpPercent >= 5.0R OrElse _lastGoodMpPercent >= 5.0R)
+
+        If captureGlitch OrElse impossibleZeroPair Then
+            _hpZeroSupportConfirmCount = 0
+            _mpZeroSupportConfirmCount = 0
+            Return
+        End If
+
+        If hpNearZero Then
+            _hpZeroSupportConfirmCount += 1
+        Else
+            _hpZeroSupportConfirmCount = 0
+        End If
+
+        If mpNearZero Then
+            _mpZeroSupportConfirmCount += 1
+        Else
+            _mpZeroSupportConfirmCount = 0
         End If
     End Sub
 
@@ -2556,6 +2684,11 @@ Public Class BotEngine
         _lastNavigationProgressDistance = -1
         _lastNavigationProgressAt = DateTime.MinValue
         _lastNavigationRecoveryAt = DateTime.MinValue
+        _navigationReturnToStartActive = False
+        _navigationReturnTargetNodeId = ""
+        _navigationReturnTargetNodeLabel = ""
+        _navigationOutboundStartNodeId = ""
+        _navigationOutboundStartNodeLabel = ""
         _lastNavigationKnownPoseAt = DateTime.MinValue
         _lastNavigationKnownX = -1
         _lastNavigationKnownY = -1
@@ -2600,8 +2733,9 @@ Public Class BotEngine
         End Property
     End Structure
 
-    Private Sub ReadMapCoordinateIfNeeded(frame As Bitmap, xRegion As RectRegion, yRegion As RectRegion, now As DateTime)
-        If _lastMapCoordinateOcrAt <> DateTime.MinValue AndAlso (now - _lastMapCoordinateOcrAt).TotalMilliseconds < MapCoordinateOcrMinIntervalMs Then
+    Private Sub ReadMapCoordinateIfNeeded(frame As Bitmap, xRegion As RectRegion, yRegion As RectRegion, cfg As BotConfig, now As DateTime)
+        Dim minIntervalMs As Integer = Math.Max(250, If(cfg Is Nothing, MapCoordinateOcrMinIntervalMs, cfg.MapCoordinateScanIntervalMs))
+        If _lastMapCoordinateOcrAt <> DateTime.MinValue AndAlso (now - _lastMapCoordinateOcrAt).TotalMilliseconds < minIntervalMs Then
             Return
         End If
 
@@ -2776,7 +2910,8 @@ Public Class BotEngine
     End Sub
 
     Private Sub ReadPartyListIfNeeded(frame As Bitmap, region As RectRegion, cfg As BotConfig, now As DateTime)
-        If _lastPartyListScanAt <> DateTime.MinValue AndAlso (now - _lastPartyListScanAt).TotalMilliseconds < PartyListScanMinIntervalMs Then
+        Dim minIntervalMs As Integer = Math.Max(250, If(cfg Is Nothing, PartyListScanMinIntervalMs, cfg.PartyListScanIntervalMs))
+        If _lastPartyListScanAt <> DateTime.MinValue AndAlso (now - _lastPartyListScanAt).TotalMilliseconds < minIntervalMs Then
             Return
         End If
 
@@ -3606,7 +3741,10 @@ Public Class BotEngine
             plan.StartNode = FindNodeById(nodes, cfg.NavigationStartNodeId)
         End If
 
-        plan.TargetNode = FindNodeById(nodes, cfg.NavigationTargetNodeId)
+        Dim effectiveTargetNodeId As String = If(_navigationReturnToStartActive AndAlso Not String.IsNullOrWhiteSpace(_navigationReturnTargetNodeId),
+                                                _navigationReturnTargetNodeId,
+                                                cfg.NavigationTargetNodeId)
+        plan.TargetNode = FindNodeById(nodes, effectiveTargetNodeId)
         If plan.StartNode Is Nothing OrElse plan.TargetNode Is Nothing Then
             plan.StatusText = "Waiting for a selected recorded route destination."
             Return plan
@@ -4063,6 +4201,10 @@ Public Class BotEngine
         End If
 
         ReleaseMovementKeys(hwnd)
+        Dim repathReason As String = ""
+        If ForceNavigationRepath(cfg, now, repathReason) AndAlso Not String.IsNullOrWhiteSpace(repathReason) Then
+            RaiseEvent LogLine(repathReason)
+        End If
 
         Dim turnKey As String = If((_lastNavigationRecoveryCount Mod 2) = 0, "A", "D")
         Dim sentAny As Boolean = False
@@ -4095,10 +4237,37 @@ Public Class BotEngine
         _lastNavigationMoveCommandAt = now.AddMilliseconds(-Math.Max(250, cfg.NavigationResampleIntervalMs))
         _lastNavigationTravelStalled = True
         SetLastAction($"{turnKey}/S/W (travel recovery)")
-        _lastNavigationTravelReason = If(plan IsNot Nothing AndAlso plan.NextWaypoint IsNot Nothing,
-                                         $"Travel stalled near {plan.NextWaypoint.Label}. Running recovery #{_lastNavigationRecoveryCount}.",
-                                         $"Travel stalled. Running recovery #{_lastNavigationRecoveryCount}.")
+        Dim baseReason As String = If(plan IsNot Nothing AndAlso plan.NextWaypoint IsNot Nothing,
+                                      $"Travel stalled near {plan.NextWaypoint.Label}. Running recovery #{_lastNavigationRecoveryCount}.",
+                                      $"Travel stalled. Running recovery #{_lastNavigationRecoveryCount}.")
+        _lastNavigationTravelReason = If(String.IsNullOrWhiteSpace(repathReason), baseReason, repathReason & " " & baseReason)
         reason = _lastNavigationTravelReason
+        Return True
+    End Function
+
+    Private Function ForceNavigationRepath(cfg As BotConfig, now As DateTime, ByRef reason As String) As Boolean
+        reason = ""
+        If cfg Is Nothing OrElse Not cfg.NavigationRepathOnStuck Then
+            Return False
+        End If
+
+        _navigationCommittedWaypointId = ""
+        _navigationCommittedWaypointLabel = ""
+        _lastNavigationProgressWaypointId = ""
+        _lastNavigationProgressDistance = -1
+        _lastNavigationProgressAt = now
+
+        Dim repathPlan As NavigationPlan = BuildNavigationPlan(cfg, now, allowStaleLocalization:=True)
+        If repathPlan Is Nothing OrElse Not repathPlan.RouteReady OrElse repathPlan.NextWaypoint Is Nothing Then
+            reason = "Navigation repath requested after stall, but no alternate route is ready yet."
+            Return True
+        End If
+
+        _navigationCommittedWaypointId = repathPlan.NextWaypoint.Id
+        _navigationCommittedWaypointLabel = repathPlan.NextWaypoint.Label
+        Dim startLabel As String = If(repathPlan.StartNode Is Nothing, "current node", repathPlan.StartNode.Label)
+        Dim targetLabel As String = If(repathPlan.TargetNode Is Nothing, "target", repathPlan.TargetNode.Label)
+        reason = $"Navigation repath after stall: {startLabel} -> {targetLabel}; next {repathPlan.NextWaypoint.Label}."
         Return True
     End Function
 
@@ -4193,6 +4362,11 @@ Public Class BotEngine
             Return False
         End If
 
+        If Not _navigationReturnToStartActive AndAlso String.IsNullOrWhiteSpace(_navigationOutboundStartNodeId) AndAlso plan.StartNode IsNot Nothing AndAlso plan.TargetNode IsNot Nothing AndAlso Not plan.StartNode.Id.Equals(plan.TargetNode.Id, StringComparison.OrdinalIgnoreCase) Then
+            _navigationOutboundStartNodeId = plan.StartNode.Id
+            _navigationOutboundStartNodeLabel = plan.StartNode.Label
+        End If
+
         If _lastNavigationKnownX < 0 OrElse _lastNavigationKnownY < 0 Then
             _navigationAwaitingLocalization = False
             _navigationLocalizationRetryAfter = DateTime.MinValue
@@ -4207,11 +4381,40 @@ Public Class BotEngine
         End If
 
         If plan.TargetNode IsNot Nothing AndAlso IsExactNavigationNodeMatch(plan.TargetNode) Then
+            If cfg.NavigationReturnToStartEnabled AndAlso Not _navigationReturnToStartActive AndAlso Not String.IsNullOrWhiteSpace(_navigationOutboundStartNodeId) AndAlso Not _navigationOutboundStartNodeId.Equals(plan.TargetNode.Id, StringComparison.OrdinalIgnoreCase) Then
+                _navigationReturnToStartActive = True
+                _navigationReturnTargetNodeId = _navigationOutboundStartNodeId
+                _navigationReturnTargetNodeLabel = If(String.IsNullOrWhiteSpace(_navigationOutboundStartNodeLabel), "route start", _navigationOutboundStartNodeLabel)
+                _navigationCommittedWaypointId = ""
+                _navigationCommittedWaypointLabel = ""
+                _lastNavigationProgressWaypointId = ""
+                _lastNavigationProgressDistance = -1
+                _lastNavigationProgressAt = now
+                _lastNavigationDestinationReached = False
+                _lastNavigationDestinationLabel = ""
+                _lastNavigationTravelReason = $"Destination reached: {plan.TargetNode.Label}. Returning to start: {_navigationReturnTargetNodeLabel}."
+                _lastNavigationTravelActive = True
+                reason = _lastNavigationTravelReason
+                RaiseEvent LogLine(_lastNavigationTravelReason)
+                Return False
+            End If
+
             _lastNavigationDestinationReached = True
-            _lastNavigationDestinationLabel = plan.TargetNode.Label
+            _lastNavigationDestinationLabel = If(_navigationReturnToStartActive,
+                                                 $"Returned to start: {plan.TargetNode.Label}",
+                                                 plan.TargetNode.Label)
             _navigationCommittedWaypointId = ""
             _navigationCommittedWaypointLabel = ""
-            _lastNavigationTravelReason = $"Destination reached with exact coordinate match: {plan.TargetNode.Label}."
+            If _navigationReturnToStartActive Then
+                _lastNavigationTravelReason = $"Returned to route start with exact coordinate match: {plan.TargetNode.Label}."
+                _navigationReturnToStartActive = False
+                _navigationReturnTargetNodeId = ""
+                _navigationReturnTargetNodeLabel = ""
+                _navigationOutboundStartNodeId = ""
+                _navigationOutboundStartNodeLabel = ""
+            Else
+                _lastNavigationTravelReason = $"Destination reached with exact coordinate match: {plan.TargetNode.Label}."
+            End If
             _lastNavigationTravelActive = False
             _lastNavigationDistanceToWaypoint = 0
             _lastNavigationTravelStalled = False
@@ -4417,7 +4620,7 @@ Public Class BotEngine
         Return New Rectangle(minX, minY, Math.Max(1, maxX - minX + 1), Math.Max(1, maxY - minY + 1))
     End Function
 
-    Private Function ReadMobNameIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime, Optional forceRefresh As Boolean = False) As String
+    Private Function ReadMobNameIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime, Optional forceRefresh As Boolean = False, Optional minIntervalMs As Integer = 650) As String
         If frame Is Nothing Then
             Return ""
         End If
@@ -4440,7 +4643,8 @@ Public Class BotEngine
             Return _cachedMobName
         End If
 
-        If (Not forceRefresh) AndAlso _mobNameOcrStartedAt <> DateTime.MinValue AndAlso (now - _mobNameOcrStartedAt).TotalMilliseconds < 650 Then
+        Dim effectiveMinIntervalMs As Integer = Math.Max(120, minIntervalMs)
+        If (Not forceRefresh) AndAlso _mobNameOcrStartedAt <> DateTime.MinValue AndAlso (now - _mobNameOcrStartedAt).TotalMilliseconds < effectiveMinIntervalMs Then
             Return _cachedMobName
         End If
 
@@ -4472,7 +4676,7 @@ Public Class BotEngine
         Return _cachedMobName
     End Function
 
-    Private Function ReadMobNameFromClientRegionIfNeeded(hwnd As IntPtr, region As RectRegion, now As DateTime, Optional forceRefresh As Boolean = False) As String
+    Private Function ReadMobNameFromClientRegionIfNeeded(hwnd As IntPtr, region As RectRegion, now As DateTime, Optional forceRefresh As Boolean = False, Optional minIntervalMs As Integer = 650) As String
         If hwnd = IntPtr.Zero OrElse region Is Nothing Then
             Return _cachedMobName
         End If
@@ -4483,7 +4687,7 @@ Public Class BotEngine
         End If
 
         Try
-            Return ReadMobNameIfNeeded(crop, New RectRegion(0, 0, crop.Width, crop.Height), now, forceRefresh)
+            Return ReadMobNameIfNeeded(crop, New RectRegion(0, 0, crop.Width, crop.Height), now, forceRefresh, minIntervalMs)
         Finally
             crop.Dispose()
         End Try
@@ -4674,7 +4878,17 @@ Public Class BotEngine
         Return _lastExpPercent
     End Function
 
-    Private Function ReadPranaExpPercent(frame As Bitmap, pranaExpRegion As RectRegion) As Double
+    Private Function IsStatsOcrDue(now As DateTime) As Boolean
+        Dim expDue As Boolean =
+            _expOcrTask Is Nothing AndAlso
+            (_lastExpOcrAt = DateTime.MinValue OrElse (now - _lastExpOcrAt).TotalMilliseconds >= ExpOcrMinIntervalMs)
+        Dim rupiahsDue As Boolean =
+            _rupiahsOcrTask Is Nothing AndAlso
+            (_lastRupiahsOcrAt = DateTime.MinValue OrElse (now - _lastRupiahsOcrAt).TotalMilliseconds >= RupiahsOcrMinIntervalMs)
+        Return expDue OrElse rupiahsDue
+    End Function
+
+    Private Function ReadPranaExpPercent(hwnd As IntPtr, frame As Bitmap, pranaExpRegion As RectRegion) As Double
         Dim now As DateTime = DateTime.UtcNow
         GetCachedPranaExpPercent()
 
@@ -4686,20 +4900,12 @@ Public Class BotEngine
             Return _lastExpPercent
         End If
 
-        If frame Is Nothing OrElse pranaExpRegion Is Nothing Then
+        Dim crop As Bitmap = CaptureOcrRegion(hwnd, frame, pranaExpRegion)
+        If crop Is Nothing Then
             Return _lastExpPercent
         End If
 
-        Dim rect As Rectangle = pranaExpRegion.Clamp(frame.Width, frame.Height)
-        If rect.Width <= 1 OrElse rect.Height <= 1 Then
-            Return _lastExpPercent
-        End If
-
-        Dim crop As New Bitmap(Math.Max(1, rect.Width), Math.Max(1, rect.Height), PixelFormat.Format24bppRgb)
         Try
-            Using g As Graphics = Graphics.FromImage(crop)
-                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
-            End Using
             _lastExpOcrAt = now
             _expOcrTask = Task.Run(
                 Function()
@@ -4715,6 +4921,36 @@ Public Class BotEngine
         End Try
 
         Return _lastExpPercent
+    End Function
+
+    Private Shared Function CaptureOcrRegion(hwnd As IntPtr, frame As Bitmap, region As RectRegion) As Bitmap
+        If region Is Nothing Then
+            Return Nothing
+        End If
+
+        If frame IsNot Nothing Then
+            Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
+            If rect.Width <= 1 OrElse rect.Height <= 1 Then
+                Return Nothing
+            End If
+
+            Dim crop As New Bitmap(Math.Max(1, rect.Width), Math.Max(1, rect.Height), PixelFormat.Format24bppRgb)
+            Try
+                Using g As Graphics = Graphics.FromImage(crop)
+                    g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
+                End Using
+                Return crop
+            Catch
+                crop.Dispose()
+                Return Nothing
+            End Try
+        End If
+
+        If hwnd = IntPtr.Zero Then
+            Return Nothing
+        End If
+
+        Return CaptureClientRegion(hwnd, region)
     End Function
 
     Private Function UpdateExpRate(expPercent As Double, now As DateTime) As Double
@@ -4767,7 +5003,7 @@ Public Class BotEngine
         Return _lastRupiahsTotal
     End Function
 
-    Private Function ReadRupiahsTotal(frame As Bitmap, rupiahsRegion As RectRegion) As Long
+    Private Function ReadRupiahsTotal(hwnd As IntPtr, frame As Bitmap, rupiahsRegion As RectRegion) As Long
         Dim now As DateTime = DateTime.UtcNow
         GetCachedRupiahsTotal()
 
@@ -4779,20 +5015,12 @@ Public Class BotEngine
             Return _lastRupiahsTotal
         End If
 
-        If frame Is Nothing OrElse rupiahsRegion Is Nothing Then
+        Dim crop As Bitmap = CaptureOcrRegion(hwnd, frame, rupiahsRegion)
+        If crop Is Nothing Then
             Return _lastRupiahsTotal
         End If
 
-        Dim rect As Rectangle = rupiahsRegion.Clamp(frame.Width, frame.Height)
-        If rect.Width <= 1 OrElse rect.Height <= 1 Then
-            Return _lastRupiahsTotal
-        End If
-
-        Dim crop As New Bitmap(Math.Max(1, rect.Width), Math.Max(1, rect.Height), PixelFormat.Format24bppRgb)
         Try
-            Using g As Graphics = Graphics.FromImage(crop)
-                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
-            End Using
             _lastRupiahsOcrAt = now
             _rupiahsOcrTask = Task.Run(
                 Function()
@@ -4892,7 +5120,8 @@ Public Class BotEngine
             Return False
         End If
 
-        If _lastPartyInviteScan <> DateTime.MinValue AndAlso (now - _lastPartyInviteScan).TotalMilliseconds < PartyInviteOcrMinIntervalMs Then
+        Dim partyInviteIntervalMs As Integer = Math.Max(250, cfg.PartyInviteScanIntervalMs)
+        If _lastPartyInviteScan <> DateTime.MinValue AndAlso (now - _lastPartyInviteScan).TotalMilliseconds < partyInviteIntervalMs Then
             Return False
         End If
 
@@ -5781,6 +6010,26 @@ Public Class BotEngine
         Return False
     End Function
 
+    Private Function IsRecentTargetSignalHoldActive(now As DateTime, cfg As BotConfig) As Boolean
+        Dim graceMs As Integer = GetTargetSignalGraceMs(cfg)
+        Dim shortAttackGraceMs As Integer = Math.Max(900, Math.Min(graceMs, Math.Max(1, If(cfg?.RetargetMs, 550)) * 2))
+        Return IsRecentUtc(_lastTargetValidAt, now, graceMs) OrElse
+            IsRecentUtc(_lastLivingTargetSignalAt, now, graceMs) OrElse
+            IsRecentUtc(_lastTargetWindowSeen, now, graceMs) OrElse
+            (_combatLockActive AndAlso IsRecentUtc(_combatLockLastSeenAt, now, graceMs)) OrElse
+            IsRecentUtc(_lastAttackAction, now, shortAttackGraceMs)
+    End Function
+
+    Private Shared Function GetTargetSignalGraceMs(cfg As BotConfig) As Integer
+        Dim retargetMs As Integer = If(cfg Is Nothing, 550, Math.Max(1, cfg.RetargetMs))
+        Dim configuredWindow As Integer = (retargetMs + RetargetBufferMs) * 3
+        Return Math.Max(TargetSignalGraceMinMs, Math.Min(TargetSignalGraceMaxMs, configuredWindow))
+    End Function
+
+    Private Shared Function IsRecentUtc(timestamp As DateTime, now As DateTime, windowMs As Integer) As Boolean
+        Return timestamp <> DateTime.MinValue AndAlso (now - timestamp).TotalMilliseconds <= Math.Max(1, windowMs)
+    End Function
+
     Private Shared Function HasLivingTargetSignal(targetWindowVisible As Boolean, mobHpPct As Double, cfg As BotConfig) As Boolean
         If targetWindowVisible Then
             Return True
@@ -5942,7 +6191,7 @@ Public Class BotEngine
         End Select
     End Function
 
-    Private Function TrySendSupportActions(cfg As BotConfig, hwnd As IntPtr, hpPercent As Double, mpPercent As Double) As Boolean
+    Private Function TrySendSupportActions(cfg As BotConfig, hwnd As IntPtr, hpPercent As Double, mpPercent As Double, Optional hpRegion As RectRegion = Nothing, Optional mpRegion As RectRegion = Nothing) As Boolean
         If hwnd = IntPtr.Zero Then
             Return False
         End If
@@ -5962,6 +6211,9 @@ Public Class BotEngine
 
         Dim sentAny As Boolean = False
         For Each action In maxHealthActions
+            If Not ConfirmSupportActionStillNeeded(cfg, hwnd, action, hpPercent, mpPercent, hpRegion, mpRegion) Then
+                Continue For
+            End If
             If Not IsReady(action) Then
                 Continue For
             End If
@@ -5981,6 +6233,9 @@ Public Class BotEngine
             If Not IsSupportTriggered(action, hpPercent, mpPercent) Then
                 Continue For
             End If
+            If Not ConfirmSupportActionStillNeeded(cfg, hwnd, action, hpPercent, mpPercent, hpRegion, mpRegion) Then
+                Continue For
+            End If
             If Not IsReady(action) Then
                 Continue For
             End If
@@ -5994,6 +6249,113 @@ Public Class BotEngine
         Next
 
         Return sentAny
+    End Function
+
+    Private Function ConfirmSupportActionStillNeeded(cfg As BotConfig, hwnd As IntPtr, action As ActionRule, hpPercent As Double, mpPercent As Double, hpRegion As RectRegion, mpRegion As RectRegion) As Boolean
+        If cfg Is Nothing OrElse action Is Nothing OrElse hwnd = IntPtr.Zero Then
+            Return False
+        End If
+
+        Dim role As String = If(action.Role, "").Trim().ToLowerInvariant()
+        Dim targetRegion As RectRegion = If(role = "mana", mpRegion, hpRegion)
+        Dim firstSample As Double = If(role = "mana", mpPercent, hpPercent)
+        If firstSample <= 0.25R AndAlso Not IsNearZeroSupportConfirmed(role, hwnd, targetRegion) Then
+            RaiseEvent LogLine($"Support action skipped: waiting for {NearZeroSupportConfirmRequiredCount} consecutive usable {If(role = "mana", "MP", "HP")}=0 frames before {action.KeyName} ({action.Role}).")
+            Return False
+        End If
+
+        If targetRegion Is Nothing Then
+            Return True
+        End If
+
+        Dim lastGood As Double = If(role = "mana", _lastGoodMpPercent, _lastGoodHpPercent)
+        Dim companionLastGood As Double = If(role = "mana", _lastGoodHpPercent, _lastGoodMpPercent)
+        Dim trigger As Double = Math.Max(1, action.TriggerPercent)
+        Dim suddenDrop As Boolean = lastGood >= Math.Max(trigger + 20.0R, 65.0R) AndAlso firstSample <= trigger
+        Dim bothResourcesZero As Boolean =
+            hpPercent <= 0.25R AndAlso
+            mpPercent <= 0.25R AndAlso
+            (lastGood >= 5.0R OrElse companionLastGood >= 5.0R)
+
+        If bothResourcesZero Then
+            RaiseEvent LogLine($"Support action skipped: ignored impossible HP/MP zero pair before {action.KeyName} ({action.Role}).")
+            Return False
+        End If
+
+        Dim ok As Boolean = False
+        Dim secondSample As Double = ComputeClientBarPercent(hwnd, targetRegion, role <> "mana", ok)
+        If Not ok Then
+            If suddenDrop Then
+                RaiseEvent LogLine($"Support action skipped: {action.KeyName} ({action.Role}) low-bar confirmation capture failed after sudden {If(role = "mana", "MP", "HP")} drop.")
+                Return False
+            End If
+            Return True
+        End If
+
+        If secondSample <= trigger Then
+            If suddenDrop Then
+                Dim fullFrameSample As Double = -1
+                If Not ConfirmSuddenSupportDropWithFullFrame(hwnd, targetRegion, role <> "mana", trigger, fullFrameSample) Then
+                    Dim sampleText As String = If(fullFrameSample < 0, "unavailable", $"{fullFrameSample:0.0}%")
+                    RaiseEvent LogLine($"Support action skipped: {action.KeyName} ({action.Role}) sudden drop was not confirmed by full-frame read ({sampleText}).")
+                    Return False
+                End If
+            End If
+            Return True
+        End If
+
+        RaiseEvent LogLine($"Support action skipped: {action.KeyName} ({action.Role}) first read {firstSample:0.0}% but confirmation read {secondSample:0.0}%.")
+        If role = "mana" Then
+            mpPercent = secondSample
+        Else
+            hpPercent = secondSample
+        End If
+        Return False
+    End Function
+
+    Private Function IsNearZeroSupportConfirmed(role As String, hwnd As IntPtr, targetRegion As RectRegion) As Boolean
+        Dim isMana As Boolean = String.Equals(role, "mana", StringComparison.OrdinalIgnoreCase)
+        Dim confirmCount As Integer = If(isMana, _mpZeroSupportConfirmCount, _hpZeroSupportConfirmCount)
+        If confirmCount < NearZeroSupportConfirmRequiredCount Then
+            Return False
+        End If
+
+        If targetRegion Is Nothing Then
+            Using frame As Bitmap = CaptureClient(hwnd)
+                Return frame IsNot Nothing AndAlso Not IsLikelyBlackFrame(frame)
+            End Using
+        End If
+
+        Dim fullFrameSample As Double = -1
+        Return ConfirmSuddenSupportDropWithFullFrame(hwnd, targetRegion, Not isMana, 0.25R, fullFrameSample)
+    End Function
+
+    Private Function ConfirmSuddenSupportDropWithFullFrame(hwnd As IntPtr, targetRegion As RectRegion, isHp As Boolean, trigger As Double, ByRef samplePercent As Double) As Boolean
+        samplePercent = -1
+        If hwnd = IntPtr.Zero OrElse targetRegion Is Nothing Then
+            Return False
+        End If
+
+        Using cachedFrame As Bitmap = GetLatestLoopFrameClone(700)
+            If cachedFrame IsNot Nothing AndAlso Not IsLikelyBlackFrame(cachedFrame) Then
+                samplePercent = ComputeBarPercent(cachedFrame, targetRegion, isHp)
+                If samplePercent > trigger Then
+                    Return False
+                End If
+                If samplePercent > 0.25R Then
+                    Return True
+                End If
+            End If
+        End Using
+
+        Using freshFrame As Bitmap = CaptureClient(hwnd)
+            If freshFrame Is Nothing OrElse IsLikelyBlackFrame(freshFrame) Then
+                Return False
+            End If
+
+            samplePercent = ComputeBarPercent(freshFrame, targetRegion, isHp)
+            Return samplePercent <= trigger
+        End Using
     End Function
 
     Private Function TrySendRepairAction(cfg As BotConfig, hwnd As IntPtr) As Boolean
@@ -6356,11 +6718,15 @@ Public Class BotEngine
             _status.RouteRecordingSamples = _routeRecordingSamples.GetRange(sampleStart, sampleSnapshotLimit).Select(Function(s) New NavigationRouteSample With {.X = s.X, .Y = s.Y, .CapturedAtUtc = s.CapturedAtUtc}).ToList()
             _status.RouteRecordingStatus = _routeRecordingStatus
             _status.RouteRecordingLastSavedPath = _routeRecordingLastSavedPath
+            _status.NavigationReturningToStart = _navigationReturnToStartActive
+            _status.NavigationReturnTargetLabel = _navigationReturnTargetNodeLabel
             _status.PartySize = _lastPartySize
             _status.PartyAliveCount = _lastPartyAliveCount
             _status.PartyAllAlive = _lastPartyAllAlive
             _status.CharacterName = _lastCharacterName
             _status.PerformanceDiagnostics = BuildPerformanceDiagnosticsText()
+            _status.EngineRestartCount = _engineRestartCount
+            _status.EngineLastRestartUtc = _engineLastRestartUtc
             _status.UpdatedAt = DateTime.UtcNow
             Dim statusSignature As String = BuildStatusRaiseSignature(_status)
             shouldRaise =
@@ -6434,6 +6800,8 @@ Public Class BotEngine
             .NavigationRecoveryCount = src.NavigationRecoveryCount,
             .NavigationDestinationReached = src.NavigationDestinationReached,
             .NavigationDestinationLabel = src.NavigationDestinationLabel,
+            .NavigationReturningToStart = src.NavigationReturningToStart,
+            .NavigationReturnTargetLabel = src.NavigationReturnTargetLabel,
             .RouteRecordingEnabled = src.RouteRecordingEnabled,
             .RouteRecordingActive = src.RouteRecordingActive,
             .RouteRecordingMapName = src.RouteRecordingMapName,
@@ -6449,6 +6817,8 @@ Public Class BotEngine
             .AgentReason = src.AgentReason,
             .AgentGuardrailTriggered = src.AgentGuardrailTriggered,
             .PerformanceDiagnostics = src.PerformanceDiagnostics,
+            .EngineRestartCount = src.EngineRestartCount,
+            .EngineLastRestartUtc = src.EngineLastRestartUtc,
             .UpdatedAt = src.UpdatedAt
         }
     End Function
@@ -6571,45 +6941,39 @@ Public Class BotEngine
         Dim bmp As New Bitmap(width, height, PixelFormat.Format24bppRgb)
 
         Try
-            If GetCaptureBackendPreferenceCode() = "wgc" AndAlso TryCaptureWithWindowsGraphicsCapture(hwnd, bmp, width, height) Then
+            If GetCaptureBackendPreferenceCode() = "wgc" AndAlso TryCaptureWithWindowsGraphicsCapture(hwnd, bmp, width, height) AndAlso AcceptCaptureIfUsable(hwnd, bmp, CaptureClientMethod.CopyFromScreen) Then
                 Return bmp
             End If
 
             Dim cachedMethod As CaptureClientMethod
-            If TryGetCachedCaptureMethod(hwnd, cachedMethod) AndAlso TryCaptureWithMethod(hwnd, bmp, width, height, cachedMethod) Then
+            If TryGetCachedCaptureMethod(hwnd, cachedMethod) AndAlso TryCaptureWithMethod(hwnd, bmp, width, height, cachedMethod) AndAlso AcceptCaptureIfUsable(hwnd, bmp, cachedMethod) Then
                 Return bmp
             End If
 
             ClearCachedCaptureMethod(hwnd)
 
-            If TryCaptureWithPrintWindow(hwnd, bmp, NativeMethods.PW_CLIENTONLY) Then
-                SetCachedCaptureMethod(hwnd, CaptureClientMethod.PrintClientOnly)
+            If TryCaptureWithPrintWindow(hwnd, bmp, NativeMethods.PW_CLIENTONLY) AndAlso AcceptCaptureIfUsable(hwnd, bmp, CaptureClientMethod.PrintClientOnly) Then
                 Return bmp
             End If
 
-            If TryCaptureWithPrintWindow(hwnd, bmp, NativeMethods.PW_RENDERFULLCONTENT) Then
-                SetCachedCaptureMethod(hwnd, CaptureClientMethod.PrintRenderFullContent)
+            If TryCaptureWithPrintWindow(hwnd, bmp, NativeMethods.PW_RENDERFULLCONTENT) AndAlso AcceptCaptureIfUsable(hwnd, bmp, CaptureClientMethod.PrintRenderFullContent) Then
                 Return bmp
             End If
 
-            If TryCaptureWithPrintWindow(hwnd, bmp, NativeMethods.PW_CLIENTONLY Or NativeMethods.PW_RENDERFULLCONTENT) Then
-                SetCachedCaptureMethod(hwnd, CaptureClientMethod.PrintClientAndRenderFullContent)
+            If TryCaptureWithPrintWindow(hwnd, bmp, NativeMethods.PW_CLIENTONLY Or NativeMethods.PW_RENDERFULLCONTENT) AndAlso AcceptCaptureIfUsable(hwnd, bmp, CaptureClientMethod.PrintClientAndRenderFullContent) Then
                 Return bmp
             End If
 
-            If TryCaptureWithPrintWindow(hwnd, bmp, 0UI) Then
-                SetCachedCaptureMethod(hwnd, CaptureClientMethod.PrintDefault)
+            If TryCaptureWithPrintWindow(hwnd, bmp, 0UI) AndAlso AcceptCaptureIfUsable(hwnd, bmp, CaptureClientMethod.PrintDefault) Then
                 Return bmp
             End If
 
-            If TryCaptureWithCopyFromScreen(hwnd, bmp, width, height) Then
-                SetCachedCaptureMethod(hwnd, CaptureClientMethod.CopyFromScreen)
+            If TryCaptureWithCopyFromScreen(hwnd, bmp, width, height) AndAlso AcceptCaptureIfUsable(hwnd, bmp, CaptureClientMethod.CopyFromScreen) Then
                 Return bmp
             End If
 
             Thread.Sleep(10)
-            If TryCaptureWithCopyFromScreen(hwnd, bmp, width, height) Then
-                SetCachedCaptureMethod(hwnd, CaptureClientMethod.CopyFromScreen)
+            If TryCaptureWithCopyFromScreen(hwnd, bmp, width, height) AndAlso AcceptCaptureIfUsable(hwnd, bmp, CaptureClientMethod.CopyFromScreen) Then
                 Return bmp
             End If
 
@@ -6644,6 +7008,16 @@ Public Class BotEngine
             _captureMethodByWindow.Remove(hwnd)
         End SyncLock
     End Sub
+
+    Private Shared Function AcceptCaptureIfUsable(hwnd As IntPtr, bmp As Bitmap, method As CaptureClientMethod) As Boolean
+        If bmp Is Nothing OrElse IsLikelyBlackFrame(bmp) Then
+            ClearCachedCaptureMethod(hwnd)
+            Return False
+        End If
+
+        SetCachedCaptureMethod(hwnd, method)
+        Return True
+    End Function
 
     Public Shared Function GetCachedCaptureMethodName(hwnd As IntPtr) As String
         Dim method As CaptureClientMethod
@@ -6853,8 +7227,9 @@ Public Class BotEngine
         End If
 
         Try
+            Dim percent As Double = ComputeBarPercent(bmp, New RectRegion(0, 0, bmp.Width, bmp.Height), isHp)
             success = True
-            Return ComputeBarPercent(bmp, New RectRegion(0, 0, bmp.Width, bmp.Height), isHp)
+            Return percent
         Finally
             bmp.Dispose()
         End Try
@@ -6915,15 +7290,16 @@ Public Class BotEngine
     End Function
 
     Private Shared Function TryCaptureWithPrintWindow(hwnd As IntPtr, bmp As Bitmap, flags As UInteger) As Boolean
+        Dim ok As Boolean = False
         Using g As Graphics = Graphics.FromImage(bmp)
             Dim hdc As IntPtr = g.GetHdc()
             Try
-                Dim ok As Boolean = NativeMethods.PrintWindow(hwnd, hdc, flags)
-                Return ok AndAlso (Not IsLikelyBlackFrame(bmp))
+                ok = NativeMethods.PrintWindow(hwnd, hdc, flags)
             Finally
                 g.ReleaseHdc(hdc)
             End Try
         End Using
+        Return ok AndAlso (Not IsLikelyBlackFrame(bmp))
     End Function
 
     Private Shared Function TryCaptureWithCopyFromScreen(hwnd As IntPtr, bmp As Bitmap, width As Integer, height As Integer) As Boolean
@@ -7023,14 +7399,21 @@ Public Class BotEngine
                     Dim b As Integer = 0
                     buffer.GetRgb(x, y, r, g, b)
                     Dim luma As Integer = (r * 30 + g * 59 + b * 11) \ 100
-                    hash = (hash Xor CULng(luma And &HFF)) * 1099511628211UL
-                    hash = (hash Xor CULng((r \ 16) And &HF)) * 1099511628211UL
-                    hash = (hash Xor CULng((g \ 16) And &HF)) * 1099511628211UL
-                    hash = (hash Xor CULng((b \ 16) And &HF)) * 1099511628211UL
+                    hash = MixVisualHash(hash, CULng(luma And &HFF))
+                    hash = MixVisualHash(hash, CULng((r \ 16) And &HF))
+                    hash = MixVisualHash(hash, CULng((g \ 16) And &HF))
+                    hash = MixVisualHash(hash, CULng((b \ 16) And &HF))
                 Next
             Next
         End Using
         Return hash
+    End Function
+
+    Private Shared Function MixVisualHash(hash As ULong, value As ULong) As ULong
+        Dim mixed As ULong = hash Xor (value And &HFFFFUL)
+        Dim rotate7 As ULong = (mixed << 7) Or (mixed >> 57)
+        Dim rotate17 As ULong = (mixed << 17) Or (mixed >> 47)
+        Return rotate7 Xor rotate17 Xor 1099511628211UL
     End Function
 
     Private Shared Function ThresholdLumaBitmap(source As Bitmap, threshold As Integer) As Bitmap

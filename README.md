@@ -15,19 +15,38 @@ dotnet build .\ui\KathanaBotControlPanel\KathanaBotControlPanel.vbproj -c Releas
 ## Publish Standalone EXE
 
 ```powershell
-dotnet publish .\ui\KathanaBotControlPanel\KathanaBotControlPanel.vbproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -p:DebugSymbols=false -o .\dist\standalone
-Copy-Item .\dist\standalone\KathanaBotControlPanel.exe .\KathanaBotControlPanel.exe -Force
+$version = Get-Date -Format "yyyyMMdd_HHmmss"
+$publishDir = ".\dist\versions\$version"
+dotnet publish .\ui\KathanaBotControlPanel\KathanaBotControlPanel.vbproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -p:DebugSymbols=false -o $publishDir
+Copy-Item "$publishDir\KathanaBotControlPanel.exe" ".\dist\versions\KathanaBotControlPanel_$version.exe"
 ```
 
-The standalone output is copied to:
+The standalone output is copied to a versioned EXE:
 
-- `KATHANABOT\KathanaBotControlPanel.exe`
+- `KATHANABOT\dist\versions\KathanaBotControlPanel_yyyyMMdd_HHmmss.exe`
+
+Important release rule: never overwrite old EXE builds. Every release/test EXE must be saved as a separate versioned file so older working builds can be restored.
 
 ## Run
 
 Double-click:
 
-- `KATHANABOT\KathanaBotControlPanel.exe`
+- the newest versioned EXE in `KATHANABOT\dist\versions`
+
+## Discord `shot` Command
+
+The app can watch one Discord data channel for the text command `shot`. When it sees that command, it uploads the newest rolling screenshot to the Discord Stats/Data webhook channel.
+
+Discord setup:
+
+1. In Discord Developer Portal, create an application and add a bot.
+2. Enable the bot's Message Content Intent.
+3. Invite the bot to your server.
+4. In the data channel, give the bot `View Channel`, `Read Message History`, and `Send Messages`.
+5. Turn on Discord Developer Mode, right-click the data channel, and copy the channel ID.
+6. In KathanaBot `Auto-Pot` > notifications, set provider to `discord`, set the Stats webhook for the data channel, paste the bot token into `Discord Bot Token (Shot)`, and paste the copied channel ID into `Discord Data Channel ID`.
+
+Type `shot` in that data channel. The image is posted through the Stats webhook. The app must be running, and the rolling screenshot folder must have at least one screenshot.
 
 ## Tabs
 
@@ -80,3 +99,4 @@ Use this baseline if calibration is reset:
 - `Test Phone Alert` and HP=0 automatic alerts publish to the ntfy channel set in `Auto-Pot` (`ntfy.sh/<your-channel>`).
 - Most setting changes auto-apply while the bot is running; stop/start is not required.
 - If the EXE is already running, rebuild can warn about locked files.
+- Keep EXE builds serialized/versioned. Do not replace an older EXE with a new one using the same filename.
