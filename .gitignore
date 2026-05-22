@@ -20,6 +20,7 @@ KathanaBotControlPanel.deps.json
 KathanaBotControlPanel.runtimeconfig.json
 KathanaBotControlPanel.pdb
 KathanaBotControlPanel-v*.exe
+KathanaBotControlPanel_*.exe
 KathanaBotControlPanel - Copy*.exe
 KathanaBotControlPanel - Copy*.dll
 KathanaBotControlPanel.deps - Copy*.json

@@ -83,6 +83,7 @@ Public Class Form1
     Private _autoPotTab As TabPage
     Private _autoLootTab As TabPage
     Private _levelingTab As TabPage
+    Private _holdPlaceTab As TabPage
     Private _diagnosticsTab As TabPage
     Private Const HelpScopeAll As String = "all"
     Private Const HelpScopeLite As String = "lite"
@@ -207,6 +208,20 @@ Public Class Form1
     Private lblTravelStatus As Label
     Private lblRoutePreview As Label
     Private lblRouteRecording As Label
+    Private _holdPlaceAnchorSet As Boolean = False
+    Private chkHoldPlaceEnabled As CheckBox
+    Private nudHoldPlaceTargetX As NumericUpDown
+    Private nudHoldPlaceTargetY As NumericUpDown
+    Private nudHoldPlaceRadius As NumericUpDown
+    Private nudHoldPlaceMoveBurstMs As NumericUpDown
+    Private nudHoldPlaceCorrectionMs As NumericUpDown
+    Private btnHoldPlaceUseCurrent As Button
+    Private btnHoldPlaceOverlay As Button
+    Private btnHoldPlaceOpenOcrCrops As Button
+    Private lblHoldPlaceStatus As Label
+    Private lblHoldPlaceCurrent As Label
+    Private lblHoldPlaceTarget As Label
+    Private txtHoldPlaceCoordinateLog As TextBox
 
     Private lblState As Label
     Private lblSystem As Label
@@ -313,6 +328,9 @@ Public Class Form1
     Private _lastWindowMissingNotification As DateTime = DateTime.MinValue
     Private _notificationWarmupUntilUtc As DateTime = DateTime.MinValue
     Private _deadHpConfirmCount As Integer = 0
+    Private _deadHpFirstSeenUtc As DateTime = DateTime.MinValue
+    Private _windowMissingConfirmCount As Integer = 0
+    Private _windowMissingFirstSeenUtc As DateTime = DateTime.MinValue
     Private _deathNotificationLatched As Boolean = False
     Private _windowMissingNotificationLatched As Boolean = False
     Private _ctrlShiftWasDown As Boolean = False
@@ -337,7 +355,8 @@ Public Class Form1
     Private Const HpZeroAlarmGraceMs As Integer = 60000
     Private Const DeadZeroThreshold As Double = 0.1
     Private Const DeadRecoverThreshold As Double = 2.0
-    Private Const DeadConfirmRequiredCount As Integer = 3
+    Private Const CriticalAlertConfirmMs As Integer = 60000
+    Private Const CriticalAlertConfirmFrames As Integer = 100
     Private Const DeathNotificationRetryCount As Integer = 3
     Private Const StartupNotificationWarmupSeconds As Integer = 20
     Private Const NotificationProviderNtfy As String = "ntfy"
@@ -912,6 +931,41 @@ Public Class Form1
             AddHandler chkNavigationReturnToStart.CheckedChanged, AddressOf LiveConfigChanged
             AddHandler chkNavigationReturnToStart.CheckedChanged, AddressOf PersistListSettingsChanged
         End If
+        If chkHoldPlaceEnabled IsNot Nothing Then
+            AddHandler chkHoldPlaceEnabled.CheckedChanged, AddressOf LiveConfigChanged
+            AddHandler chkHoldPlaceEnabled.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudHoldPlaceTargetX IsNot Nothing Then
+            AddHandler nudHoldPlaceTargetX.ValueChanged, AddressOf HoldPlaceAnchorValueChanged
+            AddHandler nudHoldPlaceTargetX.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler nudHoldPlaceTargetX.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudHoldPlaceTargetY IsNot Nothing Then
+            AddHandler nudHoldPlaceTargetY.ValueChanged, AddressOf HoldPlaceAnchorValueChanged
+            AddHandler nudHoldPlaceTargetY.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler nudHoldPlaceTargetY.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudHoldPlaceRadius IsNot Nothing Then
+            AddHandler nudHoldPlaceRadius.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler nudHoldPlaceRadius.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudHoldPlaceMoveBurstMs IsNot Nothing Then
+            AddHandler nudHoldPlaceMoveBurstMs.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler nudHoldPlaceMoveBurstMs.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudHoldPlaceCorrectionMs IsNot Nothing Then
+            AddHandler nudHoldPlaceCorrectionMs.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler nudHoldPlaceCorrectionMs.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If btnHoldPlaceUseCurrent IsNot Nothing Then
+            AddHandler btnHoldPlaceUseCurrent.Click, AddressOf HoldPlaceUseCurrentClicked
+        End If
+        If btnHoldPlaceOverlay IsNot Nothing Then
+            AddHandler btnHoldPlaceOverlay.Click, AddressOf ToggleOverlayClicked
+        End If
+        If btnHoldPlaceOpenOcrCrops IsNot Nothing Then
+            AddHandler btnHoldPlaceOpenOcrCrops.Click, AddressOf HoldPlaceOpenOcrCropsClicked
+        End If
         AddHandler dgvCombat.CellValueChanged, AddressOf LiveConfigChanged
         AddHandler dgvCombat.CellEndEdit, AddressOf LiveConfigChanged
         AddHandler dgvCombat.CellValueChanged, AddressOf PersistListSettingsChanged
@@ -1119,6 +1173,40 @@ Public Class Form1
         SavePersistedListState(False)
     End Sub
 
+    Private Sub HoldPlaceAnchorValueChanged(_sender As Object, _e As EventArgs)
+        _holdPlaceAnchorSet = True
+    End Sub
+
+    Private Sub HoldPlaceUseCurrentClicked(_sender As Object, _e As EventArgs)
+        Dim status As BotStatus = _fullStatus
+        If status Is Nothing OrElse status.MapCoordinateX < 0 OrElse status.MapCoordinateY < 0 Then
+            AppendLog("Hold on place anchor not set: current map coordinates are not available yet.")
+            Return
+        End If
+
+        _holdPlaceAnchorSet = True
+        SetNumericControlValue(nudHoldPlaceTargetX, CDec(Math.Max(0, Math.Min(999, status.MapCoordinateX))))
+        SetNumericControlValue(nudHoldPlaceTargetY, CDec(Math.Max(0, Math.Min(999, status.MapCoordinateY))))
+        If chkHoldPlaceEnabled IsNot Nothing Then
+            chkHoldPlaceEnabled.Checked = True
+        End If
+        AppendLog($"Hold on place anchor set to {status.MapCoordinateX:000}/{status.MapCoordinateY:000}.")
+        PushLiveConfig()
+        SavePersistedListState(False)
+        UpdateMainTabIndicators()
+    End Sub
+
+    Private Sub HoldPlaceOpenOcrCropsClicked(_sender As Object, _e As EventArgs)
+        Try
+            Dim diagnosticsDir As String = BotEngine.GetMapCoordinateOcrDiagnosticsDirectory()
+            Directory.CreateDirectory(diagnosticsDir)
+            Process.Start(New ProcessStartInfo(diagnosticsDir) With {.UseShellExecute = True})
+            AppendLog("Opened map coordinate OCR crop folder: " & diagnosticsDir)
+        Catch ex As Exception
+            AppendLog("Unable to open map coordinate OCR crop folder: " & ex.Message)
+        End Try
+    End Sub
+
     Private Sub LevelingGuardrailToggleChanged(_sender As Object, _e As EventArgs)
         UpdateLevelingGuardrailToggleUi()
         LiveConfigChanged(_sender, _e)
@@ -1241,6 +1329,8 @@ Public Class Form1
         _mainTabs.TabPages.Add(_autoLootTab)
         _levelingTab = BuildLevelingTab()
         _mainTabs.TabPages.Add(_levelingTab)
+        _holdPlaceTab = BuildHoldPlaceTab()
+        _mainTabs.TabPages.Add(_holdPlaceTab)
         _diagnosticsTab = BuildDiagnosticsTab()
         _mainTabs.TabPages.Add(_diagnosticsTab)
         _mainTabs.SelectedTab = _combatTab
@@ -1384,6 +1474,9 @@ Public Class Form1
         If tab Is _levelingTab Then
             Return IsLevelingTabActive()
         End If
+        If tab Is _holdPlaceTab Then
+            Return IsHoldPlaceTabActive()
+        End If
 
         Return False
     End Function
@@ -1435,6 +1528,10 @@ Public Class Form1
                (chkTravelPreview IsNot Nothing AndAlso chkTravelPreview.Checked) OrElse
                (chkTravelExecute IsNot Nothing AndAlso chkTravelExecute.Checked) OrElse
                _routeRecordingActive
+    End Function
+
+    Private Function IsHoldPlaceTabActive() As Boolean
+        Return chkHoldPlaceEnabled IsNot Nothing AndAlso chkHoldPlaceEnabled.Checked
     End Function
 
     Private Function HasEnabledCombatActions() As Boolean
@@ -2967,6 +3064,99 @@ Public Class Form1
         Return tab
     End Function
 
+    Private Function BuildHoldPlaceTab() As TabPage
+        Dim tab As New TabPage("Hold on place") With {.BackColor = Color.FromArgb(20, 20, 20)}
+        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1, .Padding = New Padding(8)}
+        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 40.0F))
+        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 60.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        tab.Controls.Add(root)
+
+        Dim settingsGroup As New GroupBox() With {.Text = "Hold on place", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
+        Dim settingsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Top, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 2, .RowCount = 8}
+        settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 170.0F))
+        settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        For i As Integer = 0 To 7
+            settingsLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+        Next
+        settingsGroup.Controls.Add(settingsLayout)
+
+        chkHoldPlaceEnabled = New CheckBox() With {.Text = "Enable Hold on place", .Dock = DockStyle.Fill, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(chkHoldPlaceEnabled, 0, 0)
+        settingsLayout.SetColumnSpan(chkHoldPlaceEnabled, 2)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Anchor X", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 1)
+        nudHoldPlaceTargetX = New NumericUpDown() With {.Minimum = 0, .Maximum = 999, .Value = 0, .Width = 90, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(nudHoldPlaceTargetX, 1, 1)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Anchor Y", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 2)
+        nudHoldPlaceTargetY = New NumericUpDown() With {.Minimum = 0, .Maximum = 999, .Value = 0, .Width = 90, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(nudHoldPlaceTargetY, 1, 2)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Tolerance", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 3)
+        nudHoldPlaceRadius = New NumericUpDown() With {.Minimum = 0, .Maximum = 25, .Value = 2, .Width = 90, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(nudHoldPlaceRadius, 1, 3)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Move Burst (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 4)
+        nudHoldPlaceMoveBurstMs = New NumericUpDown() With {.Minimum = 20, .Maximum = 800, .Increment = 10, .Value = 160, .Width = 90, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(nudHoldPlaceMoveBurstMs, 1, 4)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Correction (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 5)
+        nudHoldPlaceCorrectionMs = New NumericUpDown() With {.Minimum = 150, .Maximum = 5000, .Increment = 50, .Value = 650, .Width = 90, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(nudHoldPlaceCorrectionMs, 1, 5)
+
+        Dim buttonPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .Margin = New Padding(2)}
+        btnHoldPlaceUseCurrent = New Button() With {.Text = "Use Current", .AutoSize = True, .BackColor = Color.FromArgb(30, 120, 80), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat}
+        btnHoldPlaceOverlay = New Button() With {.Text = "Show Overlay", .AutoSize = True, .BackColor = Color.FromArgb(70, 70, 70), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat}
+        btnHoldPlaceOpenOcrCrops = New Button() With {.Text = "Open OCR Crops", .AutoSize = True, .BackColor = Color.FromArgb(65, 85, 105), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat}
+        buttonPanel.Controls.Add(btnHoldPlaceUseCurrent)
+        buttonPanel.Controls.Add(btnHoldPlaceOverlay)
+        buttonPanel.Controls.Add(btnHoldPlaceOpenOcrCrops)
+        settingsLayout.Controls.Add(buttonPanel, 1, 6)
+
+        Dim note As New Label() With {
+            .Text = "Uses calibrated map_coordinate_x_rect and map_coordinate_y_rect.",
+            .Dock = DockStyle.Fill,
+            .ForeColor = Color.LightSteelBlue,
+            .AutoSize = True,
+            .Margin = New Padding(2, 8, 2, 2)
+        }
+        settingsLayout.Controls.Add(note, 0, 7)
+        settingsLayout.SetColumnSpan(note, 2)
+
+        Dim statusGroup As New GroupBox() With {.Text = "Runtime", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
+        Dim statusLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 4}
+        statusLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+        statusLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+        statusLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+        statusLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        lblHoldPlaceStatus = New Label() With {.Text = "Hold: disabled", .Dock = DockStyle.Fill, .ForeColor = Color.Khaki, .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold), .AutoSize = True, .Margin = New Padding(2)}
+        lblHoldPlaceCurrent = New Label() With {.Text = "Current: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.LightGreen, .AutoSize = True, .Margin = New Padding(2)}
+        lblHoldPlaceTarget = New Label() With {.Text = "Anchor: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.LightSteelBlue, .AutoSize = True, .Margin = New Padding(2)}
+        txtHoldPlaceCoordinateLog = New TextBox() With {
+            .Dock = DockStyle.Fill,
+            .Multiline = True,
+            .ReadOnly = True,
+            .ScrollBars = ScrollBars.Both,
+            .WordWrap = False,
+            .BackColor = Color.FromArgb(12, 12, 12),
+            .ForeColor = Color.Gainsboro,
+            .BorderStyle = BorderStyle.FixedSingle,
+            .Font = New Font("Consolas", 8.25F),
+            .Margin = New Padding(2, 8, 2, 2),
+            .Text = "Coordinate log: waiting for bot status..."
+        }
+        statusLayout.Controls.Add(lblHoldPlaceStatus, 0, 0)
+        statusLayout.Controls.Add(lblHoldPlaceCurrent, 0, 1)
+        statusLayout.Controls.Add(lblHoldPlaceTarget, 0, 2)
+        statusLayout.Controls.Add(txtHoldPlaceCoordinateLog, 0, 3)
+        statusGroup.Controls.Add(statusLayout)
+
+        root.Controls.Add(settingsGroup, 0, 0)
+        root.Controls.Add(statusGroup, 1, 0)
+        Return tab
+    End Function
+
     Private Function BuildCombatSkillsGroup() As GroupBox
         Dim group As New GroupBox() With {.Text = "Combat Skills", .Dock = DockStyle.Fill}
         Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
@@ -2992,7 +3182,7 @@ Public Class Form1
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "MinMpPercent", .FillWeight = 85.0F})
         layout.Controls.Add(dgvCombat, 0, 0)
         layout.Controls.Add(New Label() With {
-            .Text = "repair role: watches unreachable_text_rect for '___ is about to break'. After 5 OCR reads it sends the key once, then waits for the warning text to clear before allowing another repair trigger. TriggerPercent is ignored for repair.",
+            .Text = "repair role: watches unreachable_text_rect for '___ is about to break'. After 5 OCR reads inside a 10-minute rolling window it sends the key once, resets the repair OCR count, then waits for the warning text to clear before allowing another repair trigger. TriggerPercent is ignored for repair.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.MiddleLeft
@@ -4689,7 +4879,7 @@ Public Class Form1
             "- MinHpPercent / MinMpPercent: minimum self HP/MP to allow this action.",
             "- high_max_hp only fires when enabled in Vision and mob_hp_rect OCR reads Max HP above your threshold.",
             "- Avoid mobs over max HP uses the same mob_hp_rect OCR, but retargets instead of attacking when Max HP is over your avoid threshold.",
-            "- repair watches unreachable_text_rect for '___ is about to break'. After 5 OCR reads it sends the configured key once, then waits until the warning clears before it can trigger again. TriggerPercent is ignored for repair.",
+            "- repair watches unreachable_text_rect for '___ is about to break'. After 5 OCR reads inside 10 minutes it sends the configured key once, resets the repair OCR count, then waits until the warning clears before it can trigger again. TriggerPercent is ignored for repair.",
             "",
             "3) COMBAT FULL TAB - MONSTER FILTER",
             "- Enable Monster Filter (blacklist): active deny list for mob names.",
@@ -4775,7 +4965,7 @@ Public Class Form1
             "- Vision stability filter to reduce capture glitch spikes.",
             "- OCR based target name reading with confirmation.",
             "- OCR based unreachable target detection and forced retarget.",
-            "- OCR based repair warning detection from unreachable_text_rect with 5-read confirmation.",
+            "- OCR based repair warning detection from unreachable_text_rect with 5-read / 10-minute rolling confirmation.",
             "- Party invite / resurrection prompt OCR and auto accept click.",
             "- Party ask command automation with cooldown and in-party suppression.",
             "- Loot scan with fuzzy OCR allow-list matching (Loot Name Match %), dynamic label clicking, and reject handling by click point or fallback key.",
@@ -5017,7 +5207,7 @@ Public Class Form1
             "- Vision stability filter laban sa capture glitches.",
             "- OCR para sa mob name + confirmation logic.",
             "- OCR para sa unreachable text at forced retarget.",
-            "- OCR para sa repair warning sa unreachable_text_rect na may 5-read confirmation.",
+            "- OCR para sa repair warning sa unreachable_text_rect na may 5-read / 10-minute rolling confirmation.",
             "- OCR party/ress detection at auto accept click.",
             "- Auto add party command na may cooldown at suppression kapag nasa party na.",
             "- Loot scan with configurable fuzzy OCR allow-list matching (Loot Name Match %), dynamic label clicking, at reject handling (click point/fallback key).",
@@ -5752,6 +5942,8 @@ Public Class Form1
             $"AlarmVolume%: {_alarmVolumePercent}{Environment.NewLine}" &
             $"HpZeroAlarm: {_hpZeroAlarmActive}{Environment.NewLine}" &
             $"HpZeroPending: {_hpZeroPending}{Environment.NewLine}" &
+            $"HpZeroConfirm: {_deadHpConfirmCount}/{CriticalAlertConfirmFrames} frames, {FormatPendingAlertSeconds(_deadHpFirstSeenUtc)}s/{CriticalAlertConfirmMs \ 1000}s{Environment.NewLine}" &
+            $"WindowMissingConfirm: {_windowMissingConfirmCount}/{CriticalAlertConfirmFrames} frames, {FormatPendingAlertSeconds(_windowMissingFirstSeenUtc)}s/{CriticalAlertConfirmMs \ 1000}s{Environment.NewLine}" &
             $"Window Found: {st.WindowFound}{Environment.NewLine}" &
             $"HP%: {st.HpPercent:0.0}{Environment.NewLine}" &
             $"MP%: {st.MpPercent:0.0}{Environment.NewLine}" &
@@ -5798,6 +5990,7 @@ Public Class Form1
             $"EngineRestartCount: {st.EngineRestartCount}{Environment.NewLine}" &
             $"EngineLastRestartUtc: {If(st.EngineLastRestartUtc = DateTime.MinValue, "n/a", st.EngineLastRestartUtc.ToString("yyyy-MM-dd HH:mm:ss"))}{Environment.NewLine}" &
             $"LastAction: {st.LastAction}{Environment.NewLine}" &
+            $"RepairOCR: {st.RepairConfirmCount}/{Math.Max(1, st.RepairConfirmRequiredCount)} in {Math.Max(1, st.RepairConfirmWindowMinutes)}m | Triggers: {st.RepairTriggerCount}{Environment.NewLine}" &
              $"NotAttackingReason: {st.NotAttackingReason}{Environment.NewLine}" &
              $"Error: {st.ErrorMessage}"
         AddDiagnosticsHistory(txtDiagnostics.Text)
@@ -5958,6 +6151,44 @@ Public Class Form1
             End If
             lblTravelStatus.Text = $"Travel: {travelReason} | Dist: {distanceText}{stallText}"
             lblTravelStatus.ForeColor = If(status.NavigationDestinationReached, Color.LightGreen, If(status.NavigationTravelStalled, Color.OrangeRed, If(status.NavigationTravelActive, Color.LightSteelBlue, Color.DimGray)))
+        End If
+        If lblHoldPlaceStatus IsNot Nothing Then
+            Dim holdReason As String = If(String.IsNullOrWhiteSpace(status.HoldPlaceReason), If(status.HoldPlaceEnabled, "waiting", "disabled"), status.HoldPlaceReason)
+            lblHoldPlaceStatus.Text = $"Hold: {holdReason}"
+            lblHoldPlaceStatus.ForeColor = If(status.HoldPlaceActive, Color.LightSteelBlue, If(status.HoldPlaceEnabled, Color.Khaki, Color.DimGray))
+        End If
+        If lblHoldPlaceCurrent IsNot Nothing Then
+            If status.MapCoordinateX >= 0 AndAlso status.MapCoordinateY >= 0 Then
+                lblHoldPlaceCurrent.Text = $"Current: {status.MapCoordinateX:000}/{status.MapCoordinateY:000} (confidence {status.MapCoordinateConfidence}%)"
+                lblHoldPlaceCurrent.ForeColor = If(status.MapCoordinateConfidence >= 70, Color.LightGreen, Color.Khaki)
+            Else
+                Dim rawCoordinateText As String = If(String.IsNullOrWhiteSpace(status.MapCoordinateText), "no OCR text", status.MapCoordinateText)
+                lblHoldPlaceCurrent.Text = $"Current: waiting for X/Y read ({rawCoordinateText})"
+                lblHoldPlaceCurrent.ForeColor = Color.Khaki
+            End If
+        End If
+        If txtHoldPlaceCoordinateLog IsNot Nothing Then
+            Dim coordinateLog As String = If(String.IsNullOrWhiteSpace(status.MapCoordinateDebugLog), "Coordinate log: no coordinate checks reported yet.", status.MapCoordinateDebugLog)
+            If Not String.Equals(txtHoldPlaceCoordinateLog.Text, coordinateLog, StringComparison.Ordinal) Then
+                txtHoldPlaceCoordinateLog.Text = coordinateLog
+                txtHoldPlaceCoordinateLog.SelectionStart = txtHoldPlaceCoordinateLog.TextLength
+                txtHoldPlaceCoordinateLog.ScrollToCaret()
+            End If
+        End If
+        If lblHoldPlaceTarget IsNot Nothing Then
+            If status.HoldPlaceTargetX >= 0 AndAlso status.HoldPlaceTargetY >= 0 Then
+                Dim holdDistance As String = If(status.HoldPlaceDistance < 0, "n/a", status.HoldPlaceDistance.ToString("0.0"))
+                lblHoldPlaceTarget.Text = $"Anchor: {status.HoldPlaceTargetX:000}/{status.HoldPlaceTargetY:000} | Distance: {holdDistance}"
+                lblHoldPlaceTarget.ForeColor = If(status.HoldPlaceEnabled, Color.LightSteelBlue, Color.DimGray)
+            ElseIf _holdPlaceAnchorSet Then
+                Dim targetX As Integer = CInt(If(nudHoldPlaceTargetX IsNot Nothing, nudHoldPlaceTargetX.Value, 0D))
+                Dim targetY As Integer = CInt(If(nudHoldPlaceTargetY IsNot Nothing, nudHoldPlaceTargetY.Value, 0D))
+                lblHoldPlaceTarget.Text = $"Anchor: {targetX:000}/{targetY:000} | Distance: n/a"
+                lblHoldPlaceTarget.ForeColor = If(status.HoldPlaceEnabled, Color.LightSteelBlue, Color.DimGray)
+            Else
+                lblHoldPlaceTarget.Text = "Anchor: not set"
+                lblHoldPlaceTarget.ForeColor = Color.DimGray
+            End If
         End If
         If lblRoutePreview IsNot Nothing Then
             Dim routeText As String
@@ -6310,11 +6541,32 @@ Public Class Form1
 
     Private Sub BeginNotificationWarmup()
         _notificationWarmupUntilUtc = DateTime.UtcNow.AddSeconds(StartupNotificationWarmupSeconds)
+        _deadHpConfirmCount = 0
+        _deadHpFirstSeenUtc = DateTime.MinValue
+        _windowMissingConfirmCount = 0
+        _windowMissingFirstSeenUtc = DateTime.MinValue
+        _deathNotificationLatched = False
+        _windowMissingNotificationLatched = False
         AppendLog($"Startup guard: suppressing death/window alerts for {StartupNotificationWarmupSeconds} seconds.")
     End Sub
 
     Private Function IsNotificationWarmupActive() As Boolean
         Return DateTime.UtcNow < _notificationWarmupUntilUtc
+    End Function
+
+    Private Shared Function FormatPendingAlertSeconds(firstSeenUtc As DateTime) As String
+        If firstSeenUtc = DateTime.MinValue Then
+            Return "0"
+        End If
+        Return CInt(Math.Max(0, (DateTime.UtcNow - firstSeenUtc).TotalSeconds)).ToString()
+    End Function
+
+    Private Shared Function IsCriticalAlertConfirmed(firstSeenUtc As DateTime, confirmCount As Integer) As Boolean
+        If firstSeenUtc = DateTime.MinValue Then
+            Return False
+        End If
+        Return confirmCount >= CriticalAlertConfirmFrames OrElse
+               (DateTime.UtcNow - firstSeenUtc).TotalMilliseconds >= CriticalAlertConfirmMs
     End Function
 
     Private Sub HandleWindowMissingAlarm(status As BotStatus)
@@ -6333,11 +6585,20 @@ Public Class Form1
              errorText.IndexOf("unable to capture", StringComparison.OrdinalIgnoreCase) >= 0)
 
         If status.Running AndAlso IsNotificationWarmupActive() AndAlso (missingWindow OrElse captureUnavailable) Then
+            _windowMissingConfirmCount = 0
+            _windowMissingFirstSeenUtc = DateTime.MinValue
             Return
         End If
 
         If missingWindow OrElse captureUnavailable Then
-            If Not _windowMissingNotificationLatched Then
+            If _windowMissingFirstSeenUtc = DateTime.MinValue Then
+                _windowMissingFirstSeenUtc = DateTime.UtcNow
+                _windowMissingConfirmCount = 0
+                AppendLog($"Game-window alert pending: waiting {CriticalAlertConfirmMs \ 1000} seconds or {CriticalAlertConfirmFrames} consecutive status samples before notification.")
+            End If
+            _windowMissingConfirmCount += 1
+
+            If Not _windowMissingNotificationLatched AndAlso IsCriticalAlertConfirmed(_windowMissingFirstSeenUtc, _windowMissingConfirmCount) Then
                 _windowMissingNotificationLatched = True
                 SendWindowMissingPhoneAlert(captureUnavailable)
             End If
@@ -6345,6 +6606,11 @@ Public Class Form1
         End If
 
         If status.WindowFound OrElse (Not status.Running) Then
+            If _windowMissingFirstSeenUtc <> DateTime.MinValue AndAlso Not _windowMissingNotificationLatched Then
+                AppendLog("Game-window alert canceled before confirmation.")
+            End If
+            _windowMissingConfirmCount = 0
+            _windowMissingFirstSeenUtc = DateTime.MinValue
             _windowMissingNotificationLatched = False
         End If
     End Sub
@@ -6663,6 +6929,13 @@ Public Class Form1
         cfg.NavigationStallTimeoutMs = CInt(If(nudNavigationStallTimeoutMs IsNot Nothing, nudNavigationStallTimeoutMs.Value, 6500D))
         cfg.NavigationRepathOnStuck = (chkNavigationRepathOnStuck IsNot Nothing AndAlso chkNavigationRepathOnStuck.Checked)
         cfg.NavigationReturnToStartEnabled = (chkNavigationReturnToStart IsNot Nothing AndAlso chkNavigationReturnToStart.Checked)
+        cfg.HoldPlaceEnabled = (chkHoldPlaceEnabled IsNot Nothing AndAlso chkHoldPlaceEnabled.Checked)
+        cfg.HoldPlaceAnchorSet = _holdPlaceAnchorSet
+        cfg.HoldPlaceTargetX = If(_holdPlaceAnchorSet, CInt(If(nudHoldPlaceTargetX IsNot Nothing, nudHoldPlaceTargetX.Value, -1D)), -1)
+        cfg.HoldPlaceTargetY = If(_holdPlaceAnchorSet, CInt(If(nudHoldPlaceTargetY IsNot Nothing, nudHoldPlaceTargetY.Value, -1D)), -1)
+        cfg.HoldPlaceRadius = CInt(If(nudHoldPlaceRadius IsNot Nothing, nudHoldPlaceRadius.Value, 2D))
+        cfg.HoldPlaceMoveBurstMs = CInt(If(nudHoldPlaceMoveBurstMs IsNot Nothing, nudHoldPlaceMoveBurstMs.Value, 160D))
+        cfg.HoldPlaceCorrectionIntervalMs = CInt(If(nudHoldPlaceCorrectionMs IsNot Nothing, nudHoldPlaceCorrectionMs.Value, 650D))
         cfg.ChatTranslationEnabled = (chkChatTranslationEnabled IsNot Nothing AndAlso chkChatTranslationEnabled.Checked)
         cfg.ChatTranslationOverlayEnabled = (chkChatTranslationOverlay IsNot Nothing AndAlso chkChatTranslationOverlay.Checked)
         cfg.DisabledCalibrationRegionOverlays = BuildDisabledCalibrationRegionOverlays()
@@ -7860,6 +8133,15 @@ Public Class Form1
         If chkNavigationReturnToStart IsNot Nothing Then
             chkNavigationReturnToStart.Checked = cfg.NavigationReturnToStartEnabled
         End If
+        If chkHoldPlaceEnabled IsNot Nothing Then
+            chkHoldPlaceEnabled.Checked = cfg.HoldPlaceEnabled
+        End If
+        _holdPlaceAnchorSet = cfg.HoldPlaceAnchorSet OrElse (cfg.HoldPlaceEnabled AndAlso cfg.HoldPlaceTargetX >= 0 AndAlso cfg.HoldPlaceTargetY >= 0)
+        SetNumericControlValue(nudHoldPlaceTargetX, CDec(Math.Max(0, Math.Min(999, If(cfg.HoldPlaceTargetX >= 0, cfg.HoldPlaceTargetX, 0)))))
+        SetNumericControlValue(nudHoldPlaceTargetY, CDec(Math.Max(0, Math.Min(999, If(cfg.HoldPlaceTargetY >= 0, cfg.HoldPlaceTargetY, 0)))))
+        SetNumericControlValue(nudHoldPlaceRadius, CDec(Math.Max(0, Math.Min(25, cfg.HoldPlaceRadius))))
+        SetNumericControlValue(nudHoldPlaceMoveBurstMs, CDec(Math.Max(20, Math.Min(800, cfg.HoldPlaceMoveBurstMs))))
+        SetNumericControlValue(nudHoldPlaceCorrectionMs, CDec(Math.Max(150, Math.Min(5000, cfg.HoldPlaceCorrectionIntervalMs))))
         If chkChatTranslationEnabled IsNot Nothing Then
             chkChatTranslationEnabled.Checked = cfg.ChatTranslationEnabled
         End If
@@ -8593,11 +8875,15 @@ Public Class Form1
             Return
         End If
 
+        Dim status As BotStatus = GetStatusForEdition(_edition)
+        Dim repairRequired As Integer = Math.Max(1, status.RepairConfirmRequiredCount)
+        Dim repairWindow As Integer = Math.Max(1, status.RepairConfirmWindowMinutes)
+        Dim repairText As String = $"Repair OCR: {Math.Max(0, status.RepairConfirmCount)}/{repairRequired} in {repairWindow}m | repair triggers: {Math.Max(0, status.RepairTriggerCount)}"
         If ordered.Count = 0 Then
-            lblKeySummaryInfo.Text = "No key presses tracked in the last 60 minutes."
+            lblKeySummaryInfo.Text = $"No key presses tracked in the last 60 minutes. | {repairText}"
         Else
             Dim capText As String = If(actionEvents.Count >= MaxKeyActionEvents, " | capped", "")
-            lblKeySummaryInfo.Text = $"Tracked keys: {ordered.Count} | Total presses (60m): {actionEvents.Count}{capText} | Updated: {DateTime.Now:HH:mm:ss}"
+            lblKeySummaryInfo.Text = $"Tracked keys: {ordered.Count} | Total presses (60m): {actionEvents.Count}{capText} | {repairText} | Updated: {DateTime.Now:HH:mm:ss}"
         End If
     End Sub
 
@@ -8794,6 +9080,7 @@ Public Class Form1
 
         If status.Running AndAlso IsNotificationWarmupActive() Then
             _deadHpConfirmCount = 0
+            _deadHpFirstSeenUtc = DateTime.MinValue
             If _hpZeroPending Then
                 CancelHpZeroPendingCountdown(False)
             End If
@@ -8817,9 +9104,18 @@ Public Class Form1
             status.HpPercent <= DeadZeroThreshold
 
         If isDeadHp Then
+            If _deadHpFirstSeenUtc = DateTime.MinValue Then
+                _deadHpFirstSeenUtc = DateTime.UtcNow
+                _deadHpConfirmCount = 0
+                AppendLog($"HP reached 0. Waiting {CriticalAlertConfirmMs \ 1000} seconds or {CriticalAlertConfirmFrames} consecutive valid status samples before alarm/notification.")
+            End If
             _deadHpConfirmCount += 1
         Else
+            If _deadHpFirstSeenUtc <> DateTime.MinValue AndAlso Not _deathNotificationLatched Then
+                AppendLog("HP=0 alert canceled before confirmation.")
+            End If
             _deadHpConfirmCount = 0
+            _deadHpFirstSeenUtc = DateTime.MinValue
         End If
 
         Dim recovered As Boolean = status.HpPercent >= DeadRecoverThreshold
@@ -8827,7 +9123,7 @@ Public Class Form1
             _deathNotificationLatched = False
         End If
 
-        If _deadHpConfirmCount >= DeadConfirmRequiredCount Then
+        If IsCriticalAlertConfirmed(_deadHpFirstSeenUtc, _deadHpConfirmCount) Then
             If Not _deathNotificationLatched Then
                 _deathNotificationLatched = True
                 If _hpZeroPending Then
@@ -8904,9 +9200,11 @@ Public Class Form1
             _hpPendingCts = Nothing
         End If
         _lastHpZeroNotification = DateTime.MinValue
+        _deadHpConfirmCount = 0
+        _deadHpFirstSeenUtc = DateTime.MinValue
 
         If logCancellation Then
-            AppendLog("HP recovered during 60-second grace period. Alarm canceled.")
+            AppendLog("HP recovered before death-alert confirmation. Alarm canceled.")
         End If
     End Sub
 
@@ -8932,9 +9230,12 @@ Public Class Form1
             _hpAlarmCts = Nothing
         End If
         _deadHpConfirmCount = 0
+        _deadHpFirstSeenUtc = DateTime.MinValue
         _deathNotificationLatched = False
         _lastHpZeroNotification = DateTime.MinValue
         _lastWindowMissingNotification = DateTime.MinValue
+        _windowMissingConfirmCount = 0
+        _windowMissingFirstSeenUtc = DateTime.MinValue
         _windowMissingNotificationLatched = False
         AppendLog(reason)
     End Sub
@@ -8955,9 +9256,12 @@ Public Class Form1
         End If
 
         _deadHpConfirmCount = 0
+        _deadHpFirstSeenUtc = DateTime.MinValue
         _deathNotificationLatched = False
         _lastHpZeroNotification = DateTime.MinValue
         _lastWindowMissingNotification = DateTime.MinValue
+        _windowMissingConfirmCount = 0
+        _windowMissingFirstSeenUtc = DateTime.MinValue
         _windowMissingNotificationLatched = False
         If reason <> "" Then
             AppendLog(reason)
@@ -8973,7 +9277,7 @@ Public Class Form1
         _lastHpZeroNotification = now
         Task.Run(
             Async Function()
-                Dim sent As Boolean = Await SendPhoneNotificationAsync("KathanaBot HP Alert", "HP reached zero on 5 consecutive valid frames. Character is dead.", DeathNotificationRetryCount)
+                Dim sent As Boolean = Await SendPhoneNotificationAsync("KathanaBot HP Alert", $"HP stayed at zero for {CriticalAlertConfirmMs \ 1000} seconds or {CriticalAlertConfirmFrames} consecutive valid status samples. Character may be dead.", DeathNotificationRetryCount)
                 If Not sent Then
                     AppendLogSafe("Notification failed after retries. Check notification settings/network.")
                 End If
@@ -8989,8 +9293,8 @@ Public Class Form1
         _lastWindowMissingNotification = now
         Dim body As String =
             If(captureUnavailable,
-               "Game capture failed. The game may be hidden, black-screened, minimized, or the screen is unavailable.",
-               "Game window not found. The game may have crashed or been closed.")
+               $"Game capture failed for {CriticalAlertConfirmMs \ 1000} seconds or {CriticalAlertConfirmFrames} consecutive status samples. The game may be hidden, black-screened, minimized, or the screen is unavailable.",
+               $"Game window was not found for {CriticalAlertConfirmMs \ 1000} seconds or {CriticalAlertConfirmFrames} consecutive status samples. The game may have crashed or been closed.")
         Task.Run(
             Async Function()
                 Dim sent As Boolean = Await SendPhoneNotificationAsync("KathanaBot Game Alert", body, DeathNotificationRetryCount)

@@ -272,6 +272,13 @@ Public Class BotConfig
     Public Property NavigationStallTimeoutMs As Integer = 6500
     Public Property NavigationRepathOnStuck As Boolean = True
     Public Property NavigationReturnToStartEnabled As Boolean = False
+    Public Property HoldPlaceEnabled As Boolean = False
+    Public Property HoldPlaceAnchorSet As Boolean = False
+    Public Property HoldPlaceTargetX As Integer = -1
+    Public Property HoldPlaceTargetY As Integer = -1
+    Public Property HoldPlaceRadius As Integer = 2
+    Public Property HoldPlaceMoveBurstMs As Integer = 160
+    Public Property HoldPlaceCorrectionIntervalMs As Integer = 650
     Public Property RouteRecordingEnabled As Boolean = False
     Public Property RouteRecordingName As String = "jina_route"
     Public Property RouteRecordingMinConfidencePercent As Integer = 90
@@ -381,6 +388,7 @@ Public Class BotStatus
     Public Property MapCoordinateText As String = ""
     Public Property MapCoordinateX As Integer = -1
     Public Property MapCoordinateY As Integer = -1
+    Public Property MapCoordinateDebugLog As String = ""
     Public Property ChatOcrText As String = ""
     Public Property ChatOcrUpdatedAt As DateTime = DateTime.MinValue
     Public Property MapHeading As String = ""
@@ -408,6 +416,12 @@ Public Class BotStatus
     Public Property NavigationDestinationLabel As String = ""
     Public Property NavigationReturningToStart As Boolean
     Public Property NavigationReturnTargetLabel As String = ""
+    Public Property HoldPlaceEnabled As Boolean
+    Public Property HoldPlaceActive As Boolean
+    Public Property HoldPlaceTargetX As Integer = -1
+    Public Property HoldPlaceTargetY As Integer = -1
+    Public Property HoldPlaceDistance As Double = -1
+    Public Property HoldPlaceReason As String = ""
     Public Property RouteRecordingEnabled As Boolean
     Public Property RouteRecordingActive As Boolean
     Public Property RouteRecordingMapName As String = ""
@@ -417,6 +431,10 @@ Public Class BotStatus
     Public Property RouteRecordingStatus As String = ""
     Public Property RouteRecordingLastSavedPath As String = ""
     Public Property LastAction As String = ""
+    Public Property RepairConfirmCount As Integer
+    Public Property RepairConfirmRequiredCount As Integer
+    Public Property RepairConfirmWindowMinutes As Integer
+    Public Property RepairTriggerCount As Integer
     Public Property NotAttackingReason As String = ""
     Public Property ErrorMessage As String = ""
     Public Property AgentEnabled As Boolean
@@ -588,7 +606,10 @@ Public Class BotEngine
     Private Const ExpOcrMinIntervalMs As Integer = 5000
     Private Const RupiahsOcrMinIntervalMs As Integer = 5000
     Private Const MapCoordinateOcrMinIntervalMs As Integer = 900
+    Private Const HoldPlaceMaxCoordinateAcceptanceDistance As Double = 100.0R
+    Private Const MaxMapCoordinateDebugLines As Integer = 80
     Private Const MapMarkerScanMinIntervalMs As Integer = 250
+    Private Shared ReadOnly MapCoordinateOcrDiagnosticsDirectory As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "KathanaBotCoordinateOcr")
     Private Const NavigationMapToggleCooldownMs As Integer = 450
     Private Const NavigationMapSampleWindowMs As Integer = 950
     Private Const NavigationMapLocalizationRetryDelayMs As Integer = 5000
@@ -607,9 +628,14 @@ Public Class BotEngine
     Private Const UnreachableConfirmWindowMs As Integer = 900
     Private Const UnreachableConfirmRequiredCount As Integer = 2
     Private Const RepairConfirmRequiredCount As Integer = 5
+    Private Const RepairConfirmWindowMs As Integer = 600000
     Private Const UnreachableClearRequiredCount As Integer = 2
     Private Const SustainedSingleZeroConfirmRequiredCount As Integer = 3
+    Private Const SustainedSingleManaZeroConfirmRequiredCount As Integer = 6
     Private Const NearZeroSupportConfirmRequiredCount As Integer = 3
+    Private Const NearZeroManaConfirmRequiredCount As Integer = 6
+    Private Const FreshZeroSupportConfirmSamples As Integer = 3
+    Private Const FreshZeroSupportConfirmDelayMs As Integer = 35
     Private Const RetargetBufferMs As Integer = 300
     Private Const BaseClientWidth As Integer = 1024
     Private Const BaseClientHeight As Integer = 768
@@ -755,8 +781,10 @@ Public Class BotEngine
     Private _unreachableClearCount As Integer = 0
     Private _repairConfirmCount As Integer = 0
     Private _repairLastMatchAt As DateTime = DateTime.MinValue
+    Private ReadOnly _repairMatchTimes As New Queue(Of DateTime)()
     Private _repairLatched As Boolean = False
     Private _repairClearCount As Integer = 0
+    Private _repairTriggerCount As Integer = 0
     Private _lastExpPercent As Double = -1
     Private _lastExpOcrAt As DateTime = DateTime.MinValue
     Private _expOcrTask As Task(Of Double) = Nothing
@@ -774,6 +802,8 @@ Public Class BotEngine
     Private _lastMapCoordinateX As Integer = -1
     Private _lastMapCoordinateY As Integer = -1
     Private _lastMapCoordinateConfidence As Integer = 0
+    Private ReadOnly _mapCoordinateDebugLines As New Queue(Of String)()
+    Private _lastMapCoordinateDebugLog As String = ""
     Private _lastChatOcrAt As DateTime = DateTime.MinValue
     Private _lastChatOcrText As String = ""
     Private _lastChatOcrNormalized As String = ""
@@ -826,6 +856,16 @@ Public Class BotEngine
     Private _lastTravelInputPoseX As Integer = -1
     Private _lastTravelInputPoseY As Integer = -1
     Private _lastTravelInputAt As DateTime = DateTime.MinValue
+    Private _lastHoldPlaceMoveAt As DateTime = DateTime.MinValue
+    Private _lastHoldPlaceActive As Boolean = False
+    Private _lastHoldPlaceTargetX As Integer = -1
+    Private _lastHoldPlaceTargetY As Integer = -1
+    Private _lastHoldPlaceDistance As Double = -1
+    Private _lastHoldPlaceReason As String = ""
+
+    Public Shared Function GetMapCoordinateOcrDiagnosticsDirectory() As String
+        Return MapCoordinateOcrDiagnosticsDirectory
+    End Function
     Private _navigationCommittedWaypointId As String = ""
     Private _navigationCommittedWaypointLabel As String = ""
     Private _lastNavigationMapToggleAt As DateTime = DateTime.MinValue
@@ -1019,8 +1059,10 @@ Public Class BotEngine
             _unreachableClearCount = 0
             _repairConfirmCount = 0
             _repairLastMatchAt = DateTime.MinValue
+            _repairMatchTimes.Clear()
             _repairLatched = False
             _repairClearCount = 0
+            _repairTriggerCount = 0
             _lastExpPercent = -1
             _lastExpOcrAt = DateTime.MinValue
             _expOcrTask = Nothing
@@ -1038,6 +1080,8 @@ Public Class BotEngine
             _lastMapCoordinateX = -1
             _lastMapCoordinateY = -1
             _lastMapCoordinateConfidence = 0
+            _mapCoordinateDebugLines.Clear()
+            _lastMapCoordinateDebugLog = ""
             _lastChatOcrAt = DateTime.MinValue
             _lastChatOcrText = ""
             _lastChatOcrNormalized = ""
@@ -1101,6 +1145,7 @@ Public Class BotEngine
             _lastTravelInputPoseX = -1
             _lastTravelInputPoseY = -1
             _lastTravelInputAt = DateTime.MinValue
+            ClearHoldPlaceRuntime()
             _navigationCommittedWaypointId = ""
             _navigationCommittedWaypointLabel = ""
             _lastNavigationMapToggleAt = DateTime.MinValue
@@ -1625,19 +1670,40 @@ Public Class BotEngine
             ApplyVisionStabilityFilter(hpPct, mpPct, mobHpPct, mobName, captureGlitch)
             Dim expPerHour As Double = UpdateExpRate(expPct, now)
             Dim rupiahsPerHour As Double = UpdateRupiahsRate(rupiahsTotal, now)
-            If cfg.NavigationEnabled AndAlso Not startupCombatPriorityActive AndAlso Not deferOptionalWork Then
-                ReadMapCoordinateIfNeeded(frame, mapCoordinateXRegion, mapCoordinateYRegion, cfg, now)
+            Dim mapCoordinateFeaturesEnabled As Boolean = cfg.NavigationEnabled OrElse cfg.HoldPlaceEnabled
+            Dim mapCoordinateReadRequired As Boolean = cfg.HoldPlaceEnabled
+            If mapCoordinateFeaturesEnabled AndAlso Not startupCombatPriorityActive AndAlso (Not deferOptionalWork OrElse mapCoordinateReadRequired) Then
+                ReadMapCoordinateIfNeeded(hwnd, frame, mapCoordinateXRegion, mapCoordinateYRegion, cfg, now)
                 ScanMapPlayerMarkerIfNeeded(now)
                 UpdateMapLocalizationConfidence()
                 UpdateMapVisibleState()
                 UpdateLastKnownNavigationPose(now)
-                UpdateRouteRecording(cfg, now)
-                UpdateNavigationPreview(cfg, now)
-            ElseIf cfg.NavigationEnabled AndAlso Not startupCombatPriorityActive AndAlso deferOptionalWork Then
+                If cfg.NavigationEnabled Then
+                    UpdateRouteRecording(cfg, now)
+                    UpdateNavigationPreview(cfg, now)
+                Else
+                    ClearNavigationPreviewRuntime()
+                    _routeRecordingCaptureActive = False
+                    _routeRecordingStatus = ""
+                End If
+            ElseIf mapCoordinateFeaturesEnabled AndAlso Not startupCombatPriorityActive AndAlso deferOptionalWork Then
+                AppendMapCoordinateDebug(now, "not checking: adaptive performance deferred coordinate OCR this loop.")
                 MarkOptionalWorkDeferred()
             Else
+                If mapCoordinateFeaturesEnabled AndAlso startupCombatPriorityActive Then
+                    AppendMapCoordinateDebug(now, "not checking: startup combat-priority window is active.")
+                ElseIf Not mapCoordinateFeaturesEnabled Then
+                    AppendMapCoordinateDebug(now, "not checking: navigation and Hold on place are disabled.")
+                End If
                 ClearMapLocalizationRuntime()
                 ClearNavigationPreviewRuntime()
+                ClearNavigationTravelRuntime()
+                ClearHoldPlaceRuntime()
+            End If
+            If Not cfg.HoldPlaceEnabled Then
+                ClearHoldPlaceRuntime()
+            End If
+            If Not cfg.NavigationEnabled AndAlso Not cfg.HoldPlaceEnabled Then
                 ClearNavigationTravelRuntime()
             End If
             If cfg.ChatTranslationEnabled AndAlso Not startupCombatPriorityActive AndAlso Not deferOptionalWork Then
@@ -1865,23 +1931,33 @@ Public Class BotEngine
                     reason = ""
                 End If
 
-                If Not actionSent AndAlso Not targetWindowVisible AndAlso Not combatLockActive AndAlso Not targetSignalHoldActive Then
-                    Dim travelReason As String = ""
-                    If TryHandleNavigationTravel(cfg, hwnd, now, targetWindowVisible, targetValid, travelReason) Then
-                        actionSent = True
-                        reason = travelReason
-                    ElseIf String.IsNullOrWhiteSpace(reason) AndAlso Not String.IsNullOrWhiteSpace(travelReason) Then
-                        reason = travelReason
-                    End If
-
-                    If _lastNavigationTravelActive AndAlso Not targetWindowVisible AndAlso Not targetValid Then
-                        Dim travelScanReason As String = ""
-                        If TryScanForMobDuringTravel(cfg, hwnd, now, travelScanReason) Then
+                If Not actionSent Then
+                    If cfg.HoldPlaceEnabled Then
+                        Dim holdReason As String = ""
+                        If TryHandleHoldPlace(cfg, hwnd, now, holdReason) Then
                             actionSent = True
-                            If String.IsNullOrWhiteSpace(reason) Then
-                                reason = travelScanReason
-                            ElseIf Not String.IsNullOrWhiteSpace(travelScanReason) Then
-                                reason &= " " & travelScanReason
+                            reason = holdReason
+                        ElseIf String.IsNullOrWhiteSpace(reason) AndAlso Not String.IsNullOrWhiteSpace(holdReason) Then
+                            reason = holdReason
+                        End If
+                    ElseIf Not targetWindowVisible AndAlso Not combatLockActive AndAlso Not targetSignalHoldActive Then
+                        Dim travelReason As String = ""
+                        If TryHandleNavigationTravel(cfg, hwnd, now, targetWindowVisible, targetValid, travelReason) Then
+                            actionSent = True
+                            reason = travelReason
+                        ElseIf String.IsNullOrWhiteSpace(reason) AndAlso Not String.IsNullOrWhiteSpace(travelReason) Then
+                            reason = travelReason
+                        End If
+
+                        If _lastNavigationTravelActive AndAlso Not targetWindowVisible AndAlso Not targetValid Then
+                            Dim travelScanReason As String = ""
+                            If TryScanForMobDuringTravel(cfg, hwnd, now, travelScanReason) Then
+                                actionSent = True
+                                If String.IsNullOrWhiteSpace(reason) Then
+                                    reason = travelScanReason
+                                ElseIf Not String.IsNullOrWhiteSpace(travelScanReason) Then
+                                    reason &= " " & travelScanReason
+                                End If
                             End If
                         End If
                     End If
@@ -2419,7 +2495,7 @@ Public Class BotEngine
         End If
 
         Dim sustainedSingleHpZero As Boolean = _singleHpZeroConfirmCount >= SustainedSingleZeroConfirmRequiredCount
-        Dim sustainedSingleMpZero As Boolean = _singleMpZeroConfirmCount >= SustainedSingleZeroConfirmRequiredCount
+        Dim sustainedSingleMpZero As Boolean = _singleMpZeroConfirmCount >= SustainedSingleManaZeroConfirmRequiredCount
 
         If sustainedSingleHpZero Then
             suspiciousSingleHpZero = False
@@ -2715,6 +2791,36 @@ Public Class BotEngine
         _navigationLocalizationPaused = False
     End Sub
 
+    Private Sub ClearHoldPlaceRuntime()
+        _lastHoldPlaceMoveAt = DateTime.MinValue
+        _lastHoldPlaceActive = False
+        _lastHoldPlaceTargetX = -1
+        _lastHoldPlaceTargetY = -1
+        _lastHoldPlaceDistance = -1
+        _lastHoldPlaceReason = ""
+    End Sub
+
+    Private Sub SetHoldPlaceRuntime(active As Boolean, targetX As Integer, targetY As Integer, distance As Double, reason As String)
+        _lastHoldPlaceActive = active
+        _lastHoldPlaceTargetX = targetX
+        _lastHoldPlaceTargetY = targetY
+        _lastHoldPlaceDistance = distance
+        _lastHoldPlaceReason = If(reason, "").Trim()
+    End Sub
+
+    Private Sub AppendMapCoordinateDebug(now As DateTime, message As String)
+        Dim line As String = $"{now:HH:mm:ss.fff} {If(message, "").Trim()}"
+        If line.Trim() = "" Then
+            Return
+        End If
+
+        _mapCoordinateDebugLines.Enqueue(line)
+        While _mapCoordinateDebugLines.Count > MaxMapCoordinateDebugLines
+            _mapCoordinateDebugLines.Dequeue()
+        End While
+        _lastMapCoordinateDebugLog = String.Join(Environment.NewLine, _mapCoordinateDebugLines)
+    End Sub
+
     Private Structure PartyListSummary
         Public Property Size As Integer
         Public Property AliveCount As Integer
@@ -2733,44 +2839,271 @@ Public Class BotEngine
         End Property
     End Structure
 
-    Private Sub ReadMapCoordinateIfNeeded(frame As Bitmap, xRegion As RectRegion, yRegion As RectRegion, cfg As BotConfig, now As DateTime)
+    Private Sub ReadMapCoordinateIfNeeded(hwnd As IntPtr, frame As Bitmap, xRegion As RectRegion, yRegion As RectRegion, cfg As BotConfig, now As DateTime)
         Dim minIntervalMs As Integer = Math.Max(250, If(cfg Is Nothing, MapCoordinateOcrMinIntervalMs, cfg.MapCoordinateScanIntervalMs))
         If _lastMapCoordinateOcrAt <> DateTime.MinValue AndAlso (now - _lastMapCoordinateOcrAt).TotalMilliseconds < minIntervalMs Then
+            Dim elapsedMs As Integer = CInt(Math.Max(0, (now - _lastMapCoordinateOcrAt).TotalMilliseconds))
+            AppendMapCoordinateDebug(now, $"not checking: OCR throttle {elapsedMs}/{minIntervalMs}ms.")
             Return
         End If
 
-        _lastMapCoordinateOcrAt = now
-        If frame Is Nothing OrElse xRegion Is Nothing OrElse yRegion Is Nothing Then
-            _lastMapCoordinateText = ""
-            _lastMapCoordinateX = -1
-            _lastMapCoordinateY = -1
-            _lastMapCoordinateConfidence = 0
+        If xRegion Is Nothing OrElse yRegion Is Nothing Then
+            AppendMapCoordinateDebug(now, "not checking: coordinate OCR region is missing.")
             Return
         End If
 
-        Dim rawX As String = ""
-        Dim rawY As String = ""
-        Dim x As Integer = -1
-        Dim y As Integer = -1
-        Dim xConfidence As Integer = 0
-        Dim yConfidence As Integer = 0
-        Dim xOk As Boolean = TryReadMapCoordinateAxis(frame, xRegion, rawX, x, xConfidence)
-        Dim yOk As Boolean = TryReadMapCoordinateAxis(frame, yRegion, rawY, y, yConfidence)
-
-        If xOk AndAlso yOk Then
-            _lastMapCoordinateText = $"{x:000}/{y:000}"
-            _lastMapCoordinateX = x
-            _lastMapCoordinateY = y
-            _lastMapCoordinateConfidence = Math.Min(xConfidence, yConfidence)
-        Else
-            _lastMapCoordinateText = FormatRawMapCoordinateText(rawX, rawY)
-            _lastMapCoordinateX = -1
-            _lastMapCoordinateY = -1
-            _lastMapCoordinateConfidence = 0
+        Dim ocrFrame As Bitmap = frame
+        Dim disposeOcrFrame As Boolean = False
+        If ocrFrame Is Nothing Then
+            Dim configuredFullFrameMs As Integer = Math.Max(100, If(cfg Is Nothing, FullFrameRefreshMs, cfg.FullFrameRefreshIntervalMs))
+            Dim maxCachedAgeMs As Integer = Math.Min(2500, Math.Max(minIntervalMs, configuredFullFrameMs * 2))
+            ocrFrame = GetLatestLoopFrameClone(maxCachedAgeMs)
+            disposeOcrFrame = ocrFrame IsNot Nothing
+            If ocrFrame IsNot Nothing Then
+                AppendMapCoordinateDebug(now, $"checking: using latest Vision full-frame cache for coordinate OCR (age <= {maxCachedAgeMs}ms).")
+            End If
         End If
+
+        If ocrFrame Is Nothing Then
+            AppendMapCoordinateDebug(now, "not checking: waiting for Vision full-frame capture before coordinate OCR.")
+            Return
+        End If
+
+        Try
+            _lastMapCoordinateOcrAt = now
+            AppendMapCoordinateDebug(now, $"checking: OCR X={xRegion.X},{xRegion.Y},{xRegion.W},{xRegion.H} Y={yRegion.X},{yRegion.Y},{yRegion.W},{yRegion.H} frame={ocrFrame.Width}x{ocrFrame.Height}.")
+            If hwnd <> IntPtr.Zero Then
+                SaveMapCoordinateDiagnosticFrame(hwnd, xRegion, yRegion)
+            End If
+
+            Dim rawX As String = ""
+            Dim rawY As String = ""
+            Dim x As Integer = -1
+            Dim y As Integer = -1
+            Dim xConfidence As Integer = 0
+            Dim yConfidence As Integer = 0
+            Dim referenceX As Integer = -1
+            Dim referenceY As Integer = -1
+            TryGetMapCoordinateAcceptanceReference(cfg, referenceX, referenceY)
+            Dim pairRaw As String = ""
+            Dim pairConfidence As Integer = 0
+            Dim pairOk As Boolean = If(hwnd <> IntPtr.Zero,
+                                       TryReadMapCoordinatePairFromClient(hwnd, xRegion, yRegion, pairRaw, x, y, pairConfidence, referenceX, referenceY),
+                                       TryReadMapCoordinatePair(ocrFrame, xRegion, yRegion, pairRaw, x, y, pairConfidence, referenceX, referenceY))
+            AppendMapCoordinateDebug(now, $"pair OCR: {If(String.IsNullOrWhiteSpace(pairRaw), "<blank>", Regex.Replace(pairRaw, "\s+", " ").Trim())}; ok={pairOk}.")
+            Dim xOk As Boolean = False
+            Dim yOk As Boolean = False
+            If pairOk Then
+                rawX = pairRaw
+                rawY = pairRaw
+                xConfidence = pairConfidence
+                yConfidence = pairConfidence
+                xOk = True
+                yOk = True
+            Else
+                rawX = pairRaw
+                rawY = pairRaw
+                xOk = If(hwnd <> IntPtr.Zero,
+                         TryReadMapCoordinateAxisFromClient(hwnd, xRegion, rawX, x, xConfidence, referenceX, "x"),
+                         TryReadMapCoordinateAxis(ocrFrame, xRegion, rawX, x, xConfidence, referenceX, "x"))
+                yOk = If(hwnd <> IntPtr.Zero,
+                         TryReadMapCoordinateAxisFromClient(hwnd, yRegion, rawY, y, yConfidence, referenceY, "y"),
+                         TryReadMapCoordinateAxis(ocrFrame, yRegion, rawY, y, yConfidence, referenceY, "y"))
+                AppendMapCoordinateDebug(now, $"axis OCR: X={If(String.IsNullOrWhiteSpace(rawX), "<blank>", Regex.Replace(rawX, "\s+", " ").Trim())} ok={xOk} val={If(xOk, x.ToString("000"), "n/a")} | Y={If(String.IsNullOrWhiteSpace(rawY), "<blank>", Regex.Replace(rawY, "\s+", " ").Trim())} ok={yOk} val={If(yOk, y.ToString("000"), "n/a")}.")
+            End If
+
+            If xOk AndAlso yOk Then
+                Dim rejectionText As String = ""
+                If Not IsMapCoordinateCandidateAccepted(x, y, cfg, rejectionText) Then
+                    AppendMapCoordinateDebug(now, rejectionText)
+                    _lastMapCoordinateText = rejectionText
+                    If _lastMapCoordinateX < 0 OrElse _lastMapCoordinateY < 0 Then
+                        _lastMapCoordinateConfidence = 0
+                    End If
+                    Return
+                End If
+
+                _lastMapCoordinateText = $"{x:000}/{y:000}"
+                _lastMapCoordinateX = x
+                _lastMapCoordinateY = y
+                _lastMapCoordinateConfidence = Math.Min(xConfidence, yConfidence)
+                AppendMapCoordinateDebug(now, $"accepted: {_lastMapCoordinateText} confidence {_lastMapCoordinateConfidence}%.")
+            Else
+                _lastMapCoordinateText = FormatRawMapCoordinateText(rawX, rawY)
+                AppendMapCoordinateDebug(now, $"not accepted: need exactly 3 digits for X and 3 digits for Y; raw={If(String.IsNullOrWhiteSpace(_lastMapCoordinateText), "<blank>", _lastMapCoordinateText)}.")
+                AppendMapCoordinateDebug(now, $"diagnostic crops: {MapCoordinateOcrDiagnosticsDirectory}")
+                If cfg Is Nothing OrElse Not cfg.HoldPlaceEnabled OrElse _lastMapCoordinateX < 0 OrElse _lastMapCoordinateY < 0 Then
+                    _lastMapCoordinateX = -1
+                    _lastMapCoordinateY = -1
+                    _lastMapCoordinateConfidence = 0
+                End If
+            End If
+        Finally
+            If disposeOcrFrame AndAlso ocrFrame IsNot Nothing Then
+                ocrFrame.Dispose()
+            End If
+        End Try
     End Sub
 
-    Private Shared Function TryReadMapCoordinateAxis(frame As Bitmap, region As RectRegion, ByRef rawText As String, ByRef value As Integer, ByRef confidence As Integer) As Boolean
+    Private Function TryGetMapCoordinateAcceptanceReference(cfg As BotConfig, ByRef referenceX As Integer, ByRef referenceY As Integer) As Boolean
+        referenceX = -1
+        referenceY = -1
+        If _lastMapCoordinateX >= 0 AndAlso _lastMapCoordinateY >= 0 Then
+            referenceX = _lastMapCoordinateX
+            referenceY = _lastMapCoordinateY
+            Return True
+        End If
+
+        If cfg IsNot Nothing AndAlso cfg.HoldPlaceEnabled AndAlso cfg.HoldPlaceAnchorSet AndAlso cfg.HoldPlaceTargetX >= 0 AndAlso cfg.HoldPlaceTargetY >= 0 Then
+            referenceX = cfg.HoldPlaceTargetX
+            referenceY = cfg.HoldPlaceTargetY
+            Return True
+        End If
+
+        Return False
+    End Function
+
+    Private Function IsMapCoordinateCandidateAccepted(x As Integer, y As Integer, cfg As BotConfig, ByRef rejectionText As String) As Boolean
+        rejectionText = ""
+        If x < 0 OrElse x > 999 OrElse y < 0 OrElse y > 999 Then
+            rejectionText = $"rejected map coordinate {x:000}/{y:000}: outside 000-999."
+            Return False
+        End If
+
+        If cfg Is Nothing OrElse Not cfg.HoldPlaceEnabled Then
+            Return True
+        End If
+
+        Dim referenceX As Integer = -1
+        Dim referenceY As Integer = -1
+        If Not TryGetMapCoordinateAcceptanceReference(cfg, referenceX, referenceY) Then
+            Return True
+        End If
+
+        Dim distance As Double = CalculateDistance(x, y, referenceX, referenceY)
+        If distance <= HoldPlaceMaxCoordinateAcceptanceDistance Then
+            Return True
+        End If
+
+        rejectionText = $"rejected map coordinate {x:000}/{y:000}: {distance:0} units from {referenceX:000}/{referenceY:000} (> {HoldPlaceMaxCoordinateAcceptanceDistance:0})."
+        Return False
+    End Function
+
+    Private Shared Function TryReadMapCoordinatePairFromClient(hwnd As IntPtr, xRegion As RectRegion, yRegion As RectRegion, ByRef rawText As String, ByRef x As Integer, ByRef y As Integer, ByRef confidence As Integer, referenceX As Integer, referenceY As Integer) As Boolean
+        rawText = ""
+        x = -1
+        y = -1
+        confidence = 0
+        If hwnd = IntPtr.Zero OrElse xRegion Is Nothing OrElse yRegion Is Nothing Then
+            Return False
+        End If
+
+        Dim clientRect As NativeMethods.RECT
+        If Not NativeMethods.GetClientRect(hwnd, clientRect) Then
+            Return False
+        End If
+
+        Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
+        Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
+        Dim xRect As Rectangle = xRegion.Clamp(clientWidth, clientHeight)
+        Dim yRect As Rectangle = yRegion.Clamp(clientWidth, clientHeight)
+        If xRect.Width <= 0 OrElse xRect.Height <= 0 OrElse yRect.Width <= 0 OrElse yRect.Height <= 0 Then
+            Return False
+        End If
+
+        Dim left As Integer = Math.Max(0, Math.Min(xRect.Left, yRect.Left) - 12)
+        Dim top As Integer = Math.Max(0, Math.Min(xRect.Top, yRect.Top) - 8)
+        Dim right As Integer = Math.Min(clientWidth, Math.Max(xRect.Right, yRect.Right) + 12)
+        Dim bottom As Integer = Math.Min(clientHeight, Math.Max(xRect.Bottom, yRect.Bottom) + 8)
+        Dim captureRegion As New RectRegion(left, top, Math.Max(1, right - left), Math.Max(1, bottom - top))
+
+        Using crop As Bitmap = CaptureClientRegion(hwnd, captureRegion)
+            If crop Is Nothing Then
+                Return False
+            End If
+
+            SaveMapCoordinateDiagnosticCrop(crop, "pair")
+            rawText = ReadMapCoordinateTextForOcr(crop, False)
+            Dim normalized As String = ""
+            If TryParseMapCoordinate(rawText, x, y, normalized, confidence, referenceX, referenceY) Then
+                rawText = If(String.IsNullOrWhiteSpace(rawText), normalized, rawText)
+                Return True
+            End If
+        End Using
+
+        Return False
+    End Function
+
+    Private Shared Function TryReadMapCoordinateAxisFromClient(hwnd As IntPtr, region As RectRegion, ByRef rawText As String, ByRef value As Integer, ByRef confidence As Integer, referenceValue As Integer, diagnosticLabel As String) As Boolean
+        rawText = ""
+        value = -1
+        confidence = 0
+        If hwnd = IntPtr.Zero OrElse region Is Nothing Then
+            Return False
+        End If
+
+        Dim clientRect As NativeMethods.RECT
+        If Not NativeMethods.GetClientRect(hwnd, clientRect) Then
+            Return False
+        End If
+
+        Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
+        Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
+        Dim baseRect As Rectangle = region.Clamp(clientWidth, clientHeight)
+        Dim left As Integer = Math.Max(0, baseRect.Left - 8)
+        Dim top As Integer = Math.Max(0, baseRect.Top - 6)
+        Dim right As Integer = Math.Min(clientWidth, baseRect.Right + 8)
+        Dim bottom As Integer = Math.Min(clientHeight, baseRect.Bottom + 6)
+        Dim captureRegion As New RectRegion(left, top, Math.Max(1, right - left), Math.Max(1, bottom - top))
+
+        Using crop As Bitmap = CaptureClientRegion(hwnd, captureRegion)
+            If crop Is Nothing Then
+                Return False
+            End If
+
+            Return TryReadMapCoordinateAxisCrop(crop, rawText, value, confidence, referenceValue, diagnosticLabel)
+        End Using
+    End Function
+
+    Private Shared Function TryReadMapCoordinatePair(frame As Bitmap, xRegion As RectRegion, yRegion As RectRegion, ByRef rawText As String, ByRef x As Integer, ByRef y As Integer, ByRef confidence As Integer, referenceX As Integer, referenceY As Integer) As Boolean
+        rawText = ""
+        x = -1
+        y = -1
+        confidence = 0
+        If frame Is Nothing OrElse xRegion Is Nothing OrElse yRegion Is Nothing Then
+            Return False
+        End If
+
+        Dim xRect As Rectangle = xRegion.Clamp(frame.Width, frame.Height)
+        Dim yRect As Rectangle = yRegion.Clamp(frame.Width, frame.Height)
+        If xRect.Width <= 0 OrElse xRect.Height <= 0 OrElse yRect.Width <= 0 OrElse yRect.Height <= 0 Then
+            Return False
+        End If
+
+        Dim left As Integer = Math.Max(0, Math.Min(xRect.Left, yRect.Left) - 12)
+        Dim top As Integer = Math.Max(0, Math.Min(xRect.Top, yRect.Top) - 8)
+        Dim right As Integer = Math.Min(frame.Width, Math.Max(xRect.Right, yRect.Right) + 12)
+        Dim bottom As Integer = Math.Min(frame.Height, Math.Max(xRect.Bottom, yRect.Bottom) + 8)
+        Dim rect As New Rectangle(left, top, Math.Max(1, right - left), Math.Max(1, bottom - top))
+
+        Using crop As New Bitmap(Math.Max(1, rect.Width), Math.Max(1, rect.Height), PixelFormat.Format24bppRgb)
+            Using g As Graphics = Graphics.FromImage(crop)
+                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
+            End Using
+
+            SaveMapCoordinateDiagnosticCrop(crop, "pair")
+            rawText = ReadMapCoordinateTextForOcr(crop, False)
+            Dim normalized As String = ""
+            If TryParseMapCoordinate(rawText, x, y, normalized, confidence, referenceX, referenceY) Then
+                rawText = If(String.IsNullOrWhiteSpace(rawText), normalized, rawText)
+                Return True
+            End If
+
+            Return False
+        End Using
+    End Function
+
+    Private Shared Function TryReadMapCoordinateAxis(frame As Bitmap, region As RectRegion, ByRef rawText As String, ByRef value As Integer, ByRef confidence As Integer, Optional referenceValue As Integer = -1, Optional diagnosticLabel As String = "axis") As Boolean
         rawText = ""
         value = -1
         confidence = 0
@@ -2778,7 +3111,12 @@ Public Class BotEngine
             Return False
         End If
 
-        Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
+        Dim baseRect As Rectangle = region.Clamp(frame.Width, frame.Height)
+        Dim left As Integer = Math.Max(0, baseRect.Left - 8)
+        Dim top As Integer = Math.Max(0, baseRect.Top - 6)
+        Dim right As Integer = Math.Min(frame.Width, baseRect.Right + 8)
+        Dim bottom As Integer = Math.Min(frame.Height, baseRect.Bottom + 6)
+        Dim rect As New Rectangle(left, top, Math.Max(1, right - left), Math.Max(1, bottom - top))
         If rect.Width <= 0 OrElse rect.Height <= 0 Then
             Return False
         End If
@@ -2788,10 +3126,116 @@ Public Class BotEngine
                 g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
             End Using
 
-            rawText = ReadMapCoordinateTextForOcr(crop, True)
-            Return TryParseMapCoordinateAxis(rawText, value, confidence)
+            Return TryReadMapCoordinateAxisCrop(crop, rawText, value, confidence, referenceValue, diagnosticLabel)
         End Using
     End Function
+
+    Private Shared Function TryReadMapCoordinateAxisCrop(crop As Bitmap, ByRef rawText As String, ByRef value As Integer, ByRef confidence As Integer, referenceValue As Integer, diagnosticLabel As String) As Boolean
+        rawText = ""
+        value = -1
+        confidence = 0
+        If crop Is Nothing Then
+            Return False
+        End If
+
+        SaveMapCoordinateDiagnosticCrop(crop, diagnosticLabel)
+        rawText = ReadMapCoordinateTextForOcr(crop, True)
+        If TryParseMapCoordinateAxis(rawText, value, confidence, referenceValue) Then
+            Return True
+        End If
+
+        Dim integerValue As Long = OcrReader.ReadInteger(crop)
+        If integerValue >= 0 AndAlso integerValue <= 999 Then
+            Dim integerText As String = integerValue.ToString()
+            If TryParseMapCoordinateAxis(integerText, value, confidence, referenceValue) Then
+                rawText = If(String.IsNullOrWhiteSpace(rawText), integerText, $"{rawText} [{integerText}]")
+                confidence = Math.Max(confidence, 70)
+                Return True
+            End If
+        End If
+
+        Dim pixelDigits As String = ""
+        Dim pixelConfidence As Integer = 0
+        If TryReadMapCoordinateDigitsByPixels(crop, 3, pixelDigits, pixelConfidence) AndAlso
+           TryParseMapCoordinateAxis(pixelDigits, value, confidence, referenceValue) Then
+            rawText = If(String.IsNullOrWhiteSpace(rawText), $"pixel:{pixelDigits}", $"{rawText} [pixel:{pixelDigits}]")
+            confidence = Math.Max(35, Math.Min(68, pixelConfidence))
+            Return True
+        End If
+
+        Return False
+    End Function
+
+    Private Shared Sub SaveMapCoordinateDiagnosticCrop(crop As Bitmap, label As String)
+        If crop Is Nothing Then
+            Return
+        End If
+
+        Try
+            Directory.CreateDirectory(MapCoordinateOcrDiagnosticsDirectory)
+            Dim safeLabel As String = Regex.Replace(If(label, "crop"), "[^A-Za-z0-9_-]+", "-")
+            crop.Save(Path.Combine(MapCoordinateOcrDiagnosticsDirectory, $"latest-{safeLabel}.png"), ImageFormat.Png)
+            Using enlarged As Bitmap = EnlargeBitmap(crop, 5)
+                enlarged.Save(Path.Combine(MapCoordinateOcrDiagnosticsDirectory, $"latest-{safeLabel}-enlarged.png"), ImageFormat.Png)
+                Using thresholded As Bitmap = ThresholdLumaBitmap(enlarged, 145)
+                    thresholded.Save(Path.Combine(MapCoordinateOcrDiagnosticsDirectory, $"latest-{safeLabel}-threshold.png"), ImageFormat.Png)
+                End Using
+                Using inverted As Bitmap = ThresholdLumaBitmap(enlarged, 145, True)
+                    inverted.Save(Path.Combine(MapCoordinateOcrDiagnosticsDirectory, $"latest-{safeLabel}-threshold-invert.png"), ImageFormat.Png)
+                End Using
+            End Using
+        Catch
+        End Try
+    End Sub
+
+    Private Shared Sub SaveMapCoordinateDiagnosticFrame(hwnd As IntPtr, xRegion As RectRegion, yRegion As RectRegion)
+        If hwnd = IntPtr.Zero Then
+            Return
+        End If
+
+        Try
+            Dim rc As NativeMethods.RECT
+            If Not NativeMethods.GetClientRect(hwnd, rc) Then
+                Return
+            End If
+
+            Dim clientWidth As Integer = Math.Max(1, rc.Right - rc.Left)
+            Dim clientHeight As Integer = Math.Max(1, rc.Bottom - rc.Top)
+            Using frame As Bitmap = CaptureClientRegion(hwnd, New RectRegion(0, 0, clientWidth, clientHeight))
+                If frame Is Nothing Then
+                    Return
+                End If
+
+                Using marked As New Bitmap(frame.Width, frame.Height, PixelFormat.Format24bppRgb)
+                    Using g As Graphics = Graphics.FromImage(marked)
+                        g.DrawImageUnscaled(frame, 0, 0)
+                        DrawDiagnosticRegion(g, xRegion, frame.Width, frame.Height, Color.Lime, "X")
+                        DrawDiagnosticRegion(g, yRegion, frame.Width, frame.Height, Color.DeepSkyBlue, "Y")
+                    End Using
+
+                    Directory.CreateDirectory(MapCoordinateOcrDiagnosticsDirectory)
+                    marked.Save(Path.Combine(MapCoordinateOcrDiagnosticsDirectory, "latest-client-marked.png"), ImageFormat.Png)
+                End Using
+            End Using
+        Catch
+        End Try
+    End Sub
+
+    Private Shared Sub DrawDiagnosticRegion(g As Graphics, region As RectRegion, width As Integer, height As Integer, color As Color, label As String)
+        If g Is Nothing OrElse region Is Nothing Then
+            Return
+        End If
+
+        Dim rect As Rectangle = region.Clamp(Math.Max(1, width), Math.Max(1, height))
+        Using pen As New Pen(color, 2.0F)
+            g.DrawRectangle(pen, rect)
+        End Using
+        Using back As New SolidBrush(Color.FromArgb(180, 0, 0, 0))
+            Dim textRect As New Rectangle(rect.Left, Math.Max(0, rect.Top - 18), 70, 18)
+            g.FillRectangle(back, textRect)
+            TextRenderer.DrawText(g, label, SystemFonts.DefaultFont, textRect, color, TextFormatFlags.Left Or TextFormatFlags.VerticalCenter)
+        End Using
+    End Sub
 
     Private Shared Function FormatRawMapCoordinateText(rawX As String, rawY As String) As String
         Dim xText As String = Regex.Replace(If(rawX, ""), "\s+", " ").Trim()
@@ -2808,40 +3252,371 @@ Public Class BotEngine
         End If
 
         Dim preferredPattern As String = If(axisOnly, "(?<!\d)\d{3}(?!\d)", "\d{3}\s*[/,]\s*\d{3}")
-        Dim acceptablePattern As String = If(axisOnly, "(?<!\d)\d{1,3}(?!\d)", preferredPattern)
+        Dim acceptablePattern As String = If(axisOnly, "(?<!\d)\d{1,3}(?!\d)", "\d{1,3}\D+\d{1,3}")
+        Dim acceptableCandidate As String = ""
+        Dim firstCandidate As String = ""
+        Dim selectedCandidate As String = ""
 
-        Using enlarged As New Bitmap(Math.Max(1, crop.Width * 3), Math.Max(1, crop.Height * 3), PixelFormat.Format24bppRgb)
-            Using g As Graphics = Graphics.FromImage(enlarged)
-                g.Clear(Color.Black)
-                g.InterpolationMode = InterpolationMode.NearestNeighbor
-                g.PixelOffsetMode = PixelOffsetMode.Half
-                g.DrawImage(crop, New Rectangle(0, 0, enlarged.Width, enlarged.Height), New Rectangle(0, 0, crop.Width, crop.Height), GraphicsUnit.Pixel)
-            End Using
-
-            Dim rawText As String = OcrReader.ReadScreenText(enlarged)
-            If Regex.IsMatch(If(rawText, ""), preferredPattern) Then
-                Return rawText
+        Using enlarged As Bitmap = EnlargeBitmap(crop, If(axisOnly, 5, 4))
+            If TrySelectMapCoordinateOcrCandidate(OcrReader.ReadScreenText(enlarged), preferredPattern, acceptablePattern, acceptableCandidate, firstCandidate, selectedCandidate) Then
+                Return selectedCandidate
+            End If
+            If TrySelectMapCoordinateOcrCandidate(OcrReader.ReadScreenTextIsolated(enlarged), preferredPattern, acceptablePattern, acceptableCandidate, firstCandidate, selectedCandidate) Then
+                Return selectedCandidate
             End If
 
-            Using thresholded As Bitmap = ThresholdLumaBitmap(enlarged, 140)
-                Dim thresholdText As String = OcrReader.ReadScreenText(thresholded)
-                If Regex.IsMatch(If(thresholdText, ""), preferredPattern) Then
-                    Return thresholdText
-                End If
-                If Regex.IsMatch(If(rawText, ""), acceptablePattern) Then
-                    Return rawText
-                End If
-                If Regex.IsMatch(If(thresholdText, ""), acceptablePattern) Then
-                    Return thresholdText
-                End If
+            For Each threshold As Integer In New Integer() {105, 125, 145, 165}
+                Using thresholded As Bitmap = ThresholdLumaBitmap(enlarged, threshold)
+                    If TrySelectMapCoordinateOcrCandidate(OcrReader.ReadScreenText(thresholded), preferredPattern, acceptablePattern, acceptableCandidate, firstCandidate, selectedCandidate) Then
+                        Return selectedCandidate
+                    End If
+                    If TrySelectMapCoordinateOcrCandidate(OcrReader.ReadScreenTextIsolated(thresholded), preferredPattern, acceptablePattern, acceptableCandidate, firstCandidate, selectedCandidate) Then
+                        Return selectedCandidate
+                    End If
+                End Using
+            Next
 
-                If String.IsNullOrWhiteSpace(rawText) Then
-                    Return thresholdText
-                End If
-
-                Return rawText
-            End Using
+            For Each threshold As Integer In New Integer() {125, 165}
+                Using thresholded As Bitmap = ThresholdLumaBitmap(enlarged, threshold, True)
+                    If TrySelectMapCoordinateOcrCandidate(OcrReader.ReadScreenText(thresholded), preferredPattern, acceptablePattern, acceptableCandidate, firstCandidate, selectedCandidate) Then
+                        Return selectedCandidate
+                    End If
+                    If TrySelectMapCoordinateOcrCandidate(OcrReader.ReadScreenTextIsolated(thresholded), preferredPattern, acceptablePattern, acceptableCandidate, firstCandidate, selectedCandidate) Then
+                        Return selectedCandidate
+                    End If
+                End Using
+            Next
         End Using
+
+        Return If(acceptableCandidate <> "", acceptableCandidate, firstCandidate)
+    End Function
+
+    Private Shared Function TrySelectMapCoordinateOcrCandidate(candidate As String, preferredPattern As String, acceptablePattern As String, ByRef acceptableCandidate As String, ByRef firstCandidate As String, ByRef selectedCandidate As String) As Boolean
+        Dim cleaned As String = If(candidate, "").Trim()
+        If cleaned = "" Then
+            Return False
+        End If
+
+        If firstCandidate = "" Then
+            firstCandidate = cleaned
+        End If
+
+        If Regex.IsMatch(cleaned, preferredPattern) Then
+            selectedCandidate = cleaned
+            Return True
+        End If
+
+        If acceptableCandidate = "" AndAlso Regex.IsMatch(cleaned, acceptablePattern) Then
+            acceptableCandidate = cleaned
+        End If
+
+        Return False
+    End Function
+
+    Private Shared Function TryReadMapCoordinateDigitsByPixels(crop As Bitmap, expectedDigits As Integer, ByRef digits As String, ByRef confidence As Integer) As Boolean
+        digits = ""
+        confidence = 0
+        If crop Is Nothing OrElse expectedDigits <= 0 Then
+            Return False
+        End If
+
+        Dim bestDigits As String = ""
+        Dim bestConfidence As Integer = 0
+        Using enlarged As Bitmap = EnlargeBitmap(crop, 4)
+            For Each threshold As Integer In New Integer() {85, 105, 125, 145, 165, 185, 205}
+                For Each invert As Boolean In New Boolean() {False, True}
+                    Dim mask(,) As Boolean = BuildDigitMask(enlarged, threshold, invert)
+                    Dim candidate As String = ""
+                    Dim candidateConfidence As Integer = 0
+                    If TryReadDigitMask(mask, enlarged.Width, enlarged.Height, expectedDigits, candidate, candidateConfidence) Then
+                        If candidateConfidence > bestConfidence Then
+                            bestDigits = candidate
+                            bestConfidence = candidateConfidence
+                        End If
+                    End If
+                Next
+            Next
+        End Using
+
+        If bestDigits.Length <> expectedDigits OrElse bestConfidence < 55 Then
+            Return False
+        End If
+
+        digits = bestDigits
+        confidence = bestConfidence
+        Return True
+    End Function
+
+    Private Shared Function BuildDigitMask(source As Bitmap, threshold As Integer, invert As Boolean) As Boolean(,)
+        Dim mask(source.Width - 1, source.Height - 1) As Boolean
+        Using buffer As New BitmapReadBuffer(source)
+            For y As Integer = 0 To source.Height - 1
+                For x As Integer = 0 To source.Width - 1
+                    Dim r As Integer = 0
+                    Dim g As Integer = 0
+                    Dim b As Integer = 0
+                    buffer.GetRgb(x, y, r, g, b)
+                    Dim luma As Integer = (r * 30 + g * 59 + b * 11) \ 100
+                    Dim foreground As Boolean = luma >= threshold
+                    If invert Then
+                        foreground = Not foreground
+                    End If
+                    mask(x, y) = foreground
+                Next
+            Next
+        End Using
+        Return mask
+    End Function
+
+    Private Shared Function TryReadDigitMask(mask(,) As Boolean, width As Integer, height As Integer, expectedDigits As Integer, ByRef digits As String, ByRef confidence As Integer) As Boolean
+        digits = ""
+        confidence = 0
+        Dim bounds As Rectangle = GetMaskBounds(mask, width, height)
+        If bounds = Rectangle.Empty OrElse bounds.Width < expectedDigits * 2 OrElse bounds.Height < 8 Then
+            Return False
+        End If
+
+        Dim runs As List(Of Rectangle) = SegmentDigitRuns(mask, bounds)
+        NormalizeDigitRunCount(runs, expectedDigits)
+        If runs.Count <> expectedDigits Then
+            Return False
+        End If
+
+        Dim parts As New List(Of Char)()
+        Dim minConfidence As Integer = 100
+        For Each run As Rectangle In runs
+            Dim digit As Char = "0"c
+            Dim digitConfidence As Integer = 0
+            If Not RecognizePixelDigit(mask, run, digit, digitConfidence) Then
+                Return False
+            End If
+            parts.Add(digit)
+            minConfidence = Math.Min(minConfidence, digitConfidence)
+        Next
+
+        digits = New String(parts.ToArray())
+        confidence = minConfidence
+        Return confidence >= 52
+    End Function
+
+    Private Shared Function GetMaskBounds(mask(,) As Boolean, width As Integer, height As Integer) As Rectangle
+        Dim left As Integer = width
+        Dim top As Integer = height
+        Dim right As Integer = -1
+        Dim bottom As Integer = -1
+        For y As Integer = 0 To height - 1
+            For x As Integer = 0 To width - 1
+                If Not mask(x, y) Then
+                    Continue For
+                End If
+                left = Math.Min(left, x)
+                top = Math.Min(top, y)
+                right = Math.Max(right, x)
+                bottom = Math.Max(bottom, y)
+            Next
+        Next
+
+        If right < left OrElse bottom < top Then
+            Return Rectangle.Empty
+        End If
+        Return New Rectangle(left, top, right - left + 1, bottom - top + 1)
+    End Function
+
+    Private Shared Function SegmentDigitRuns(mask(,) As Boolean, bounds As Rectangle) As List(Of Rectangle)
+        Dim runs As New List(Of Rectangle)()
+        Dim minColumnPixels As Integer = Math.Max(1, bounds.Height \ 18)
+        Dim gapTolerance As Integer = Math.Max(1, bounds.Width \ 80)
+        Dim runStart As Integer = -1
+        Dim runEnd As Integer = -1
+        Dim gap As Integer = 0
+
+        For x As Integer = bounds.Left To bounds.Right - 1
+            Dim count As Integer = 0
+            For y As Integer = bounds.Top To bounds.Bottom - 1
+                If mask(x, y) Then
+                    count += 1
+                End If
+            Next
+
+            If count >= minColumnPixels Then
+                If runStart < 0 Then
+                    runStart = x
+                End If
+                runEnd = x
+                gap = 0
+            ElseIf runStart >= 0 Then
+                gap += 1
+                If gap > gapTolerance Then
+                    AddDigitRun(mask, bounds, runStart, runEnd, runs)
+                    runStart = -1
+                    runEnd = -1
+                    gap = 0
+                End If
+            End If
+        Next
+
+        If runStart >= 0 Then
+            AddDigitRun(mask, bounds, runStart, runEnd, runs)
+        End If
+
+        Return runs.OrderBy(Function(r) r.Left).ToList()
+    End Function
+
+    Private Shared Sub AddDigitRun(mask(,) As Boolean, bounds As Rectangle, left As Integer, right As Integer, runs As List(Of Rectangle))
+        If right < left Then
+            Return
+        End If
+
+        Dim top As Integer = bounds.Bottom
+        Dim bottom As Integer = bounds.Top - 1
+        Dim area As Integer = 0
+        For x As Integer = left To right
+            For y As Integer = bounds.Top To bounds.Bottom - 1
+                If mask(x, y) Then
+                    area += 1
+                    top = Math.Min(top, y)
+                    bottom = Math.Max(bottom, y)
+                End If
+            Next
+        Next
+
+        If area < Math.Max(8, bounds.Height) OrElse bottom < top Then
+            Return
+        End If
+        runs.Add(New Rectangle(left, top, right - left + 1, bottom - top + 1))
+    End Sub
+
+    Private Shared Sub NormalizeDigitRunCount(runs As List(Of Rectangle), expectedDigits As Integer)
+        If runs Is Nothing Then
+            Return
+        End If
+
+        While runs.Count > expectedDigits
+            Dim mergeIndex As Integer = -1
+            Dim bestGap As Integer = Integer.MaxValue
+            For i As Integer = 0 To runs.Count - 2
+                Dim gap As Integer = runs(i + 1).Left - runs(i).Right
+                If gap < bestGap Then
+                    bestGap = gap
+                    mergeIndex = i
+                End If
+            Next
+            If mergeIndex < 0 Then
+                Exit While
+            End If
+            runs(mergeIndex) = Rectangle.Union(runs(mergeIndex), runs(mergeIndex + 1))
+            runs.RemoveAt(mergeIndex + 1)
+        End While
+
+        While runs.Count < expectedDigits
+            Dim widestIndex As Integer = -1
+            Dim widest As Integer = 0
+            For i As Integer = 0 To runs.Count - 1
+                If runs(i).Width > widest Then
+                    widest = runs(i).Width
+                    widestIndex = i
+                End If
+            Next
+            If widestIndex < 0 OrElse widest < 10 Then
+                Exit While
+            End If
+
+            Dim source As Rectangle = runs(widestIndex)
+            Dim leftWidth As Integer = Math.Max(1, source.Width \ 2)
+            Dim rightWidth As Integer = Math.Max(1, source.Width - leftWidth)
+            runs(widestIndex) = New Rectangle(source.Left, source.Top, leftWidth, source.Height)
+            runs.Insert(widestIndex + 1, New Rectangle(source.Left + leftWidth, source.Top, rightWidth, source.Height))
+        End While
+
+        runs.Sort(Function(a, b) a.Left.CompareTo(b.Left))
+    End Sub
+
+    Private Shared Function RecognizePixelDigit(mask(,) As Boolean, rect As Rectangle, ByRef digit As Char, ByRef confidence As Integer) As Boolean
+        digit = "0"c
+        confidence = 0
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then
+            Return False
+        End If
+
+        Dim cells(4, 6) As Boolean
+        For gy As Integer = 0 To 6
+            For gx As Integer = 0 To 4
+                Dim x0 As Integer = rect.Left + CInt(Math.Floor(gx * rect.Width / 5.0R))
+                Dim x1 As Integer = rect.Left + CInt(Math.Floor((gx + 1) * rect.Width / 5.0R)) - 1
+                Dim y0 As Integer = rect.Top + CInt(Math.Floor(gy * rect.Height / 7.0R))
+                Dim y1 As Integer = rect.Top + CInt(Math.Floor((gy + 1) * rect.Height / 7.0R)) - 1
+                x1 = Math.Max(x0, x1)
+                y1 = Math.Max(y0, y1)
+
+                Dim total As Integer = 0
+                Dim filled As Integer = 0
+                For y As Integer = y0 To y1
+                    For x As Integer = x0 To x1
+                        total += 1
+                        If mask(x, y) Then
+                            filled += 1
+                        End If
+                    Next
+                Next
+                cells(gx, gy) = total > 0 AndAlso filled / CDbl(total) >= 0.18R
+            Next
+        Next
+
+        Dim bestDigit As Char = "0"c
+        Dim bestScore As Double = -1.0R
+        For Each candidate As Char In "0123456789"
+            Dim template As String() = GetDigitTemplate(candidate)
+            Dim matchedWeight As Double = 0.0R
+            Dim totalWeight As Double = 0.0R
+            For gy As Integer = 0 To 6
+                For gx As Integer = 0 To 4
+                    Dim expected As Boolean = template(gy).Chars(gx) = "1"c
+                    Dim actual As Boolean = cells(gx, gy)
+                    Dim weight As Double = If(expected, 1.25R, 0.75R)
+                    totalWeight += weight
+                    If expected = actual Then
+                        matchedWeight += weight
+                    End If
+                Next
+            Next
+
+            Dim score As Double = If(totalWeight <= 0, 0.0R, matchedWeight / totalWeight)
+            If score > bestScore Then
+                bestScore = score
+                bestDigit = candidate
+            End If
+        Next
+
+        digit = bestDigit
+        confidence = CInt(Math.Round(bestScore * 100.0R))
+        Return confidence >= 52
+    End Function
+
+    Private Shared Function GetDigitTemplate(digit As Char) As String()
+        Select Case digit
+            Case "0"c
+                Return New String() {"01110", "10001", "10011", "10101", "11001", "10001", "01110"}
+            Case "1"c
+                Return New String() {"00100", "01100", "00100", "00100", "00100", "00100", "01110"}
+            Case "2"c
+                Return New String() {"01110", "10001", "00001", "00010", "00100", "01000", "11111"}
+            Case "3"c
+                Return New String() {"11110", "00001", "00001", "01110", "00001", "00001", "11110"}
+            Case "4"c
+                Return New String() {"00010", "00110", "01010", "10010", "11111", "00010", "00010"}
+            Case "5"c
+                Return New String() {"11111", "10000", "10000", "11110", "00001", "00001", "11110"}
+            Case "6"c
+                Return New String() {"01110", "10000", "10000", "11110", "10001", "10001", "01110"}
+            Case "7"c
+                Return New String() {"11111", "00001", "00010", "00100", "01000", "01000", "01000"}
+            Case "8"c
+                Return New String() {"01110", "10001", "10001", "01110", "10001", "10001", "01110"}
+            Case "9"c
+                Return New String() {"01110", "10001", "10001", "01111", "00001", "00001", "01110"}
+            Case Else
+                Return New String() {"00000", "00000", "00000", "00000", "00000", "00000", "00000"}
+        End Select
     End Function
 
     Private Sub ReadChatTextIfNeeded(frame As Bitmap, region As RectRegion, cfg As BotConfig, now As DateTime)
@@ -4320,6 +5095,88 @@ Public Class BotEngine
         Return False
     End Function
 
+    Private Function TryHandleHoldPlace(cfg As BotConfig, hwnd As IntPtr, now As DateTime, ByRef reason As String) As Boolean
+        reason = ""
+        If cfg Is Nothing OrElse Not cfg.HoldPlaceEnabled OrElse hwnd = IntPtr.Zero Then
+            ClearHoldPlaceRuntime()
+            Return False
+        End If
+
+        Dim targetX As Integer = cfg.HoldPlaceTargetX
+        Dim targetY As Integer = cfg.HoldPlaceTargetY
+        If Not cfg.HoldPlaceAnchorSet Then
+            reason = "Hold on place: set an anchor X/Y coordinate."
+            SetHoldPlaceRuntime(False, -1, -1, -1, reason)
+            Return False
+        End If
+
+        If targetX < 0 OrElse targetY < 0 OrElse targetX > 999 OrElse targetY > 999 Then
+            reason = "Hold on place: set an anchor X/Y coordinate."
+            SetHoldPlaceRuntime(False, targetX, targetY, -1, reason)
+            Return False
+        End If
+
+        If _lastMapCoordinateX < 0 OrElse _lastMapCoordinateY < 0 OrElse _lastMapLocalizationConfidence < 30 Then
+            reason = $"Hold on place: waiting for map coordinates near anchor {targetX:000}/{targetY:000}."
+            SetHoldPlaceRuntime(False, targetX, targetY, -1, reason)
+            Return False
+        End If
+
+        Dim dx As Integer = targetX - _lastMapCoordinateX
+        Dim dy As Integer = targetY - _lastMapCoordinateY
+        Dim distance As Double = CalculateDistance(_lastMapCoordinateX, _lastMapCoordinateY, targetX, targetY)
+        Dim radius As Integer = Math.Max(0, cfg.HoldPlaceRadius)
+        If Math.Abs(dx) <= radius AndAlso Math.Abs(dy) <= radius Then
+            reason = $"Hold on place: anchored at {targetX:000}/{targetY:000}; current {_lastMapCoordinateX:000}/{_lastMapCoordinateY:000}."
+            SetHoldPlaceRuntime(False, targetX, targetY, distance, reason)
+            Return False
+        End If
+
+        Dim correctionIntervalMs As Integer = Math.Max(150, cfg.HoldPlaceCorrectionIntervalMs)
+        If _lastHoldPlaceMoveAt <> DateTime.MinValue AndAlso (now - _lastHoldPlaceMoveAt).TotalMilliseconds < correctionIntervalMs Then
+            reason = $"Hold on place: correcting back to {targetX:000}/{targetY:000}; current {_lastMapCoordinateX:000}/{_lastMapCoordinateY:000}."
+            SetHoldPlaceRuntime(True, targetX, targetY, distance, reason)
+            Return False
+        End If
+
+        Dim primaryDirection As String
+        Dim primaryDistance As Integer
+        If Math.Abs(dx) >= Math.Abs(dy) Then
+            primaryDirection = If(dx >= 0, "E", "W")
+            primaryDistance = Math.Abs(dx)
+        Else
+            primaryDirection = If(dy >= 0, "S", "N")
+            primaryDistance = Math.Abs(dy)
+        End If
+
+        Dim primaryKey As String = GetKeyForDesiredDirection(primaryDirection)
+        If primaryKey = "" Then
+            primaryKey = If(primaryDirection = "N", "W",
+                        If(primaryDirection = "S", "S",
+                        If(primaryDirection = "E", "D", "A")))
+        End If
+
+        Dim baseBurstMs As Integer = Math.Max(20, Math.Min(800, cfg.HoldPlaceMoveBurstMs))
+        Dim primaryBurstMs As Integer = GetPreciseTravelBurstMs(baseBurstMs, primaryDistance)
+        If SendKey(hwnd, primaryKey, primaryBurstMs) Then
+            MarkKeyUsed(primaryKey)
+            SetLastAction($"{primaryKey} (hold on place)")
+            _lastHoldPlaceMoveAt = now
+            _lastTravelInputKey = primaryKey
+            _lastTravelInputDesiredDirection = primaryDirection
+            _lastTravelInputPoseX = _lastNavigationKnownX
+            _lastTravelInputPoseY = _lastNavigationKnownY
+            _lastTravelInputAt = now
+            reason = $"Hold on place: returning to {targetX:000}/{targetY:000}; current {_lastMapCoordinateX:000}/{_lastMapCoordinateY:000}, using {primaryKey}."
+            SetHoldPlaceRuntime(True, targetX, targetY, distance, reason)
+            Return True
+        End If
+
+        reason = $"Hold on place: failed to send movement toward {targetX:000}/{targetY:000}."
+        SetHoldPlaceRuntime(False, targetX, targetY, distance, reason)
+        Return False
+    End Function
+
     Private Function TryHandleNavigationTravel(cfg As BotConfig, hwnd As IntPtr, now As DateTime, targetWindowVisible As Boolean, targetValid As Boolean, ByRef reason As String) As Boolean
         _lastNavigationTravelActive = False
         _lastNavigationTravelReason = ""
@@ -4482,7 +5339,7 @@ Public Class BotEngine
         Return False
     End Function
 
-    Private Shared Function TryParseMapCoordinateAxis(rawText As String, ByRef value As Integer, ByRef confidence As Integer) As Boolean
+    Private Shared Function TryParseMapCoordinateAxis(rawText As String, ByRef value As Integer, ByRef confidence As Integer, Optional referenceValue As Integer = -1) As Boolean
         value = -1
         confidence = 0
         If String.IsNullOrWhiteSpace(rawText) Then
@@ -4490,40 +5347,41 @@ Public Class BotEngine
         End If
 
         Dim normalizedRaw As String = rawText.ToUpperInvariant()
-        normalizedRaw = normalizedRaw.Replace("O", "0").Replace("I", "1").Replace("L", "1")
+        normalizedRaw = NormalizeMapCoordinateOcrText(normalizedRaw)
         normalizedRaw = Regex.Replace(normalizedRaw, "[^0-9]", " ")
         normalizedRaw = Regex.Replace(normalizedRaw, "\s+", " ").Trim()
         If normalizedRaw = "" Then
             Return False
         End If
 
-        Dim digitsOnly As String = Regex.Replace(normalizedRaw, "\D", "")
-        If digitsOnly.Length = 3 Then
-            value = Integer.Parse(digitsOnly)
-            confidence = 99
-            Return True
-        End If
-
-        Dim exactMatch As Match = Regex.Match(normalizedRaw, "(?<!\d)(\d{3})(?!\d)")
-        If exactMatch.Success Then
-            value = Integer.Parse(exactMatch.Groups(1).Value)
-            confidence = 99
-            Return True
-        End If
-
-        Dim fallbackMatch As Match = Regex.Match(normalizedRaw, "(?<!\d)(\d{2,3})(?!\d)")
-        If fallbackMatch.Success Then
-            value = Integer.Parse(fallbackMatch.Groups(1).Value)
-            If value >= 0 AndAlso value <= 999 Then
-                confidence = If(fallbackMatch.Groups(1).Value.Length = 3, 78, 55)
-                Return True
+        Dim bestValue As Integer = -1
+        Dim bestConfidence As Integer = 0
+        Dim bestDelta As Integer = Integer.MaxValue
+        For Each m As Match In Regex.Matches(normalizedRaw, "\d+")
+            Dim candidateValue As Integer = -1
+            Dim candidateConfidence As Integer = 0
+            If Not TryParseMapCoordinateToken(m.Value, referenceValue, candidateValue, candidateConfidence) Then
+                Continue For
             End If
+
+            Dim delta As Integer = If(referenceValue >= 0 AndAlso referenceValue <= 999, Math.Abs(candidateValue - referenceValue), 0)
+            If bestValue < 0 OrElse candidateConfidence > bestConfidence OrElse (candidateConfidence = bestConfidence AndAlso delta < bestDelta) Then
+                bestValue = candidateValue
+                bestConfidence = candidateConfidence
+                bestDelta = delta
+            End If
+        Next
+
+        If bestValue >= 0 Then
+            value = bestValue
+            confidence = bestConfidence
+            Return True
         End If
 
         Return False
     End Function
 
-    Private Shared Function TryParseMapCoordinate(rawText As String, ByRef x As Integer, ByRef y As Integer, ByRef normalized As String, ByRef confidence As Integer) As Boolean
+    Private Shared Function TryParseMapCoordinate(rawText As String, ByRef x As Integer, ByRef y As Integer, ByRef normalized As String, ByRef confidence As Integer, Optional referenceX As Integer = -1, Optional referenceY As Integer = -1) As Boolean
         x = -1
         y = -1
         normalized = ""
@@ -4533,34 +5391,159 @@ Public Class BotEngine
         End If
 
         Dim normalizedRaw As String = rawText.ToUpperInvariant()
-        normalizedRaw = normalizedRaw.Replace("O", "0").Replace("I", "1").Replace("L", "1").Replace("|", "/")
+        normalizedRaw = NormalizeMapCoordinateOcrText(normalizedRaw).Replace("|", "/")
         normalizedRaw = Regex.Replace(normalizedRaw, "[^0-9/,\- ]", " ")
         normalizedRaw = Regex.Replace(normalizedRaw, "\s+", " ").Trim()
         If normalizedRaw = "" Then
             Return False
         End If
 
-        Dim explicitMatch As Match = Regex.Match(normalizedRaw, "(\d{3})\s*[/,]\s*(\d{3})")
+        Dim explicitMatch As Match = Regex.Match(normalizedRaw, "(\d+)\s*[/,]\s*(\d+)")
         If explicitMatch.Success Then
-            x = Integer.Parse(explicitMatch.Groups(1).Value)
-            y = Integer.Parse(explicitMatch.Groups(2).Value)
-            normalized = $"{x:000}/{y:000}"
-            confidence = 99
-            Return True
+            Dim parsedX As Integer = -1
+            Dim parsedY As Integer = -1
+            Dim xConfidence As Integer = 0
+            Dim yConfidence As Integer = 0
+            If TryParseMapCoordinateToken(explicitMatch.Groups(1).Value, referenceX, parsedX, xConfidence) AndAlso
+               TryParseMapCoordinateToken(explicitMatch.Groups(2).Value, referenceY, parsedY, yConfidence) Then
+                x = parsedX
+                y = parsedY
+                normalized = $"{x:000}/{y:000}"
+                confidence = Math.Min(xConfidence, yConfidence)
+                Return True
+            End If
         End If
 
-        Dim fallbackMatch As Match = Regex.Match(normalizedRaw, "(\d{1,3})\D+(\d{1,3})")
-        If fallbackMatch.Success Then
-            x = Integer.Parse(fallbackMatch.Groups(1).Value)
-            y = Integer.Parse(fallbackMatch.Groups(2).Value)
-            If x >= 0 AndAlso x <= 999 AndAlso y >= 0 AndAlso y <= 999 Then
+        Dim numberMatches As MatchCollection = Regex.Matches(normalizedRaw, "\d+")
+        If numberMatches.Count >= 2 Then
+            Dim bestX As Integer = -1
+            Dim bestY As Integer = -1
+            Dim bestConfidence As Integer = -1
+            Dim bestDistance As Double = Double.MaxValue
+
+            For i As Integer = 0 To numberMatches.Count - 2
+                Dim parsedX As Integer = -1
+                Dim parsedY As Integer = -1
+                Dim xConfidence As Integer = 0
+                Dim yConfidence As Integer = 0
+                If Not TryParseMapCoordinateToken(numberMatches(i).Value, referenceX, parsedX, xConfidence) Then
+                    Continue For
+                End If
+                If Not TryParseMapCoordinateToken(numberMatches(i + 1).Value, referenceY, parsedY, yConfidence) Then
+                    Continue For
+                End If
+
+                Dim pairConfidence As Integer = Math.Min(xConfidence, yConfidence)
+                Dim pairDistance As Double =
+                    If(referenceX >= 0 AndAlso referenceY >= 0,
+                       CalculateDistance(parsedX, parsedY, referenceX, referenceY),
+                       0.0R)
+                If bestX < 0 OrElse pairConfidence > bestConfidence OrElse (pairConfidence = bestConfidence AndAlso pairDistance < bestDistance) Then
+                    bestX = parsedX
+                    bestY = parsedY
+                    bestConfidence = pairConfidence
+                    bestDistance = pairDistance
+                End If
+            Next
+
+            If bestX >= 0 AndAlso bestY >= 0 Then
+                x = bestX
+                y = bestY
                 normalized = $"{x:000}/{y:000}"
-                confidence = 78
+                confidence = bestConfidence
                 Return True
             End If
         End If
 
         Return False
+    End Function
+
+    Private Shared Function NormalizeMapCoordinateOcrText(raw As String) As String
+        Dim normalized As String = If(raw, "").ToUpperInvariant()
+        normalized = normalized.Replace("O", "0").
+                                Replace("Q", "0").
+                                Replace("D", "0").
+                                Replace("I", "1").
+                                Replace("L", "1").
+                                Replace("|", "1").
+                                Replace("S", "5").
+                                Replace("B", "8").
+                                Replace("G", "6").
+                                Replace("Z", "2")
+        Return normalized
+    End Function
+
+    Private Shared Function TryParseMapCoordinateToken(rawToken As String, referenceValue As Integer, ByRef value As Integer, ByRef confidence As Integer) As Boolean
+        value = -1
+        confidence = 0
+        Dim digits As String = Regex.Replace(If(rawToken, ""), "\D", "")
+        If digits = "" Then
+            Return False
+        End If
+
+        If digits.Length = 3 Then
+            value = Integer.Parse(digits)
+            confidence = 99
+            Return True
+        End If
+
+        Dim candidates As New List(Of Tuple(Of Integer, Integer))()
+        If digits.Length > 3 Then
+            For i As Integer = 0 To digits.Length - 3
+                Dim parsed As Integer = Integer.Parse(digits.Substring(i, 3))
+                candidates.Add(Tuple.Create(parsed, 72))
+            Next
+        ElseIf digits.Length = 2 Then
+            Dim parsed As Integer = Integer.Parse(digits)
+            candidates.Add(Tuple.Create(parsed, 42))
+            If referenceValue >= 0 AndAlso referenceValue <= 999 Then
+                For prefix As Integer = 0 To 9
+                    candidates.Add(Tuple.Create((prefix * 100) + parsed, 62))
+                Next
+                For suffix As Integer = 0 To 9
+                    candidates.Add(Tuple.Create((parsed * 10) + suffix, 62))
+                Next
+            End If
+        ElseIf digits.Length = 1 Then
+            Dim parsed As Integer = Integer.Parse(digits)
+            candidates.Add(Tuple.Create(parsed, 35))
+            If referenceValue >= 0 AndAlso referenceValue <= 999 Then
+                For a As Integer = 0 To 9
+                    For b As Integer = 0 To 9
+                        candidates.Add(Tuple.Create((parsed * 100) + (a * 10) + b, 40))
+                        candidates.Add(Tuple.Create((a * 100) + (parsed * 10) + b, 40))
+                        candidates.Add(Tuple.Create((a * 100) + (b * 10) + parsed, 40))
+                    Next
+                Next
+            End If
+        End If
+
+        Dim bestValue As Integer = -1
+        Dim bestConfidence As Integer = -1
+        Dim bestDelta As Integer = Integer.MaxValue
+        Dim hasReference As Boolean = referenceValue >= 0 AndAlso referenceValue <= 999
+        For Each candidate As Tuple(Of Integer, Integer) In candidates
+            If candidate.Item1 < 0 OrElse candidate.Item1 > 999 Then
+                Continue For
+            End If
+
+            Dim delta As Integer = If(hasReference, Math.Abs(candidate.Item1 - referenceValue), 0)
+            If bestValue < 0 OrElse
+               (hasReference AndAlso delta < bestDelta) OrElse
+               ((Not hasReference OrElse delta = bestDelta) AndAlso candidate.Item2 > bestConfidence) Then
+                bestValue = candidate.Item1
+                bestConfidence = candidate.Item2
+                bestDelta = delta
+            End If
+        Next
+
+        If bestValue < 0 Then
+            Return False
+        End If
+
+        value = bestValue
+        confidence = bestConfidence
+        Return True
     End Function
 
     Private Shared Function IsMapMarkerColor(c As Color) As Boolean
@@ -5247,6 +6230,19 @@ Public Class BotEngine
         Return typedAny
     End Function
 
+    Private Sub PruneRepairMatchTimes(now As DateTime)
+        Dim cutoff As DateTime = now.AddMilliseconds(-RepairConfirmWindowMs)
+        While _repairMatchTimes.Count > 0 AndAlso _repairMatchTimes.Peek() < cutoff
+            _repairMatchTimes.Dequeue()
+        End While
+    End Sub
+
+    Private Sub ResetRepairMatchWindow()
+        _repairMatchTimes.Clear()
+        _repairConfirmCount = 0
+        _repairLastMatchAt = DateTime.MinValue
+    End Sub
+
     Private Shared Function PartyAskCharToKeyName(ch As Char) As String
         Select Case ch
             Case " "c
@@ -5315,18 +6311,19 @@ Public Class BotEngine
             If repairMatched Then
                 _repairClearCount = 0
                 If Not _repairLatched Then
-                    If _repairLastMatchAt = DateTime.MinValue OrElse (now - _repairLastMatchAt).TotalMilliseconds > UnreachableConfirmWindowMs Then
-                        _repairConfirmCount = 1
-                    Else
-                        _repairConfirmCount += 1
-                    End If
+                    _repairMatchTimes.Enqueue(now)
+                    PruneRepairMatchTimes(now)
+                    _repairConfirmCount = _repairMatchTimes.Count
                     _repairLastMatchAt = now
                 Else
                     _repairConfirmCount = 0
                 End If
             Else
-                _repairConfirmCount = 0
-                _repairLastMatchAt = DateTime.MinValue
+                PruneRepairMatchTimes(now)
+                _repairConfirmCount = _repairMatchTimes.Count
+                If _repairConfirmCount = 0 Then
+                    _repairLastMatchAt = DateTime.MinValue
+                End If
                 If _repairLatched Then
                     _repairClearCount += 1
                     If _repairClearCount >= UnreachableClearRequiredCount Then
@@ -5372,9 +6369,12 @@ Public Class BotEngine
             _unreachableConfirmCount = 0
             _unreachableLastMatchAt = DateTime.MinValue
         End If
-        If _repairConfirmCount > 0 AndAlso _repairLastMatchAt <> DateTime.MinValue AndAlso (now - _repairLastMatchAt).TotalMilliseconds > UnreachableConfirmWindowMs Then
-            _repairConfirmCount = 0
-            _repairLastMatchAt = DateTime.MinValue
+        If _repairConfirmCount > 0 Then
+            PruneRepairMatchTimes(now)
+            _repairConfirmCount = _repairMatchTimes.Count
+            If _repairConfirmCount = 0 Then
+                _repairLastMatchAt = DateTime.MinValue
+            End If
         End If
 
         If _unreachableOcrTask IsNot Nothing Then
@@ -6260,7 +7260,7 @@ Public Class BotEngine
         Dim targetRegion As RectRegion = If(role = "mana", mpRegion, hpRegion)
         Dim firstSample As Double = If(role = "mana", mpPercent, hpPercent)
         If firstSample <= 0.25R AndAlso Not IsNearZeroSupportConfirmed(role, hwnd, targetRegion) Then
-            RaiseEvent LogLine($"Support action skipped: waiting for {NearZeroSupportConfirmRequiredCount} consecutive usable {If(role = "mana", "MP", "HP")}=0 frames before {action.KeyName} ({action.Role}).")
+            RaiseEvent LogLine($"Support action skipped: waiting for {GetNearZeroSupportConfirmRequiredCount(role)} consecutive usable {If(role = "mana", "MP", "HP")}=0 frames before {action.KeyName} ({action.Role}).")
             Return False
         End If
 
@@ -6316,7 +7316,7 @@ Public Class BotEngine
     Private Function IsNearZeroSupportConfirmed(role As String, hwnd As IntPtr, targetRegion As RectRegion) As Boolean
         Dim isMana As Boolean = String.Equals(role, "mana", StringComparison.OrdinalIgnoreCase)
         Dim confirmCount As Integer = If(isMana, _mpZeroSupportConfirmCount, _hpZeroSupportConfirmCount)
-        If confirmCount < NearZeroSupportConfirmRequiredCount Then
+        If confirmCount < GetNearZeroSupportConfirmRequiredCount(role) Then
             Return False
         End If
 
@@ -6327,7 +7327,41 @@ Public Class BotEngine
         End If
 
         Dim fullFrameSample As Double = -1
-        Return ConfirmSuddenSupportDropWithFullFrame(hwnd, targetRegion, Not isMana, 0.25R, fullFrameSample)
+        Return ConfirmNearZeroSupportWithFreshFrames(hwnd, targetRegion, Not isMana, fullFrameSample)
+    End Function
+
+    Private Shared Function GetNearZeroSupportConfirmRequiredCount(role As String) As Integer
+        If String.Equals(role, "mana", StringComparison.OrdinalIgnoreCase) Then
+            Return NearZeroManaConfirmRequiredCount
+        End If
+        Return NearZeroSupportConfirmRequiredCount
+    End Function
+
+    Private Function ConfirmNearZeroSupportWithFreshFrames(hwnd As IntPtr, targetRegion As RectRegion, isHp As Boolean, ByRef samplePercent As Double) As Boolean
+        samplePercent = -1
+        If hwnd = IntPtr.Zero OrElse targetRegion Is Nothing Then
+            Return False
+        End If
+
+        For sampleIndex As Integer = 1 To FreshZeroSupportConfirmSamples
+            Using freshFrame As Bitmap = CaptureClient(hwnd)
+                If freshFrame Is Nothing OrElse IsLikelyBlackFrame(freshFrame) Then
+                    samplePercent = -1
+                    Return False
+                End If
+
+                samplePercent = ComputeBarPercent(freshFrame, targetRegion, isHp)
+                If samplePercent > 0.25R Then
+                    Return False
+                End If
+            End Using
+
+            If sampleIndex < FreshZeroSupportConfirmSamples Then
+                Thread.Sleep(FreshZeroSupportConfirmDelayMs)
+            End If
+        Next
+
+        Return True
     End Function
 
     Private Function ConfirmSuddenSupportDropWithFullFrame(hwnd As IntPtr, targetRegion As RectRegion, isHp As Boolean, trigger As Double, ByRef samplePercent As Double) As Boolean
@@ -6385,10 +7419,10 @@ Public Class BotEngine
             MarkKeyUsed(action.KeyName)
             _repairLatched = True
             _repairClearCount = 0
-            _repairConfirmCount = 0
-            _repairLastMatchAt = DateTime.MinValue
+            ResetRepairMatchWindow()
+            _repairTriggerCount += 1
             SetLastAction($"{action.KeyName} (repair)")
-            RaiseEvent LogLine("Repair role triggered after 5 OCR reads of 'is about to break'.")
+            RaiseEvent LogLine("Repair role triggered after 5 OCR reads of 'is about to break' inside the 10-minute rolling window.")
             Return True
         Next
 
@@ -6683,6 +7717,7 @@ Public Class BotEngine
             _status.MapCoordinateText = _lastMapCoordinateText
             _status.MapCoordinateX = _lastMapCoordinateX
             _status.MapCoordinateY = _lastMapCoordinateY
+            _status.MapCoordinateDebugLog = _lastMapCoordinateDebugLog
             _status.ChatOcrText = _lastChatOcrText
             _status.ChatOcrUpdatedAt = _lastChatOcrUpdatedAt
             _status.MapHeading = If(String.IsNullOrWhiteSpace(_lastNavigationKnownHeading), "", $"{_lastNavigationKnownHeading} (from coordinates)")
@@ -6720,10 +7755,22 @@ Public Class BotEngine
             _status.RouteRecordingLastSavedPath = _routeRecordingLastSavedPath
             _status.NavigationReturningToStart = _navigationReturnToStartActive
             _status.NavigationReturnTargetLabel = _navigationReturnTargetNodeLabel
+            _status.HoldPlaceEnabled = _config IsNot Nothing AndAlso _config.HoldPlaceEnabled
+            _status.HoldPlaceActive = _lastHoldPlaceActive
+            _status.HoldPlaceTargetX = _lastHoldPlaceTargetX
+            _status.HoldPlaceTargetY = _lastHoldPlaceTargetY
+            _status.HoldPlaceDistance = _lastHoldPlaceDistance
+            _status.HoldPlaceReason = _lastHoldPlaceReason
             _status.PartySize = _lastPartySize
             _status.PartyAliveCount = _lastPartyAliveCount
             _status.PartyAllAlive = _lastPartyAllAlive
             _status.CharacterName = _lastCharacterName
+            PruneRepairMatchTimes(DateTime.UtcNow)
+            _repairConfirmCount = _repairMatchTimes.Count
+            _status.RepairConfirmCount = _repairConfirmCount
+            _status.RepairConfirmRequiredCount = RepairConfirmRequiredCount
+            _status.RepairConfirmWindowMinutes = Math.Max(1, RepairConfirmWindowMs \ 60000)
+            _status.RepairTriggerCount = _repairTriggerCount
             _status.PerformanceDiagnostics = BuildPerformanceDiagnosticsText()
             _status.EngineRestartCount = _engineRestartCount
             _status.EngineLastRestartUtc = _engineLastRestartUtc
@@ -6750,7 +7797,7 @@ Public Class BotEngine
             Return ""
         End If
 
-        Return $"{status.Running}|{status.WindowFound}|{status.NotAttackingReason}|{status.ErrorMessage}|{status.AgentState}|{status.AgentReason}|{status.AgentGuardrailTriggered}|{status.TargetValid}|{status.MobName}|{status.MobHpText}"
+        Return $"{status.Running}|{status.WindowFound}|{status.NotAttackingReason}|{status.ErrorMessage}|{status.AgentState}|{status.AgentReason}|{status.AgentGuardrailTriggered}|{status.TargetValid}|{status.MobName}|{status.MobHpText}|{status.MapCoordinateText}|{status.MapCoordinateX}|{status.MapCoordinateY}|{status.MapCoordinateConfidence}|{status.MapCoordinateDebugLog}|{status.HoldPlaceActive}|{status.HoldPlaceReason}|{status.HoldPlaceDistance:0.0}|{status.RepairConfirmCount}|{status.RepairTriggerCount}"
     End Function
 
     Private Function CloneStatus(src As BotStatus) As BotStatus
@@ -6775,6 +7822,7 @@ Public Class BotEngine
             .MapCoordinateText = src.MapCoordinateText,
             .MapCoordinateX = src.MapCoordinateX,
             .MapCoordinateY = src.MapCoordinateY,
+            .MapCoordinateDebugLog = src.MapCoordinateDebugLog,
             .ChatOcrText = src.ChatOcrText,
             .ChatOcrUpdatedAt = src.ChatOcrUpdatedAt,
             .MapHeading = src.MapHeading,
@@ -6802,6 +7850,12 @@ Public Class BotEngine
             .NavigationDestinationLabel = src.NavigationDestinationLabel,
             .NavigationReturningToStart = src.NavigationReturningToStart,
             .NavigationReturnTargetLabel = src.NavigationReturnTargetLabel,
+            .HoldPlaceEnabled = src.HoldPlaceEnabled,
+            .HoldPlaceActive = src.HoldPlaceActive,
+            .HoldPlaceTargetX = src.HoldPlaceTargetX,
+            .HoldPlaceTargetY = src.HoldPlaceTargetY,
+            .HoldPlaceDistance = src.HoldPlaceDistance,
+            .HoldPlaceReason = src.HoldPlaceReason,
             .RouteRecordingEnabled = src.RouteRecordingEnabled,
             .RouteRecordingActive = src.RouteRecordingActive,
             .RouteRecordingMapName = src.RouteRecordingMapName,
@@ -6810,6 +7864,10 @@ Public Class BotEngine
             .RouteRecordingStatus = src.RouteRecordingStatus,
             .RouteRecordingLastSavedPath = src.RouteRecordingLastSavedPath,
             .LastAction = src.LastAction,
+            .RepairConfirmCount = src.RepairConfirmCount,
+            .RepairConfirmRequiredCount = src.RepairConfirmRequiredCount,
+            .RepairConfirmWindowMinutes = src.RepairConfirmWindowMinutes,
+            .RepairTriggerCount = src.RepairTriggerCount,
             .NotAttackingReason = src.NotAttackingReason,
             .ErrorMessage = src.ErrorMessage,
             .AgentEnabled = src.AgentEnabled,
@@ -7416,7 +8474,7 @@ Public Class BotEngine
         Return rotate7 Xor rotate17 Xor 1099511628211UL
     End Function
 
-    Private Shared Function ThresholdLumaBitmap(source As Bitmap, threshold As Integer) As Bitmap
+    Private Shared Function ThresholdLumaBitmap(source As Bitmap, threshold As Integer, Optional invert As Boolean = False) As Bitmap
         Dim output As New Bitmap(Math.Max(1, source.Width), Math.Max(1, source.Height), PixelFormat.Format24bppRgb)
         Using src As New BitmapReadBuffer(source)
             Dim rect As New Rectangle(0, 0, output.Width, output.Height)
@@ -7434,7 +8492,11 @@ Public Class BotEngine
                         Dim b As Integer = 0
                         src.GetRgb(x, y, r, g, b)
                         Dim luma As Integer = (r * 30 + g * 59 + b * 11) \ 100
-                        Dim value As Byte = If(luma >= threshold, CByte(255), CByte(0))
+                        Dim isLight As Boolean = luma >= threshold
+                        If invert Then
+                            isLight = Not isLight
+                        End If
+                        Dim value As Byte = If(isLight, CByte(255), CByte(0))
                         Dim index As Integer = row + (x * 3)
                         bytes(index) = value
                         bytes(index + 1) = value
@@ -8188,27 +9250,19 @@ Public Class BotEngine
             Return
         End If
 
-        Dim characterNameFromOcr As String = ReadCharacterInfoFromHpBar(frame, hpRegion)
-        If Not HasDetectedCharacterName(characterNameFromOcr) Then
-            SyncLock _sync
-                _hardcodedVisionStatsInitialSent = False
-                _lastHardcodedVisionStatsSentAt = DateTime.MinValue
-                _hardcodedVisionStatsInFlight = False
-            End SyncLock
-            Return
-        End If
-
-        SyncLock _sync
-            _lastCharacterName = characterNameFromOcr
-        End SyncLock
-
         Dim actualWindowTitle As String = GetWindowTitle(hwnd)
         If String.IsNullOrWhiteSpace(actualWindowTitle) Then
             actualWindowTitle = If(cfg.WindowTitle, "").Trim()
         End If
 
+        Dim characterNameFromOcr As String = ReadCharacterInfoFromHpBar(frame, hpRegion)
         Dim titleCharacterName As String = ExtractCharacterNameFromWindowTitle(actualWindowTitle, cfg.WindowTitle)
-        Dim characterName As String = If(characterNameFromOcr <> "", characterNameFromOcr, titleCharacterName)
+        Dim characterName As String = ResolveVisionStatsCharacterName(characterNameFromOcr, titleCharacterName, actualWindowTitle, cfg.WindowTitle)
+
+        SyncLock _sync
+            _lastCharacterName = If(IsKnownCharacterName(characterName), characterName, "")
+        End SyncLock
+
         Dim hpNumbersText As String = ReadBarNumbersFromRegion(frame, hpRegion)
         Dim mpNumbersText As String = ReadBarNumbersFromRegion(frame, mpRegion)
         Dim visionMobName As String = If(String.IsNullOrWhiteSpace(mobName), "none", mobName.Trim())
@@ -8316,6 +9370,73 @@ Public Class BotEngine
         Return Regex.IsMatch(cleaned, "\p{L}|\p{N}")
     End Function
 
+    Private Shared Function ResolveVisionStatsCharacterName(rawOcrText As String, titleCharacterName As String, actualWindowTitle As String, configuredTitle As String) As String
+        Dim ocrCandidate As String = CleanCharacterNameCandidate(NormalizeCharacterInfoText(rawOcrText))
+        If IsKnownCharacterName(ocrCandidate) AndAlso
+           Not LooksLikeWindowTitleText(ocrCandidate, actualWindowTitle, configuredTitle) Then
+            Return ocrCandidate
+        End If
+
+        Dim titleCandidate As String = CleanCharacterNameCandidate(titleCharacterName)
+        If IsKnownCharacterName(titleCandidate) Then
+            Return titleCandidate
+        End If
+
+        Return "unknown"
+    End Function
+
+    Private Shared Function IsKnownCharacterName(candidate As String) As Boolean
+        Dim cleaned As String = NormalizeCharacterInfoText(candidate)
+        If Not HasDetectedCharacterName(cleaned) Then
+            Return False
+        End If
+        Return Not LooksLikeKathanaGameTitle(cleaned)
+    End Function
+
+    Private Shared Function LooksLikeWindowTitleText(candidate As String, actualWindowTitle As String, configuredTitle As String) As Boolean
+        Dim cleaned As String = NormalizeForLooseTextMatch(candidate)
+        If cleaned = "" Then
+            Return False
+        End If
+
+        If LooksLikeKathanaGameTitle(candidate) Then
+            Return True
+        End If
+
+        Dim actualTitle As String = NormalizeForLooseTextMatch(actualWindowTitle)
+        If actualTitle <> "" AndAlso (cleaned = actualTitle OrElse actualTitle.Contains(cleaned) OrElse cleaned.Contains(actualTitle)) Then
+            Return True
+        End If
+
+        Dim configured As String = NormalizeForLooseTextMatch(configuredTitle)
+        If configured <> "" AndAlso (cleaned = configured OrElse configured.Contains(cleaned) OrElse cleaned.Contains(configured)) Then
+            Return True
+        End If
+
+        Return False
+    End Function
+
+    Private Shared Function LooksLikeKathanaGameTitle(raw As String) As Boolean
+        Dim cleaned As String = NormalizeForLooseTextMatch(raw)
+        If cleaned = "" Then
+            Return False
+        End If
+
+        Return (cleaned.Contains("kathana") AndAlso
+                cleaned.Contains("coming") AndAlso
+                cleaned.Contains("dark")) OrElse
+               (cleaned.Contains("the coming") AndAlso
+                cleaned.Contains("dark"))
+    End Function
+
+    Private Shared Function NormalizeForLooseTextMatch(raw As String) As String
+        Dim cleaned As String = If(raw, "").ToLowerInvariant()
+        cleaned = cleaned.Replace("0", "o").Replace("1", "i")
+        cleaned = Regex.Replace(cleaned, "[^a-z0-9]+", " ")
+        cleaned = Regex.Replace(cleaned, "\s+", " ").Trim()
+        Return cleaned
+    End Function
+
     Private Shared Function GetWindowTitle(hwnd As IntPtr) As String
         If hwnd = IntPtr.Zero Then
             Return ""
@@ -8368,7 +9489,8 @@ Public Class BotEngine
 
     Private Shared Function CleanCharacterNameCandidate(raw As String) As String
         Dim cleaned As String = If(raw, "").Trim(" "c, "-"c, ":"c, "|"c, "["c, "]"c)
-        If cleaned.Equals("Kathana", StringComparison.OrdinalIgnoreCase) OrElse
+        If LooksLikeKathanaGameTitle(cleaned) OrElse
+           cleaned.Equals("Kathana", StringComparison.OrdinalIgnoreCase) OrElse
            cleaned.Equals("The Coming of the Dark Ages", StringComparison.OrdinalIgnoreCase) Then
             Return ""
         End If
