@@ -211,12 +211,18 @@ Public Class Form1
     Private lblRoutePreview As Label
     Private lblRouteRecording As Label
     Private _holdPlaceAnchorSet As Boolean = False
+    Private _updatingHoldPlacePreset As Boolean = False
     Private chkHoldPlaceEnabled As CheckBox
+    Private cboHoldPlaceRestrictiveness As ComboBox
     Private nudHoldPlaceTargetX As NumericUpDown
     Private nudHoldPlaceTargetY As NumericUpDown
     Private nudHoldPlaceRadius As NumericUpDown
     Private nudHoldPlaceMoveBurstMs As NumericUpDown
     Private nudHoldPlaceCorrectionMs As NumericUpDown
+    Private chkHoldPlacePostFightReturn As CheckBox
+    Private chkHoldPlaceCombatSafe As CheckBox
+    Private nudHoldPlaceEmergencyLeash As NumericUpDown
+    Private chkHoldPlaceDirectionLearning As CheckBox
     Private btnHoldPlaceUseCurrent As Button
     Private btnHoldPlaceOverlay As Button
     Private btnHoldPlaceOpenOcrCrops As Button
@@ -949,6 +955,11 @@ Public Class Form1
             AddHandler chkHoldPlaceEnabled.CheckedChanged, AddressOf LiveConfigChanged
             AddHandler chkHoldPlaceEnabled.CheckedChanged, AddressOf PersistListSettingsChanged
         End If
+        If cboHoldPlaceRestrictiveness IsNot Nothing Then
+            AddHandler cboHoldPlaceRestrictiveness.SelectedIndexChanged, AddressOf HoldPlaceRestrictivenessChanged
+            AddHandler cboHoldPlaceRestrictiveness.SelectedIndexChanged, AddressOf LiveConfigChanged
+            AddHandler cboHoldPlaceRestrictiveness.SelectedIndexChanged, AddressOf PersistListSettingsChanged
+        End If
         If nudHoldPlaceTargetX IsNot Nothing Then
             AddHandler nudHoldPlaceTargetX.ValueChanged, AddressOf HoldPlaceAnchorValueChanged
             AddHandler nudHoldPlaceTargetX.ValueChanged, AddressOf LiveConfigChanged
@@ -960,16 +971,39 @@ Public Class Form1
             AddHandler nudHoldPlaceTargetY.ValueChanged, AddressOf PersistListSettingsChanged
         End If
         If nudHoldPlaceRadius IsNot Nothing Then
+            AddHandler nudHoldPlaceRadius.ValueChanged, AddressOf HoldPlaceCustomValueChanged
             AddHandler nudHoldPlaceRadius.ValueChanged, AddressOf LiveConfigChanged
             AddHandler nudHoldPlaceRadius.ValueChanged, AddressOf PersistListSettingsChanged
         End If
         If nudHoldPlaceMoveBurstMs IsNot Nothing Then
+            AddHandler nudHoldPlaceMoveBurstMs.ValueChanged, AddressOf HoldPlaceCustomValueChanged
             AddHandler nudHoldPlaceMoveBurstMs.ValueChanged, AddressOf LiveConfigChanged
             AddHandler nudHoldPlaceMoveBurstMs.ValueChanged, AddressOf PersistListSettingsChanged
         End If
         If nudHoldPlaceCorrectionMs IsNot Nothing Then
+            AddHandler nudHoldPlaceCorrectionMs.ValueChanged, AddressOf HoldPlaceCustomValueChanged
             AddHandler nudHoldPlaceCorrectionMs.ValueChanged, AddressOf LiveConfigChanged
             AddHandler nudHoldPlaceCorrectionMs.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If chkHoldPlacePostFightReturn IsNot Nothing Then
+            AddHandler chkHoldPlacePostFightReturn.CheckedChanged, AddressOf HoldPlaceCustomValueChanged
+            AddHandler chkHoldPlacePostFightReturn.CheckedChanged, AddressOf LiveConfigChanged
+            AddHandler chkHoldPlacePostFightReturn.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
+        If chkHoldPlaceCombatSafe IsNot Nothing Then
+            AddHandler chkHoldPlaceCombatSafe.CheckedChanged, AddressOf HoldPlaceCustomValueChanged
+            AddHandler chkHoldPlaceCombatSafe.CheckedChanged, AddressOf LiveConfigChanged
+            AddHandler chkHoldPlaceCombatSafe.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudHoldPlaceEmergencyLeash IsNot Nothing Then
+            AddHandler nudHoldPlaceEmergencyLeash.ValueChanged, AddressOf HoldPlaceCustomValueChanged
+            AddHandler nudHoldPlaceEmergencyLeash.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler nudHoldPlaceEmergencyLeash.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If chkHoldPlaceDirectionLearning IsNot Nothing Then
+            AddHandler chkHoldPlaceDirectionLearning.CheckedChanged, AddressOf HoldPlaceCustomValueChanged
+            AddHandler chkHoldPlaceDirectionLearning.CheckedChanged, AddressOf LiveConfigChanged
+            AddHandler chkHoldPlaceDirectionLearning.CheckedChanged, AddressOf PersistListSettingsChanged
         End If
         If btnHoldPlaceUseCurrent IsNot Nothing Then
             AddHandler btnHoldPlaceUseCurrent.Click, AddressOf HoldPlaceUseCurrentClicked
@@ -1260,6 +1294,198 @@ Public Class Form1
             End If
         End If
     End Sub
+
+    Private Sub HoldPlaceRestrictivenessChanged(_sender As Object, _e As EventArgs)
+        If _updatingHoldPlacePreset Then
+            Return
+        End If
+
+        Dim mode As String = GetHoldPlaceRestrictivenessMode()
+        If Not mode.Equals("custom", StringComparison.OrdinalIgnoreCase) Then
+            ApplyHoldPlaceRestrictivenessPreset(mode)
+        End If
+    End Sub
+
+    Private Sub HoldPlaceCustomValueChanged(_sender As Object, _e As EventArgs)
+        If _updatingHoldPlacePreset Then
+            Return
+        End If
+
+        SelectHoldPlaceRestrictivenessMode("custom", applyPreset:=False)
+    End Sub
+
+    Private Function GetHoldPlaceRestrictivenessMode() As String
+        If cboHoldPlaceRestrictiveness IsNot Nothing AndAlso cboHoldPlaceRestrictiveness.SelectedItem IsNot Nothing Then
+            Return NormalizeHoldPlaceRestrictivenessMode(cboHoldPlaceRestrictiveness.SelectedItem.ToString())
+        End If
+        Return "custom"
+    End Function
+
+    Private Shared Function NormalizeHoldPlaceRestrictivenessMode(raw As String) As String
+        Dim cleaned As String = If(raw, "").Trim().ToLowerInvariant()
+        If cleaned.StartsWith("low", StringComparison.OrdinalIgnoreCase) Then
+            Return "low"
+        End If
+        If cleaned.StartsWith("medium", StringComparison.OrdinalIgnoreCase) Then
+            Return "medium"
+        End If
+        If cleaned.StartsWith("extra", StringComparison.OrdinalIgnoreCase) OrElse cleaned.Contains("extra high") Then
+            Return "extra_high"
+        End If
+        If cleaned.StartsWith("high", StringComparison.OrdinalIgnoreCase) Then
+            Return "high"
+        End If
+        Return "custom"
+    End Function
+
+    Private Shared Function GetHoldPlaceRestrictivenessLabel(mode As String) As String
+        Select Case NormalizeHoldPlaceRestrictivenessMode(mode)
+            Case "low"
+                Return "Low"
+            Case "medium"
+                Return "Medium (Recommended)"
+            Case "high"
+                Return "High"
+            Case "extra_high"
+                Return "Extra High"
+            Case Else
+                Return "Custom"
+        End Select
+    End Function
+
+    Private Sub SelectHoldPlaceRestrictivenessMode(raw As String, Optional applyPreset As Boolean = False)
+        If cboHoldPlaceRestrictiveness Is Nothing Then
+            Return
+        End If
+
+        Dim mode As String = NormalizeHoldPlaceRestrictivenessMode(raw)
+        Dim label As String = GetHoldPlaceRestrictivenessLabel(mode)
+        Dim selectedIndex As Integer = -1
+        For i As Integer = 0 To cboHoldPlaceRestrictiveness.Items.Count - 1
+            If NormalizeHoldPlaceRestrictivenessMode(cboHoldPlaceRestrictiveness.Items(i).ToString()).Equals(mode, StringComparison.OrdinalIgnoreCase) Then
+                selectedIndex = i
+                Exit For
+            End If
+        Next
+
+        If selectedIndex < 0 Then
+            cboHoldPlaceRestrictiveness.Items.Add(label)
+            selectedIndex = cboHoldPlaceRestrictiveness.Items.Count - 1
+        End If
+
+        _updatingHoldPlacePreset = True
+        Try
+            If cboHoldPlaceRestrictiveness.SelectedIndex <> selectedIndex Then
+                cboHoldPlaceRestrictiveness.SelectedIndex = selectedIndex
+            End If
+        Finally
+            _updatingHoldPlacePreset = False
+        End Try
+
+        If applyPreset AndAlso Not mode.Equals("custom", StringComparison.OrdinalIgnoreCase) Then
+            ApplyHoldPlaceRestrictivenessPreset(mode)
+        End If
+    End Sub
+
+    Private Sub ApplyHoldPlaceRestrictivenessPreset(mode As String)
+        Dim tolerance As Integer = 4
+        Dim moveBurstMs As Integer = 750
+        Dim correctionMs As Integer = 900
+        Dim emergencyLeash As Integer = 60
+        Dim postFightReturn As Boolean = True
+        Dim combatSafe As Boolean = True
+        Dim directionLearning As Boolean = True
+
+        If Not TryGetHoldPlaceRestrictivenessPreset(mode, tolerance, moveBurstMs, correctionMs, emergencyLeash, postFightReturn, combatSafe, directionLearning) Then
+            Return
+        End If
+
+        _updatingHoldPlacePreset = True
+        Try
+            SetNumericControlValue(nudHoldPlaceRadius, CDec(tolerance))
+            SetNumericControlValue(nudHoldPlaceMoveBurstMs, CDec(moveBurstMs))
+            SetNumericControlValue(nudHoldPlaceCorrectionMs, CDec(correctionMs))
+            SetNumericControlValue(nudHoldPlaceEmergencyLeash, CDec(emergencyLeash))
+            If chkHoldPlacePostFightReturn IsNot Nothing Then
+                chkHoldPlacePostFightReturn.Checked = postFightReturn
+            End If
+            If chkHoldPlaceCombatSafe IsNot Nothing Then
+                chkHoldPlaceCombatSafe.Checked = combatSafe
+            End If
+            If chkHoldPlaceDirectionLearning IsNot Nothing Then
+                chkHoldPlaceDirectionLearning.Checked = directionLearning
+            End If
+        Finally
+            _updatingHoldPlacePreset = False
+        End Try
+    End Sub
+
+    Private Function HoldPlaceControlsMatchPreset(mode As String) As Boolean
+        Dim tolerance As Integer = 0
+        Dim moveBurstMs As Integer = 0
+        Dim correctionMs As Integer = 0
+        Dim emergencyLeash As Integer = 0
+        Dim postFightReturn As Boolean = False
+        Dim combatSafe As Boolean = False
+        Dim directionLearning As Boolean = False
+
+        If Not TryGetHoldPlaceRestrictivenessPreset(mode, tolerance, moveBurstMs, correctionMs, emergencyLeash, postFightReturn, combatSafe, directionLearning) Then
+            Return False
+        End If
+        If nudHoldPlaceRadius Is Nothing OrElse nudHoldPlaceMoveBurstMs Is Nothing OrElse nudHoldPlaceCorrectionMs Is Nothing OrElse nudHoldPlaceEmergencyLeash Is Nothing Then
+            Return False
+        End If
+
+        Return CInt(nudHoldPlaceRadius.Value) = tolerance AndAlso
+               CInt(nudHoldPlaceMoveBurstMs.Value) = moveBurstMs AndAlso
+               CInt(nudHoldPlaceCorrectionMs.Value) = correctionMs AndAlso
+               CInt(nudHoldPlaceEmergencyLeash.Value) = emergencyLeash AndAlso
+               (chkHoldPlacePostFightReturn IsNot Nothing AndAlso chkHoldPlacePostFightReturn.Checked = postFightReturn) AndAlso
+               (chkHoldPlaceCombatSafe IsNot Nothing AndAlso chkHoldPlaceCombatSafe.Checked = combatSafe) AndAlso
+               (chkHoldPlaceDirectionLearning IsNot Nothing AndAlso chkHoldPlaceDirectionLearning.Checked = directionLearning)
+    End Function
+
+    Private Shared Function TryGetHoldPlaceRestrictivenessPreset(mode As String,
+                                                                ByRef tolerance As Integer,
+                                                                ByRef moveBurstMs As Integer,
+                                                                ByRef correctionMs As Integer,
+                                                                ByRef emergencyLeash As Integer,
+                                                                ByRef postFightReturn As Boolean,
+                                                                ByRef combatSafe As Boolean,
+                                                                ByRef directionLearning As Boolean) As Boolean
+        postFightReturn = True
+        combatSafe = True
+        directionLearning = True
+
+        Select Case NormalizeHoldPlaceRestrictivenessMode(mode)
+            Case "low"
+                tolerance = 8
+                moveBurstMs = 700
+                correctionMs = 1600
+                emergencyLeash = 95
+                Return True
+            Case "medium"
+                tolerance = 4
+                moveBurstMs = 750
+                correctionMs = 900
+                emergencyLeash = 60
+                Return True
+            Case "high"
+                tolerance = 2
+                moveBurstMs = 800
+                correctionMs = 650
+                emergencyLeash = 40
+                Return True
+            Case "extra_high"
+                tolerance = 1
+                moveBurstMs = 800
+                correctionMs = 350
+                emergencyLeash = 25
+                Return True
+            Case Else
+                Return False
+        End Select
+    End Function
 
     Private Sub HoldPlaceAnchorValueChanged(_sender As Object, _e As EventArgs)
         _holdPlaceAnchorSet = True
@@ -3161,10 +3387,10 @@ Public Class Form1
         tab.Controls.Add(root)
 
         Dim settingsGroup As New GroupBox() With {.Text = "Hold on place", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
-        Dim settingsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Top, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 2, .RowCount = 8}
-        settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 170.0F))
+        Dim settingsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Top, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 2, .RowCount = 13}
+        settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 210.0F))
         settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
-        For i As Integer = 0 To 7
+        For i As Integer = 0 To 12
             settingsLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
         Next
         settingsGroup.Controls.Add(settingsLayout)
@@ -3173,25 +3399,47 @@ Public Class Form1
         settingsLayout.Controls.Add(chkHoldPlaceEnabled, 0, 0)
         settingsLayout.SetColumnSpan(chkHoldPlaceEnabled, 2)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Anchor X", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 1)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Restrictiveness", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 1)
+        cboHoldPlaceRestrictiveness = New ComboBox() With {.DropDownStyle = ComboBoxStyle.DropDownList, .Width = 190, .Margin = New Padding(2)}
+        cboHoldPlaceRestrictiveness.Items.AddRange(New Object() {"Low", "Medium (Recommended)", "High", "Extra High", "Custom"})
+        cboHoldPlaceRestrictiveness.SelectedIndex = 1
+        settingsLayout.Controls.Add(cboHoldPlaceRestrictiveness, 1, 1)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Anchor X", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 2)
         nudHoldPlaceTargetX = New NumericUpDown() With {.Minimum = 0, .Maximum = 999, .Value = 0, .Width = 90, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(nudHoldPlaceTargetX, 1, 1)
+        settingsLayout.Controls.Add(nudHoldPlaceTargetX, 1, 2)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Anchor Y", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 2)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Anchor Y", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 3)
         nudHoldPlaceTargetY = New NumericUpDown() With {.Minimum = 0, .Maximum = 999, .Value = 0, .Width = 90, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(nudHoldPlaceTargetY, 1, 2)
+        settingsLayout.Controls.Add(nudHoldPlaceTargetY, 1, 3)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Tolerance", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 3)
-        nudHoldPlaceRadius = New NumericUpDown() With {.Minimum = 0, .Maximum = 25, .Value = 2, .Width = 90, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(nudHoldPlaceRadius, 1, 3)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Tolerance", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 4)
+        nudHoldPlaceRadius = New NumericUpDown() With {.Minimum = 0, .Maximum = 25, .Value = 4, .Width = 90, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(nudHoldPlaceRadius, 1, 4)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Move Burst (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 4)
-        nudHoldPlaceMoveBurstMs = New NumericUpDown() With {.Minimum = 20, .Maximum = 800, .Increment = 10, .Value = 160, .Width = 90, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(nudHoldPlaceMoveBurstMs, 1, 4)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Move Burst (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 5)
+        nudHoldPlaceMoveBurstMs = New NumericUpDown() With {.Minimum = 20, .Maximum = 800, .Increment = 10, .Value = 750, .Width = 90, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(nudHoldPlaceMoveBurstMs, 1, 5)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Correction (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 5)
-        nudHoldPlaceCorrectionMs = New NumericUpDown() With {.Minimum = 150, .Maximum = 5000, .Increment = 50, .Value = 650, .Width = 90, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(nudHoldPlaceCorrectionMs, 1, 5)
+        settingsLayout.Controls.Add(New Label() With {.Text = "Correction (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 6)
+        nudHoldPlaceCorrectionMs = New NumericUpDown() With {.Minimum = 150, .Maximum = 5000, .Increment = 50, .Value = 900, .Width = 90, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(nudHoldPlaceCorrectionMs, 1, 6)
+
+        chkHoldPlacePostFightReturn = New CheckBox() With {.Text = "Return before retargeting after fight", .Dock = DockStyle.Fill, .Checked = True, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(chkHoldPlacePostFightReturn, 0, 7)
+        settingsLayout.SetColumnSpan(chkHoldPlacePostFightReturn, 2)
+
+        chkHoldPlaceCombatSafe = New CheckBox() With {.Text = "During combat: emergency leash only", .Dock = DockStyle.Fill, .Checked = True, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(chkHoldPlaceCombatSafe, 0, 8)
+        settingsLayout.SetColumnSpan(chkHoldPlaceCombatSafe, 2)
+
+        settingsLayout.Controls.Add(New Label() With {.Text = "Emergency Leash", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 9)
+        nudHoldPlaceEmergencyLeash = New NumericUpDown() With {.Minimum = 5, .Maximum = 200, .Increment = 5, .Value = 60, .Width = 90, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(nudHoldPlaceEmergencyLeash, 1, 9)
+
+        chkHoldPlaceDirectionLearning = New CheckBox() With {.Text = "Learn direction after corrections", .Dock = DockStyle.Fill, .Checked = True, .Margin = New Padding(2)}
+        settingsLayout.Controls.Add(chkHoldPlaceDirectionLearning, 0, 10)
+        settingsLayout.SetColumnSpan(chkHoldPlaceDirectionLearning, 2)
 
         Dim buttonPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .Margin = New Padding(2)}
         btnHoldPlaceUseCurrent = New Button() With {.Text = "Use Current", .AutoSize = True, .BackColor = Color.FromArgb(30, 120, 80), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat}
@@ -3200,16 +3448,16 @@ Public Class Form1
         buttonPanel.Controls.Add(btnHoldPlaceUseCurrent)
         buttonPanel.Controls.Add(btnHoldPlaceOverlay)
         buttonPanel.Controls.Add(btnHoldPlaceOpenOcrCrops)
-        settingsLayout.Controls.Add(buttonPanel, 1, 6)
+        settingsLayout.Controls.Add(buttonPanel, 1, 11)
 
         Dim note As New Label() With {
-            .Text = "Uses calibrated map_coordinate_x_rect and map_coordinate_y_rect.",
+            .Text = "Presets: Low = loose, Medium = recommended, High/Extra High = tighter leash and faster return. Editing values switches to Custom.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .AutoSize = True,
             .Margin = New Padding(2, 8, 2, 2)
         }
-        settingsLayout.Controls.Add(note, 0, 7)
+        settingsLayout.Controls.Add(note, 0, 12)
         settingsLayout.SetColumnSpan(note, 2)
 
         Dim statusGroup As New GroupBox() With {.Text = "Runtime", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
@@ -6022,6 +6270,11 @@ Public Class Form1
             $"StallTimeoutMs: {If(nudNavigationStallTimeoutMs IsNot Nothing, nudNavigationStallTimeoutMs.Value.ToString(), "6500")}{Environment.NewLine}" &
             $"RepathOnStuck: {If(chkNavigationRepathOnStuck IsNot Nothing AndAlso chkNavigationRepathOnStuck.Checked, "True", "False")}{Environment.NewLine}" &
             $"ReturnToStart: {If(chkNavigationReturnToStart IsNot Nothing AndAlso chkNavigationReturnToStart.Checked, "True", "False")}{Environment.NewLine}" &
+            $"HoldPlace: {If(chkHoldPlaceEnabled IsNot Nothing AndAlso chkHoldPlaceEnabled.Checked, "Enabled", "Disabled")} | Preset: {GetHoldPlaceRestrictivenessLabel(GetHoldPlaceRestrictivenessMode())} | " &
+            $"PostFight: {If(chkHoldPlacePostFightReturn Is Nothing OrElse chkHoldPlacePostFightReturn.Checked, "True", "False")} | " &
+            $"CombatSafe: {If(chkHoldPlaceCombatSafe Is Nothing OrElse chkHoldPlaceCombatSafe.Checked, "True", "False")} | " &
+            $"Leash: {If(nudHoldPlaceEmergencyLeash IsNot Nothing, nudHoldPlaceEmergencyLeash.Value.ToString(), "60")} | " &
+            $"DirectionLearning: {If(chkHoldPlaceDirectionLearning Is Nothing OrElse chkHoldPlaceDirectionLearning.Checked, "True", "False")}{Environment.NewLine}" &
             $"RouteStartNode: {ExtractNavigationNodeId(If(cboNavigationStartNode IsNot Nothing, cboNavigationStartNode.SelectedItem, Nothing))}{Environment.NewLine}" &
             $"RouteTargetNode: {ExtractNavigationNodeId(If(cboNavigationTargetNode IsNot Nothing, cboNavigationTargetNode.SelectedItem, Nothing))}{Environment.NewLine}" &
             $"RouteRecordingActive: {st.RouteRecordingActive}{Environment.NewLine}" &
@@ -7042,9 +7295,14 @@ Public Class Form1
         cfg.HoldPlaceAnchorSet = _holdPlaceAnchorSet
         cfg.HoldPlaceTargetX = If(_holdPlaceAnchorSet, CInt(If(nudHoldPlaceTargetX IsNot Nothing, nudHoldPlaceTargetX.Value, -1D)), -1)
         cfg.HoldPlaceTargetY = If(_holdPlaceAnchorSet, CInt(If(nudHoldPlaceTargetY IsNot Nothing, nudHoldPlaceTargetY.Value, -1D)), -1)
-        cfg.HoldPlaceRadius = CInt(If(nudHoldPlaceRadius IsNot Nothing, nudHoldPlaceRadius.Value, 2D))
-        cfg.HoldPlaceMoveBurstMs = CInt(If(nudHoldPlaceMoveBurstMs IsNot Nothing, nudHoldPlaceMoveBurstMs.Value, 160D))
-        cfg.HoldPlaceCorrectionIntervalMs = CInt(If(nudHoldPlaceCorrectionMs IsNot Nothing, nudHoldPlaceCorrectionMs.Value, 650D))
+        cfg.HoldPlaceRestrictivenessMode = GetHoldPlaceRestrictivenessMode()
+        cfg.HoldPlaceRadius = CInt(If(nudHoldPlaceRadius IsNot Nothing, nudHoldPlaceRadius.Value, 4D))
+        cfg.HoldPlaceMoveBurstMs = CInt(If(nudHoldPlaceMoveBurstMs IsNot Nothing, nudHoldPlaceMoveBurstMs.Value, 750D))
+        cfg.HoldPlaceCorrectionIntervalMs = CInt(If(nudHoldPlaceCorrectionMs IsNot Nothing, nudHoldPlaceCorrectionMs.Value, 900D))
+        cfg.HoldPlacePostFightReturnEnabled = (chkHoldPlacePostFightReturn Is Nothing OrElse chkHoldPlacePostFightReturn.Checked)
+        cfg.HoldPlaceCombatSafeEnabled = (chkHoldPlaceCombatSafe Is Nothing OrElse chkHoldPlaceCombatSafe.Checked)
+        cfg.HoldPlaceEmergencyLeashDistance = CInt(If(nudHoldPlaceEmergencyLeash IsNot Nothing, nudHoldPlaceEmergencyLeash.Value, 60D))
+        cfg.HoldPlaceDirectionLearningEnabled = (chkHoldPlaceDirectionLearning Is Nothing OrElse chkHoldPlaceDirectionLearning.Checked)
         cfg.ChatTranslationEnabled = (chkChatTranslationEnabled IsNot Nothing AndAlso chkChatTranslationEnabled.Checked)
         cfg.ChatTranslationOverlayEnabled = (chkChatTranslationOverlay IsNot Nothing AndAlso chkChatTranslationOverlay.Checked)
         cfg.DisabledCalibrationRegionOverlays = BuildDisabledCalibrationRegionOverlays()
@@ -8263,6 +8521,21 @@ Public Class Form1
         SetNumericControlValue(nudHoldPlaceRadius, CDec(Math.Max(0, Math.Min(25, cfg.HoldPlaceRadius))))
         SetNumericControlValue(nudHoldPlaceMoveBurstMs, CDec(Math.Max(20, Math.Min(800, cfg.HoldPlaceMoveBurstMs))))
         SetNumericControlValue(nudHoldPlaceCorrectionMs, CDec(Math.Max(150, Math.Min(5000, cfg.HoldPlaceCorrectionIntervalMs))))
+        If chkHoldPlacePostFightReturn IsNot Nothing Then
+            chkHoldPlacePostFightReturn.Checked = cfg.HoldPlacePostFightReturnEnabled
+        End If
+        If chkHoldPlaceCombatSafe IsNot Nothing Then
+            chkHoldPlaceCombatSafe.Checked = cfg.HoldPlaceCombatSafeEnabled
+        End If
+        SetNumericControlValue(nudHoldPlaceEmergencyLeash, CDec(Math.Max(5, Math.Min(200, If(cfg.HoldPlaceEmergencyLeashDistance > 0, cfg.HoldPlaceEmergencyLeashDistance, 60)))))
+        If chkHoldPlaceDirectionLearning IsNot Nothing Then
+            chkHoldPlaceDirectionLearning.Checked = cfg.HoldPlaceDirectionLearningEnabled
+        End If
+        Dim savedHoldPlaceMode As String = NormalizeHoldPlaceRestrictivenessMode(cfg.HoldPlaceRestrictivenessMode)
+        If Not savedHoldPlaceMode.Equals("custom", StringComparison.OrdinalIgnoreCase) AndAlso Not HoldPlaceControlsMatchPreset(savedHoldPlaceMode) Then
+            savedHoldPlaceMode = "custom"
+        End If
+        SelectHoldPlaceRestrictivenessMode(savedHoldPlaceMode, applyPreset:=False)
         If chkChatTranslationEnabled IsNot Nothing Then
             chkChatTranslationEnabled.Checked = cfg.ChatTranslationEnabled
         End If

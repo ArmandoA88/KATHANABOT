@@ -278,9 +278,14 @@ Public Class BotConfig
     Public Property HoldPlaceAnchorSet As Boolean = False
     Public Property HoldPlaceTargetX As Integer = -1
     Public Property HoldPlaceTargetY As Integer = -1
-    Public Property HoldPlaceRadius As Integer = 2
-    Public Property HoldPlaceMoveBurstMs As Integer = 160
-    Public Property HoldPlaceCorrectionIntervalMs As Integer = 650
+    Public Property HoldPlaceRestrictivenessMode As String = "medium"
+    Public Property HoldPlaceRadius As Integer = 4
+    Public Property HoldPlaceMoveBurstMs As Integer = 750
+    Public Property HoldPlaceCorrectionIntervalMs As Integer = 900
+    Public Property HoldPlacePostFightReturnEnabled As Boolean = True
+    Public Property HoldPlaceCombatSafeEnabled As Boolean = True
+    Public Property HoldPlaceEmergencyLeashDistance As Integer = 60
+    Public Property HoldPlaceDirectionLearningEnabled As Boolean = True
     Public Property RouteRecordingEnabled As Boolean = False
     Public Property RouteRecordingName As String = "jina_route"
     Public Property RouteRecordingMinConfidencePercent As Integer = 90
@@ -609,6 +614,10 @@ Public Class BotEngine
     Private Const RupiahsOcrMinIntervalMs As Integer = 5000
     Private Const MapCoordinateOcrMinIntervalMs As Integer = 900
     Private Const HoldPlaceMaxCoordinateAcceptanceDistance As Double = 100.0R
+    Private Const MapCoordinateFarJumpConfirmRequiredCount As Integer = 2
+    Private Const MapCoordinateFarJumpConfirmMaxDistance As Double = 4.0R
+    Private Const MapCoordinateFarJumpConfirmWindowMs As Integer = 8000
+    Private Const MapCoordinateFarJumpMinConfidence As Integer = 20
     Private Const MaxMapCoordinateDebugLines As Integer = 80
     Private Const MapMarkerScanMinIntervalMs As Integer = 250
     Private Shared ReadOnly MapCoordinateOcrDiagnosticsDirectory As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "KathanaBotCoordinateOcr")
@@ -804,6 +813,11 @@ Public Class BotEngine
     Private _lastMapCoordinateX As Integer = -1
     Private _lastMapCoordinateY As Integer = -1
     Private _lastMapCoordinateConfidence As Integer = 0
+    Private _pendingFarMapCoordinateX As Integer = -1
+    Private _pendingFarMapCoordinateY As Integer = -1
+    Private _pendingFarMapCoordinateCount As Integer = 0
+    Private _pendingFarMapCoordinateFirstAt As DateTime = DateTime.MinValue
+    Private _pendingFarMapCoordinateLastAt As DateTime = DateTime.MinValue
     Private ReadOnly _mapCoordinateDebugLines As New Queue(Of String)()
     Private _lastMapCoordinateDebugLog As String = ""
     Private _lastChatOcrAt As DateTime = DateTime.MinValue
@@ -858,6 +872,7 @@ Public Class BotEngine
     Private _lastTravelInputPoseX As Integer = -1
     Private _lastTravelInputPoseY As Integer = -1
     Private _lastTravelInputAt As DateTime = DateTime.MinValue
+    Private _lastTravelInputIsHoldCorrection As Boolean = False
     Private _lastHoldPlaceMoveAt As DateTime = DateTime.MinValue
     Private _lastHoldPlaceActive As Boolean = False
     Private _lastHoldPlaceTargetX As Integer = -1
@@ -1147,6 +1162,7 @@ Public Class BotEngine
             _lastTravelInputPoseX = -1
             _lastTravelInputPoseY = -1
             _lastTravelInputAt = DateTime.MinValue
+            _lastTravelInputIsHoldCorrection = False
             ClearHoldPlaceRuntime()
             _navigationCommittedWaypointId = ""
             _navigationCommittedWaypointLabel = ""
@@ -1942,7 +1958,12 @@ Public Class BotEngine
                 If Not actionSent Then
                     If cfg.HoldPlaceEnabled Then
                         Dim holdReason As String = ""
-                        If TryHandleHoldPlace(cfg, hwnd, now, holdReason) Then
+                        Dim holdCombatActive As Boolean = targetWindowVisible OrElse targetValid OrElse effectiveTargetValid OrElse combatLockActive OrElse targetSignalHoldActive
+                        Dim holdBlocksRetarget As Boolean = False
+                        If TryHandleHoldPlace(cfg, hwnd, now, holdCombatActive, holdReason, holdBlocksRetarget) Then
+                            actionSent = True
+                            reason = holdReason
+                        ElseIf holdBlocksRetarget Then
                             actionSent = True
                             reason = holdReason
                         ElseIf String.IsNullOrWhiteSpace(reason) AndAlso Not String.IsNullOrWhiteSpace(holdReason) Then
@@ -2732,6 +2753,7 @@ Public Class BotEngine
         _lastMapCoordinateX = -1
         _lastMapCoordinateY = -1
         _lastMapCoordinateConfidence = 0
+        ClearPendingFarMapCoordinate()
         _lastMapMarkerScanAt = DateTime.MinValue
         _lastMapMarkerDetected = False
         _lastMapMarkerX = -1
@@ -2792,6 +2814,7 @@ Public Class BotEngine
         _lastTravelInputPoseX = -1
         _lastTravelInputPoseY = -1
         _lastTravelInputAt = DateTime.MinValue
+        _lastTravelInputIsHoldCorrection = False
         _navigationCommittedWaypointId = ""
         _navigationCommittedWaypointLabel = ""
         _lastNavigationMapToggleAt = DateTime.MinValue
@@ -2831,6 +2854,14 @@ Public Class BotEngine
             _mapCoordinateDebugLines.Dequeue()
         End While
         _lastMapCoordinateDebugLog = String.Join(Environment.NewLine, _mapCoordinateDebugLines)
+    End Sub
+
+    Private Sub ClearPendingFarMapCoordinate()
+        _pendingFarMapCoordinateX = -1
+        _pendingFarMapCoordinateY = -1
+        _pendingFarMapCoordinateCount = 0
+        _pendingFarMapCoordinateFirstAt = DateTime.MinValue
+        _pendingFarMapCoordinateLastAt = DateTime.MinValue
     End Sub
 
     Private Structure PartyListSummary
@@ -2926,7 +2957,9 @@ Public Class BotEngine
 
             If xOk AndAlso yOk Then
                 Dim rejectionText As String = ""
-                If Not IsMapCoordinateCandidateAccepted(x, y, cfg, rejectionText) Then
+                Dim acceptedByConfirmedJump As Boolean = False
+                Dim coordinateConfidence As Integer = Math.Min(xConfidence, yConfidence)
+                If Not IsMapCoordinateCandidateAccepted(x, y, cfg, now, coordinateConfidence, acceptedByConfirmedJump, rejectionText) Then
                     AppendMapCoordinateDebug(now, rejectionText)
                     _lastMapCoordinateText = rejectionText
                     If _lastMapCoordinateX < 0 OrElse _lastMapCoordinateY < 0 Then
@@ -2938,8 +2971,12 @@ Public Class BotEngine
                 _lastMapCoordinateText = $"{x:000}/{y:000}"
                 _lastMapCoordinateX = x
                 _lastMapCoordinateY = y
-                _lastMapCoordinateConfidence = Math.Min(xConfidence, yConfidence)
-                AppendMapCoordinateDebug(now, $"accepted: {_lastMapCoordinateText} confidence {_lastMapCoordinateConfidence}%.")
+                _lastMapCoordinateConfidence = coordinateConfidence
+                If acceptedByConfirmedJump Then
+                    AppendMapCoordinateDebug(now, $"accepted confirmed far jump: {_lastMapCoordinateText} confidence {_lastMapCoordinateConfidence}%.")
+                Else
+                    AppendMapCoordinateDebug(now, $"accepted: {_lastMapCoordinateText} confidence {_lastMapCoordinateConfidence}%.")
+                End If
             Else
                 _lastMapCoordinateText = FormatRawMapCoordinateText(rawX, rawY)
                 AppendMapCoordinateDebug(now, $"not accepted: need exactly 3 digits for X and 3 digits for Y; raw={If(String.IsNullOrWhiteSpace(_lastMapCoordinateText), "<blank>", _lastMapCoordinateText)}.")
@@ -2975,29 +3012,86 @@ Public Class BotEngine
         Return False
     End Function
 
-    Private Function IsMapCoordinateCandidateAccepted(x As Integer, y As Integer, cfg As BotConfig, ByRef rejectionText As String) As Boolean
+    Private Function IsMapCoordinateCandidateAccepted(x As Integer, y As Integer, cfg As BotConfig, now As DateTime, confidence As Integer, ByRef acceptedByConfirmedJump As Boolean, ByRef rejectionText As String) As Boolean
         rejectionText = ""
+        acceptedByConfirmedJump = False
         If x < 0 OrElse x > 999 OrElse y < 0 OrElse y > 999 Then
             rejectionText = $"rejected map coordinate {x:000}/{y:000}: outside 000-999."
             Return False
         End If
 
         If cfg Is Nothing OrElse Not cfg.HoldPlaceEnabled Then
+            ClearPendingFarMapCoordinate()
             Return True
         End If
 
         Dim referenceX As Integer = -1
         Dim referenceY As Integer = -1
         If Not TryGetMapCoordinateAcceptanceReference(cfg, referenceX, referenceY) Then
+            ClearPendingFarMapCoordinate()
             Return True
         End If
 
         Dim distance As Double = CalculateDistance(x, y, referenceX, referenceY)
         If distance <= HoldPlaceMaxCoordinateAcceptanceDistance Then
+            ClearPendingFarMapCoordinate()
             Return True
         End If
 
-        rejectionText = $"rejected map coordinate {x:000}/{y:000}: {distance:0} units from {referenceX:000}/{referenceY:000} (> {HoldPlaceMaxCoordinateAcceptanceDistance:0})."
+        If x = 0 AndAlso y = 0 Then
+            rejectionText = $"rejected map coordinate 000/000: blank-looking coordinate read; keeping previous coordinate."
+            Return False
+        End If
+
+        Dim confirmationCount As Integer = 0
+        Dim confirmationReason As String = ""
+        If IsConfirmedFarMapCoordinateJump(x, y, now, confidence, confirmationCount, confirmationReason) Then
+            acceptedByConfirmedJump = True
+            ClearPendingFarMapCoordinate()
+            Return True
+        End If
+
+        rejectionText = $"rejected map coordinate {x:000}/{y:000}: {distance:0} units from {referenceX:000}/{referenceY:000} (> {HoldPlaceMaxCoordinateAcceptanceDistance:0}); {confirmationReason}"
+        Return False
+    End Function
+
+    Private Function IsConfirmedFarMapCoordinateJump(x As Integer, y As Integer, now As DateTime, confidence As Integer, ByRef confirmationCount As Integer, ByRef confirmationReason As String) As Boolean
+        confirmationCount = 0
+        confirmationReason = ""
+
+        If confidence < MapCoordinateFarJumpMinConfidence Then
+            confirmationReason = $"far-jump confirmation skipped: confidence {confidence}% < {MapCoordinateFarJumpMinConfidence}%."
+            Return False
+        End If
+
+        Dim resetCandidate As Boolean =
+            _pendingFarMapCoordinateX < 0 OrElse
+            _pendingFarMapCoordinateY < 0 OrElse
+            _pendingFarMapCoordinateFirstAt = DateTime.MinValue OrElse
+            (now - _pendingFarMapCoordinateFirstAt).TotalMilliseconds > MapCoordinateFarJumpConfirmWindowMs
+
+        If Not resetCandidate Then
+            Dim pendingDistance As Double = CalculateDistance(x, y, _pendingFarMapCoordinateX, _pendingFarMapCoordinateY)
+            resetCandidate = pendingDistance > MapCoordinateFarJumpConfirmMaxDistance
+        End If
+
+        If resetCandidate Then
+            _pendingFarMapCoordinateX = x
+            _pendingFarMapCoordinateY = y
+            _pendingFarMapCoordinateCount = 1
+            _pendingFarMapCoordinateFirstAt = now
+        Else
+            _pendingFarMapCoordinateCount += 1
+        End If
+
+        _pendingFarMapCoordinateLastAt = now
+        confirmationCount = _pendingFarMapCoordinateCount
+        If confirmationCount >= MapCoordinateFarJumpConfirmRequiredCount Then
+            confirmationReason = $"far-jump confirmation {confirmationCount}/{MapCoordinateFarJumpConfirmRequiredCount} within {MapCoordinateFarJumpConfirmMaxDistance:0} units."
+            Return True
+        End If
+
+        confirmationReason = $"waiting for far-jump confirmation {confirmationCount}/{MapCoordinateFarJumpConfirmRequiredCount} within {MapCoordinateFarJumpConfirmWindowMs \ 1000}s."
         Return False
     End Function
 
@@ -3987,12 +4081,17 @@ Public Class BotEngine
         Dim defaultDirection As String = GetDefaultDirectionForKey(_lastTravelInputKey)
         Dim defaultIndex As Integer = CardinalDirectionIndex(defaultDirection)
         Dim actualIndex As Integer = CardinalDirectionIndex(actualDirection)
+        Dim holdDirectionLearning As Boolean =
+            _lastTravelInputIsHoldCorrection AndAlso
+            _config IsNot Nothing AndAlso
+            _config.HoldPlaceDirectionLearningEnabled
+        Dim requiredConfirmations As Integer = If(holdDirectionLearning, 1, NavigationRotationConfirmationsRequired)
         If defaultIndex >= 0 AndAlso actualIndex >= 0 Then
             Dim observedRotation As Integer = (actualIndex - defaultIndex + 4) Mod 4
             If observedRotation = _navigationRotationQuarterTurns Then
                 _navigationRotationCandidateQuarterTurns = -1
                 _navigationRotationCandidateCount = 0
-            ElseIf _lastNavigationRotationChangeAt <> DateTime.MinValue AndAlso (now - _lastNavigationRotationChangeAt).TotalMilliseconds < NavigationRotationChangeCooldownMs Then
+            ElseIf (Not holdDirectionLearning) AndAlso _lastNavigationRotationChangeAt <> DateTime.MinValue AndAlso (now - _lastNavigationRotationChangeAt).TotalMilliseconds < NavigationRotationChangeCooldownMs Then
                 ' Hold the current mapping briefly so a single noisy sample does not jerk travel.
             Else
                 If _navigationRotationCandidateQuarterTurns <> observedRotation Then
@@ -4002,7 +4101,7 @@ Public Class BotEngine
                     _navigationRotationCandidateCount += 1
                 End If
 
-                If _navigationRotationCandidateCount >= NavigationRotationConfirmationsRequired Then
+                If _navigationRotationCandidateCount >= requiredConfirmations Then
                     _navigationRotationQuarterTurns = observedRotation
                     _lastNavigationRotationChangeAt = now
                     _navigationRotationCandidateQuarterTurns = -1
@@ -4021,6 +4120,7 @@ Public Class BotEngine
         _lastTravelInputPoseX = -1
         _lastTravelInputPoseY = -1
         _lastTravelInputAt = DateTime.MinValue
+        _lastTravelInputIsHoldCorrection = False
     End Sub
 
     Private Sub UpdateRouteRecording(cfg As BotConfig, now As DateTime)
@@ -5100,6 +5200,7 @@ Public Class BotEngine
             _lastTravelInputPoseX = _lastNavigationKnownX
             _lastTravelInputPoseY = _lastNavigationKnownY
             _lastTravelInputAt = DateTime.UtcNow
+            _lastTravelInputIsHoldCorrection = False
             reason = $"Moving toward {plan.NextWaypoint.Label}: want {primaryDirection}, using {primaryKey}."
             Return True
         End If
@@ -5107,8 +5208,9 @@ Public Class BotEngine
         Return False
     End Function
 
-    Private Function TryHandleHoldPlace(cfg As BotConfig, hwnd As IntPtr, now As DateTime, ByRef reason As String) As Boolean
+    Private Function TryHandleHoldPlace(cfg As BotConfig, hwnd As IntPtr, now As DateTime, combatActive As Boolean, ByRef reason As String, ByRef blocksRetarget As Boolean) As Boolean
         reason = ""
+        blocksRetarget = False
         If cfg Is Nothing OrElse Not cfg.HoldPlaceEnabled OrElse hwnd = IntPtr.Zero Then
             ClearHoldPlaceRuntime()
             Return False
@@ -5144,9 +5246,22 @@ Public Class BotEngine
             Return False
         End If
 
+        Dim configuredLeash As Integer = Math.Max(0, cfg.HoldPlaceEmergencyLeashDistance)
+        Dim emergencyLeash As Integer = Math.Max(radius + 1, configuredLeash)
+        Dim emergencyCorrection As Boolean = configuredLeash > 0 AndAlso distance >= emergencyLeash
+        Dim postFightReturn As Boolean = cfg.HoldPlacePostFightReturnEnabled AndAlso Not combatActive
+        blocksRetarget = postFightReturn
+
+        If combatActive AndAlso cfg.HoldPlaceCombatSafeEnabled AndAlso Not emergencyCorrection Then
+            reason = $"Hold on place: combat active; normal correction waits until target clears or distance reaches leash {emergencyLeash}."
+            SetHoldPlaceRuntime(False, targetX, targetY, distance, reason)
+            Return False
+        End If
+
         Dim correctionIntervalMs As Integer = Math.Max(150, cfg.HoldPlaceCorrectionIntervalMs)
         If _lastHoldPlaceMoveAt <> DateTime.MinValue AndAlso (now - _lastHoldPlaceMoveAt).TotalMilliseconds < correctionIntervalMs Then
-            reason = $"Hold on place: correcting back to {targetX:000}/{targetY:000}; current {_lastMapCoordinateX:000}/{_lastMapCoordinateY:000}."
+            Dim correctionMode As String = If(emergencyCorrection, "emergency leash", If(postFightReturn, "post-fight return", "correction"))
+            reason = $"Hold on place: {correctionMode} waiting for correction interval; current {_lastMapCoordinateX:000}/{_lastMapCoordinateY:000}, distance {distance:0.0}."
             SetHoldPlaceRuntime(True, targetX, targetY, distance, reason)
             Return False
         End If
@@ -5172,14 +5287,20 @@ Public Class BotEngine
         Dim primaryBurstMs As Integer = GetPreciseTravelBurstMs(baseBurstMs, primaryDistance)
         If SendKey(hwnd, primaryKey, primaryBurstMs) Then
             MarkKeyUsed(primaryKey)
-            SetLastAction($"{primaryKey} (hold on place)")
+            Dim correctionMode As String = If(emergencyCorrection, "emergency leash", If(postFightReturn, "post-fight return", If(combatActive, "combat correction", "hold correction")))
+            SetLastAction($"{primaryKey} (hold {correctionMode})")
             _lastHoldPlaceMoveAt = now
-            _lastTravelInputKey = primaryKey
-            _lastTravelInputDesiredDirection = primaryDirection
-            _lastTravelInputPoseX = _lastNavigationKnownX
-            _lastTravelInputPoseY = _lastNavigationKnownY
-            _lastTravelInputAt = now
-            reason = $"Hold on place: returning to {targetX:000}/{targetY:000}; current {_lastMapCoordinateX:000}/{_lastMapCoordinateY:000}, using {primaryKey}."
+            If cfg.HoldPlaceDirectionLearningEnabled Then
+                _lastTravelInputKey = primaryKey
+                _lastTravelInputDesiredDirection = primaryDirection
+                _lastTravelInputPoseX = _lastMapCoordinateX
+                _lastTravelInputPoseY = _lastMapCoordinateY
+                _lastTravelInputAt = now
+                _lastTravelInputIsHoldCorrection = True
+            Else
+                ClearPendingNavigationTravelInput()
+            End If
+            reason = $"Hold on place: {correctionMode} to {targetX:000}/{targetY:000}; current {_lastMapCoordinateX:000}/{_lastMapCoordinateY:000}, distance {distance:0.0}, using {primaryKey}."
             SetHoldPlaceRuntime(True, targetX, targetY, distance, reason)
             Return True
         End If
