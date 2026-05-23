@@ -139,6 +139,8 @@ Public Class Form1
 
     Private dgvCombat As DataGridView
     Private chkMonsterFilter As CheckBox
+    Private chkMonsterWhitelistMode As CheckBox
+    Private chkMonsterConfirmOnce As CheckBox
     Private chkLootPickup As CheckBox
     Private chkLootNameAutoPickup As CheckBox
     Private chkLootNamePickupRestoreCursor As CheckBox
@@ -363,6 +365,7 @@ Public Class Form1
     Private Const NotificationProviderDiscord As String = "discord"
     Private Shared ReadOnly StatusAliveColor As Color = Color.FromArgb(0, 230, 65)
     Private Shared ReadOnly StatusStoppedOrDeadColor As Color = Color.FromArgb(235, 0, 0)
+    Private Shared ReadOnly BotRunningColor As Color = Color.FromArgb(0, 170, 70)
     Private Const DefaultNtfyTopicName As String = "Katana12345"
     Private Const DefaultPartyAskCommand As String = "add"
     Private Const DefaultLootNameMatchThresholdPercent As Integer = 80
@@ -507,6 +510,8 @@ Public Class Form1
 
     Private Class PersistedListState
         Public Property MonsterFilterEnabled As Boolean = True
+        Public Property MonsterFilterMode As String = "blacklist"
+        Public Property MonsterFilterConfirmReads As Integer = 2
         Public Property LootPickupEnabled As Boolean = False
         Public Property LootPickupSeconds As Decimal = 4D
         Public Property LootNameMatchThresholdPercent As Decimal = 80D
@@ -807,7 +812,16 @@ Public Class Form1
             AddHandler nudLootNameMatchThreshold.ValueChanged, AddressOf LiveConfigChanged
         End If
         AddHandler nudAlarmVolume.ValueChanged, AddressOf LiveConfigChanged
+        AddHandler chkMonsterFilter.CheckedChanged, AddressOf MonsterFilterOptionChanged
         AddHandler chkMonsterFilter.CheckedChanged, AddressOf LiveConfigChanged
+        If chkMonsterWhitelistMode IsNot Nothing Then
+            AddHandler chkMonsterWhitelistMode.CheckedChanged, AddressOf MonsterFilterOptionChanged
+            AddHandler chkMonsterWhitelistMode.CheckedChanged, AddressOf LiveConfigChanged
+        End If
+        If chkMonsterConfirmOnce IsNot Nothing Then
+            AddHandler chkMonsterConfirmOnce.CheckedChanged, AddressOf MonsterFilterOptionChanged
+            AddHandler chkMonsterConfirmOnce.CheckedChanged, AddressOf LiveConfigChanged
+        End If
         AddHandler chkLootPickup.CheckedChanged, AddressOf LiveConfigChanged
         AddHandler nudLootPickupSeconds.ValueChanged, AddressOf LiveConfigChanged
         If chkLootNameAutoPickup IsNot Nothing Then
@@ -996,6 +1010,12 @@ Public Class Form1
             AddHandler nudChatMaxLines.ValueChanged, AddressOf PersistListSettingsChanged
         End If
         AddHandler chkMonsterFilter.CheckedChanged, AddressOf PersistListSettingsChanged
+        If chkMonsterWhitelistMode IsNot Nothing Then
+            AddHandler chkMonsterWhitelistMode.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
+        If chkMonsterConfirmOnce IsNot Nothing Then
+            AddHandler chkMonsterConfirmOnce.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
         AddHandler chkLootPickup.CheckedChanged, AddressOf PersistListSettingsChanged
         AddHandler nudLootPickupSeconds.ValueChanged, AddressOf PersistListSettingsChanged
         If chkLootNameAutoPickup IsNot Nothing Then
@@ -1171,6 +1191,74 @@ Public Class Form1
 
     Private Sub PersistListSettingsChanged(_sender As Object, _e As EventArgs)
         SavePersistedListState(False)
+    End Sub
+
+    Private Sub MonsterFilterOptionChanged(_sender As Object, _e As EventArgs)
+        UpdateMonsterFilterUi()
+    End Sub
+
+    Private Function GetMonsterFilterMode() As String
+        If chkMonsterWhitelistMode IsNot Nothing AndAlso chkMonsterWhitelistMode.Checked Then
+            Return "whitelist"
+        End If
+        Return "blacklist"
+    End Function
+
+    Private Function GetMonsterFilterConfirmReads() As Integer
+        If chkMonsterConfirmOnce IsNot Nothing AndAlso chkMonsterConfirmOnce.Checked Then
+            Return 1
+        End If
+        Return 2
+    End Function
+
+    Private Shared Function NormalizeMonsterFilterMode(raw As String) As String
+        Dim cleaned As String = If(raw, "").Trim().ToLowerInvariant()
+        If cleaned = "whitelist" OrElse cleaned = "white" OrElse cleaned = "allow" OrElse cleaned = "allowlist" Then
+            Return "whitelist"
+        End If
+        Return "blacklist"
+    End Function
+
+    Private Sub SelectMonsterFilterMode(raw As String)
+        If chkMonsterWhitelistMode IsNot Nothing Then
+            chkMonsterWhitelistMode.Checked = NormalizeMonsterFilterMode(raw).Equals("whitelist", StringComparison.OrdinalIgnoreCase)
+        End If
+        UpdateMonsterFilterUi()
+    End Sub
+
+    Private Sub UpdateMonsterFilterUi()
+        Dim enabled As Boolean = chkMonsterFilter Is Nothing OrElse chkMonsterFilter.Checked
+        Dim whitelist As Boolean = chkMonsterWhitelistMode IsNot Nothing AndAlso chkMonsterWhitelistMode.Checked
+        Dim oneRead As Boolean = chkMonsterConfirmOnce IsNot Nothing AndAlso chkMonsterConfirmOnce.Checked
+
+        If chkMonsterFilter IsNot Nothing Then
+            chkMonsterFilter.Text = If(enabled, "Enable Monster Filter", "Monster Filter Disabled")
+        End If
+
+        If chkMonsterWhitelistMode IsNot Nothing Then
+            chkMonsterWhitelistMode.Text = If(whitelist, "Mode: Whitelist", "Mode: Blacklist")
+            chkMonsterWhitelistMode.BackColor = If(whitelist, Color.FromArgb(0, 185, 80), Color.FromArgb(220, 35, 35))
+            chkMonsterWhitelistMode.ForeColor = Color.White
+        End If
+
+        If chkMonsterConfirmOnce IsNot Nothing Then
+            chkMonsterConfirmOnce.Text = If(oneRead, "Name Check: 1 read", "Name Check: 2 reads")
+            chkMonsterConfirmOnce.BackColor = If(oneRead, Color.FromArgb(130, 95, 25), Color.FromArgb(42, 84, 130))
+            chkMonsterConfirmOnce.ForeColor = Color.White
+        End If
+
+        If lstMonsterFilter IsNot Nothing Then
+            If Not enabled Then
+                lstMonsterFilter.BackColor = Color.FromArgb(35, 35, 35)
+                lstMonsterFilter.ForeColor = Color.LightGray
+            ElseIf whitelist Then
+                lstMonsterFilter.BackColor = Color.FromArgb(0, 118, 48)
+                lstMonsterFilter.ForeColor = Color.White
+            Else
+                lstMonsterFilter.BackColor = Color.FromArgb(150, 0, 0)
+                lstMonsterFilter.ForeColor = Color.White
+            End If
+        End If
     End Sub
 
     Private Sub HoldPlaceAnchorValueChanged(_sender As Object, _e As EventArgs)
@@ -3200,17 +3288,31 @@ Public Class Form1
 
     Private Function BuildMonsterFilterGroup() As GroupBox
         Dim group As New GroupBox() With {.Text = "Monster Filter", .Dock = DockStyle.Fill}
-        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3}
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 30.0F))
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 4}
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 28.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 35.0F))
         group.Controls.Add(layout)
 
-        chkMonsterFilter = New CheckBox() With {.Text = "Enable Monster Filter (blacklist)", .Dock = DockStyle.Fill, .Checked = True}
-        layout.Controls.Add(chkMonsterFilter, 0, 0)
+        Dim toggleRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
+        chkMonsterFilter = New CheckBox() With {.Text = "Enable Monster Filter", .AutoSize = True, .Checked = True, .Margin = New Padding(3, 7, 14, 3)}
+        chkMonsterWhitelistMode = New CheckBox() With {.Text = "Mode: Blacklist", .Appearance = Appearance.Button, .Width = 125, .Height = 25, .TextAlign = ContentAlignment.MiddleCenter, .Margin = New Padding(0, 4, 8, 3), .UseVisualStyleBackColor = False}
+        chkMonsterConfirmOnce = New CheckBox() With {.Text = "Name Check: 2 reads", .Appearance = Appearance.Button, .Width = 145, .Height = 25, .TextAlign = ContentAlignment.MiddleCenter, .Margin = New Padding(0, 4, 3, 3), .UseVisualStyleBackColor = False}
+        toggleRow.Controls.Add(chkMonsterFilter)
+        toggleRow.Controls.Add(chkMonsterWhitelistMode)
+        toggleRow.Controls.Add(chkMonsterConfirmOnce)
+        layout.Controls.Add(toggleRow, 0, 0)
+
+        layout.Controls.Add(New Label() With {
+            .Text = "Blacklist skips listed names. Whitelist only attacks listed names. 2 reads is safer; 1 read attacks sooner.",
+            .Dock = DockStyle.Fill,
+            .ForeColor = Color.LightSteelBlue,
+            .TextAlign = ContentAlignment.MiddleLeft
+        }, 0, 1)
 
         lstMonsterFilter = New ListBox() With {.Dock = DockStyle.Fill}
-        layout.Controls.Add(lstMonsterFilter, 0, 1)
+        layout.Controls.Add(lstMonsterFilter, 0, 2)
 
         Dim actionRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
         txtMonsterName = New TextBox() With {.Width = 140, .PlaceholderText = "name1, name2, name3"}
@@ -3221,7 +3323,8 @@ Public Class Form1
         actionRow.Controls.Add(txtMonsterName)
         actionRow.Controls.Add(btnAddMonster)
         actionRow.Controls.Add(btnRemoveMonster)
-        layout.Controls.Add(actionRow, 0, 2)
+        layout.Controls.Add(actionRow, 0, 3)
+        UpdateMonsterFilterUi()
         Return group
     End Function
 
@@ -4882,7 +4985,8 @@ Public Class Form1
             "- repair watches unreachable_text_rect for '___ is about to break'. After 5 OCR reads inside 10 minutes it sends the configured key once, resets the repair OCR count, then waits until the warning clears before it can trigger again. TriggerPercent is ignored for repair.",
             "",
             "3) COMBAT FULL TAB - MONSTER FILTER",
-            "- Enable Monster Filter (blacklist): active deny list for mob names.",
+            "- Monster Filter: blacklist skips listed mobs; whitelist only attacks listed mobs.",
+            "- Name Check: 2 reads is safer; 1 read attacks sooner after one OCR match.",
             "- Add / Remove: manage blocked mob names.",
             "- OCR + confirmation logic avoids stale or wrong-name attacks.",
             "",
@@ -5013,7 +5117,8 @@ Public Class Form1
             "- repair vigila unreachable_text_rect para '___ is about to break'. Despues de 5 lecturas OCR envia la tecla una vez y espera a que el aviso desaparezca antes de volver a activarse. TriggerPercent no se usa en repair.",
             "",
             "3) FILTRO DE MONSTRUOS",
-            "- Enable Monster Filter (blacklist): lista negra de mobs.",
+            "- Monster Filter: blacklist evita mobs listados; whitelist solo ataca mobs listados.",
+            "- Name Check: 2 lecturas es mas seguro; 1 lectura ataca mas rapido despues de una coincidencia OCR.",
             "- Add / Remove: agrega o elimina nombres.",
             "- El OCR y confirmacion reducen ataques por nombre incorrecto.",
             "",
@@ -5133,7 +5238,8 @@ Public Class Form1
             "- repair nagbabantay sa unreachable_text_rect para sa '___ is about to break'. Pag nabasa ito ng OCR ng 5 beses, isang beses nitong ipapadala ang repair key at maghihintay munang mawala ang warning bago puwedeng mag-trigger ulit. Hindi ginagamit ang TriggerPercent sa repair.",
             "",
             "3) MONSTER FILTER",
-            "- Enable Monster Filter (blacklist): listahan ng bawal at i-skip na mobs.",
+            "- Monster Filter: blacklist iiwas sa listed mobs; whitelist listed mobs lang ang aatakihin.",
+            "- Name Check: 2 reads mas safe; 1 read mas mabilis umatake after isang OCR match.",
             "- Add / Remove: dagdag o tanggal ng pangalan.",
             "- May OCR confirm para iwas maling target dahil sa stale text.",
             "",
@@ -5351,7 +5457,7 @@ Public Class Form1
                     "- Use lower Priority numbers for more important rows within the same role group.",
                     "- high_max_hp only works well if Vision reads the mob_hp_rect numbers correctly.",
                     "- repair only works when unreachable_text_rect is calibrated to detect the 'is about to break' warning.",
-                    "- Monster Filter is a blacklist. If enabled, the engine rejects targets whose OCR name matches the blocked list.",
+                    "- Monster Filter can run as blacklist or whitelist. Blacklist skips listed names; whitelist only attacks listed names. Name Check 2 reads requires two separate OCR reads before attacking; 1 read attacks after the first matching OCR name.",
                     "- Add lets you insert names, including comma-separated names typed in the box. Remove deletes the selected names.",
                     "- In the center panel, Attack starts Full mode, Save Settings stores the live config, Stop Bot sends the hard-stop flow, Ignore Skill Min HP/MP bypasses row minimums, Auto Retarget If Stuck enables stuck-target recovery, and Retarget Now (E) forces a manual retarget.",
                     "- Auto Accept Party/Ress toggles OCR-based prompt acceptance.",
@@ -5483,7 +5589,7 @@ Public Class Form1
                     "- Usa prioridades numericamente mas bajas para filas mas importantes dentro del mismo tipo.",
                     "- high_max_hp depende de una lectura correcta de mob_hp_rect en Vision.",
                     "- repair depende de que unreachable_text_rect detecte bien el warning de equipo.",
-                    "- Monster Filter funciona como blacklist. Si esta activo, el motor rechaza nombres de mobs que coincidan con la lista.",
+                    "- Monster Filter puede ser blacklist o whitelist. Blacklist evita nombres listados; whitelist solo ataca nombres listados. Name Check 2 reads requiere dos lecturas OCR separadas antes de atacar; 1 read ataca con la primera coincidencia.",
                     "- Add agrega nombres, incluso varios separados por coma. Remove elimina los seleccionados.",
                     "- En el panel central, Attack inicia Full, Save Settings guarda la configuracion en vivo, Stop Bot ejecuta hard-stop, Ignore Skill Min HP/MP ignora minimos de fila, Auto Retarget If Stuck activa recuperacion por objetivo atascado y Retarget Now (E) envia retarget manual.",
                     "- Auto Accept Party/Ress maneja prompts detectados por OCR.",
@@ -5614,7 +5720,7 @@ Public Class Form1
                     "- Gumamit ng mas mababang priority number para sa mas importanteng rows sa parehong role group.",
                     "- high_max_hp ay gagana lang kung tama ang OCR reading ng mob_hp_rect sa Vision.",
                     "- repair ay nakadepende sa tamang calibration ng unreachable_text_rect warning text.",
-                    "- Ang Monster Filter ay blacklist. Kapag naka-enable, iiwasan ng engine ang mga target na tugma sa blocked names.",
+                    "- Monster Filter puwedeng blacklist o whitelist. Blacklist iiwas sa listed names; whitelist listed names lang ang aatakihin. Name Check 2 reads kailangan ng dalawang OCR reads bago umatake; 1 read unang match pa lang puwede na.",
                     "- Add puwedeng magdagdag ng isa o maraming comma-separated names. Remove mag-aalis ng selected names.",
                     "- Sa center panel, Attack nagsisimula ng Full mode, Save Settings nagsa-save ng live config, Stop Bot naghihinto sa hard-stop flow, Ignore Skill Min HP/MP nagba-bypass sa row minimums, Auto Retarget If Stuck nag-o-on ng stuck-target recovery, at Retarget Now (E) ay manual retarget.",
                     "- Auto Accept Party/Ress ay para sa OCR-based prompt acceptance.",
@@ -5871,6 +5977,7 @@ Public Class Form1
             $"AutoAskPartyText: {GetPartyAskCommandText()}{Environment.NewLine}" &
             $"LevelingAgentEnabled: {st.AgentEnabled}{Environment.NewLine}" &
             $"LevelingPreferredMobs: {If(txtLevelingPreferredMobs IsNot Nothing, txtLevelingPreferredMobs.Text.Trim(), "")}{Environment.NewLine}" &
+            $"MonsterFilter: {If(chkMonsterFilter IsNot Nothing AndAlso chkMonsterFilter.Checked, "Enabled", "Disabled")} | Mode: {GetMonsterFilterMode()} | NameConfirmReads: {GetMonsterFilterConfirmReads()}{Environment.NewLine}" &
             $"LevelingStopHpEnabled: {If(chkLevelingStopHp Is Nothing OrElse chkLevelingStopHp.Checked, "True", "False")}{Environment.NewLine}" &
             $"LevelingStopHp%: {If(nudLevelingStopHp IsNot Nothing, nudLevelingStopHp.Value.ToString(), "20")}{Environment.NewLine}" &
             $"LevelingStopMpEnabled: {If(chkLevelingStopMp Is Nothing OrElse chkLevelingStopMp.Checked, "True", "False")}{Environment.NewLine}" &
@@ -6232,7 +6339,7 @@ Public Class Form1
         UpdateAttackButtonAppearance(False)
         HandleHpZeroAlarm(status)
         HandleWindowMissingAlarm(status)
-        ApplyHealthUiTint(status.HpPercent, status.Running AndAlso status.WindowFound)
+        ApplyHealthUiTint(status.HpPercent, status.Running)
         UpdateTaskbarStatusIndicator()
 
         If Not String.IsNullOrWhiteSpace(status.RouteRecordingLastSavedPath) AndAlso Not status.RouteRecordingLastSavedPath.Equals(_lastRouteRecordingSavedPath, StringComparison.OrdinalIgnoreCase) Then
@@ -6880,6 +6987,8 @@ Public Class Form1
         cfg.StuckTargetMs = CInt(If(nudStuckTargetMs IsNot Nothing, nudStuckTargetMs.Value, 2200D))
         cfg.StuckTargetNoProgressRetargetMs = CInt(If(nudStuckNoProgressRetargetMs IsNot Nothing, nudStuckNoProgressRetargetMs.Value, 6000D))
         cfg.MobHpPresenceThreshold = CDbl(nudMobHpThreshold.Value)
+        cfg.MonsterFilterMode = GetMonsterFilterMode()
+        cfg.MonsterFilterConfirmReads = GetMonsterFilterConfirmReads()
         cfg.HighMaxHpSpecialEnabled = (chkHighMaxHpSpecial IsNot Nothing AndAlso chkHighMaxHpSpecial.Checked)
         cfg.HighMaxHpThreshold = CInt(If(nudHighMaxHpThreshold IsNot Nothing, nudHighMaxHpThreshold.Value, 2000D))
         cfg.AvoidHighMaxHpEnabled = (chkAvoidHighMaxHpTargets IsNot Nothing AndAlso chkAvoidHighMaxHpTargets.Checked)
@@ -7725,6 +7834,11 @@ Public Class Form1
             If chkMonsterFilter IsNot Nothing Then
                 chkMonsterFilter.Checked = state.MonsterFilterEnabled
             End If
+            SelectMonsterFilterMode(state.MonsterFilterMode)
+            If chkMonsterConfirmOnce IsNot Nothing Then
+                chkMonsterConfirmOnce.Checked = Math.Max(1, state.MonsterFilterConfirmReads) <= 1
+            End If
+            UpdateMonsterFilterUi()
             If chkLootPickup IsNot Nothing Then
                 chkLootPickup.Checked = state.LootPickupEnabled
             End If
@@ -7889,6 +8003,8 @@ Public Class Form1
 
             Dim fullState As New PersistedListState With {
                 .MonsterFilterEnabled = (chkMonsterFilter IsNot Nothing AndAlso chkMonsterFilter.Checked),
+                .MonsterFilterMode = GetMonsterFilterMode(),
+                .MonsterFilterConfirmReads = GetMonsterFilterConfirmReads(),
                 .LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked),
                 .LootPickupSeconds = If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value, 4D),
                 .LootNameMatchThresholdPercent = If(nudLootNameMatchThreshold IsNot Nothing, nudLootNameMatchThreshold.Value, CDec(DefaultLootNameMatchThresholdPercent)),
@@ -8016,6 +8132,11 @@ Public Class Form1
         SetNumericControlValue(nudStuckTargetMs, cfg.StuckTargetMs)
         SetNumericControlValue(nudStuckNoProgressRetargetMs, If(cfg.StuckTargetNoProgressRetargetMs > 0, cfg.StuckTargetNoProgressRetargetMs, 6000))
         SetNumericControlValue(nudMobHpThreshold, CDec(cfg.MobHpPresenceThreshold))
+        SelectMonsterFilterMode(cfg.MonsterFilterMode)
+        If chkMonsterConfirmOnce IsNot Nothing Then
+            chkMonsterConfirmOnce.Checked = Math.Max(1, cfg.MonsterFilterConfirmReads) <= 1
+        End If
+        UpdateMonsterFilterUi()
         If chkHighMaxHpSpecial IsNot Nothing Then
             chkHighMaxHpSpecial.Checked = cfg.HighMaxHpSpecialEnabled
         End If
@@ -8906,24 +9027,22 @@ Public Class Form1
         Dim liteRunning As Boolean = _liteEngine.IsRunning()
         Dim runningEdition As BotEdition? = GetRunningEdition()
         Dim selectedEdition As BotEdition = If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full)
-        Dim fullButtonState As String = GetBotRunStateLabel(_fullStatus, fullRunning)
-        Dim liteButtonState As String = GetBotRunStateLabel(_liteStatus, liteRunning)
 
         If btnAttack IsNot Nothing Then
             If fullRunning Then
-                btnAttack.Text = fullButtonState
-                btnAttack.BackColor = GetBotRunStateColor(fullButtonState)
+                btnAttack.Text = "RUNNING"
+                btnAttack.BackColor = BotRunningColor
                 btnAttack.ForeColor = Color.White
             Else
-                btnAttack.Text = "PAUSED"
-                btnAttack.BackColor = Color.FromArgb(40, 180, 80)
+                btnAttack.Text = "STOPPED"
+                btnAttack.BackColor = StatusStoppedOrDeadColor
                 btnAttack.ForeColor = Color.White
             End If
         End If
 
         If btnLiteAttack IsNot Nothing Then
-            btnLiteAttack.Text = If(liteRunning, liteButtonState, If(fullRunning, "Start Lite", "Start"))
-            btnLiteAttack.BackColor = If(liteRunning, GetBotRunStateColor(liteButtonState), Color.FromArgb(40, 180, 80))
+            btnLiteAttack.Text = If(liteRunning, "RUNNING", If(fullRunning, "Start Lite", "Start"))
+            btnLiteAttack.BackColor = If(liteRunning, BotRunningColor, StatusStoppedOrDeadColor)
             btnLiteAttack.ForeColor = Color.White
         End If
 
@@ -8937,8 +9056,8 @@ Public Class Form1
         End If
 
         If lblRunState IsNot Nothing Then
-            lblRunState.Text = If(fullRunning, "FULL BOT " & fullButtonState, "FULL BOT PAUSED")
-            lblRunState.BackColor = If(fullRunning, GetBotRunStateColor(fullButtonState), StatusStoppedOrDeadColor)
+            lblRunState.Text = If(fullRunning, "FULL BOT RUNNING", "FULL BOT STOPPED")
+            lblRunState.BackColor = If(fullRunning, BotRunningColor, StatusStoppedOrDeadColor)
             lblRunState.ForeColor = Color.White
         End If
         If lblFullEdition IsNot Nothing Then
@@ -8946,8 +9065,8 @@ Public Class Form1
         End If
 
         If lblLiteRunState IsNot Nothing Then
-            lblLiteRunState.Text = If(liteRunning, "LITE BOT " & liteButtonState, "LITE BOT PAUSED")
-            lblLiteRunState.BackColor = If(liteRunning, GetBotRunStateColor(liteButtonState), StatusStoppedOrDeadColor)
+            lblLiteRunState.Text = If(liteRunning, "LITE BOT RUNNING", "LITE BOT STOPPED")
+            lblLiteRunState.BackColor = If(liteRunning, BotRunningColor, StatusStoppedOrDeadColor)
             lblLiteRunState.ForeColor = Color.White
         End If
 
@@ -9016,17 +9135,17 @@ Public Class Form1
     Private Shared Function GetBotRunStateColor(stateLabel As String) As Color
         Select Case If(stateLabel, "").Trim().ToUpperInvariant()
             Case "RUNNING"
-                Return Color.FromArgb(220, 70, 55)
+                Return BotRunningColor
             Case "TRAVELING", "RETURNING"
-                Return Color.FromArgb(95, 95, 200)
+                Return BotRunningColor
             Case "WAIT WINDOW", "WAITING"
-                Return Color.FromArgb(210, 140, 35)
+                Return BotRunningColor
             Case "RECOVERING"
-                Return Color.FromArgb(45, 120, 180)
+                Return BotRunningColor
             Case "WARNING"
-                Return Color.FromArgb(190, 90, 35)
+                Return BotRunningColor
             Case Else
-                Return Color.FromArgb(220, 70, 55)
+                Return BotRunningColor
         End Select
     End Function
 
@@ -9677,9 +9796,7 @@ Public Class Form1
             Return
         End If
 
-        Dim bounded As Double = NormalizePercent(percent, 100.0)
-        Dim alive As Boolean = active AndAlso bounded > DeadZeroThreshold
-        Dim tint As Color = If(alive, HealthPercentColor(bounded), StatusStoppedOrDeadColor)
+        Dim tint As Color = If(active, BotRunningColor, StatusStoppedOrDeadColor)
         pnlWindowFrame.BackColor = tint
         If pnlHealthBanner IsNot Nothing Then
             pnlHealthBanner.BackColor = tint
@@ -9723,32 +9840,14 @@ Public Class Form1
         Dim active As Boolean = runningEdition.HasValue
         Dim status As BotStatus = If(active, GetStatusForEdition(runningEdition.Value), Nothing)
         Dim hpPercent As Double = If(status Is Nothing, 0.0, NormalizePercent(status.HpPercent, 0.0))
-        Dim alive As Boolean =
-            active AndAlso
-            status IsNot Nothing AndAlso
-            status.Running AndAlso
-            status.WindowFound AndAlso
-            hpPercent > DeadZeroThreshold AndAlso
-            Not _deathNotificationLatched
 
         If active AndAlso status IsNot Nothing Then
-            ApplyHealthUiTint(hpPercent, status.Running AndAlso status.WindowFound)
+            ApplyHealthUiTint(hpPercent, status.Running)
         Else
             ApplyHealthUiTint(0.0, False)
         End If
 
-        Dim taskbarState As TaskbarProgressState
-        If Not alive Then
-            taskbarState = TaskbarProgressState.Error
-        ElseIf hpPercent < 35.0 Then
-            taskbarState = TaskbarProgressState.Error
-        ElseIf hpPercent < 70.0 Then
-            taskbarState = TaskbarProgressState.Paused
-        Else
-            taskbarState = TaskbarProgressState.Normal
-        End If
-
-        SetTaskbarProgressSolid(taskbarState)
+        SetTaskbarProgressSolid(If(active, TaskbarProgressState.Normal, TaskbarProgressState.NoProgress))
     End Sub
 
     Private Function TryGetTaskbarList() As ITaskbarList3
@@ -9778,7 +9877,9 @@ Public Class Form1
 
         Try
             taskbar.SetProgressState(Handle, state)
-            taskbar.SetProgressValue(Handle, 100UL, 100UL)
+            If state <> TaskbarProgressState.NoProgress Then
+                taskbar.SetProgressValue(Handle, 100UL, 100UL)
+            End If
         Catch
             _taskbarUnavailable = True
             _taskbarList = Nothing

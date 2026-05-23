@@ -218,6 +218,8 @@ Public Class BotConfig
     Public Property StuckTargetNoProgressRetargetMs As Integer = 6000
     Public Property BlackScreenProtectionEnabled As Boolean = True
     Public Property DeniedMobs As List(Of String) = New List(Of String)()
+    Public Property MonsterFilterMode As String = "blacklist"
+    Public Property MonsterFilterConfirmReads As Integer = 2
     Public Property LootPickupEnabled As Boolean = False
     Public Property LootPickupIntervalMs As Integer = 4000
     Public Property LootPickupVerifyDelayMs As Integer = 80
@@ -1646,6 +1648,8 @@ Public Class BotEngine
             End If
             Dim mobOcrWatch As Stopwatch = Stopwatch.StartNew()
             Dim monsterFilterActive As Boolean = (cfg.DeniedMobs IsNot Nothing AndAlso cfg.DeniedMobs.Count > 0)
+            Dim monsterFilterWhitelistMode As Boolean = IsMonsterFilterWhitelistMode(cfg)
+            Dim monsterFilterConfirmRequired As Integer = GetMonsterFilterConfirmRequiredCount(cfg)
             Dim targetWindowSignalNoName As Boolean =
                 If(frame IsNot Nothing,
                    HasTargetWindowSignal(frame, mobHpRegion, "", mobHpPct),
@@ -1749,8 +1753,12 @@ Public Class BotEngine
             ElseIf _noTargetBeganAt = DateTime.MinValue Then
                 _noTargetBeganAt = now
             End If
-            Dim deniedTarget As Boolean = IsDeniedMob(mobName, cfg.DeniedMobs)
             Dim normMobName As String = NormalizeMobName(mobName)
+            Dim listedMonsterTarget As Boolean = IsDeniedMob(mobName, cfg.DeniedMobs)
+            Dim monsterFilterBlockedTarget As Boolean =
+                monsterFilterActive AndAlso
+                normMobName <> "" AndAlso
+                If(monsterFilterWhitelistMode, Not listedMonsterTarget, listedMonsterTarget)
             Dim preferredMobFilterActive As Boolean = cfg.LevelingAgentEnabled AndAlso cfg.LevelingPreferredMobs IsNot Nothing AndAlso cfg.LevelingPreferredMobs.Count > 0
             Dim missingNameBlockedByPreference As Boolean = preferredMobFilterActive AndAlso targetWindowVisible AndAlso normMobName = ""
             Dim preferredTargetMismatch As Boolean = preferredMobFilterActive AndAlso normMobName <> "" AndAlso Not IsPreferredMob(mobName, cfg.LevelingPreferredMobs)
@@ -1765,7 +1773,7 @@ Public Class BotEngine
                 _agentUnreachableEvents += 1
             End If
 
-            If monsterFilterActive AndAlso deniedTarget Then
+            If monsterFilterActive AndAlso monsterFilterBlockedTarget Then
                 _blacklistLockUntil = now.AddMilliseconds(BlacklistLockWindowMs)
                 _nameConfirmCandidate = ""
                 _nameConfirmCount = 0
@@ -1790,8 +1798,8 @@ Public Class BotEngine
                 _nameConfirmCount = 0
                 _nameConfirmConfirmedName = ""
                 _nameConfirmLastSampleAt = DateTime.MinValue
-            ElseIf deniedTarget Then
-                ' Already handled above; keep state reset while denied.
+            ElseIf monsterFilterBlockedTarget Then
+                ' Already handled above; keep state reset while the filter blocks the current name.
             ElseIf _nameConfirmConfirmedName.Equals(normMobName, StringComparison.OrdinalIgnoreCase) Then
                 ' Keep confirmed state for current stable target name.
             ElseIf nameSampleUpdated Then
@@ -1806,7 +1814,7 @@ Public Class BotEngine
                     _nameConfirmLastSampleAt = _lastMobNameRead
                 End If
 
-                If _nameConfirmCount >= TargetNameConfirmRequiredCount Then
+                If _nameConfirmCount >= monsterFilterConfirmRequired Then
                     _nameConfirmConfirmedName = normMobName
                 End If
             End If
@@ -1814,14 +1822,14 @@ Public Class BotEngine
             Dim blacklistLockActive As Boolean = monsterFilterActive AndAlso _blacklistLockUntil <> DateTime.MinValue AndAlso now < _blacklistLockUntil
             Dim nameConfirmedForAttack As Boolean = (Not monsterFilterActive) OrElse (normMobName <> "" AndAlso _nameConfirmConfirmedName.Equals(normMobName, StringComparison.OrdinalIgnoreCase))
             Dim missingNameBlockedByFilter As Boolean = monsterFilterActive AndAlso targetWindowVisible AndAlso normMobName = ""
-            Dim nameConfirmationBlockedByFilter As Boolean = monsterFilterActive AndAlso targetWindowVisible AndAlso (Not missingNameBlockedByFilter) AndAlso (Not deniedTarget) AndAlso (Not nameConfirmedForAttack)
+            Dim nameConfirmationBlockedByFilter As Boolean = monsterFilterActive AndAlso targetWindowVisible AndAlso (Not missingNameBlockedByFilter) AndAlso (Not monsterFilterBlockedTarget) AndAlso (Not nameConfirmedForAttack)
             Dim currentTargetAliveSignal As Boolean = HasLivingTargetSignal(targetWindowVisible, mobHpPct, cfg) OrElse normMobName <> ""
             If currentTargetAliveSignal Then
                 _lastLivingTargetSignalAt = now
                 _noTargetBeganAt = DateTime.MinValue
             End If
             Dim combatLockActive As Boolean = UpdateCombatLockState(now, cfg, currentTargetAliveSignal, normMobName)
-            Dim canTrackFirstHitTarget As Boolean = currentTargetAliveSignal AndAlso (Not deniedTarget) AndAlso (Not missingNameBlockedByFilter) AndAlso (Not avoidHighMaxHpTarget)
+            Dim canTrackFirstHitTarget As Boolean = currentTargetAliveSignal AndAlso (Not monsterFilterBlockedTarget) AndAlso (Not missingNameBlockedByFilter) AndAlso (Not avoidHighMaxHpTarget)
             Dim currentFirstHitSignature As String = normMobName
             If canTrackFirstHitTarget Then
                 Dim isNewFirstHitTarget As Boolean = (Not _firstHitPending) OrElse ((currentFirstHitSignature <> "") AndAlso (Not _firstHitTargetSignature.Equals(currentFirstHitSignature, StringComparison.OrdinalIgnoreCase)))
@@ -1830,7 +1838,7 @@ Public Class BotEngine
                     _firstHitTargetSignature = currentFirstHitSignature
                     _firstHitWindowUntil = now.AddMilliseconds(FirstHitWindowMs)
                 End If
-            ElseIf Not targetWindowVisible OrElse deniedTarget OrElse avoidHighMaxHpTarget Then
+            ElseIf Not targetWindowVisible OrElse monsterFilterBlockedTarget OrElse avoidHighMaxHpTarget Then
                 _firstHitPending = False
                 _firstHitTargetSignature = ""
                 _firstHitWindowUntil = DateTime.MinValue
@@ -1838,7 +1846,7 @@ Public Class BotEngine
             Dim firstHitWindowActive As Boolean = _firstHitPending AndAlso now < _firstHitWindowUntil
             Dim targetValid As Boolean =
                 currentTargetAliveSignal AndAlso
-                (Not deniedTarget) AndAlso
+                (Not monsterFilterBlockedTarget) AndAlso
                 (Not missingNameBlockedByFilter) AndAlso
                 (Not missingNameBlockedByPreference) AndAlso
                 (Not preferredTargetMismatch) AndAlso
@@ -1850,7 +1858,7 @@ Public Class BotEngine
                 _lastTargetValidAt = now
             End If
             Dim targetActionBlocked As Boolean =
-                deniedTarget OrElse
+                monsterFilterBlockedTarget OrElse
                 avoidHighMaxHpTarget OrElse
                 blacklistLockActive OrElse
                 missingNameBlockedByFilter OrElse
@@ -1964,7 +1972,7 @@ Public Class BotEngine
                 End If
 
                 ' Support keys can fire without blocking attack/special in the same loop.
-                Dim allowBlindAttack As Boolean = AllowBlindAttackWhenTargetMissing AndAlso (Not deniedTarget) AndAlso (Not avoidHighMaxHpTarget) AndAlso (Not _lastNavigationTravelActive)
+                Dim allowBlindAttack As Boolean = AllowBlindAttackWhenTargetMissing AndAlso (Not monsterFilterActive) AndAlso (Not monsterFilterBlockedTarget) AndAlso (Not avoidHighMaxHpTarget) AndAlso (Not _lastNavigationTravelActive)
                 Dim attackBurst As List(Of ActionRule) = ChooseAttackBurstActions(cfg, hpPct, mpPct, effectiveTargetValid, allowBlindAttack, highMaxHpAttackActive, reason)
                 If attackBurst.Count > 0 Then
                     Dim sentKeys As New List(Of String)()
@@ -2025,8 +2033,10 @@ Public Class BotEngine
                             _noDamageTargetSignature = ""
                             _noDamageAttackCount = 0
                             If String.IsNullOrWhiteSpace(reason) Then
-                                If deniedTarget Then
-                                    reason = $"Monster filter blocked target '{If(String.IsNullOrWhiteSpace(mobName), "unknown", mobName)}'. Retarget key sent."
+                                If monsterFilterBlockedTarget Then
+                                    reason = If(monsterFilterWhitelistMode,
+                                                $"Monster whitelist skipped non-listed mob '{If(String.IsNullOrWhiteSpace(mobName), "unknown", mobName)}'. Retarget key sent.",
+                                                $"Monster blacklist blocked target '{If(String.IsNullOrWhiteSpace(mobName), "unknown", mobName)}'. Retarget key sent.")
                                 ElseIf avoidHighMaxHpTarget Then
                                     reason = $"Avoided high Max HP mob ({mobMaxHp:N0} >= {Math.Max(1, cfg.AvoidHighMaxHpThreshold):N0}). Retarget key sent."
                                 ElseIf blacklistLockActive Then
@@ -2038,7 +2048,7 @@ Public Class BotEngine
                                 ElseIf preferredTargetMismatch Then
                                     reason = $"Leveling agent skipped non-preferred mob '{If(String.IsNullOrWhiteSpace(mobName), "unknown", mobName)}'. Retarget key sent."
                                 ElseIf nameConfirmationBlockedByFilter Then
-                                    reason = "Monster filter waiting for 2x name confirmation. Retarget key sent."
+                                    reason = $"Monster filter waiting for {monsterFilterConfirmRequired}x name confirmation. Retarget key sent."
                                 ElseIf unreachableLockActive Then
                                     reason = "Unable-to-reach lock active. Retarget key sent."
                                 ElseIf Not targetWindowVisible Then
@@ -2049,8 +2059,10 @@ Public Class BotEngine
                             End If
                         End If
                     ElseIf String.IsNullOrWhiteSpace(reason) Then
-                        If deniedTarget Then
-                            reason = "Monster filter blocked target. Waiting retarget cooldown."
+                        If monsterFilterBlockedTarget Then
+                            reason = If(monsterFilterWhitelistMode,
+                                        "Monster whitelist skipped non-listed mob. Waiting retarget cooldown.",
+                                        "Monster blacklist blocked target. Waiting retarget cooldown.")
                         ElseIf avoidHighMaxHpTarget Then
                             reason = $"Avoiding high Max HP mob ({mobMaxHp:N0} >= {Math.Max(1, cfg.AvoidHighMaxHpThreshold):N0}). Waiting retarget cooldown."
                         ElseIf blacklistLockActive Then
@@ -2062,7 +2074,7 @@ Public Class BotEngine
                         ElseIf preferredTargetMismatch Then
                             reason = "Leveling agent is searching for a preferred mob."
                         ElseIf nameConfirmationBlockedByFilter Then
-                            reason = "Monster filter waiting for 2x name confirmation. Waiting retarget cooldown."
+                            reason = $"Monster filter waiting for {monsterFilterConfirmRequired}x name confirmation. Waiting retarget cooldown."
                         ElseIf unreachableLockActive Then
                             reason = "Unable-to-reach lock active. Waiting retarget cooldown."
                         ElseIf Not targetWindowVisible Then
@@ -7178,6 +7190,20 @@ Public Class BotEngine
 
     Private Shared Function IsRepairRole(role As String) As Boolean
         Return String.Equals(role, "repair", StringComparison.OrdinalIgnoreCase)
+    End Function
+
+    Private Shared Function IsMonsterFilterWhitelistMode(cfg As BotConfig) As Boolean
+        If cfg Is Nothing Then
+            Return False
+        End If
+        Return String.Equals(If(cfg.MonsterFilterMode, "").Trim(), "whitelist", StringComparison.OrdinalIgnoreCase)
+    End Function
+
+    Private Shared Function GetMonsterFilterConfirmRequiredCount(cfg As BotConfig) As Integer
+        If cfg Is Nothing OrElse cfg.MonsterFilterConfirmReads <= 0 Then
+            Return TargetNameConfirmRequiredCount
+        End If
+        Return Math.Max(1, Math.Min(2, cfg.MonsterFilterConfirmReads))
     End Function
 
     Private Shared Function IsSupportTriggered(action As ActionRule, hpPercent As Double, mpPercent As Double) As Boolean
