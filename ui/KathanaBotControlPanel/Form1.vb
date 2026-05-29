@@ -2286,7 +2286,7 @@ Public Class Form1
         If keyName.Equals("R", StringComparison.OrdinalIgnoreCase) OrElse
            keyName.Equals("F", StringComparison.OrdinalIgnoreCase) OrElse
            keyName.StartsWith("F", StringComparison.OrdinalIgnoreCase) Then
-            Return "special"
+            Return "buff"
         End If
 
         Return "attack"
@@ -2496,7 +2496,7 @@ Public Class Form1
         AddHandler btnCaptureSnapshot.Click, AddressOf SnapshotClicked
         generalLayout.Controls.Add(btnCaptureSnapshot, 3, 3)
 
-        chkHighMaxHpSpecial = New CheckBox() With {.Text = "Use special key on high max HP mobs", .Dock = DockStyle.Fill}
+        chkHighMaxHpSpecial = New CheckBox() With {.Text = "Use buff key on high max HP mobs", .Dock = DockStyle.Fill}
         generalLayout.Controls.Add(chkHighMaxHpSpecial, 0, 4)
         generalLayout.SetColumnSpan(chkHighMaxHpSpecial, 2)
 
@@ -2526,7 +2526,7 @@ Public Class Form1
         }
         generalLayout.Controls.Add(nudAvoidHighMaxHpThreshold, 3, 5)
 
-        Dim hint As New Label() With {.Text = "Mob HP Presence % = red-fill in mob_hp_rect. High max HP special and avoid-high-HP use mob_life_rect to read Max HP numbers.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.LightGreen}
+        Dim hint As New Label() With {.Text = "Mob HP Presence % = red-fill in mob_hp_rect. High max HP buff and avoid-high-HP use mob_life_rect to read Max HP numbers.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.LightGreen}
         generalLayout.Controls.Add(hint, 0, 6)
         generalLayout.SetColumnSpan(hint, 4)
 
@@ -3510,7 +3510,7 @@ Public Class Form1
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Key", .ReadOnly = True, .FillWeight = 60.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "CooldownSec", .FillWeight = 90.0F})
         Dim roleColumn As New DataGridViewComboBoxColumn() With {.Name = "Role", .FillWeight = 80.0F}
-        roleColumn.Items.AddRange(New Object() {"attack", "heal", "max_health", "mana", "special", "high_max_hp", "repair", "stop"})
+        roleColumn.Items.AddRange(New Object() {"attack", "heal", "max_health", "mana", "buff", "high_max_hp", "repair", "stop"})
         dgvCombat.Columns.Add(roleColumn)
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Priority", .FillWeight = 75.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "TriggerPercent", .HeaderText = "Trigger%", .FillWeight = 62.0F})
@@ -3929,12 +3929,12 @@ Public Class Form1
             keyIndex += 1
         Next
         For Each key In FunctionKeys
-            dgvCombat.Rows.Add(False, key, "1", "special", keyIndex * 10, 1, 1, 1)
+            dgvCombat.Rows.Add(False, key, "1", "buff", keyIndex * 10, 1, 1, 1)
             keyIndex += 1
         Next
         For i As Integer = 0 To CustomCombatDefaultKeys.Length - 1
             Dim customKey As String = CustomCombatDefaultKeys(i)
-            dgvCombat.Rows.Add(False, customKey, "1", "special", keyIndex * 10, 1, 1, 1)
+            dgvCombat.Rows.Add(False, customKey, "1", "buff", keyIndex * 10, 1, 1, 1)
             Dim customRow As DataGridViewRow = dgvCombat.Rows(dgvCombat.Rows.Count - 1)
             customRow.Cells("Key").ReadOnly = False
             keyIndex += 1
@@ -5225,7 +5225,7 @@ Public Class Form1
             "- Enabled: if checked, action is available.",
             "- Key: keyboard key sent to game (1-0, F1-F10 plus 3 custom rows after F10).",
             "- CooldownSec: minimum seconds between sends of this key.",
-            "- Role: attack, heal, max_health, mana, special, high_max_hp, repair, stop.",
+            "- Role: attack, heal, max_health, mana, buff, high_max_hp, repair, stop.",
             "- Priority: lower values act first inside same category checks.",
             "- TriggerPercent: role threshold (heal/mana/max_health use this heavily).",
             "- MinHpPercent / MinMpPercent: minimum self HP/MP to allow this action.",
@@ -5358,7 +5358,7 @@ Public Class Form1
             "- Enabled: activa/desactiva la accion.",
             "- Key: tecla enviada al juego.",
             "- CooldownSec: tiempo minimo entre envios de la tecla.",
-            "- Role: attack, heal, max_health, mana, special, high_max_hp, repair, stop.",
+            "- Role: attack, heal, max_health, mana, buff, high_max_hp, repair, stop.",
             "- Priority: orden de prioridad.",
             "- TriggerPercent: umbral principal para roles de soporte.",
             "- MinHpPercent / MinMpPercent: minimos para permitir la accion.",
@@ -5479,7 +5479,7 @@ Public Class Form1
             "- Enabled: naka-on o naka-off ang action.",
             "- Key: key na ipapadala sa game.",
             "- CooldownSec: minimum na pagitan bago ulitin ang key.",
-            "- Role: attack, heal, max_health, mana, special, high_max_hp, repair, stop.",
+            "- Role: attack, heal, max_health, mana, buff, high_max_hp, repair, stop.",
             "- Priority: pagkakasunod ng aksyon.",
             "- TriggerPercent: pangunahing threshold ng support actions.",
             "- MinHpPercent / MinMpPercent: minimum HP/MP para payagan ang action.",
@@ -5622,7 +5622,7 @@ Public Class Form1
                     "- Mob HP Presence % is the minimum HP-bar signal required to trust the current target.",
                     "- Show Overlay opens the live calibration overlay.",
                     "- Capture Snapshot stores the current client image for region checking.",
-                    "- Use special key on high max HP mobs plus Max HP >= work together with the high_max_hp combat role.",
+                    "- Use buff key on high max HP mobs plus Max HP >= work together with the high_max_hp combat role.",
                     "- Avoid mobs over max HP plus Avoid Max HP >= skips targets above that detected Max HP and retargets.",
                     "- Chat translation settings control OCR of the chat box, overlay visibility, target language, scan speed, and number of visible translated lines.",
                     "- Calibration Regions is the editable rectangle list for HP, MP, target name, target HP, map coordinates, chat, and other OCR areas; each On checkbox controls that region's overlay.",
@@ -5702,7 +5702,7 @@ Public Class Form1
                     "",
                     "- Combat Full is the complete mode intended for more powerful computers. This tab controls the combat rotation, safety actions, monster filtering, start/stop flow, and live full-mode status.",
                     "- In the Combat Skills grid: Enabled decides whether the row can run, Key is the game key, CooldownSec is the minimum delay between sends, Role defines when the row is considered, Priority orders rows inside the same category, TriggerPercent is the main threshold, and MinHpPercent / MinMpPercent are self-safety gates.",
-                    "- Role meanings: attack = normal damage, heal = healing action, max_health = HP support threshold, mana = MP support threshold, special = extra combat skill, high_max_hp = special branch for high-Max-HP targets, repair = one-shot repair key when the OCR warning is confirmed, stop = stop-movement key burst.",
+                    "- Role meanings: attack = normal damage, heal = healing action, max_health = HP support threshold, mana = MP support threshold, buff = extra combat skill, high_max_hp = buff branch for high-Max-HP targets, repair = one-shot repair key when the OCR warning is confirmed, stop = stop-movement key burst.",
                     "- Use lower Priority numbers for more important rows within the same role group.",
                     "- high_max_hp only works well if Vision reads the mob_life_rect numbers correctly.",
                     "- repair only works when unreachable_text_rect is calibrated to detect the 'is about to break' warning.",
@@ -5756,7 +5756,7 @@ Public Class Form1
                     "- Mob HP Presence % es la senal minima para confiar en la barra de HP del objetivo.",
                     "- Show Overlay abre la capa de calibracion.",
                     "- Capture Snapshot captura la imagen actual del cliente.",
-                    "- Use special key on high max HP mobs junto con Max HP >= trabaja con el role high_max_hp.",
+                    "- Use buff key on high max HP mobs junto con Max HP >= trabaja con el role high_max_hp.",
                     "- Los controles de chat translation manejan OCR del chat, overlay, idioma destino, velocidad y numero de lineas.",
                     "- Calibration Regions contiene los rectangulos OCR editables, incluidas las coordenadas del mapa; cada checkbox On controla el overlay de esa region.",
                     "- Las coordenadas del mapa se dividen en map_coordinate_x_rect para el eje X de 3 digitos y map_coordinate_y_rect para el eje Y de 3 digitos.",
@@ -5834,7 +5834,7 @@ Public Class Form1
                     "",
                     "- Combat Full es el modo completo pensado para computadoras mas potentes. Esta pestana controla la rotacion de combate, acciones de seguridad, filtro de monstruos, inicio/parada y estado en vivo.",
                     "- En Combat Skills: Enabled decide si la fila puede correr, Key es la tecla del juego, CooldownSec es el tiempo minimo entre envios, Role define cuando se considera la fila, Priority ordena filas del mismo grupo, TriggerPercent es el umbral principal y MinHpPercent / MinMpPercent son filtros de seguridad propios.",
-                    "- Roles: attack = dano normal, heal = curacion, max_health = soporte de HP, mana = soporte de MP, special = skill ofensiva extra, high_max_hp = rama especial para mobs con mucho Max HP, repair = repair por warning OCR, stop = tecla de parada.",
+                    "- Roles: attack = dano normal, heal = curacion, max_health = soporte de HP, mana = soporte de MP, buff = skill ofensiva extra, high_max_hp = rama buff para mobs con mucho Max HP, repair = repair por warning OCR, stop = tecla de parada.",
                     "- Usa prioridades numericamente mas bajas para filas mas importantes dentro del mismo tipo.",
                     "- high_max_hp depende de una lectura correcta de mob_life_rect en Vision.",
                     "- repair depende de que unreachable_text_rect detecte bien el warning de equipo.",
@@ -5887,7 +5887,7 @@ Public Class Form1
                     "- Mob HP Presence % ang minimum signal para paniwalaan ang HP bar ng target.",
                     "- Show Overlay bubukas sa live calibration overlay.",
                     "- Capture Snapshot kukuha ng kasalukuyang image ng client.",
-                    "- Use special key on high max HP mobs kasama ng Max HP >= ay para sa high_max_hp combat role.",
+                    "- Use buff key on high max HP mobs kasama ng Max HP >= ay para sa high_max_hp combat role.",
                     "- Ang chat translation controls ay para sa OCR ng chat, overlay visibility, target language, bilis ng scan, at dami ng visible lines.",
                     "- Calibration Regions ang editable OCR rectangles, kasama ang map coordinates; bawat On checkbox ang control ng overlay ng region.",
                     "- Hiwalay ang map coordinates: map_coordinate_x_rect para sa 3-digit X axis at map_coordinate_y_rect para sa 3-digit Y axis.",
@@ -5965,7 +5965,7 @@ Public Class Form1
                     "",
                     "- Ang Combat Full ay ang kumpletong mode na para sa mas malalakas na computer. Dito kino-control ang combat rotation, safety actions, monster filtering, start/stop flow, at live full-mode status.",
                     "- Sa Combat Skills grid: Enabled ang on/off ng row, Key ang key na ipapadala sa game, CooldownSec ang minimum pagitan ng gamit, Role ang nagsasabi kung kailan susuriin ang row, Priority ang order sa loob ng parehong role group, TriggerPercent ang pangunahing threshold, at MinHpPercent / MinMpPercent ang sariling safety gates.",
-                    "- Mga role: attack = normal damage, heal = heal action, max_health = HP support threshold, mana = MP support threshold, special = extra skill, high_max_hp = special branch para sa high-Max-HP mobs, repair = one-shot repair kapag confirmed ang OCR warning, stop = stop-movement key burst.",
+                    "- Mga role: attack = normal damage, heal = heal action, max_health = HP support threshold, mana = MP support threshold, buff = extra skill, high_max_hp = buff branch para sa high-Max-HP mobs, repair = one-shot repair kapag confirmed ang OCR warning, stop = stop-movement key burst.",
                     "- Gumamit ng mas mababang priority number para sa mas importanteng rows sa parehong role group.",
                     "- high_max_hp ay gagana lang kung tama ang OCR reading ng mob_life_rect sa Vision.",
                     "- repair ay nakadepende sa tamang calibration ng unreachable_text_rect warning text.",
@@ -7130,7 +7130,7 @@ Public Class Form1
 
     Private Sub ApplyQuickAutoPotThresholds(Optional silent As Boolean = False)
         For Each row As DataGridViewRow In dgvCombat.Rows
-            Dim role As String = SafeCell(row, "Role", "attack").ToLowerInvariant()
+            Dim role As String = NormalizePersistedRole(SafeCell(row, "Role", "attack"))
             If role = "heal" OrElse role = "max_health" Then
                 row.Cells("TriggerPercent").Value = CInt(nudAutoPotHp.Value).ToString()
             ElseIf role = "mana" Then
@@ -8878,7 +8878,9 @@ Public Class Form1
     Private Shared Function NormalizePersistedRole(rawRole As String) As String
         Dim role As String = If(rawRole, "").Trim().ToLowerInvariant()
         Select Case role
-            Case "attack", "heal", "max_health", "mana", "special", "high_max_hp", "repair", "stop"
+            Case "special"
+                Return "buff"
+            Case "attack", "heal", "max_health", "mana", "buff", "high_max_hp", "repair", "stop"
                 Return role
             Case Else
                 Return "attack"

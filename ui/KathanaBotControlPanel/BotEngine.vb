@@ -340,7 +340,7 @@ Public Class BotConfig
             ElseIf isPrimary Then
                 role = "attack"
             Else
-                role = "special"
+                role = "buff"
             End If
             Dim trigger As Integer = If(keyName = "6", 80, 40)
             Dim cooldownMs As Integer
@@ -1844,7 +1844,20 @@ Public Class BotEngine
             Dim nameConfirmedForAttack As Boolean = (Not monsterFilterActive) OrElse (normMobName <> "" AndAlso _nameConfirmConfirmedName.Equals(normMobName, StringComparison.OrdinalIgnoreCase))
             Dim missingNameBlockedByFilter As Boolean = monsterFilterActive AndAlso targetWindowVisible AndAlso normMobName = ""
             Dim nameConfirmationBlockedByFilter As Boolean = monsterFilterActive AndAlso targetWindowVisible AndAlso (Not missingNameBlockedByFilter) AndAlso (Not monsterFilterBlockedTarget) AndAlso (Not nameConfirmedForAttack)
-            Dim currentTargetAliveSignal As Boolean = HasLivingTargetSignal(targetWindowVisible, mobHpPct, cfg) OrElse normMobName <> ""
+            Dim targetHasHpSignal As Boolean = HasLivingTargetSignal(targetWindowVisible, mobHpPct, cfg)
+            Dim nameOnlyNonMobTarget As Boolean = normMobName <> "" AndAlso (Not targetHasHpSignal) AndAlso mobMaxHp <= 0
+            If nameOnlyNonMobTarget Then
+                ClearCombatLock()
+                _firstHitPending = False
+                _firstHitTargetSignature = ""
+                _firstHitWindowUntil = DateTime.MinValue
+                _lastTargetValidAt = DateTime.MinValue
+                _lastLivingTargetSignalAt = DateTime.MinValue
+                _lastTargetWindowSeen = DateTime.MinValue
+                _noDamageTargetSignature = ""
+                _noDamageAttackCount = 0
+            End If
+            Dim currentTargetAliveSignal As Boolean = targetHasHpSignal
             If currentTargetAliveSignal Then
                 _lastLivingTargetSignalAt = now
                 _noTargetBeganAt = DateTime.MinValue
@@ -1888,7 +1901,10 @@ Public Class BotEngine
                 nameConfirmationBlockedByFilter OrElse
                 unreachableLockActive
             Dim targetSignalHoldActive As Boolean = (Not targetActionBlocked) AndAlso IsRecentTargetSignalHoldActive(now, cfg)
-            Dim effectiveTargetValid As Boolean = targetValid OrElse targetSignalHoldActive OrElse (combatLockActive AndAlso Not targetActionBlocked)
+            If nameOnlyNonMobTarget Then
+                targetSignalHoldActive = False
+            End If
+            Dim effectiveTargetValid As Boolean = targetValid OrElse targetSignalHoldActive OrElse ((Not nameOnlyNonMobTarget) AndAlso combatLockActive AndAlso Not targetActionBlocked)
             TrackMobHpMovement(targetValid, mobHpPct, now)
 
             Dim guardrailReason As String = ""
@@ -1926,7 +1942,17 @@ Public Class BotEngine
             End If
             Dim forcedRetarget As Boolean = False
 
-            If ShouldBypassStuckTarget(cfg, targetWindowVisible, targetValid, now) Then
+            If nameOnlyNonMobTarget AndAlso Not actionSent Then
+                If TrySendRetargetKey(hwnd, cfg, now, "E (non-mob target without HP bar)", forced:=True) Then
+                    reason = $"Selected target '{mobName}' has no mob HP bar/life numbers. Retarget key sent."
+                    forcedRetarget = True
+                    actionSent = True
+                Else
+                    reason = $"Selected target '{mobName}' has no mob HP bar/life numbers. Waiting retarget cooldown."
+                End If
+            End If
+
+            If Not forcedRetarget AndAlso ShouldBypassStuckTarget(cfg, targetWindowVisible, targetValid, now) Then
                 If TrySendRetargetKey(hwnd, cfg, now, "E (stuck target bypass)", forced:=True) Then
                     _noDamageTargetSignature = ""
                     _noDamageAttackCount = 0
@@ -1997,7 +2023,7 @@ Public Class BotEngine
                     End If
                 End If
 
-                ' Support keys can fire without blocking attack/special in the same loop.
+                ' Support keys can fire without blocking attack/buff in the same loop.
                 Dim allowBlindAttack As Boolean = AllowBlindAttackWhenTargetMissing AndAlso (Not monsterFilterActive) AndAlso (Not monsterFilterBlockedTarget) AndAlso (Not avoidHighMaxHpTarget) AndAlso (Not _lastNavigationTravelActive)
                 Dim attackBurst As List(Of ActionRule) = ChooseAttackBurstActions(cfg, hpPct, mpPct, effectiveTargetValid, allowBlindAttack, highMaxHpAttackActive, reason)
                 If attackBurst.Count > 0 Then
@@ -2077,6 +2103,8 @@ Public Class BotEngine
                                     reason = $"Monster filter waiting for {monsterFilterConfirmRequired}x name confirmation. Retarget key sent."
                                 ElseIf unreachableLockActive Then
                                     reason = "Unable-to-reach lock active. Retarget key sent."
+                                ElseIf nameOnlyNonMobTarget Then
+                                    reason = "Selected target has no mob HP bar/life numbers. Retarget key sent."
                                 ElseIf Not targetWindowVisible Then
                                     reason = "No target window detected. Retarget key sent."
                                 Else
@@ -2103,6 +2131,8 @@ Public Class BotEngine
                             reason = $"Monster filter waiting for {monsterFilterConfirmRequired}x name confirmation. Waiting retarget cooldown."
                         ElseIf unreachableLockActive Then
                             reason = "Unable-to-reach lock active. Waiting retarget cooldown."
+                        ElseIf nameOnlyNonMobTarget Then
+                            reason = "Selected target has no mob HP bar/life numbers. Waiting retarget cooldown."
                         ElseIf Not targetWindowVisible Then
                             reason = $"No target window detected. Waiting {retargetDelayMs}ms retarget cooldown."
                         Else
@@ -6005,7 +6035,7 @@ Public Class BotEngine
             Return
         End If
         ' Do not fully block looting when combat/support keys fire in the same loop.
-        ' Only skip if an attack/special key was just sent to avoid immediate input collision.
+        ' Only skip if an attack/buff key was just sent to avoid immediate input collision.
         If actionSent AndAlso _lastAttackAction <> DateTime.MinValue AndAlso (now - _lastAttackAction).TotalMilliseconds < 180 Then
             Return
         End If
@@ -7757,6 +7787,7 @@ Public Class BotEngine
 
             Dim isAttackLike As Boolean =
                 action.Role = "attack" OrElse
+                action.Role = "buff" OrElse
                 action.Role = "special" OrElse
                 action.Role = "high_max_hp"
             If Not isAttackLike Then
@@ -7792,7 +7823,7 @@ Public Class BotEngine
         End If
 
         If Not hasAttackKey Then
-            reason = "No enabled attack/special/high_max_hp keys."
+            reason = "No enabled attack/buff/high_max_hp keys."
         ElseIf Not targetValid AndAlso Not allowBlindAttack Then
             reason = "No target detected."
         ElseIf highMaxHpRoleWaitingForLifeRead Then
