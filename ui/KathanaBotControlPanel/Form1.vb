@@ -2526,7 +2526,7 @@ Public Class Form1
         }
         generalLayout.Controls.Add(nudAvoidHighMaxHpThreshold, 3, 5)
 
-        Dim hint As New Label() With {.Text = "Mob HP Presence % = minimum red-fill detected in Mob HP bar. High max HP special and avoid-high-HP both need mob_hp_rect to include the HP numbers.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.LightGreen}
+        Dim hint As New Label() With {.Text = "Mob HP Presence % = red-fill in mob_hp_rect. High max HP special and avoid-high-HP use mob_life_rect to read Max HP numbers.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.LightGreen}
         generalLayout.Controls.Add(hint, 0, 6)
         generalLayout.SetColumnSpan(hint, 4)
 
@@ -3513,9 +3513,9 @@ Public Class Form1
         roleColumn.Items.AddRange(New Object() {"attack", "heal", "max_health", "mana", "special", "high_max_hp", "repair", "stop"})
         dgvCombat.Columns.Add(roleColumn)
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Priority", .FillWeight = 75.0F})
-        dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "TriggerPercent", .FillWeight = 85.0F})
-        dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "MinHpPercent", .FillWeight = 85.0F})
-        dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "MinMpPercent", .FillWeight = 85.0F})
+        dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "TriggerPercent", .HeaderText = "Trigger%", .FillWeight = 62.0F})
+        dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "MinHpPercent", .HeaderText = "MinHp%", .FillWeight = 62.0F})
+        dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "MinMpPercent", .HeaderText = "MinMp%", .FillWeight = 62.0F})
         layout.Controls.Add(dgvCombat, 0, 0)
         layout.Controls.Add(New Label() With {
             .Text = "repair role: watches unreachable_text_rect for '___ is about to break'. After 5 OCR reads inside a 10-minute rolling window it sends the key once, resets the repair OCR count, then waits for the warning text to clear before allowing another repair trigger. TriggerPercent is ignored for repair.",
@@ -3646,7 +3646,7 @@ Public Class Form1
         lblSystem = New Label() With {.Text = "System Active: False", .Top = 122, .Left = 8, .Width = 260, .Height = 22, .ForeColor = Color.LightGreen}
         lblHp = New Label() With {.Text = "HP%: 0", .Top = 150, .Left = 8, .Width = 120, .Height = 22, .ForeColor = Color.LimeGreen}
         lblMp = New Label() With {.Text = "MP%: 0", .Top = 150, .Left = 136, .Width = 120, .Height = 22, .ForeColor = Color.DeepSkyBlue}
-        lblMobName = New Label() With {.Text = "Mob: (none)", .Top = 174, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.LightSkyBlue}
+        lblMobName = New Label() With {.Text = "Mob: (none) | Life: n/a", .Top = 174, .Left = 8, .Width = 360, .Height = 22, .ForeColor = Color.LightSkyBlue}
         lblExpRate = New Label() With {.Text = "Prana/EXP: 0.00% | Rate: Calculating (1m)", .Top = 196, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.Khaki}
         lblRupiahsRate = New Label() With {.Text = "Rupiahs: n/a | Rate: Calculating (1m)", .Top = 218, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.Gold}
         btnAttack = New Button() With {.Text = "Attack", .Top = 252, .Left = 8, .Width = 210, .Height = 42, .BackColor = Color.FromArgb(40, 180, 80), .ForeColor = Color.White}
@@ -3830,7 +3830,7 @@ Public Class Form1
 
     Private Function BuildKeySummaryPanel() As Control
         Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3, .Padding = New Padding(6)}
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 28.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 48.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
 
@@ -3884,6 +3884,7 @@ Public Class Form1
         dgvRegions.Rows.Add(True, "mp_bar", "3", "40", "161", "11")
         dgvRegions.Rows.Add(True, "mob_name_rect", "860", "711", "162", "23")
         dgvRegions.Rows.Add(True, "mob_hp_rect", "859", "737", "165", "11")
+        dgvRegions.Rows.Add(True, "mob_life_rect", "859", "737", "165", "11")
         dgvRegions.Rows.Add(True, "unreachable_text_rect", "15", "582", "128", "22")
         dgvRegions.Rows.Add(True, "prana_exp_rect", "472", "745", "78", "21")
         dgvRegions.Rows.Add(True, "rupiahs_rect", "560", "745", "110", "21")
@@ -5228,8 +5229,8 @@ Public Class Form1
             "- Priority: lower values act first inside same category checks.",
             "- TriggerPercent: role threshold (heal/mana/max_health use this heavily).",
             "- MinHpPercent / MinMpPercent: minimum self HP/MP to allow this action.",
-            "- high_max_hp only fires when enabled in Vision and mob_hp_rect OCR reads Max HP above your threshold.",
-            "- Avoid mobs over max HP uses the same mob_hp_rect OCR, but retargets instead of attacking when Max HP is over your avoid threshold.",
+            "- high_max_hp only fires when enabled in Vision and mob_life_rect OCR reads Max HP above your threshold.",
+            "- Avoid mobs over max HP uses the same mob_life_rect OCR, but retargets instead of attacking when Max HP is over your avoid threshold.",
             "- repair watches unreachable_text_rect for '___ is about to break'. After 5 OCR reads inside 10 minutes it sends the configured key once, resets the repair OCR count, then waits until the warning clears before it can trigger again. TriggerPercent is ignored for repair.",
             "",
             "3) COMBAT FULL TAB - MONSTER FILTER",
@@ -5265,7 +5266,7 @@ Public Class Form1
             "- Capture Snapshot: captures current client image.",
             "",
             "7) VISION TAB - CALIBRATION REGIONS",
-            "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, unreachable_text_rect,",
+            "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, mob_life_rect, unreachable_text_rect,",
             "  prana_exp_rect, rupiahs_rect, party_invite_scan_rect, party_invite_ok_rect, party_list_rect.",
             "- Loot Scan Area uses 4 freeform points: x,y | x,y | x,y | x,y.",
             "- You can edit coordinates directly in grid or through overlay.",
@@ -5361,7 +5362,7 @@ Public Class Form1
             "- Priority: orden de prioridad.",
             "- TriggerPercent: umbral principal para roles de soporte.",
             "- MinHpPercent / MinMpPercent: minimos para permitir la accion.",
-            "- high_max_hp solo dispara si esta activo en Vision y el OCR de mob_hp_rect lee Max HP arriba del umbral.",
+            "- high_max_hp solo dispara si esta activo en Vision y el OCR de mob_life_rect lee Max HP arriba del umbral.",
             "- repair vigila unreachable_text_rect para '___ is about to break'. Despues de 5 lecturas OCR envia la tecla una vez y espera a que el aviso desaparezca antes de volver a activarse. TriggerPercent no se usa en repair.",
             "",
             "3) FILTRO DE MONSTRUOS",
@@ -5392,7 +5393,7 @@ Public Class Form1
             "- Capture Snapshot para capturar imagen del cliente.",
             "",
             "7) REGIONES DE CALIBRACION",
-            "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, unreachable_text_rect,",
+            "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, mob_life_rect, unreachable_text_rect,",
             "  prana_exp_rect, rupiahs_rect, party_invite_scan_rect, party_invite_ok_rect, party_list_rect.",
             "- Loot Scan Area usa 4 puntos libres: x,y | x,y | x,y | x,y.",
             "- Puedes editar coordenadas en tabla o con overlay.",
@@ -5482,7 +5483,7 @@ Public Class Form1
             "- Priority: pagkakasunod ng aksyon.",
             "- TriggerPercent: pangunahing threshold ng support actions.",
             "- MinHpPercent / MinMpPercent: minimum HP/MP para payagan ang action.",
-            "- high_max_hp gagana lang kapag naka-enable sa Vision at nabasa ng mob_hp_rect OCR ang Max HP lampas sa threshold mo.",
+            "- high_max_hp gagana lang kapag naka-enable sa Vision at nabasa ng mob_life_rect OCR ang Max HP lampas sa threshold mo.",
             "- repair nagbabantay sa unreachable_text_rect para sa '___ is about to break'. Pag nabasa ito ng OCR ng 5 beses, isang beses nitong ipapadala ang repair key at maghihintay munang mawala ang warning bago puwedeng mag-trigger ulit. Hindi ginagamit ang TriggerPercent sa repair.",
             "",
             "3) MONSTER FILTER",
@@ -5513,7 +5514,7 @@ Public Class Form1
             "- Capture Snapshot para kumuha ng current game image.",
             "",
             "7) CALIBRATION REGIONS",
-            "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, unreachable_text_rect,",
+            "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, mob_life_rect, unreachable_text_rect,",
             "  prana_exp_rect, rupiahs_rect, party_invite_scan_rect, party_invite_ok_rect, party_list_rect.",
             "- Loot Scan Area ay 4 na freeform points: x,y | x,y | x,y | x,y.",
             "- Puwedeng i-edit sa grid o sa overlay.",
@@ -5703,7 +5704,7 @@ Public Class Form1
                     "- In the Combat Skills grid: Enabled decides whether the row can run, Key is the game key, CooldownSec is the minimum delay between sends, Role defines when the row is considered, Priority orders rows inside the same category, TriggerPercent is the main threshold, and MinHpPercent / MinMpPercent are self-safety gates.",
                     "- Role meanings: attack = normal damage, heal = healing action, max_health = HP support threshold, mana = MP support threshold, special = extra combat skill, high_max_hp = special branch for high-Max-HP targets, repair = one-shot repair key when the OCR warning is confirmed, stop = stop-movement key burst.",
                     "- Use lower Priority numbers for more important rows within the same role group.",
-                    "- high_max_hp only works well if Vision reads the mob_hp_rect numbers correctly.",
+                    "- high_max_hp only works well if Vision reads the mob_life_rect numbers correctly.",
                     "- repair only works when unreachable_text_rect is calibrated to detect the 'is about to break' warning.",
                     "- Monster Filter can run as blacklist or whitelist. Blacklist skips listed names; whitelist only attacks listed names. Name Check 2 reads requires two separate OCR reads before attacking; 1 read attacks after the first matching OCR name.",
                     "- Add lets you insert names, including comma-separated names typed in the box. Remove deletes the selected names.",
@@ -5835,7 +5836,7 @@ Public Class Form1
                     "- En Combat Skills: Enabled decide si la fila puede correr, Key es la tecla del juego, CooldownSec es el tiempo minimo entre envios, Role define cuando se considera la fila, Priority ordena filas del mismo grupo, TriggerPercent es el umbral principal y MinHpPercent / MinMpPercent son filtros de seguridad propios.",
                     "- Roles: attack = dano normal, heal = curacion, max_health = soporte de HP, mana = soporte de MP, special = skill ofensiva extra, high_max_hp = rama especial para mobs con mucho Max HP, repair = repair por warning OCR, stop = tecla de parada.",
                     "- Usa prioridades numericamente mas bajas para filas mas importantes dentro del mismo tipo.",
-                    "- high_max_hp depende de una lectura correcta de mob_hp_rect en Vision.",
+                    "- high_max_hp depende de una lectura correcta de mob_life_rect en Vision.",
                     "- repair depende de que unreachable_text_rect detecte bien el warning de equipo.",
                     "- Monster Filter puede ser blacklist o whitelist. Blacklist evita nombres listados; whitelist solo ataca nombres listados. Name Check 2 reads requiere dos lecturas OCR separadas antes de atacar; 1 read ataca con la primera coincidencia.",
                     "- Add agrega nombres, incluso varios separados por coma. Remove elimina los seleccionados.",
@@ -5966,7 +5967,7 @@ Public Class Form1
                     "- Sa Combat Skills grid: Enabled ang on/off ng row, Key ang key na ipapadala sa game, CooldownSec ang minimum pagitan ng gamit, Role ang nagsasabi kung kailan susuriin ang row, Priority ang order sa loob ng parehong role group, TriggerPercent ang pangunahing threshold, at MinHpPercent / MinMpPercent ang sariling safety gates.",
                     "- Mga role: attack = normal damage, heal = heal action, max_health = HP support threshold, mana = MP support threshold, special = extra skill, high_max_hp = special branch para sa high-Max-HP mobs, repair = one-shot repair kapag confirmed ang OCR warning, stop = stop-movement key burst.",
                     "- Gumamit ng mas mababang priority number para sa mas importanteng rows sa parehong role group.",
-                    "- high_max_hp ay gagana lang kung tama ang OCR reading ng mob_hp_rect sa Vision.",
+                    "- high_max_hp ay gagana lang kung tama ang OCR reading ng mob_life_rect sa Vision.",
                     "- repair ay nakadepende sa tamang calibration ng unreachable_text_rect warning text.",
                     "- Monster Filter puwedeng blacklist o whitelist. Blacklist iiwas sa listed names; whitelist listed names lang ang aatakihin. Name Check 2 reads kailangan ng dalawang OCR reads bago umatake; 1 read unang match pa lang puwede na.",
                     "- Add puwedeng magdagdag ng isa o maraming comma-separated names. Remove mag-aalis ng selected names.",
@@ -6462,11 +6463,7 @@ Public Class Form1
         lblMp.Text = $"MP%: {status.MpPercent:0.0}"
         lblHp.ForeColor = HpColor(status.HpPercent)
         lblMp.ForeColor = MpColor(status.MpPercent)
-        Dim mobDisplayName As String = If(String.IsNullOrWhiteSpace(status.MobName), "(none)", status.MobName)
-        If Not String.IsNullOrWhiteSpace(status.MobHpText) Then
-            mobDisplayName &= $" ({status.MobHpText})"
-        End If
-        lblMobName.Text = $"Mob: {mobDisplayName}"
+        lblMobName.Text = FormatFullMobStatusText(status)
         lblExpRate.Text = $"Prana/EXP: {status.ExpPercent:0.00}% | Rate: {If(status.ExpPerHour < 0, "Calculating (1m)", status.ExpPerHour.ToString("0.00") & "%/hr")}"
         lblRupiahsRate.Text = $"Rupiahs: {If(status.RupiahsTotal >= 0, status.RupiahsTotal.ToString("N0"), "n/a")} | Rate: {If(status.RupiahsPerHour < 0, "Calculating (1m)", status.RupiahsPerHour.ToString("N0") & "/hr")}"
         If lblLevelingState IsNot Nothing Then
@@ -6640,6 +6637,20 @@ Public Class Form1
             _lastAgentState = agentStateText
         End If
     End Sub
+
+    Private Shared Function FormatFullMobStatusText(status As BotStatus) As String
+        If status Is Nothing Then
+            Return "Mob: (none) | Life: n/a"
+        End If
+
+        Dim mobName As String = If(String.IsNullOrWhiteSpace(status.MobName), "(none)", status.MobName.Trim())
+        Dim lifeText As String = If(String.IsNullOrWhiteSpace(status.MobHpText), "n/a", status.MobHpText.Trim())
+        If lifeText = "n/a" AndAlso status.MobMaxHp > 0 Then
+            lifeText = status.MobMaxHp.ToString("N0")
+        End If
+
+        Return $"Mob: {mobName} | Life: {lifeText}"
+    End Function
 
     Private Sub HandleChatTranslation(status As BotStatus)
         Dim translationEnabled As Boolean = (chkChatTranslationEnabled IsNot Nothing AndAlso chkChatTranslationEnabled.Checked)
@@ -7327,6 +7338,7 @@ Public Class Form1
         cfg.MpBar = BuildRect("mp_bar")
         cfg.MobNameRect = BuildRect("mob_name_rect")
         cfg.MobHpRect = BuildRect("mob_hp_rect")
+        cfg.MobLifeRect = BuildRectOrFallback("mob_life_rect", cfg.MobHpRect)
         cfg.UnreachableTextRect = BuildRect("unreachable_text_rect")
         cfg.PranaExpRect = BuildRect("prana_exp_rect")
         cfg.RupiahsRect = BuildRect("rupiahs_rect")
@@ -8621,6 +8633,7 @@ Public Class Form1
         UpsertRegionRow("mp_bar", cfg.MpBar)
         UpsertRegionRow("mob_name_rect", cfg.MobNameRect)
         UpsertRegionRow("mob_hp_rect", cfg.MobHpRect)
+        UpsertRegionRow("mob_life_rect", If(cfg.MobLifeRect, cfg.MobHpRect))
         UpsertRegionRow("unreachable_text_rect", cfg.UnreachableTextRect)
         UpsertRegionRow("prana_exp_rect", cfg.PranaExpRect)
         UpsertRegionRow("rupiahs_rect", cfg.RupiahsRect)
@@ -9273,13 +9286,41 @@ Public Class Form1
         Dim repairRequired As Integer = Math.Max(1, status.RepairConfirmRequiredCount)
         Dim repairWindow As Integer = Math.Max(1, status.RepairConfirmWindowMinutes)
         Dim repairText As String = $"Repair OCR: {Math.Max(0, status.RepairConfirmCount)}/{repairRequired} in {repairWindow}m | repair triggers: {Math.Max(0, status.RepairTriggerCount)}"
+        Dim runtimeText As String = FormatBotRuntimeSummary()
         If ordered.Count = 0 Then
-            lblKeySummaryInfo.Text = $"No key presses tracked in the last 60 minutes. | {repairText}"
+            lblKeySummaryInfo.Text = $"No key presses tracked in the last 60 minutes. | {repairText}{Environment.NewLine}{runtimeText}"
         Else
             Dim capText As String = If(actionEvents.Count >= MaxKeyActionEvents, " | capped", "")
-            lblKeySummaryInfo.Text = $"Tracked keys: {ordered.Count} | Total presses (60m): {actionEvents.Count}{capText} | {repairText} | Updated: {DateTime.Now:HH:mm:ss}"
+            lblKeySummaryInfo.Text = $"Tracked keys: {ordered.Count} | Total presses (60m): {actionEvents.Count}{capText} | {repairText} | Updated: {DateTime.Now:HH:mm:ss}{Environment.NewLine}{runtimeText}"
         End If
     End Sub
+
+    Private Function FormatBotRuntimeSummary() As String
+        Dim runningEdition As BotEdition? = GetRunningEdition()
+        If Not runningEdition.HasValue Then
+            Return "Bot running time: stopped"
+        End If
+
+        Dim status As BotStatus = GetStatusForEdition(runningEdition.Value)
+        If status Is Nothing OrElse Not status.Running OrElse status.RunStartedAtUtc = DateTime.MinValue Then
+            Return $"Bot running time ({runningEdition.Value}): starting..."
+        End If
+
+        Dim elapsed As TimeSpan = DateTime.UtcNow - status.RunStartedAtUtc
+        If elapsed < TimeSpan.Zero Then
+            elapsed = TimeSpan.Zero
+        End If
+
+        Return $"Bot running time ({runningEdition.Value}): {FormatElapsedRuntime(elapsed)}"
+    End Function
+
+    Private Shared Function FormatElapsedRuntime(elapsed As TimeSpan) As String
+        Dim totalHours As Integer = CInt(Math.Floor(elapsed.TotalHours))
+        If totalHours >= 24 Then
+            Return $"{elapsed.Days}d {elapsed.Hours:00}:{elapsed.Minutes:00}:{elapsed.Seconds:00}"
+        End If
+        Return $"{totalHours:00}:{elapsed.Minutes:00}:{elapsed.Seconds:00}"
+    End Function
 
     Private Sub PruneKeyActionEvents(nowUtc As DateTime)
         SyncLock _keyActionEventsSync

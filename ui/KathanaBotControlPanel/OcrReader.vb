@@ -404,29 +404,18 @@ Public NotInheritable Class OcrReader
         Dim bestText As String = ""
         Dim bestScore As Integer = -1
 
-        Using baseScaled As Bitmap = ScaleBitmap(source, 5)
-            If TryReadHpFractionCandidate(engine, baseScaled, bestText, bestScore, 60) Then
-                Return bestText
-            End If
-            Using candidate As Bitmap = ToGrayHighContrast(baseScaled)
-                If TryReadHpFractionCandidate(engine, candidate, bestText, bestScore, 60) Then
+        Dim candidates As List(Of Bitmap) = BuildHpFractionCandidates(source)
+        Try
+            For Each candidate As Bitmap In candidates
+                If TryReadHpFractionCandidate(engine, candidate, bestText, bestScore, 45) Then
                     Return bestText
                 End If
-            End Using
-            Using whiteDigits As Bitmap = IsolateWhiteDigits(baseScaled)
-                If TryReadHpFractionCandidate(engine, whiteDigits, bestText, bestScore, 60) Then
-                    Return bestText
-                End If
-                Using candidate As Bitmap = ToBinary(whiteDigits, 120, False)
-                    If TryReadHpFractionCandidate(engine, candidate, bestText, bestScore, 60) Then
-                        Return bestText
-                    End If
-                End Using
-            End Using
-            Using candidate As Bitmap = ToBinary(baseScaled, 165, False)
-                TryReadHpFractionCandidate(engine, candidate, bestText, bestScore, 60)
-            End Using
-        End Using
+            Next
+        Finally
+            For Each candidate As Bitmap In candidates
+                candidate.Dispose()
+            Next
+        End Try
 
         Return bestText
     End Function
@@ -652,13 +641,33 @@ Public NotInheritable Class OcrReader
 
     Private Shared Function BuildHpFractionCandidates(source As Bitmap) As List(Of Bitmap)
         Dim list As New List(Of Bitmap)()
-        Dim baseScaled As Bitmap = ScaleBitmap(source, 5)
+        Dim baseScaled As Bitmap = ScaleBitmap(source, 6)
+        Dim largeScaled As Bitmap = ScaleBitmap(source, 8)
+        Dim extraLargeScaled As Bitmap = ScaleBitmap(source, 10)
         Dim whiteDigits As Bitmap = IsolateWhiteDigits(baseScaled)
+        Dim lifeDigits As Bitmap = IsolateLifeDigits(baseScaled)
+        Dim largeLifeDigits As Bitmap = IsolateLifeDigits(largeScaled)
         list.Add(baseScaled)
+        list.Add(largeScaled)
+        list.Add(extraLargeScaled)
         list.Add(ToGrayHighContrast(baseScaled))
+        list.Add(ToGrayHighContrast(largeScaled))
+        list.Add(ToGrayHighContrast(extraLargeScaled))
         list.Add(whiteDigits)
-        list.Add(ToBinary(whiteDigits, 120, False))
-        list.Add(ToBinary(baseScaled, 165, False))
+        list.Add(lifeDigits)
+        list.Add(largeLifeDigits)
+        list.Add(IsolateLightText(baseScaled))
+        list.Add(IsolateLightText(largeScaled))
+        list.Add(ToBinary(whiteDigits, 105, False))
+        list.Add(ToBinary(whiteDigits, 135, False))
+        list.Add(ToBinary(lifeDigits, 105, False))
+        list.Add(ToBinary(lifeDigits, 135, False))
+        list.Add(ToBinary(largeLifeDigits, 105, False))
+        list.Add(ToBinary(largeLifeDigits, 135, False))
+        list.Add(ToBinary(baseScaled, 145, False))
+        list.Add(ToBinary(baseScaled, 175, False))
+        list.Add(ToBinary(largeScaled, 145, False))
+        list.Add(ToBinary(largeScaled, 175, False))
         Return list
     End Function
 
@@ -903,6 +912,62 @@ Public NotInheritable Class OcrReader
         Return outBmp
     End Function
 
+    Private Shared Function IsolateLifeDigits(source As Bitmap) As Bitmap
+        Dim outBmp As New Bitmap(source.Width, source.Height, PixelFormat.Format24bppRgb)
+        Dim rect As New Rectangle(0, 0, source.Width, source.Height)
+        Dim srcData As BitmapData = Nothing
+        Dim dstData As BitmapData = Nothing
+        Dim srcBytes As Byte() = Nothing
+        Dim dstBytes As Byte() = Nothing
+        Try
+            srcData = source.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb)
+            dstData = outBmp.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb)
+            Dim srcLength As Integer = Math.Abs(srcData.Stride) * source.Height
+            Dim dstLength As Integer = Math.Abs(dstData.Stride) * outBmp.Height
+            srcBytes = ArrayPool(Of Byte).Shared.Rent(srcLength)
+            dstBytes = ArrayPool(Of Byte).Shared.Rent(dstLength)
+            Marshal.Copy(srcData.Scan0, srcBytes, 0, srcLength)
+
+            For y As Integer = 0 To source.Height - 1
+                Dim srcRow As Integer = y * srcData.Stride
+                Dim dstRow As Integer = y * dstData.Stride
+                For x As Integer = 0 To source.Width - 1
+                    Dim si As Integer = srcRow + (x * 3)
+                    Dim b As Integer = srcBytes(si)
+                    Dim g As Integer = srcBytes(si + 1)
+                    Dim r As Integer = srcBytes(si + 2)
+                    Dim maxChannel As Integer = Math.Max(r, Math.Max(g, b))
+                    Dim minChannel As Integer = Math.Min(r, Math.Min(g, b))
+                    Dim bright As Integer = r + g + b
+                    Dim isWhite As Boolean = maxChannel >= 145 AndAlso (maxChannel - minChannel) <= 85
+                    Dim isYellow As Boolean = r >= 150 AndAlso g >= 125 AndAlso b <= 150
+                    Dim isRed As Boolean = r >= 190 AndAlso g <= 145 AndAlso b <= 145 AndAlso bright >= 260
+                    Dim value As Byte = If(isWhite OrElse isYellow OrElse isRed, CByte(255), CByte(0))
+                    Dim di As Integer = dstRow + (x * 3)
+                    dstBytes(di) = value
+                    dstBytes(di + 1) = value
+                    dstBytes(di + 2) = value
+                Next
+            Next
+
+            Marshal.Copy(dstBytes, 0, dstData.Scan0, dstLength)
+        Finally
+            If srcData IsNot Nothing Then
+                source.UnlockBits(srcData)
+            End If
+            If dstData IsNot Nothing Then
+                outBmp.UnlockBits(dstData)
+            End If
+            If srcBytes IsNot Nothing Then
+                ArrayPool(Of Byte).Shared.Return(srcBytes)
+            End If
+            If dstBytes IsNot Nothing Then
+                ArrayPool(Of Byte).Shared.Return(dstBytes)
+            End If
+        End Try
+        Return outBmp
+    End Function
+
     Private Shared Function ScoreText(text As String) As Integer
         If String.IsNullOrWhiteSpace(text) Then
             Return -1
@@ -940,8 +1005,11 @@ Public NotInheritable Class OcrReader
         End If
 
         Dim normalized As String = raw.ToUpperInvariant()
-        normalized = normalized.Replace("O", "0").Replace("I", "1").Replace("L", "1").Replace("|", "1")
+        normalized = normalized.Replace("O", "0").Replace("Q", "0").Replace("D", "0")
+        normalized = normalized.Replace("I", "1").Replace("L", "1").Replace("|", "1").Replace("!", "1")
+        normalized = normalized.Replace("S", "5").Replace("B", "8").Replace("Z", "2")
         normalized = normalized.Replace(",", "").Replace(".", "")
+        normalized = normalized.Replace("\", "/").Replace(":", "/").Replace(";", "/")
         normalized = Regex.Replace(normalized, "[^0-9/ ]", " ")
         normalized = Regex.Replace(normalized, "/{2,}", "/")
         normalized = Regex.Replace(normalized, "\s+", " ").Trim()
@@ -949,6 +1017,21 @@ Public NotInheritable Class OcrReader
         Dim fractionMatch As Match = Regex.Match(normalized, "(\d{2,9})\s*/\s*(\d{2,9})")
         If fractionMatch.Success Then
             Return $"{fractionMatch.Groups(1).Value}/{fractionMatch.Groups(2).Value}"
+        End If
+
+        Dim spacedPair As Match = Regex.Match(normalized, "(\d{2,9})\s+(\d{2,9})")
+        If spacedPair.Success Then
+            Return $"{spacedPair.Groups(1).Value}/{spacedPair.Groups(2).Value}"
+        End If
+
+        Dim digitsOnly As String = Regex.Replace(normalized, "\D", "")
+        If digitsOnly.Length >= 4 AndAlso digitsOnly.Length Mod 2 = 0 Then
+            Dim half As Integer = digitsOnly.Length \ 2
+            Dim left As String = digitsOnly.Substring(0, half)
+            Dim right As String = digitsOnly.Substring(half)
+            If left.Length >= 2 AndAlso right.Length >= 2 Then
+                Return $"{left}/{right}"
+            End If
         End If
 
         Return normalized

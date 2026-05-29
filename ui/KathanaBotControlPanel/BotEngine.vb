@@ -199,6 +199,7 @@ Public Class BotConfig
     Public Property MpBar As RectRegion = New RectRegion(3, 40, 161, 11)
     Public Property MobNameRect As RectRegion = New RectRegion(860, 711, 162, 23)
     Public Property MobHpRect As RectRegion = New RectRegion(859, 737, 165, 11)
+    Public Property MobLifeRect As RectRegion = New RectRegion(859, 737, 165, 11)
     Public Property UnreachableTextRect As RectRegion = New RectRegion(15, 582, 128, 22)
     Public Property PranaExpRect As RectRegion = New RectRegion(472, 745, 78, 21)
     Public Property RupiahsRect As RectRegion = New RectRegion(560, 745, 110, 21)
@@ -376,6 +377,7 @@ End Class
 
 Public Class BotStatus
     Public Property Running As Boolean
+    Public Property RunStartedAtUtc As DateTime = DateTime.MinValue
     Public Property WindowFound As Boolean
     Public Property HpPercent As Double
     Public Property MpPercent As Double
@@ -1022,6 +1024,7 @@ Public Class BotEngine
             _noTargetBeganAt = DateTime.MinValue
             _lastAttackAction = DateTime.MinValue
             _loopStartedAt = DateTime.UtcNow
+            _status.RunStartedAtUtc = _loopStartedAt
             _combatLockActive = False
             _combatLockTargetSignature = ""
             _combatLockLostSignalCount = 0
@@ -1223,6 +1226,7 @@ Public Class BotEngine
 
         SyncLock _sync
             _status.Running = False
+            _status.RunStartedAtUtc = DateTime.MinValue
             _lootScannerCapturePending = False
             _lootScannerCaptureRequestedAt = DateTime.MinValue
             _lootScannerAltHeld = False
@@ -1555,6 +1559,7 @@ Public Class BotEngine
             Dim fullClientWidth As Integer = Math.Max(1, fullClientRect.Right - fullClientRect.Left)
             Dim fullClientHeight As Integer = Math.Max(1, fullClientRect.Bottom - fullClientRect.Top)
             ResolveVisionRegions(cfg, fullClientWidth, fullClientHeight, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, partyListRegion, mapCoordinateXRegion, mapCoordinateYRegion, chatRegion)
+            Dim mobLifeRegion As RectRegion = ResolveMobLifeRegion(cfg, fullClientWidth, fullClientHeight)
             Dim lootScanPolygon As List(Of DrawingPoint) = ResolveLootScanPolygon(cfg, fullClientWidth, fullClientHeight)
             Dim activeHwnd As IntPtr = NativeMethods.GetForegroundWindow()
             Dim configuredFullFrameMs As Integer = Math.Max(100, If(cfg Is Nothing, FullFrameRefreshMs, cfg.FullFrameRefreshIntervalMs))
@@ -1752,8 +1757,8 @@ Public Class BotEngine
                 If(startupCombatPriorityActive,
                    _lastMobDetectedMaxHp,
                    If(frame IsNot Nothing,
-                      UpdateMobMaxHpTracking(cfg, frame, mobHpRegion, targetWindowVisible, mobHpPct, now),
-                      UpdateMobMaxHpTrackingFromClientRegion(cfg, hwnd, mobHpRegion, targetWindowVisible, mobHpPct, now)))
+                      UpdateMobMaxHpTracking(cfg, frame, mobLifeRegion, targetWindowVisible, mobHpPct, now),
+                      UpdateMobMaxHpTrackingFromClientRegion(cfg, hwnd, mobLifeRegion, targetWindowVisible, mobHpPct, now)))
             mobOcrWatch.Stop()
             RecordTiming(_mobOcrTiming, mobOcrWatch.Elapsed.TotalMilliseconds)
             Dim highMaxHpAttackActive As Boolean =
@@ -5743,7 +5748,7 @@ Public Class BotEngine
 
         If _mobNameOcrTask IsNot Nothing AndAlso _mobNameOcrTask.IsCompleted Then
             Try
-                Dim candidate As String = If(_mobNameOcrTask.Result, "").Trim()
+                Dim candidate As String = NormalizeMobNameDisplay(If(_mobNameOcrTask.Result, "").Trim())
                 If Not String.IsNullOrWhiteSpace(candidate) Then
                     _cachedMobName = candidate
                 ElseIf (now - _lastMobNameRead).TotalMilliseconds > 1200 Then
@@ -5827,10 +5832,10 @@ Public Class BotEngine
             _mobHpTextOcrTask = Nothing
         End If
 
+        Dim hasMobHpBarSignal As Boolean = mobHpPercent >= Math.Max(0.6, cfg.MobHpPresenceThreshold * 0.7)
         Dim canTrack As Boolean =
             frame IsNot Nothing AndAlso
-            targetWindowVisible AndAlso
-            mobHpPercent >= Math.Max(0.6, cfg.MobHpPresenceThreshold * 0.7)
+            hasMobHpBarSignal
 
         If Not canTrack Then
             If _mobHpTextOcrTask Is Nothing Then
@@ -5850,33 +5855,61 @@ Public Class BotEngine
 
         Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
         Dim paddedRect As Rectangle = Rectangle.FromLTRB(
-            Math.Max(0, rect.Left - 2),
-            Math.Max(0, rect.Top - 8),
-            Math.Min(frame.Width, rect.Right + 2),
-            Math.Min(frame.Height, rect.Bottom + 8))
-        If paddedRect.Width <= 1 OrElse paddedRect.Height <= 1 Then
+            Math.Max(0, rect.Left - 8),
+            Math.Max(0, rect.Top - 10),
+            Math.Min(frame.Width, rect.Right + 8),
+            Math.Min(frame.Height, rect.Bottom + 10))
+        If rect.Width <= 1 OrElse rect.Height <= 1 Then
             Return _lastMobDetectedMaxHp
         End If
 
-        Dim crop As New Bitmap(Math.Max(1, paddedRect.Width), Math.Max(1, paddedRect.Height), PixelFormat.Format24bppRgb)
+        Dim exactCrop As Bitmap = CropFrameRegion(frame, rect)
+        Dim paddedCrop As Bitmap = Nothing
         Try
-            Using g As Graphics = Graphics.FromImage(crop)
-                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), paddedRect, GraphicsUnit.Pixel)
-            End Using
+            If paddedRect.Width > 1 AndAlso paddedRect.Height > 1 AndAlso Not paddedRect.Equals(rect) Then
+                paddedCrop = CropFrameRegion(frame, paddedRect)
+            End If
 
-            Dim workerCrop As Bitmap = DirectCast(crop.Clone(), Bitmap)
+            Dim workerExactCrop As Bitmap = exactCrop
+            Dim workerPaddedCrop As Bitmap = paddedCrop
+            exactCrop = Nothing
+            paddedCrop = Nothing
             _lastMobHpTextScan = now
             _mobHpTextOcrTask = Task.Run(
                 Function()
-                    Using workerCrop
-                        Return OcrReader.ReadHpFraction(workerCrop)
+                    Using workerExactCrop
+                        Dim exactText As String = OcrReader.ReadHpFraction(workerExactCrop)
+                        If ParseMobMaxHpFromText(exactText) > 0 Then
+                            Return exactText
+                        End If
                     End Using
+
+                    If workerPaddedCrop IsNot Nothing Then
+                        Using workerPaddedCrop
+                            Return OcrReader.ReadHpFraction(workerPaddedCrop)
+                        End Using
+                    End If
+
+                    Return ""
                 End Function)
         Finally
-            crop.Dispose()
+            If exactCrop IsNot Nothing Then
+                exactCrop.Dispose()
+            End If
+            If paddedCrop IsNot Nothing Then
+                paddedCrop.Dispose()
+            End If
         End Try
 
         Return _lastMobDetectedMaxHp
+    End Function
+
+    Private Shared Function CropFrameRegion(frame As Bitmap, rect As Rectangle) As Bitmap
+        Dim crop As New Bitmap(Math.Max(1, rect.Width), Math.Max(1, rect.Height), PixelFormat.Format24bppRgb)
+        Using g As Graphics = Graphics.FromImage(crop)
+            g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
+        End Using
+        Return crop
     End Function
 
     Private Function UpdateMobMaxHpTrackingFromClientRegion(cfg As BotConfig, hwnd As IntPtr, region As RectRegion, targetWindowVisible As Boolean, mobHpPercent As Double, now As DateTime) As Integer
@@ -5936,11 +5969,31 @@ Public Class BotEngine
         End If
 
         Dim normalized As String = raw.ToUpperInvariant()
-        normalized = normalized.Replace("O", "0").Replace("I", "1").Replace("L", "1").Replace("|", "1")
+        normalized = normalized.Replace("O", "0").Replace("Q", "0").Replace("D", "0")
+        normalized = normalized.Replace("I", "1").Replace("L", "1").Replace("|", "1").Replace("!", "1")
+        normalized = normalized.Replace("S", "5").Replace("B", "8").Replace("Z", "2")
         normalized = normalized.Replace(",", "").Replace(".", "")
+        normalized = normalized.Replace("\", "/").Replace(":", "/").Replace(";", "/")
         normalized = Regex.Replace(normalized, "[^0-9/ ]", " ")
         normalized = Regex.Replace(normalized, "/{2,}", "/")
         normalized = Regex.Replace(normalized, "\s+", " ").Trim()
+
+        Dim fractionMatch As Match = Regex.Match(normalized, "(\d{2,9})\s*/\s*(\d{2,9})")
+        If fractionMatch.Success Then
+            Return $"{fractionMatch.Groups(1).Value}/{fractionMatch.Groups(2).Value}"
+        End If
+
+        Dim spacedPair As Match = Regex.Match(normalized, "(\d{2,9})\s+(\d{2,9})")
+        If spacedPair.Success Then
+            Return $"{spacedPair.Groups(1).Value}/{spacedPair.Groups(2).Value}"
+        End If
+
+        Dim digitsOnly As String = Regex.Replace(normalized, "\D", "")
+        If digitsOnly.Length >= 4 AndAlso digitsOnly.Length Mod 2 = 0 Then
+            Dim half As Integer = digitsOnly.Length \ 2
+            Return $"{digitsOnly.Substring(0, half)}/{digitsOnly.Substring(half)}"
+        End If
+
         Return normalized
     End Function
 
@@ -7087,8 +7140,28 @@ Public Class BotEngine
         If String.IsNullOrWhiteSpace(raw) Then
             Return ""
         End If
+        raw = NormalizeMobNameDisplay(raw)
         Dim cleaned As String = Regex.Replace(raw, "[^A-Za-z0-9 '\-]", " ")
         cleaned = Regex.Replace(cleaned, "\s+", " ").Trim().ToLowerInvariant()
+        Return cleaned
+    End Function
+
+    Private Shared Function NormalizeMobNameDisplay(raw As String) As String
+        If String.IsNullOrWhiteSpace(raw) Then
+            Return ""
+        End If
+
+        Dim cleaned As String = Regex.Replace(raw, "\s+", " ").Trim()
+        Dim levelFirst As Match = Regex.Match(cleaned, "^\s*Lv\s*\.?\s*(\d{1,3})\s*(?:\||-|:)?\s*(.+?)\s*$", RegexOptions.IgnoreCase)
+        If levelFirst.Success Then
+            Dim level As String = levelFirst.Groups(1).Value
+            Dim namePart As String = Regex.Replace(levelFirst.Groups(2).Value, "^\s*(?:\||-|:)\s*", "").Trim()
+            namePart = Regex.Replace(namePart, "\s*(?:\||-|:)\s*$", "").Trim()
+            If namePart <> "" AndAlso Not Regex.IsMatch(namePart, "^Lv\s*\.?\s*\d{1,3}\b", RegexOptions.IgnoreCase) Then
+                Return $"{namePart} Lv{level}"
+            End If
+        End If
+
         Return cleaned
     End Function
 
@@ -7671,14 +7744,21 @@ Public Class BotEngine
         Dim hasAttackKey As Boolean = False
         Dim statBlocked As Boolean = False
         Dim cooldownBlocked As Boolean = False
+        Dim highMaxHpRoleWaitingForLifeRead As Boolean = False
         Dim selected As New List(Of ActionRule)()
         Dim usedKeys As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
 
         For Each action In ordered
+            If action.Role = "high_max_hp" AndAlso Not highMaxHpAttackActive Then
+                highMaxHpRoleWaitingForLifeRead = True
+                hasAttackKey = True
+                Continue For
+            End If
+
             Dim isAttackLike As Boolean =
                 action.Role = "attack" OrElse
                 action.Role = "special" OrElse
-                (action.Role = "high_max_hp" AndAlso highMaxHpAttackActive)
+                action.Role = "high_max_hp"
             If Not isAttackLike Then
                 Continue For
             End If
@@ -7715,6 +7795,8 @@ Public Class BotEngine
             reason = "No enabled attack/special/high_max_hp keys."
         ElseIf Not targetValid AndAlso Not allowBlindAttack Then
             reason = "No target detected."
+        ElseIf highMaxHpRoleWaitingForLifeRead Then
+            reason = "High Max HP keys waiting for mob_life_rect Max HP OCR."
         ElseIf statBlocked AndAlso (Not cfg.BypassHpMpLimits) Then
             reason = "HP/MP limits blocked all attack keys."
         ElseIf cooldownBlocked Then
@@ -7921,6 +8003,7 @@ Public Class BotEngine
             _status.PerformanceDiagnostics = BuildPerformanceDiagnosticsText()
             _status.EngineRestartCount = _engineRestartCount
             _status.EngineLastRestartUtc = _engineLastRestartUtc
+            _status.RunStartedAtUtc = If(_status.Running, _loopStartedAt, DateTime.MinValue)
             _status.UpdatedAt = DateTime.UtcNow
             Dim statusSignature As String = BuildStatusRaiseSignature(_status)
             shouldRaise =
@@ -7944,12 +8027,13 @@ Public Class BotEngine
             Return ""
         End If
 
-        Return $"{status.Running}|{status.WindowFound}|{status.NotAttackingReason}|{status.ErrorMessage}|{status.AgentState}|{status.AgentReason}|{status.AgentGuardrailTriggered}|{status.TargetValid}|{status.MobName}|{status.MobHpText}|{status.MapCoordinateText}|{status.MapCoordinateX}|{status.MapCoordinateY}|{status.MapCoordinateConfidence}|{status.MapCoordinateDebugLog}|{status.HoldPlaceActive}|{status.HoldPlaceReason}|{status.HoldPlaceDistance:0.0}|{status.RepairConfirmCount}|{status.RepairTriggerCount}"
+        Return $"{status.Running}|{status.RunStartedAtUtc:O}|{status.WindowFound}|{status.NotAttackingReason}|{status.ErrorMessage}|{status.AgentState}|{status.AgentReason}|{status.AgentGuardrailTriggered}|{status.TargetValid}|{status.MobName}|{status.MobHpText}|{status.MapCoordinateText}|{status.MapCoordinateX}|{status.MapCoordinateY}|{status.MapCoordinateConfidence}|{status.MapCoordinateDebugLog}|{status.HoldPlaceActive}|{status.HoldPlaceReason}|{status.HoldPlaceDistance:0.0}|{status.RepairConfirmCount}|{status.RepairTriggerCount}"
     End Function
 
     Private Function CloneStatus(src As BotStatus) As BotStatus
         Return New BotStatus With {
             .Running = src.Running,
+            .RunStartedAtUtc = src.RunStartedAtUtc,
             .WindowFound = src.WindowFound,
             .HpPercent = src.HpPercent,
             .MpPercent = src.MpPercent,
@@ -8953,6 +9037,20 @@ Public Class BotEngine
         chatRect = ScaleRegionLeftTop(cfg.ChatRect, sx, sy)
     End Sub
 
+    Private Shared Function ResolveMobLifeRegion(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer) As RectRegion
+        Dim source As RectRegion = If(cfg Is Nothing OrElse cfg.MobLifeRect Is Nothing, New RectRegion(859, 737, 165, 11), cfg.MobLifeRect)
+        If frameWidth <= 0 OrElse frameHeight <= 0 Then
+            Return CloneRegion(source)
+        End If
+        If cfg Is Nothing OrElse Not IsDefaultVisionLayout(cfg) OrElse (frameWidth = BaseClientWidth AndAlso frameHeight = BaseClientHeight) Then
+            Return CloneRegion(source)
+        End If
+
+        Dim sx As Double = frameWidth / CDbl(BaseClientWidth)
+        Dim sy As Double = frameHeight / CDbl(BaseClientHeight)
+        Return ScaleRegionRightTop(source, sx, sy, frameWidth)
+    End Function
+
     Private Shared Function ResolveLootScanPolygon(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer) As List(Of DrawingPoint)
         Dim points As List(Of DrawingPoint) = GetEffectiveLootScanPolygon(cfg)
         If frameWidth <= 0 OrElse frameHeight <= 0 Then
@@ -9009,6 +9107,7 @@ Public Class BotEngine
                SameRegion(cfg.MpBar, New RectRegion(3, 40, 161, 11)) AndAlso
                SameRegion(cfg.MobNameRect, New RectRegion(860, 711, 162, 23)) AndAlso
                SameRegion(cfg.MobHpRect, New RectRegion(859, 737, 165, 11)) AndAlso
+               SameRegion(cfg.MobLifeRect, New RectRegion(859, 737, 165, 11)) AndAlso
                SameRegion(cfg.UnreachableTextRect, New RectRegion(15, 582, 128, 22)) AndAlso
                SameRegion(cfg.PranaExpRect, New RectRegion(472, 745, 78, 21)) AndAlso
                SameRegion(cfg.RupiahsRect, New RectRegion(560, 745, 110, 21)) AndAlso
