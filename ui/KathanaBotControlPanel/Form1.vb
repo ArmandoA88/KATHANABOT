@@ -307,6 +307,12 @@ Public Class Form1
     Private nudAlarmVolume As NumericUpDown
     Private nudStatsNtfyIntervalMinutes As NumericUpDown
     Private txtNtfyTopic As TextBox
+    Private chkCustomBarColors As CheckBox
+    Private btnHpBarColor As Button
+    Private btnMpBarColor As Button
+    Private btnPickHpBarColor As Button
+    Private btnPickMpBarColor As Button
+    Private nudBarColorTolerance As NumericUpDown
 
     Private _lastAction As String = ""
     Private _lastState As String = ""
@@ -354,6 +360,12 @@ Public Class Form1
     Private _liteAutoPotMpPointY As Integer = -1
     Private _pendingLitePointCapture As LitePointCaptureKind = LitePointCaptureKind.None
     Private _liteRightMouseWasDown As Boolean = False
+    Private _customBarColorsEnabled As Boolean = False
+    Private _hpBarColor As Color = Color.FromArgb(BotConfig.DefaultHpBarColorArgb())
+    Private _mpBarColor As Color = Color.FromArgb(BotConfig.DefaultMpBarColorArgb())
+    Private _barColorTolerance As Integer = BotConfig.DefaultBarColorTolerance
+    Private _pendingBarColorPick As BarColorPickKind = BarColorPickKind.None
+    Private _barColorSyncInProgress As Boolean = False
     Private _themeSnapshotCaptured As Boolean = False
     Private _lastUiTintActive As Boolean = False
     Private _lastUiTintColorArgb As Integer = Integer.MinValue
@@ -508,6 +520,12 @@ Public Class Form1
         Mp
     End Enum
 
+    Private Enum BarColorPickKind
+        None
+        Hp
+        Mp
+    End Enum
+
     Private Class PersistedAppState
         Public Property WindowTitle As String = DefaultGameWindowTitle
         Public Property Full As PersistedListState = New PersistedListState()
@@ -623,6 +641,7 @@ Public Class Form1
         ForceLevelingAgentOffForStartup()
         SetupLiveConfigBindings()
         ApplyDarkTheme(Me)
+        UpdateBarColorUi()
         CaptureThemeSnapshot(Me)
         _themeSnapshotCaptured = True
 
@@ -1227,6 +1246,146 @@ Public Class Form1
         SavePersistedListState(False)
     End Sub
 
+    Private Sub BarColorSettingsChanged(_sender As Object, _e As EventArgs)
+        If _barColorSyncInProgress Then
+            Return
+        End If
+
+        _customBarColorsEnabled = (chkCustomBarColors IsNot Nothing AndAlso chkCustomBarColors.Checked)
+        If nudBarColorTolerance IsNot Nothing Then
+            _barColorTolerance = CInt(nudBarColorTolerance.Value)
+        End If
+
+        UpdateBarColorUi()
+        PushLiveConfig()
+        SavePersistedListState(False)
+    End Sub
+
+    Private Sub ChooseHpBarColorClicked(sender As Object, e As EventArgs)
+        ChooseBarColor(BarColorPickKind.Hp)
+    End Sub
+
+    Private Sub ChooseMpBarColorClicked(sender As Object, e As EventArgs)
+        ChooseBarColor(BarColorPickKind.Mp)
+    End Sub
+
+    Private Sub PickHpBarColorFromSnapshotClicked(sender As Object, e As EventArgs)
+        BeginBarColorSnapshotPick(BarColorPickKind.Hp)
+    End Sub
+
+    Private Sub PickMpBarColorFromSnapshotClicked(sender As Object, e As EventArgs)
+        BeginBarColorSnapshotPick(BarColorPickKind.Mp)
+    End Sub
+
+    Private Sub ChooseBarColor(kind As BarColorPickKind)
+        If kind = BarColorPickKind.None Then
+            Return
+        End If
+
+        Using dialog As New ColorDialog()
+            dialog.FullOpen = True
+            dialog.Color = If(kind = BarColorPickKind.Hp, _hpBarColor, _mpBarColor)
+            If dialog.ShowDialog(Me) = DialogResult.OK Then
+                SetBarColor(kind, dialog.Color, "manual picker")
+            End If
+        End Using
+    End Sub
+
+    Private Sub BeginBarColorSnapshotPick(kind As BarColorPickKind)
+        If kind = BarColorPickKind.None Then
+            Return
+        End If
+
+        _pendingBarColorPick = kind
+        _isPickingLootRejectPoint = False
+        _isPickingLootNamePickupPoint = False
+        UpdateLootRejectPointUi()
+        UpdateLootNamePickupPointUi()
+        UpdateBarColorUi()
+        FocusVisionSnapshotForPick(If(kind = BarColorPickKind.Hp, "HP bar color", "MP bar color"))
+    End Sub
+
+    Private Sub SetBarColor(kind As BarColorPickKind, color As Color, source As String)
+        If kind = BarColorPickKind.None Then
+            Return
+        End If
+
+        Dim normalized As Color = Color.FromArgb(255, color.R, color.G, color.B)
+        If kind = BarColorPickKind.Hp Then
+            _hpBarColor = normalized
+        Else
+            _mpBarColor = normalized
+        End If
+
+        _customBarColorsEnabled = True
+        If chkCustomBarColors IsNot Nothing AndAlso Not chkCustomBarColors.Checked Then
+            chkCustomBarColors.Checked = True
+        End If
+
+        UpdateBarColorUi()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        AppendLog($"{If(kind = BarColorPickKind.Hp, "HP", "MP")} bar color set to {FormatBarColor(normalized)} from {source}.")
+    End Sub
+
+    Private Sub UpdateBarColorUi()
+        If chkCustomBarColors IsNot Nothing AndAlso chkCustomBarColors.Checked <> _customBarColorsEnabled Then
+            chkCustomBarColors.Checked = _customBarColorsEnabled
+        End If
+
+        If nudBarColorTolerance IsNot Nothing Then
+            Dim bounded As Decimal = Math.Max(nudBarColorTolerance.Minimum, Math.Min(nudBarColorTolerance.Maximum, CDec(_barColorTolerance)))
+            If nudBarColorTolerance.Value <> bounded Then
+                nudBarColorTolerance.Value = bounded
+            End If
+            nudBarColorTolerance.Enabled = _customBarColorsEnabled
+        End If
+
+        UpdateBarColorButton(btnHpBarColor, _hpBarColor)
+        UpdateBarColorButton(btnMpBarColor, _mpBarColor)
+
+        If btnPickHpBarColor IsNot Nothing Then
+            btnPickHpBarColor.Text = If(_pendingBarColorPick = BarColorPickKind.Hp, "Click Snapshot...", "Pick Snapshot")
+            btnPickHpBarColor.BackColor = If(_pendingBarColorPick = BarColorPickKind.Hp, Color.FromArgb(175, 110, 30), Color.FromArgb(45, 95, 140))
+            btnPickHpBarColor.ForeColor = Color.White
+        End If
+
+        If btnPickMpBarColor IsNot Nothing Then
+            btnPickMpBarColor.Text = If(_pendingBarColorPick = BarColorPickKind.Mp, "Click Snapshot...", "Pick Snapshot")
+            btnPickMpBarColor.BackColor = If(_pendingBarColorPick = BarColorPickKind.Mp, Color.FromArgb(175, 110, 30), Color.FromArgb(45, 95, 140))
+            btnPickMpBarColor.ForeColor = Color.White
+        End If
+
+        If picSnapshot IsNot Nothing Then
+            picSnapshot.Cursor = If(IsSnapshotPickActive(), Cursors.Cross, Cursors.Default)
+        End If
+    End Sub
+
+    Private Sub UpdateBarColorButton(button As Button, color As Color)
+        If button Is Nothing Then
+            Return
+        End If
+
+        button.Text = FormatBarColor(color)
+        button.BackColor = color
+        button.ForeColor = GetReadableForeground(color)
+    End Sub
+
+    Private Function IsSnapshotPickActive() As Boolean
+        Return _isPickingLootRejectPoint OrElse
+               _isPickingLootNamePickupPoint OrElse
+               _pendingBarColorPick <> BarColorPickKind.None
+    End Function
+
+    Private Shared Function FormatBarColor(color As Color) As String
+        Return $"#{color.R:X2}{color.G:X2}{color.B:X2}"
+    End Function
+
+    Private Shared Function GetReadableForeground(background As Color) As Color
+        Dim luma As Integer = (background.R * 30 + background.G * 59 + background.B * 11) \ 100
+        Return If(luma >= 130, Color.Black, Color.White)
+    End Function
+
     Private Sub MonsterFilterOptionChanged(_sender As Object, _e As EventArgs)
         UpdateMonsterFilterUi()
     End Sub
@@ -1591,6 +1750,47 @@ Public Class Form1
         Try
             _liteEngine.UpdateConfig(BuildLiteConfig())
         Catch
+        End Try
+    End Sub
+
+    Private Sub ApplyBarColorSettingsToConfig(cfg As BotConfig)
+        If cfg Is Nothing Then
+            Return
+        End If
+
+        Dim tolerance As Integer = _barColorTolerance
+        If nudBarColorTolerance IsNot Nothing Then
+            tolerance = CInt(nudBarColorTolerance.Value)
+        End If
+
+        cfg.CustomBarColorsEnabled = _customBarColorsEnabled
+        cfg.HpBarColorArgb = _hpBarColor.ToArgb()
+        cfg.MpBarColorArgb = _mpBarColor.ToArgb()
+        cfg.BarColorTolerance = Math.Max(8, Math.Min(120, tolerance))
+    End Sub
+
+    Private Sub ApplyBarColorConfigToUi(cfg As BotConfig)
+        If cfg Is Nothing Then
+            Return
+        End If
+
+        _barColorSyncInProgress = True
+        Try
+            _customBarColorsEnabled = cfg.CustomBarColorsEnabled
+            Try
+                _hpBarColor = Color.FromArgb(cfg.HpBarColorArgb)
+            Catch
+                _hpBarColor = Color.FromArgb(BotConfig.DefaultHpBarColorArgb())
+            End Try
+            Try
+                _mpBarColor = Color.FromArgb(cfg.MpBarColorArgb)
+            Catch
+                _mpBarColor = Color.FromArgb(BotConfig.DefaultMpBarColorArgb())
+            End Try
+            _barColorTolerance = Math.Max(8, Math.Min(120, cfg.BarColorTolerance))
+            UpdateBarColorUi()
+        Finally
+            _barColorSyncInProgress = False
         End Try
     End Sub
 
@@ -2685,12 +2885,16 @@ Public Class Form1
         settingsLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 48.0F))
 
         Dim thresholdsGroup As New GroupBox() With {.Text = "Thresholds", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
-        Dim thresholdsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 4}
+        Dim thresholdsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 8}
         thresholdsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 190.0F))
         thresholdsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
         thresholdsLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
         thresholdsLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
         thresholdsLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
+        thresholdsLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        thresholdsLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
+        thresholdsLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
+        thresholdsLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
         thresholdsLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
 
         thresholdsLayout.Controls.Add(New Label() With {.Text = "Heal Trigger %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
@@ -2711,15 +2915,46 @@ Public Class Form1
             End Sub
         thresholdsLayout.Controls.Add(nudAlarmVolume, 1, 2)
 
+        chkCustomBarColors = New CheckBox() With {.Text = "Use Custom Bar Colors", .Dock = DockStyle.Fill, .Checked = False}
+        AddHandler chkCustomBarColors.CheckedChanged, AddressOf BarColorSettingsChanged
+        thresholdsLayout.Controls.Add(chkCustomBarColors, 0, 3)
+        thresholdsLayout.SetColumnSpan(chkCustomBarColors, 2)
+
+        thresholdsLayout.Controls.Add(New Label() With {.Text = "HP Bar Color", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 4)
+        Dim hpColorPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(0)}
+        btnHpBarColor = New Button() With {.Text = "HP Color", .Width = 94, .Height = 28, .BackColor = _hpBarColor}
+        AddHandler btnHpBarColor.Click, AddressOf ChooseHpBarColorClicked
+        btnPickHpBarColor = New Button() With {.Text = "Pick Snapshot", .Width = 112, .Height = 28, .BackColor = Color.FromArgb(45, 95, 140), .ForeColor = Color.White}
+        AddHandler btnPickHpBarColor.Click, AddressOf PickHpBarColorFromSnapshotClicked
+        hpColorPanel.Controls.Add(btnHpBarColor)
+        hpColorPanel.Controls.Add(btnPickHpBarColor)
+        thresholdsLayout.Controls.Add(hpColorPanel, 1, 4)
+
+        thresholdsLayout.Controls.Add(New Label() With {.Text = "MP Bar Color", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 5)
+        Dim mpColorPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(0)}
+        btnMpBarColor = New Button() With {.Text = "MP Color", .Width = 94, .Height = 28, .BackColor = _mpBarColor}
+        AddHandler btnMpBarColor.Click, AddressOf ChooseMpBarColorClicked
+        btnPickMpBarColor = New Button() With {.Text = "Pick Snapshot", .Width = 112, .Height = 28, .BackColor = Color.FromArgb(45, 95, 140), .ForeColor = Color.White}
+        AddHandler btnPickMpBarColor.Click, AddressOf PickMpBarColorFromSnapshotClicked
+        mpColorPanel.Controls.Add(btnMpBarColor)
+        mpColorPanel.Controls.Add(btnPickMpBarColor)
+        thresholdsLayout.Controls.Add(mpColorPanel, 1, 5)
+
+        thresholdsLayout.Controls.Add(New Label() With {.Text = "Color Tolerance", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 6)
+        nudBarColorTolerance = New NumericUpDown() With {.Minimum = 8D, .Maximum = 120D, .Value = BotConfig.DefaultBarColorTolerance, .Dock = DockStyle.Left, .Width = 100}
+        AddHandler nudBarColorTolerance.ValueChanged, AddressOf BarColorSettingsChanged
+        thresholdsLayout.Controls.Add(nudBarColorTolerance, 1, 6)
+
         Dim thresholdsHint As New Label() With {
-            .Text = "These quick values mirror your heal, mana, and max-health rows. HP alarm volume only affects the death alarm sound.",
+            .Text = "Custom colors affect Full combat HP, MP, and mob HP bar detection. Use Capture Snapshot in Vision, then Pick Snapshot on a solid bar pixel.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.TopLeft
         }
-        thresholdsLayout.Controls.Add(thresholdsHint, 0, 3)
+        thresholdsLayout.Controls.Add(thresholdsHint, 0, 7)
         thresholdsLayout.SetColumnSpan(thresholdsHint, 2)
         thresholdsGroup.Controls.Add(thresholdsLayout)
+        UpdateBarColorUi()
 
         Dim notifyGroup As New GroupBox() With {.Text = "Notifications + Loot Matching", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
         Dim notifyLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 13}
@@ -4523,7 +4758,7 @@ Public Class Form1
     End Sub
 
     Private Sub SnapshotMouseClick(sender As Object, e As MouseEventArgs)
-        If Not _isPickingLootRejectPoint AndAlso Not _isPickingLootNamePickupPoint Then
+        If Not IsSnapshotPickActive() Then
             Return
         End If
         If picSnapshot Is Nothing OrElse picSnapshot.Image Is Nothing Then
@@ -4534,6 +4769,19 @@ Public Class Form1
         Dim mapped As System.Drawing.Point
         If Not TryMapPictureBoxPointToImage(picSnapshot, e.Location, mapped) Then
             AppendLog("Pick failed: click inside the snapshot image area.")
+            Return
+        End If
+
+        If _pendingBarColorPick <> BarColorPickKind.None Then
+            Dim sampled As Color
+            Using bmp As New Bitmap(picSnapshot.Image)
+                sampled = bmp.GetPixel(mapped.X, mapped.Y)
+            End Using
+
+            Dim pickedKind As BarColorPickKind = _pendingBarColorPick
+            _pendingBarColorPick = BarColorPickKind.None
+            UpdateBarColorUi()
+            SetBarColor(pickedKind, sampled, $"snapshot x={mapped.X}, y={mapped.Y}")
             Return
         End If
 
@@ -4608,7 +4856,7 @@ Public Class Form1
         End If
 
         If picSnapshot IsNot Nothing Then
-            picSnapshot.Cursor = If(_isPickingLootRejectPoint OrElse _isPickingLootNamePickupPoint, Cursors.Cross, Cursors.Default)
+            picSnapshot.Cursor = If(IsSnapshotPickActive(), Cursors.Cross, Cursors.Default)
         End If
     End Sub
 
@@ -4631,7 +4879,7 @@ Public Class Form1
         End If
 
         If picSnapshot IsNot Nothing Then
-            picSnapshot.Cursor = If(_isPickingLootRejectPoint OrElse _isPickingLootNamePickupPoint, Cursors.Cross, Cursors.Default)
+            picSnapshot.Cursor = If(IsSnapshotPickActive(), Cursors.Cross, Cursors.Default)
         End If
     End Sub
 
@@ -7175,6 +7423,7 @@ Public Class Form1
         cfg.LiteHpCheckPointY = _liteAutoPotHpPointY
         cfg.LiteMpCheckPointX = _liteAutoPotMpPointX
         cfg.LiteMpCheckPointY = _liteAutoPotMpPointY
+        ApplyBarColorSettingsToConfig(cfg)
         cfg.LoopMs = 80
         cfg.RetargetMs = 550
         cfg.ForcedRetargetMs = 550
@@ -7245,6 +7494,7 @@ Public Class Form1
         Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
         cfg.WindowTitle = txtWindowTitle.Text.Trim()
         cfg.SelectedWindowHandle = If(selected IsNot Nothing, selected.MainWindowHandle, IntPtr.Zero)
+        ApplyBarColorSettingsToConfig(cfg)
         cfg.LoopMs = CInt(nudLoopMs.Value)
         cfg.RetargetMs = CInt(nudRetargetMs.Value)
         cfg.ForcedRetargetMs = CInt(If(nudForcedRetargetMs IsNot Nothing, nudForcedRetargetMs.Value, nudRetargetMs.Value))
@@ -8396,6 +8646,7 @@ Public Class Form1
         If txtWindowTitle IsNot Nothing AndAlso String.IsNullOrWhiteSpace(txtWindowTitle.Text) Then
             txtWindowTitle.Text = DefaultGameWindowTitle
         End If
+        ApplyBarColorConfigToUi(cfg)
         SetNumericControlValue(nudLoopMs, cfg.LoopMs)
         SetNumericControlValue(nudRetargetMs, cfg.RetargetMs)
         SetNumericControlValue(nudForcedRetargetMs, If(cfg.ForcedRetargetMs > 0, cfg.ForcedRetargetMs, cfg.RetargetMs))

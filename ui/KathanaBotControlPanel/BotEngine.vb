@@ -131,6 +131,16 @@ Public Class RecordedNavigationRouteInfo
 End Class
 
 Public Class BotConfig
+    Public Const DefaultBarColorTolerance As Integer = 48
+
+    Public Shared Function DefaultHpBarColorArgb() As Integer
+        Return Color.FromArgb(230, 0, 0).ToArgb()
+    End Function
+
+    Public Shared Function DefaultMpBarColorArgb() As Integer
+        Return Color.FromArgb(24, 62, 235).ToArgb()
+    End Function
+
     Public Shared Function DefaultMapCoordinateRect() As RectRegion
         Return New RectRegion(6, 744, 120, 22)
     End Function
@@ -187,6 +197,10 @@ Public Class BotConfig
     Public Property LiteHpCheckPointY As Integer = -1
     Public Property LiteMpCheckPointX As Integer = -1
     Public Property LiteMpCheckPointY As Integer = -1
+    Public Property CustomBarColorsEnabled As Boolean = False
+    Public Property HpBarColorArgb As Integer = DefaultHpBarColorArgb()
+    Public Property MpBarColorArgb As Integer = DefaultMpBarColorArgb()
+    Public Property BarColorTolerance As Integer = DefaultBarColorTolerance
     Public Property LoopMs As Integer = 80
     Public Property RetargetMs As Integer = 550
     Public Property ForcedRetargetMs As Integer = 550
@@ -1429,11 +1443,11 @@ Public Class BotEngine
                 Dim liteMpPct As Double = If(hasLiteMpPoint, 0, 100)
 
                 If hasLiteHpPoint Then
-                    liteHpPct = ComputeClientPotionPointPercent(hwnd, cfg.LiteHpCheckPointX, cfg.LiteHpCheckPointY, True, hpScanOk)
+                    liteHpPct = ComputeClientPotionPointPercent(hwnd, cfg.LiteHpCheckPointX, cfg.LiteHpCheckPointY, True, cfg, hpScanOk)
                 End If
 
                 If hasLiteMpPoint Then
-                    liteMpPct = ComputeClientPotionPointPercent(hwnd, cfg.LiteMpCheckPointX, cfg.LiteMpCheckPointY, False, mpScanOk)
+                    liteMpPct = ComputeClientPotionPointPercent(hwnd, cfg.LiteMpCheckPointX, cfg.LiteMpCheckPointY, False, cfg, mpScanOk)
                 End If
 
                 Dim liteAttackHpPct As Double = If(hpScanOk, liteHpPct, 100.0)
@@ -1614,16 +1628,16 @@ Public Class BotEngine
             Dim localMobHpRegion As RectRegion = Nothing
 
             If frame IsNot Nothing Then
-                hpPct = ComputeBarPercent(frame, hpRegion, True)
-                mpPct = ComputeBarPercent(frame, mpRegion, False)
-                mobHpPct = ComputeBarPercent(frame, mobHpRegion, True)
+                hpPct = ComputeBarPercent(frame, hpRegion, True, cfg)
+                mpPct = ComputeBarPercent(frame, mpRegion, False, cfg)
+                mobHpPct = ComputeBarPercent(frame, mobHpRegion, True, cfg)
             Else
-                hpPct = ComputeClientBarPercent(hwnd, hpRegion, True, fullHpScanOk)
-                mpPct = ComputeClientBarPercent(hwnd, mpRegion, False, fullMpScanOk)
+                hpPct = ComputeClientBarPercent(hwnd, hpRegion, True, cfg, fullHpScanOk)
+                mpPct = ComputeClientBarPercent(hwnd, mpRegion, False, cfg, fullMpScanOk)
                 mobHpRegionFrame = CaptureClientRegion(hwnd, mobHpRegion)
                 If mobHpRegionFrame IsNot Nothing Then
                     localMobHpRegion = New RectRegion(0, 0, mobHpRegionFrame.Width, mobHpRegionFrame.Height)
-                    mobHpPct = ComputeBarPercent(mobHpRegionFrame, localMobHpRegion, True)
+                    mobHpPct = ComputeBarPercent(mobHpRegionFrame, localMobHpRegion, True, cfg)
                 Else
                     mobHpScanOk = False
                 End If
@@ -1673,9 +1687,9 @@ Public Class BotEngine
             Dim monsterFilterConfirmRequired As Integer = GetMonsterFilterConfirmRequiredCount(cfg)
             Dim targetWindowSignalNoName As Boolean =
                 If(frame IsNot Nothing,
-                   HasTargetWindowSignal(frame, mobHpRegion, "", mobHpPct),
+                   HasTargetWindowSignal(frame, mobHpRegion, "", mobHpPct, cfg),
                    If(mobHpRegionFrame IsNot Nothing AndAlso localMobHpRegion IsNot Nothing,
-                      HasTargetWindowSignal(mobHpRegionFrame, localMobHpRegion, "", mobHpPct),
+                      HasTargetWindowSignal(mobHpRegionFrame, localMobHpRegion, "", mobHpPct, cfg),
                       mobHpPct >= Math.Max(0.6, cfg.MobHpPresenceThreshold * 0.7)))
             Dim shouldReadMobName As Boolean = targetWindowSignalNoName OrElse (mobHpPct >= Math.Max(0.6, cfg.MobHpPresenceThreshold * 0.7))
             Dim forceMobNameRefresh As Boolean = monsterFilterActive AndAlso targetWindowSignalNoName AndAlso ((now - _lastMobNameRead).TotalMilliseconds >= 180)
@@ -1748,9 +1762,9 @@ Public Class BotEngine
             End If
             Dim targetWindowVisible As Boolean =
                 If(frame IsNot Nothing,
-                   HasTargetWindowSignal(frame, mobHpRegion, mobName, mobHpPct),
+                   HasTargetWindowSignal(frame, mobHpRegion, mobName, mobHpPct, cfg),
                    If(mobHpRegionFrame IsNot Nothing AndAlso localMobHpRegion IsNot Nothing,
-                      HasTargetWindowSignal(mobHpRegionFrame, localMobHpRegion, mobName, mobHpPct),
+                      HasTargetWindowSignal(mobHpRegionFrame, localMobHpRegion, mobName, mobHpPct, cfg),
                       targetWindowSignalNoName))
             Dim hasHighMaxHpAction As Boolean = HasHighMaxHpAttackAction(cfg)
             Dim mobMaxHp As Integer =
@@ -7533,7 +7547,7 @@ Public Class BotEngine
         End If
 
         Dim ok As Boolean = False
-        Dim secondSample As Double = ComputeClientBarPercent(hwnd, targetRegion, role <> "mana", ok)
+        Dim secondSample As Double = ComputeClientBarPercent(hwnd, targetRegion, role <> "mana", cfg, ok)
         If Not ok Then
             If suddenDrop Then
                 RaiseEvent LogLine($"Support action skipped: {action.KeyName} ({action.Role}) low-bar confirmation capture failed after sudden {If(role = "mana", "MP", "HP")} drop.")
@@ -7545,7 +7559,7 @@ Public Class BotEngine
         If secondSample <= trigger Then
             If suddenDrop Then
                 Dim fullFrameSample As Double = -1
-                If Not ConfirmSuddenSupportDropWithFullFrame(hwnd, targetRegion, role <> "mana", trigger, fullFrameSample) Then
+                If Not ConfirmSuddenSupportDropWithFullFrame(hwnd, targetRegion, role <> "mana", cfg, trigger, fullFrameSample) Then
                     Dim sampleText As String = If(fullFrameSample < 0, "unavailable", $"{fullFrameSample:0.0}%")
                     RaiseEvent LogLine($"Support action skipped: {action.KeyName} ({action.Role}) sudden drop was not confirmed by full-frame read ({sampleText}).")
                     Return False
@@ -7577,7 +7591,7 @@ Public Class BotEngine
         End If
 
         Dim fullFrameSample As Double = -1
-        Return ConfirmNearZeroSupportWithFreshFrames(hwnd, targetRegion, Not isMana, fullFrameSample)
+        Return ConfirmNearZeroSupportWithFreshFrames(hwnd, targetRegion, Not isMana, _config, fullFrameSample)
     End Function
 
     Private Shared Function GetNearZeroSupportConfirmRequiredCount(role As String) As Integer
@@ -7587,7 +7601,7 @@ Public Class BotEngine
         Return NearZeroSupportConfirmRequiredCount
     End Function
 
-    Private Function ConfirmNearZeroSupportWithFreshFrames(hwnd As IntPtr, targetRegion As RectRegion, isHp As Boolean, ByRef samplePercent As Double) As Boolean
+    Private Function ConfirmNearZeroSupportWithFreshFrames(hwnd As IntPtr, targetRegion As RectRegion, isHp As Boolean, cfg As BotConfig, ByRef samplePercent As Double) As Boolean
         samplePercent = -1
         If hwnd = IntPtr.Zero OrElse targetRegion Is Nothing Then
             Return False
@@ -7600,7 +7614,7 @@ Public Class BotEngine
                     Return False
                 End If
 
-                samplePercent = ComputeBarPercent(freshFrame, targetRegion, isHp)
+                samplePercent = ComputeBarPercent(freshFrame, targetRegion, isHp, cfg)
                 If samplePercent > 0.25R Then
                     Return False
                 End If
@@ -7614,7 +7628,7 @@ Public Class BotEngine
         Return True
     End Function
 
-    Private Function ConfirmSuddenSupportDropWithFullFrame(hwnd As IntPtr, targetRegion As RectRegion, isHp As Boolean, trigger As Double, ByRef samplePercent As Double) As Boolean
+    Private Function ConfirmSuddenSupportDropWithFullFrame(hwnd As IntPtr, targetRegion As RectRegion, isHp As Boolean, cfg As BotConfig, trigger As Double, ByRef samplePercent As Double) As Boolean
         samplePercent = -1
         If hwnd = IntPtr.Zero OrElse targetRegion Is Nothing Then
             Return False
@@ -7622,7 +7636,7 @@ Public Class BotEngine
 
         Using cachedFrame As Bitmap = GetLatestLoopFrameClone(700)
             If cachedFrame IsNot Nothing AndAlso Not IsLikelyBlackFrame(cachedFrame) Then
-                samplePercent = ComputeBarPercent(cachedFrame, targetRegion, isHp)
+                samplePercent = ComputeBarPercent(cachedFrame, targetRegion, isHp, cfg)
                 If samplePercent > trigger Then
                     Return False
                 End If
@@ -7637,7 +7651,7 @@ Public Class BotEngine
                 Return False
             End If
 
-            samplePercent = ComputeBarPercent(freshFrame, targetRegion, isHp)
+            samplePercent = ComputeBarPercent(freshFrame, targetRegion, isHp, cfg)
             Return samplePercent <= trigger
         End Using
     End Function
@@ -8438,8 +8452,8 @@ Public Class BotEngine
             Dim regionWatch As Stopwatch = Stopwatch.StartNew()
             Dim hpOk As Boolean = False
             Dim mpOk As Boolean = False
-            hpValues.Add(ComputeClientBarPercent(hwnd, hpRegion, True, hpOk))
-            mpValues.Add(ComputeClientBarPercent(hwnd, mpRegion, False, mpOk))
+            hpValues.Add(ComputeClientBarPercent(hwnd, hpRegion, True, cfg, hpOk))
+            mpValues.Add(ComputeClientBarPercent(hwnd, mpRegion, False, cfg, mpOk))
             regionWatch.Stop()
             regionTimes.Add(regionWatch.Elapsed.TotalMilliseconds)
         Next
@@ -8539,7 +8553,7 @@ Public Class BotEngine
         End Using
     End Function
 
-    Private Shared Function ComputeClientBarPercent(hwnd As IntPtr, region As RectRegion, isHp As Boolean, ByRef success As Boolean) As Double
+    Private Shared Function ComputeClientBarPercent(hwnd As IntPtr, region As RectRegion, isHp As Boolean, cfg As BotConfig, ByRef success As Boolean) As Double
         success = False
         Dim bmp As Bitmap = CaptureClientRegion(hwnd, region)
         If bmp Is Nothing Then
@@ -8547,7 +8561,7 @@ Public Class BotEngine
         End If
 
         Try
-            Dim percent As Double = ComputeBarPercent(bmp, New RectRegion(0, 0, bmp.Width, bmp.Height), isHp)
+            Dim percent As Double = ComputeBarPercent(bmp, New RectRegion(0, 0, bmp.Width, bmp.Height), isHp, cfg)
             success = True
             Return percent
         Finally
@@ -8555,7 +8569,7 @@ Public Class BotEngine
         End Try
     End Function
 
-    Private Shared Function ComputeClientPotionPointPercent(hwnd As IntPtr, clientX As Integer, clientY As Integer, isHp As Boolean, ByRef success As Boolean) As Double
+    Private Shared Function ComputeClientPotionPointPercent(hwnd As IntPtr, clientX As Integer, clientY As Integer, isHp As Boolean, cfg As BotConfig, ByRef success As Boolean) As Double
         success = False
         If hwnd = IntPtr.Zero Then
             Return 0
@@ -8572,6 +8586,7 @@ Public Class BotEngine
             Return 0
         End If
 
+        Dim profile As BarColorProfile = CreateBarColorProfile(isHp, cfg)
         Dim hdc As IntPtr = NativeMethods.GetDC(hwnd)
         If hdc = IntPtr.Zero Then
             Return 0
@@ -8592,7 +8607,7 @@ Public Class BotEngine
                         CInt(colorRef And &HFFUI),
                         CInt((colorRef >> 8) And &HFFUI),
                         CInt((colorRef >> 16) And &HFFUI))
-                    If If(isHp, IsHpColor(px), IsMpColor(px)) Then
+                    If IsBarColorRgb(px.R, px.G, px.B, profile) Then
                         matches += 1
                     End If
                 Next
@@ -8669,6 +8684,15 @@ Public Class BotEngine
             ArrayPool(Of Byte).Shared.Return(_bytes)
         End Sub
     End Class
+
+    Private Structure BarColorProfile
+        Public Property IsHp As Boolean
+        Public Property UseCustom As Boolean
+        Public Property TargetR As Integer
+        Public Property TargetG As Integer
+        Public Property TargetB As Integer
+        Public Property Tolerance As Integer
+    End Structure
 
     Private Shared Function IsLikelyBlackFrame(bmp As Bitmap) As Boolean
         Dim stepX As Integer = Math.Max(1, bmp.Width \ 10)
@@ -8778,7 +8802,7 @@ Public Class BotEngine
         Return output
     End Function
 
-    Private Shared Function ComputeBarPercent(frame As Bitmap, region As RectRegion, isHp As Boolean) As Double
+    Private Shared Function ComputeBarPercent(frame As Bitmap, region As RectRegion, isHp As Boolean, Optional cfg As BotConfig = Nothing) As Double
         If frame Is Nothing Then
             Return 0
         End If
@@ -8794,13 +8818,14 @@ Public Class BotEngine
             rect.Height -= 2
         End If
 
+        Dim profile As BarColorProfile = CreateBarColorProfile(isHp, cfg)
         Using buffer As New BitmapReadBuffer(frame)
-            Return ComputeBarPercent(buffer, rect, isHp)
+            Return ComputeBarPercent(buffer, rect, profile)
         End Using
     End Function
 
-    Private Shared Function ComputeBarPercent(buffer As BitmapReadBuffer, rect As Rectangle, isHp As Boolean) As Double
-        Dim leadingEdgeRatio As Double = ComputeLeadingEdgeFillRatio(buffer, rect, isHp)
+    Private Shared Function ComputeBarPercent(buffer As BitmapReadBuffer, rect As Rectangle, profile As BarColorProfile) As Double
+        Dim leadingEdgeRatio As Double = ComputeLeadingEdgeFillRatio(buffer, rect, profile)
 
         Dim columnMinPixels As Integer = Math.Max(1, CInt(Math.Ceiling(rect.Height * 0.1)))
         Dim gapTolerance As Integer = Math.Max(2, CInt(Math.Ceiling(rect.Width * 0.02)))
@@ -8816,7 +8841,7 @@ Public Class BotEngine
                 Dim g As Integer = 0
                 Dim b As Integer = 0
                 buffer.GetRgb(px, y, r, g, b)
-                If If(isHp, IsHpColorRgb(r, g, b), IsMpColorRgb(r, g, b)) Then
+                If IsBarColorRgb(r, g, b, profile) Then
                     colored += 1
                 End If
             Next
@@ -8835,7 +8860,7 @@ Public Class BotEngine
         Next
 
         If rightMost < 0 OrElse rect.Width <= 0 Then
-            Return ComputeBarPercentAdaptive(buffer, rect, isHp)
+            Return ComputeBarPercentAdaptive(buffer, rect, profile)
         End If
 
         Dim colorPercent As Double = Math.Max(0, Math.Min(100, (rightMost + 1) * 100.0 / rect.Width))
@@ -8843,7 +8868,7 @@ Public Class BotEngine
             Return 0
         End If
         If colorPercent < 2.0 Then
-            Dim adaptive As Double = ComputeBarPercentAdaptive(buffer, rect, isHp)
+            Dim adaptive As Double = ComputeBarPercentAdaptive(buffer, rect, profile)
             If adaptive > colorPercent Then
                 Return adaptive
             End If
@@ -8851,22 +8876,23 @@ Public Class BotEngine
         Return colorPercent
     End Function
 
-    Private Shared Function ComputeBarPercentAdaptive(frame As Bitmap, rect As Rectangle, isHp As Boolean) As Double
+    Private Shared Function ComputeBarPercentAdaptive(frame As Bitmap, rect As Rectangle, isHp As Boolean, Optional cfg As BotConfig = Nothing) As Double
         If rect.Width <= 0 OrElse rect.Height <= 0 Then
             Return 0
         End If
 
+        Dim profile As BarColorProfile = CreateBarColorProfile(isHp, cfg)
         Using buffer As New BitmapReadBuffer(frame)
-            Return ComputeBarPercentAdaptive(buffer, rect, isHp)
+            Return ComputeBarPercentAdaptive(buffer, rect, profile)
         End Using
     End Function
 
-    Private Shared Function ComputeBarPercentAdaptive(buffer As BitmapReadBuffer, rect As Rectangle, isHp As Boolean) As Double
+    Private Shared Function ComputeBarPercentAdaptive(buffer As BitmapReadBuffer, rect As Rectangle, profile As BarColorProfile) As Double
         If rect.Width <= 0 OrElse rect.Height <= 0 Then
             Return 0
         End If
 
-        Dim leadingEdgeRatio As Double = ComputeLeadingEdgeFillRatio(buffer, rect, isHp)
+        Dim leadingEdgeRatio As Double = ComputeLeadingEdgeFillRatio(buffer, rect, profile)
 
         Dim scores(rect.Width - 1) As Long
         Dim maxScore As Long = 0
@@ -8879,15 +8905,7 @@ Public Class BotEngine
                 Dim g As Integer = 0
                 Dim b As Integer = 0
                 buffer.GetRgb(px, y, r, g, b)
-                Dim dominance As Integer
-                If isHp Then
-                    dominance = r - ((g + b) \ 2)
-                Else
-                    dominance = b - ((r + g) \ 2)
-                End If
-                If dominance > 0 Then
-                    score += dominance
-                End If
+                score += GetBarColorScoreRgb(r, g, b, profile)
             Next
             scores(x) = score
             If score > maxScore Then
@@ -8929,17 +8947,18 @@ Public Class BotEngine
         Return adaptivePercent
     End Function
 
-    Private Shared Function ComputeLeadingEdgeFillRatio(frame As Bitmap, rect As Rectangle, isHp As Boolean) As Double
+    Private Shared Function ComputeLeadingEdgeFillRatio(frame As Bitmap, rect As Rectangle, isHp As Boolean, Optional cfg As BotConfig = Nothing) As Double
         If frame Is Nothing OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then
             Return 0
         End If
 
+        Dim profile As BarColorProfile = CreateBarColorProfile(isHp, cfg)
         Using buffer As New BitmapReadBuffer(frame)
-            Return ComputeLeadingEdgeFillRatio(buffer, rect, isHp)
+            Return ComputeLeadingEdgeFillRatio(buffer, rect, profile)
         End Using
     End Function
 
-    Private Shared Function ComputeLeadingEdgeFillRatio(buffer As BitmapReadBuffer, rect As Rectangle, isHp As Boolean) As Double
+    Private Shared Function ComputeLeadingEdgeFillRatio(buffer As BitmapReadBuffer, rect As Rectangle, profile As BarColorProfile) As Double
         Dim edgeCols As Integer = Math.Max(2, Math.Min(rect.Width, CInt(Math.Ceiling(rect.Width * 0.12))))
         Dim colored As Integer = 0
         Dim total As Integer = edgeCols * rect.Height
@@ -8954,7 +8973,7 @@ Public Class BotEngine
                 Dim g As Integer = 0
                 Dim b As Integer = 0
                 buffer.GetRgb(px, y, r, g, b)
-                If If(isHp, IsHpColorRgb(r, g, b), IsMpColorRgb(r, g, b)) Then
+                If IsBarColorRgb(r, g, b, profile) Then
                     colored += 1
                 End If
             Next
@@ -8963,7 +8982,7 @@ Public Class BotEngine
         Return colored / CDbl(total)
     End Function
 
-    Private Shared Function HasTargetWindowSignal(frame As Bitmap, mobHpRegion As RectRegion, mobName As String, mobHpPct As Double) As Boolean
+    Private Shared Function HasTargetWindowSignal(frame As Bitmap, mobHpRegion As RectRegion, mobName As String, mobHpPct As Double, cfg As BotConfig) As Boolean
         If frame Is Nothing Then
             Return False
         End If
@@ -8979,8 +8998,8 @@ Public Class BotEngine
             rect.Height -= 2
         End If
 
-        Dim edgeFill As Double = ComputeLeadingEdgeFillRatio(frame, rect, True)
-        Dim colorFill As Double = ComputeColorFillRatio(frame, rect, True)
+        Dim edgeFill As Double = ComputeLeadingEdgeFillRatio(frame, rect, True, cfg)
+        Dim colorFill As Double = ComputeColorFillRatio(frame, rect, True, cfg)
         Dim hasName As Boolean = Not String.IsNullOrWhiteSpace(mobName)
 
         If edgeFill >= 0.04 AndAlso colorFill >= 0.01 Then
@@ -8994,17 +9013,18 @@ Public Class BotEngine
         Return False
     End Function
 
-    Private Shared Function ComputeColorFillRatio(frame As Bitmap, rect As Rectangle, isHp As Boolean) As Double
+    Private Shared Function ComputeColorFillRatio(frame As Bitmap, rect As Rectangle, isHp As Boolean, Optional cfg As BotConfig = Nothing) As Double
         If frame Is Nothing OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then
             Return 0
         End If
 
+        Dim profile As BarColorProfile = CreateBarColorProfile(isHp, cfg)
         Using buffer As New BitmapReadBuffer(frame)
-            Return ComputeColorFillRatio(buffer, rect, isHp)
+            Return ComputeColorFillRatio(buffer, rect, profile)
         End Using
     End Function
 
-    Private Shared Function ComputeColorFillRatio(buffer As BitmapReadBuffer, rect As Rectangle, isHp As Boolean) As Double
+    Private Shared Function ComputeColorFillRatio(buffer As BitmapReadBuffer, rect As Rectangle, profile As BarColorProfile) As Double
         Dim colored As Integer = 0
         Dim total As Integer = rect.Width * rect.Height
         If total <= 0 Then
@@ -9017,7 +9037,7 @@ Public Class BotEngine
                 Dim g As Integer = 0
                 Dim b As Integer = 0
                 buffer.GetRgb(x, y, r, g, b)
-                If If(isHp, IsHpColorRgb(r, g, b), IsMpColorRgb(r, g, b)) Then
+                If IsBarColorRgb(r, g, b, profile) Then
                     colored += 1
                 End If
             Next
@@ -9222,6 +9242,103 @@ Public Class BotEngine
         Dim scaledX As Integer = Math.Max(0, frameWidth - scaledMarginRight - scaledW)
         Dim scaledY As Integer = CInt(Math.Round(src.Y * sy))
         Return New RectRegion(scaledX, scaledY, scaledW, scaledH)
+    End Function
+
+    Private Shared Function CreateBarColorProfile(isHp As Boolean, cfg As BotConfig) As BarColorProfile
+        Dim profile As New BarColorProfile With {
+            .IsHp = isHp,
+            .UseCustom = False,
+            .TargetR = 0,
+            .TargetG = 0,
+            .TargetB = 0,
+            .Tolerance = BotConfig.DefaultBarColorTolerance
+        }
+
+        If cfg Is Nothing OrElse Not cfg.CustomBarColorsEnabled Then
+            Return profile
+        End If
+
+        Dim target As Color
+        Try
+            target = Color.FromArgb(If(isHp, cfg.HpBarColorArgb, cfg.MpBarColorArgb))
+        Catch
+            target = Color.FromArgb(If(isHp, BotConfig.DefaultHpBarColorArgb(), BotConfig.DefaultMpBarColorArgb()))
+        End Try
+
+        profile.UseCustom = True
+        profile.TargetR = target.R
+        profile.TargetG = target.G
+        profile.TargetB = target.B
+        profile.Tolerance = Math.Max(8, Math.Min(120, cfg.BarColorTolerance))
+        Return profile
+    End Function
+
+    Private Shared Function IsBarColorRgb(r As Integer, g As Integer, b As Integer, profile As BarColorProfile) As Boolean
+        If Not profile.UseCustom Then
+            Return If(profile.IsHp, IsHpColorRgb(r, g, b), IsMpColorRgb(r, g, b))
+        End If
+
+        Return IsCustomBarColorRgb(r, g, b, profile)
+    End Function
+
+    Private Shared Function GetBarColorScoreRgb(r As Integer, g As Integer, b As Integer, profile As BarColorProfile) As Integer
+        If Not profile.UseCustom Then
+            Dim dominance As Integer
+            If profile.IsHp Then
+                dominance = r - ((g + b) \ 2)
+            Else
+                dominance = b - ((r + g) \ 2)
+            End If
+            Return Math.Max(0, dominance)
+        End If
+
+        If Not IsCustomBarColorRgb(r, g, b, profile) Then
+            Return 0
+        End If
+
+        Dim rgbDelta As Integer =
+            Math.Abs(r - profile.TargetR) +
+            Math.Abs(g - profile.TargetG) +
+            Math.Abs(b - profile.TargetB)
+        Return Math.Max(1, 255 - Math.Min(255, rgbDelta \ 2))
+    End Function
+
+    Private Shared Function IsCustomBarColorRgb(r As Integer, g As Integer, b As Integer, profile As BarColorProfile) As Boolean
+        Dim pxMax As Integer = Math.Max(r, Math.Max(g, b))
+        Dim targetMax As Integer = Math.Max(profile.TargetR, Math.Max(profile.TargetG, profile.TargetB))
+        If targetMax <= 0 OrElse pxMax <= 0 Then
+            Return False
+        End If
+
+        Dim intensityFloor As Integer = Math.Max(10, Math.Min(70, targetMax \ 5))
+        If pxMax < intensityFloor Then
+            Return False
+        End If
+
+        Dim dr As Integer = Math.Abs(r - profile.TargetR)
+        Dim dg As Integer = Math.Abs(g - profile.TargetG)
+        Dim db As Integer = Math.Abs(b - profile.TargetB)
+        Dim maxDelta As Integer = Math.Max(dr, Math.Max(dg, db))
+        Dim totalDelta As Integer = dr + dg + db
+        If maxDelta <= profile.Tolerance AndAlso totalDelta <= CInt(Math.Round(profile.Tolerance * 2.6R)) Then
+            Return True
+        End If
+
+        Dim normTolerance As Integer = Math.Max(18, Math.Min(95, profile.Tolerance + 18))
+        Dim sr As Integer = CInt(Math.Round(r * 255.0R / pxMax))
+        Dim sg As Integer = CInt(Math.Round(g * 255.0R / pxMax))
+        Dim sb As Integer = CInt(Math.Round(b * 255.0R / pxMax))
+        Dim tr As Integer = CInt(Math.Round(profile.TargetR * 255.0R / targetMax))
+        Dim tg As Integer = CInt(Math.Round(profile.TargetG * 255.0R / targetMax))
+        Dim tb As Integer = CInt(Math.Round(profile.TargetB * 255.0R / targetMax))
+
+        Dim nr As Integer = Math.Abs(sr - tr)
+        Dim ng As Integer = Math.Abs(sg - tg)
+        Dim nb As Integer = Math.Abs(sb - tb)
+        Dim normalizedMaxDelta As Integer = Math.Max(nr, Math.Max(ng, nb))
+        Dim normalizedTotalDelta As Integer = nr + ng + nb
+        Return normalizedMaxDelta <= normTolerance AndAlso
+               normalizedTotalDelta <= CInt(Math.Round(normTolerance * 2.4R))
     End Function
 
     Private Shared Function IsHpColor(c As Color) As Boolean
