@@ -80,10 +80,13 @@ Type `shot` in that data channel. The image is posted through the Stats webhook.
 
 Use this baseline if calibration is reset:
 
-- `hp_bar`: `x=11, y=25, w=151, h=11`
-- `mp_bar`: `x=3, y=40, w=161, h=11`
-- `mob_name_rect`: `x=862, y=0, w=162, h=23`
-- `mob_hp_rect`: `x=859, y=20, w=165, h=11`
+- `hp_bar`: `x=1, y=22, w=218, h=14`
+- `mp_bar`: `x=3, y=39, w=216, h=10`
+- `mob_name_rect`: `x=0, y=53, w=218, h=22`
+- `mob_hp_rect`: `x=0, y=78, w=215, h=12`
+- `mob_life_rect`: `x=0, y=78, w=215, h=12`
+
+The default game window is `Kathana - The Reign of Shadow` from process `KathanaGame`. PrintWindow captures are normalized to the client area before HP/MP, target-bar, and OCR processing.
 
 ## Notes
 

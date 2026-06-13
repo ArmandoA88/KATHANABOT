@@ -133,6 +133,22 @@ End Class
 Public Class BotConfig
     Public Const DefaultBarColorTolerance As Integer = 48
 
+    Public Shared Function DefaultHpBarRect() As RectRegion
+        Return New RectRegion(1, 22, 218, 14)
+    End Function
+
+    Public Shared Function DefaultMpBarRect() As RectRegion
+        Return New RectRegion(3, 39, 216, 10)
+    End Function
+
+    Public Shared Function DefaultMobNameRect() As RectRegion
+        Return New RectRegion(0, 53, 218, 22)
+    End Function
+
+    Public Shared Function DefaultMobHpRect() As RectRegion
+        Return New RectRegion(0, 78, 215, 12)
+    End Function
+
     Public Shared Function DefaultHpBarColorArgb() As Integer
         Return Color.FromArgb(230, 0, 0).ToArgb()
     End Function
@@ -189,7 +205,7 @@ Public Class BotConfig
         Return New RectRegion(left, top, Math.Max(1, right - left), Math.Max(1, bottom - top))
     End Function
 
-    Public Property WindowTitle As String = "Kathana   The Coming of the Dark Ages"
+    Public Property WindowTitle As String = "Kathana - The Reign of Shadow"
     <JsonIgnore>
     Public Property SelectedWindowHandle As IntPtr = IntPtr.Zero
     Public Property LiteModeEnabled As Boolean = False
@@ -209,11 +225,11 @@ Public Class BotConfig
     Public Property HighMaxHpThreshold As Integer = 2000
     Public Property AvoidHighMaxHpEnabled As Boolean = False
     Public Property AvoidHighMaxHpThreshold As Integer = 2000
-    Public Property HpBar As RectRegion = New RectRegion(11, 25, 151, 11)
-    Public Property MpBar As RectRegion = New RectRegion(3, 40, 161, 11)
-    Public Property MobNameRect As RectRegion = New RectRegion(860, 711, 162, 23)
-    Public Property MobHpRect As RectRegion = New RectRegion(859, 737, 165, 11)
-    Public Property MobLifeRect As RectRegion = New RectRegion(859, 737, 165, 11)
+    Public Property HpBar As RectRegion = DefaultHpBarRect()
+    Public Property MpBar As RectRegion = DefaultMpBarRect()
+    Public Property MobNameRect As RectRegion = DefaultMobNameRect()
+    Public Property MobHpRect As RectRegion = DefaultMobHpRect()
+    Public Property MobLifeRect As RectRegion = DefaultMobHpRect()
     Public Property UnreachableTextRect As RectRegion = New RectRegion(15, 582, 128, 22)
     Public Property PranaExpRect As RectRegion = New RectRegion(472, 745, 78, 21)
     Public Property RupiahsRect As RectRegion = New RectRegion(560, 745, 110, 21)
@@ -387,6 +403,53 @@ Public Class BotConfig
             New LootScanPoint(220, 510)
         }
     End Function
+
+    Public Shared Sub MigrateLegacyVisionLayout(cfg As BotConfig)
+        If cfg Is Nothing Then
+            Return
+        End If
+
+        Dim configuredTitle As String = If(cfg.WindowTitle, "").Trim()
+        If configuredTitle = "" OrElse
+           configuredTitle.Equals("Kathana   The Coming of the Dark Ages", StringComparison.OrdinalIgnoreCase) OrElse
+           configuredTitle.Equals("Kathana - The Coming of the Dark Ages", StringComparison.OrdinalIgnoreCase) Then
+            cfg.WindowTitle = "Kathana - The Reign of Shadow"
+        End If
+
+        Dim legacyHp As New RectRegion(11, 25, 151, 11)
+        Dim legacyMp As New RectRegion(3, 40, 161, 11)
+        Dim legacyMobName As New RectRegion(860, 711, 162, 23)
+        Dim legacyMobHp As New RectRegion(859, 737, 165, 11)
+        Dim usesLegacyHud As Boolean =
+            SameRect(cfg.HpBar, legacyHp) AndAlso
+            SameRect(cfg.MpBar, legacyMp) AndAlso
+            SameRect(cfg.MobNameRect, legacyMobName) AndAlso
+            SameRect(cfg.MobHpRect, legacyMobHp)
+
+        If usesLegacyHud Then
+            cfg.HpBar = DefaultHpBarRect()
+            cfg.MpBar = DefaultMpBarRect()
+            cfg.MobNameRect = DefaultMobNameRect()
+            cfg.MobHpRect = DefaultMobHpRect()
+        End If
+
+        ' mob_life_rect was added after mob_hp_rect. Older saved configs can retain the
+        ' obsolete bottom-right rectangle even after the other target regions were moved.
+        If cfg.MobLifeRect Is Nothing OrElse
+           (SameRect(cfg.MobLifeRect, legacyMobHp) AndAlso Not SameRect(cfg.MobHpRect, legacyMobHp)) Then
+            cfg.MobLifeRect = CloneRect(cfg.MobHpRect, DefaultMobHpRect())
+        End If
+    End Sub
+
+    Private Shared Function SameRect(a As RectRegion, b As RectRegion) As Boolean
+        Return a IsNot Nothing AndAlso b IsNot Nothing AndAlso
+            a.X = b.X AndAlso a.Y = b.Y AndAlso a.W = b.W AndAlso a.H = b.H
+    End Function
+
+    Private Shared Function CloneRect(source As RectRegion, fallback As RectRegion) As RectRegion
+        Dim value As RectRegion = If(source, fallback)
+        Return New RectRegion(value.X, value.Y, Math.Max(1, value.W), Math.Max(1, value.H))
+    End Function
 End Class
 
 Public Class BotStatus
@@ -552,6 +615,10 @@ Friend Module NativeMethods
 
     <DllImport("user32.dll", SetLastError:=True)>
     Friend Function GetClientRect(hWnd As IntPtr, ByRef lpRect As RECT) As Boolean
+    End Function
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function GetWindowRect(hWnd As IntPtr, ByRef lpRect As RECT) As Boolean
     End Function
 
 
@@ -760,6 +827,7 @@ Public Class BotEngine
     Private _noDamageTargetSignature As String = ""
     Private _noDamageAttackCount As Integer = 0
     Private _lastMobNameRead As DateTime = DateTime.MinValue
+    Private _lastMobNameDetectedAt As DateTime = DateTime.MinValue
     Private _cachedMobName As String = ""
     Private _mobNameOcrStartedAt As DateTime = DateTime.MinValue
     Private _mobNameOcrTask As Task(Of String) = Nothing
@@ -966,6 +1034,7 @@ Public Class BotEngine
     }
 
     Public Sub UpdateConfig(cfg As BotConfig)
+        BotConfig.MigrateLegacyVisionLayout(cfg)
         SyncLock _sync
             _config = cfg
         End SyncLock
@@ -1048,6 +1117,7 @@ Public Class BotEngine
             _noDamageTargetSignature = ""
             _noDamageAttackCount = 0
             _lastMobNameRead = DateTime.MinValue
+            _lastMobNameDetectedAt = DateTime.MinValue
             _cachedMobName = ""
             _mobNameOcrStartedAt = DateTime.MinValue
             _mobNameOcrTask = Nothing
@@ -1617,6 +1687,10 @@ Public Class BotEngine
                 End If
             End If
 
+            If frame Is Nothing Then
+                frame = GetLatestLoopFrameClone(Math.Max(1000, fullFrameIntervalMs * 3))
+            End If
+
             Dim hpScanWatch As Stopwatch = Stopwatch.StartNew()
             Dim hpPct As Double = 0
             Dim mpPct As Double = 0
@@ -1630,14 +1704,14 @@ Public Class BotEngine
             If frame IsNot Nothing Then
                 hpPct = ComputeBarPercent(frame, hpRegion, True, cfg)
                 mpPct = ComputeBarPercent(frame, mpRegion, False, cfg)
-                mobHpPct = ComputeBarPercent(frame, mobHpRegion, True, cfg)
+                mobHpPct = ComputeMobHpPercent(frame, mobHpRegion, cfg)
             Else
                 hpPct = ComputeClientBarPercent(hwnd, hpRegion, True, cfg, fullHpScanOk)
                 mpPct = ComputeClientBarPercent(hwnd, mpRegion, False, cfg, fullMpScanOk)
                 mobHpRegionFrame = CaptureClientRegion(hwnd, mobHpRegion)
                 If mobHpRegionFrame IsNot Nothing Then
                     localMobHpRegion = New RectRegion(0, 0, mobHpRegionFrame.Width, mobHpRegionFrame.Height)
-                    mobHpPct = ComputeBarPercent(mobHpRegionFrame, localMobHpRegion, True, cfg)
+                    mobHpPct = ComputeMobHpPercent(mobHpRegionFrame, localMobHpRegion, cfg)
                 Else
                     mobHpScanOk = False
                 End If
@@ -1691,7 +1765,10 @@ Public Class BotEngine
                    If(mobHpRegionFrame IsNot Nothing AndAlso localMobHpRegion IsNot Nothing,
                       HasTargetWindowSignal(mobHpRegionFrame, localMobHpRegion, "", mobHpPct, cfg),
                       mobHpPct >= Math.Max(0.6, cfg.MobHpPresenceThreshold * 0.7)))
-            Dim shouldReadMobName As Boolean = targetWindowSignalNoName OrElse (mobHpPct >= Math.Max(0.6, cfg.MobHpPresenceThreshold * 0.7))
+            Dim shouldReadMobName As Boolean =
+                frame IsNot Nothing OrElse
+                targetWindowSignalNoName OrElse
+                (mobHpPct >= Math.Max(0.6, cfg.MobHpPresenceThreshold * 0.7))
             Dim forceMobNameRefresh As Boolean = monsterFilterActive AndAlso targetWindowSignalNoName AndAlso ((now - _lastMobNameRead).TotalMilliseconds >= 180)
             Dim mobName As String
             If shouldReadMobName Then
@@ -1702,6 +1779,7 @@ Public Class BotEngine
                 ' Avoid stale-name attacks after target switches.
                 _cachedMobName = ""
                 _lastMobNameRead = DateTime.MinValue
+                _lastMobNameDetectedAt = DateTime.MinValue
                 _mobNameOcrStartedAt = DateTime.MinValue
                 _mobNameOcrTask = Nothing
                 mobName = ""
@@ -5795,7 +5873,9 @@ Public Class BotEngine
                 Dim candidate As String = NormalizeMobNameDisplay(If(_mobNameOcrTask.Result, "").Trim())
                 If Not String.IsNullOrWhiteSpace(candidate) Then
                     _cachedMobName = candidate
-                ElseIf (now - _lastMobNameRead).TotalMilliseconds > 1200 Then
+                    _lastMobNameDetectedAt = now
+                ElseIf _lastMobNameDetectedAt = DateTime.MinValue OrElse
+                       (now - _lastMobNameDetectedAt).TotalMilliseconds > 1200 Then
                     _cachedMobName = ""
                 End If
                 _lastMobNameRead = now
@@ -8515,25 +8595,13 @@ Public Class BotEngine
             Return Nothing
         End If
 
-        Dim pt As New NativeMethods.POINT With {.X = 0, .Y = 0}
-        If Not NativeMethods.ClientToScreen(hwnd, pt) Then
-            Return Nothing
-        End If
-
-        Dim bmp As New Bitmap(clamped.Width, clamped.Height, PixelFormat.Format24bppRgb)
-        Try
-            If TryCaptureClientRegionWithBitBlt(hwnd, clamped, bmp) Then
-                Return bmp
+        Using fullFrame As Bitmap = CaptureClient(hwnd)
+            If fullFrame Is Nothing Then
+                Return Nothing
             End If
 
-            Using g As Graphics = Graphics.FromImage(bmp)
-                g.CopyFromScreen(pt.X + clamped.X, pt.Y + clamped.Y, 0, 0, New Size(clamped.Width, clamped.Height), CopyPixelOperation.SourceCopy Or NativeMethods.CAPTUREBLT)
-            End Using
-            Return bmp
-        Catch
-            bmp.Dispose()
-            Return Nothing
-        End Try
+            Return CropFrameRegion(fullFrame, clamped)
+        End Using
     End Function
 
     Private Shared Function TryCaptureClientRegionWithBitBlt(hwnd As IntPtr, clamped As Rectangle, bmp As Bitmap) As Boolean
@@ -8625,16 +8693,60 @@ Public Class BotEngine
     End Function
 
     Private Shared Function TryCaptureWithPrintWindow(hwnd As IntPtr, bmp As Bitmap, flags As UInteger) As Boolean
-        Dim ok As Boolean = False
-        Using g As Graphics = Graphics.FromImage(bmp)
-            Dim hdc As IntPtr = g.GetHdc()
-            Try
-                ok = NativeMethods.PrintWindow(hwnd, hdc, flags)
-            Finally
-                g.ReleaseHdc(hdc)
-            End Try
+        If flags = NativeMethods.PW_CLIENTONLY Then
+            Dim clientOnlyOk As Boolean = False
+            Using g As Graphics = Graphics.FromImage(bmp)
+                Dim hdc As IntPtr = g.GetHdc()
+                Try
+                    clientOnlyOk = NativeMethods.PrintWindow(hwnd, hdc, flags)
+                Finally
+                    g.ReleaseHdc(hdc)
+                End Try
+            End Using
+            Return clientOnlyOk AndAlso (Not IsLikelyBlackFrame(bmp))
+        End If
+
+        Dim windowRect As NativeMethods.RECT
+        Dim clientRect As NativeMethods.RECT
+        Dim clientOrigin As New NativeMethods.POINT With {.X = 0, .Y = 0}
+        If Not NativeMethods.GetWindowRect(hwnd, windowRect) OrElse
+           Not NativeMethods.GetClientRect(hwnd, clientRect) OrElse
+           Not NativeMethods.ClientToScreen(hwnd, clientOrigin) Then
+            Return False
+        End If
+
+        Dim outerWidth As Integer = Math.Max(bmp.Width, windowRect.Right - windowRect.Left)
+        Dim outerHeight As Integer = Math.Max(bmp.Height, windowRect.Bottom - windowRect.Top)
+        Dim offsetX As Integer = clientOrigin.X - windowRect.Left
+        Dim offsetY As Integer = clientOrigin.Y - windowRect.Top
+        If offsetX < 0 OrElse offsetY < 0 OrElse
+           offsetX + bmp.Width > outerWidth OrElse offsetY + bmp.Height > outerHeight Then
+            Return False
+        End If
+
+        Using outer As New Bitmap(outerWidth, outerHeight, PixelFormat.Format24bppRgb)
+            Dim ok As Boolean = False
+            Using g As Graphics = Graphics.FromImage(outer)
+                Dim hdc As IntPtr = g.GetHdc()
+                Try
+                    ok = NativeMethods.PrintWindow(hwnd, hdc, flags)
+                Finally
+                    g.ReleaseHdc(hdc)
+                End Try
+            End Using
+            If Not ok OrElse IsLikelyBlackFrame(outer) Then
+                Return False
+            End If
+
+            Using g As Graphics = Graphics.FromImage(bmp)
+                g.DrawImage(
+                    outer,
+                    New Rectangle(0, 0, bmp.Width, bmp.Height),
+                    New Rectangle(offsetX, offsetY, bmp.Width, bmp.Height),
+                    GraphicsUnit.Pixel)
+            End Using
         End Using
-        Return ok AndAlso (Not IsLikelyBlackFrame(bmp))
+        Return Not IsLikelyBlackFrame(bmp)
     End Function
 
     Private Shared Function TryCaptureWithCopyFromScreen(hwnd As IntPtr, bmp As Bitmap, width As Integer, height As Integer) As Boolean
@@ -8824,6 +8936,15 @@ Public Class BotEngine
         End Using
     End Function
 
+    Private Shared Function ComputeMobHpPercent(frame As Bitmap, region As RectRegion, cfg As BotConfig) As Double
+        Dim genericPercent As Double = ComputeBarPercent(frame, region, True, Nothing)
+        If cfg Is Nothing OrElse Not cfg.CustomBarColorsEnabled Then
+            Return genericPercent
+        End If
+
+        Return Math.Max(genericPercent, ComputeBarPercent(frame, region, True, cfg))
+    End Function
+
     Private Shared Function ComputeBarPercent(buffer As BitmapReadBuffer, rect As Rectangle, profile As BarColorProfile) As Double
         Dim leadingEdgeRatio As Double = ComputeLeadingEdgeFillRatio(buffer, rect, profile)
 
@@ -8998,8 +9119,12 @@ Public Class BotEngine
             rect.Height -= 2
         End If
 
-        Dim edgeFill As Double = ComputeLeadingEdgeFillRatio(frame, rect, True, cfg)
-        Dim colorFill As Double = ComputeColorFillRatio(frame, rect, True, cfg)
+        Dim edgeFill As Double = ComputeLeadingEdgeFillRatio(frame, rect, True, Nothing)
+        Dim colorFill As Double = ComputeColorFillRatio(frame, rect, True, Nothing)
+        If cfg IsNot Nothing AndAlso cfg.CustomBarColorsEnabled Then
+            edgeFill = Math.Max(edgeFill, ComputeLeadingEdgeFillRatio(frame, rect, True, cfg))
+            colorFill = Math.Max(colorFill, ComputeColorFillRatio(frame, rect, True, cfg))
+        End If
         Dim hasName As Boolean = Not String.IsNullOrWhiteSpace(mobName)
 
         If edgeFill >= 0.04 AndAlso colorFill >= 0.01 Then
@@ -9073,10 +9198,11 @@ Public Class BotEngine
 
         Dim sx As Double = frameWidth / CDbl(BaseClientWidth)
         Dim sy As Double = frameHeight / CDbl(BaseClientHeight)
-        hpBar = ScaleRegionLeftTop(cfg.HpBar, sx, sy)
-        mpBar = ScaleRegionLeftTop(cfg.MpBar, sx, sy)
-        mobNameRect = ScaleRegionRightTop(cfg.MobNameRect, sx, sy, frameWidth)
-        mobHpRect = ScaleRegionRightTop(cfg.MobHpRect, sx, sy, frameWidth)
+        ' The redesigned HUD keeps these panels at a fixed top-left pixel size.
+        hpBar = CloneRegion(cfg.HpBar)
+        mpBar = CloneRegion(cfg.MpBar)
+        mobNameRect = CloneRegion(cfg.MobNameRect)
+        mobHpRect = CloneRegion(cfg.MobHpRect)
         unreachableTextRect = ScaleRegionLeftTop(cfg.UnreachableTextRect, sx, sy)
         pranaExpRect = ScaleRegionLeftTop(cfg.PranaExpRect, sx, sy)
         rupiahsRect = ScaleRegionLeftTop(cfg.RupiahsRect, sx, sy)
@@ -9089,11 +9215,14 @@ Public Class BotEngine
     End Sub
 
     Private Shared Function ResolveMobLifeRegion(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer) As RectRegion
-        Dim source As RectRegion = If(cfg Is Nothing OrElse cfg.MobLifeRect Is Nothing, New RectRegion(859, 737, 165, 11), cfg.MobLifeRect)
+        Dim source As RectRegion = If(cfg Is Nothing OrElse cfg.MobLifeRect Is Nothing, BotConfig.DefaultMobHpRect(), cfg.MobLifeRect)
         If frameWidth <= 0 OrElse frameHeight <= 0 Then
             Return CloneRegion(source)
         End If
-        If cfg Is Nothing OrElse Not IsDefaultVisionLayout(cfg) OrElse (frameWidth = BaseClientWidth AndAlso frameHeight = BaseClientHeight) Then
+        If cfg Is Nothing OrElse
+           SameRegion(source, BotConfig.DefaultMobHpRect()) OrElse
+           Not IsDefaultVisionLayout(cfg) OrElse
+           (frameWidth = BaseClientWidth AndAlso frameHeight = BaseClientHeight) Then
             Return CloneRegion(source)
         End If
 
@@ -9154,11 +9283,11 @@ Public Class BotEngine
     End Function
 
     Private Shared Function IsDefaultVisionLayout(cfg As BotConfig) As Boolean
-        Return SameRegion(cfg.HpBar, New RectRegion(11, 25, 151, 11)) AndAlso
-               SameRegion(cfg.MpBar, New RectRegion(3, 40, 161, 11)) AndAlso
-               SameRegion(cfg.MobNameRect, New RectRegion(860, 711, 162, 23)) AndAlso
-               SameRegion(cfg.MobHpRect, New RectRegion(859, 737, 165, 11)) AndAlso
-               SameRegion(cfg.MobLifeRect, New RectRegion(859, 737, 165, 11)) AndAlso
+        Return SameRegion(cfg.HpBar, BotConfig.DefaultHpBarRect()) AndAlso
+               SameRegion(cfg.MpBar, BotConfig.DefaultMpBarRect()) AndAlso
+               SameRegion(cfg.MobNameRect, BotConfig.DefaultMobNameRect()) AndAlso
+               SameRegion(cfg.MobHpRect, BotConfig.DefaultMobHpRect()) AndAlso
+               SameRegion(cfg.MobLifeRect, BotConfig.DefaultMobHpRect()) AndAlso
                SameRegion(cfg.UnreachableTextRect, New RectRegion(15, 582, 128, 22)) AndAlso
                SameRegion(cfg.PranaExpRect, New RectRegion(472, 745, 78, 21)) AndAlso
                SameRegion(cfg.RupiahsRect, New RectRegion(560, 745, 110, 21)) AndAlso

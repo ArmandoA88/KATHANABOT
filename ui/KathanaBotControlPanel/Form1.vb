@@ -18,8 +18,9 @@ Public Class Form1
     Private Shared ReadOnly LitePrimarySkillKeys As String() = {"1", "2", "3", "4", "5", "6", "7", "8"}
     Private Shared ReadOnly LiteSecondarySkillKeys As String() = {"F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10"}
     Private Shared ReadOnly CustomCombatDefaultKeys As String() = {"F11", "F12", "F13"}
-    Private Shared ReadOnly DefaultGameWindowTitle As String = "Kathana   The Coming of the Dark Ages"
-    Private Shared ReadOnly PreferredProcessWindowTitle As String = "Kathana - The Coming of the Dark Ages"
+    Private Shared ReadOnly DefaultGameWindowTitle As String = "Kathana - The Reign of Shadow"
+    Private Shared ReadOnly PreferredProcessWindowTitle As String = "Kathana - The Reign of Shadow"
+    Private Const PreferredProcessName As String = "KathanaGame"
     Private Shared ReadOnly LiteWindowSize As New Size(920, 660)
     Private Shared ReadOnly FullWindowSize As New Size(1450, 900)
 
@@ -510,7 +511,7 @@ Public Class Form1
         Public Property MainWindowHandle As IntPtr = IntPtr.Zero
 
         Public Overrides Function ToString() As String
-            Return $"{WindowTitle} - {ProcessName} ({ProcessId})"
+            Return $"{WindowTitle} - {ProcessName}"
         End Function
     End Class
 
@@ -4115,11 +4116,11 @@ Public Class Form1
 
     Private Sub SeedDefaults()
         txtWindowTitle.Text = DefaultGameWindowTitle
-        dgvRegions.Rows.Add(True, "hp_bar", "11", "25", "151", "11")
-        dgvRegions.Rows.Add(True, "mp_bar", "3", "40", "161", "11")
-        dgvRegions.Rows.Add(True, "mob_name_rect", "860", "711", "162", "23")
-        dgvRegions.Rows.Add(True, "mob_hp_rect", "859", "737", "165", "11")
-        dgvRegions.Rows.Add(True, "mob_life_rect", "859", "737", "165", "11")
+        dgvRegions.Rows.Add(True, "hp_bar", "1", "22", "218", "14")
+        dgvRegions.Rows.Add(True, "mp_bar", "3", "39", "216", "10")
+        dgvRegions.Rows.Add(True, "mob_name_rect", "0", "53", "218", "22")
+        dgvRegions.Rows.Add(True, "mob_hp_rect", "0", "78", "215", "12")
+        dgvRegions.Rows.Add(True, "mob_life_rect", "0", "78", "215", "12")
         dgvRegions.Rows.Add(True, "unreachable_text_rect", "15", "582", "128", "22")
         dgvRegions.Rows.Add(True, "prana_exp_rect", "472", "745", "78", "21")
         dgvRegions.Rows.Add(True, "rupiahs_rect", "560", "745", "110", "21")
@@ -5023,7 +5024,7 @@ Public Class Form1
 
                 If targetIndex < 0 Then
                     For i As Integer = 0 To entries.Count - 1
-                        If IsPreferredKathanaWindowTitle(entries(i).WindowTitle) Then
+                        If IsPreferredKathanaWindow(entries(i)) Then
                             targetIndex = i
                             Exit For
                         End If
@@ -5082,6 +5083,12 @@ Public Class Form1
         Return value.Equals(PreferredProcessWindowTitle, StringComparison.OrdinalIgnoreCase) OrElse
                value.Equals(DefaultGameWindowTitle, StringComparison.OrdinalIgnoreCase) OrElse
                value.IndexOf("The Coming of the Dark Ages", StringComparison.OrdinalIgnoreCase) >= 0
+    End Function
+
+    Private Shared Function IsPreferredKathanaWindow(entry As ProcessWindowEntry) As Boolean
+        Return entry IsNot Nothing AndAlso
+            entry.ProcessName.Equals(PreferredProcessName, StringComparison.OrdinalIgnoreCase) AndAlso
+            IsPreferredKathanaWindowTitle(entry.WindowTitle)
     End Function
 
     Private Function GetProcessRenameText() As String
@@ -8348,6 +8355,7 @@ Public Class Form1
             End If
 
             If state.SavedConfig IsNot Nothing Then
+                BotConfig.MigrateLegacyVisionLayout(state.SavedConfig)
                 ApplySavedConfigToUi(state.SavedConfig)
             End If
 
