@@ -1476,10 +1476,13 @@ Public Class BotEngine
                 Dim liteChatRegion As New RectRegion(0, 0, 1, 1)
                 ResolveVisionRegions(cfg, clientWidth, clientHeight, liteHpRegion, liteMpRegion, liteMobNameRegion, liteMobHpRegion, liteUnreachableTextRegion, litePranaExpRegion, liteRupiahsRegion, litePartyInviteScanRegion, litePartyInviteOkRegion, litePartyListRegion, liteMapCoordinateXRegion, liteMapCoordinateYRegion, liteChatRegion)
 
+                Dim hasLiteHpPoint As Boolean = cfg.LiteHpCheckPointX >= 0 AndAlso cfg.LiteHpCheckPointY >= 0
+                Dim hasLiteMpPoint As Boolean = cfg.LiteMpCheckPointX >= 0 AndAlso cfg.LiteMpCheckPointY >= 0
+                Dim needsLiteFrame As Boolean = cfg.PartyAskEnabled OrElse hasLiteHpPoint OrElse hasLiteMpPoint
                 Dim liteFrame As Bitmap = Nothing
                 Dim liteScanWarning As String = ""
                 Dim liteFullFrameGlitch As Boolean = False
-                If cfg.PartyAskEnabled Then
+                If needsLiteFrame Then
                     Dim captureWatch As Stopwatch = Stopwatch.StartNew()
                     liteFrame = CaptureClient(hwnd)
                     captureWatch.Stop()
@@ -1494,7 +1497,7 @@ Public Class BotEngine
                             liteFrame.Dispose()
                             liteFrame = Nothing
                             liteFullFrameGlitch = True
-                            liteScanWarning = "Vision glitch: black full-frame capture skipped; Lite actions continue with direct HP/MP reads."
+                            liteScanWarning = "Vision glitch: black full-frame capture skipped; Lite vision actions were skipped."
                         Else
                             ReplaceLatestLoopFrame(liteFrame)
                         End If
@@ -1505,19 +1508,17 @@ Public Class BotEngine
                     ClearLatestLoopFrame()
                 End If
 
-                Dim hasLiteHpPoint As Boolean = cfg.LiteHpCheckPointX >= 0 AndAlso cfg.LiteHpCheckPointY >= 0
-                Dim hasLiteMpPoint As Boolean = cfg.LiteMpCheckPointX >= 0 AndAlso cfg.LiteMpCheckPointY >= 0
                 Dim hpScanOk As Boolean = False
                 Dim mpScanOk As Boolean = False
                 Dim liteHpPct As Double = If(hasLiteHpPoint, 0, 100)
                 Dim liteMpPct As Double = If(hasLiteMpPoint, 0, 100)
 
                 If hasLiteHpPoint Then
-                    liteHpPct = ComputeClientPotionPointPercent(hwnd, cfg.LiteHpCheckPointX, cfg.LiteHpCheckPointY, True, cfg, hpScanOk)
+                    liteHpPct = ComputeClientPotionPointPercent(liteFrame, cfg.LiteHpCheckPointX, cfg.LiteHpCheckPointY, True, cfg, hpScanOk)
                 End If
 
                 If hasLiteMpPoint Then
-                    liteMpPct = ComputeClientPotionPointPercent(hwnd, cfg.LiteMpCheckPointX, cfg.LiteMpCheckPointY, False, cfg, mpScanOk)
+                    liteMpPct = ComputeClientPotionPointPercent(liteFrame, cfg.LiteMpCheckPointX, cfg.LiteMpCheckPointY, False, cfg, mpScanOk)
                 End If
 
                 Dim liteAttackHpPct As Double = If(hpScanOk, liteHpPct, 100.0)
@@ -8637,45 +8638,30 @@ Public Class BotEngine
         End Try
     End Function
 
-    Private Shared Function ComputeClientPotionPointPercent(hwnd As IntPtr, clientX As Integer, clientY As Integer, isHp As Boolean, cfg As BotConfig, ByRef success As Boolean) As Double
+    Private Shared Function ComputeClientPotionPointPercent(frame As Bitmap, clientX As Integer, clientY As Integer, isHp As Boolean, cfg As BotConfig, ByRef success As Boolean) As Double
         success = False
-        If hwnd = IntPtr.Zero Then
+        If frame Is Nothing Then
             Return 0
         End If
 
-        Dim clientRect As NativeMethods.RECT
-        If Not NativeMethods.GetClientRect(hwnd, clientRect) Then
-            Return 0
-        End If
-
-        Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
-        Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
+        Dim clientWidth As Integer = frame.Width
+        Dim clientHeight As Integer = frame.Height
         If clientX < 0 OrElse clientY < 0 OrElse clientX >= clientWidth OrElse clientY >= clientHeight Then
             Return 0
         End If
 
         Dim profile As BarColorProfile = CreateBarColorProfile(isHp, cfg)
-        Dim hdc As IntPtr = NativeMethods.GetDC(hwnd)
-        If hdc = IntPtr.Zero Then
-            Return 0
-        End If
-
-        Try
+        Using buffer As New BitmapReadBuffer(frame)
             Dim matches As Integer = 0
             Dim validSamples As Integer = 0
             For y As Integer = Math.Max(0, clientY - 3) To Math.Min(clientHeight - 1, clientY + 3)
                 For x As Integer = Math.Max(0, clientX - 3) To Math.Min(clientWidth - 1, clientX + 3)
-                    Dim colorRef As UInteger = NativeMethods.GetPixel(hdc, x, y)
-                    If colorRef = &HFFFFFFFFUI Then
-                        Continue For
-                    End If
-
+                    Dim r As Integer = 0
+                    Dim g As Integer = 0
+                    Dim b As Integer = 0
+                    buffer.GetRgb(x, y, r, g, b)
                     validSamples += 1
-                    Dim px As Color = Color.FromArgb(
-                        CInt(colorRef And &HFFUI),
-                        CInt((colorRef >> 8) And &HFFUI),
-                        CInt((colorRef >> 16) And &HFFUI))
-                    If IsBarColorRgb(px.R, px.G, px.B, profile) Then
+                    If IsBarColorRgb(r, g, b, profile) Then
                         matches += 1
                     End If
                 Next
@@ -8687,9 +8673,7 @@ Public Class BotEngine
 
             success = True
             Return If(matches >= Math.Max(2, CInt(Math.Ceiling(validSamples * 0.12))), 100.0, 0.0)
-        Finally
-            NativeMethods.ReleaseDC(hwnd, hdc)
-        End Try
+        End Using
     End Function
 
     Private Shared Function TryCaptureWithPrintWindow(hwnd As IntPtr, bmp As Bitmap, flags As UInteger) As Boolean

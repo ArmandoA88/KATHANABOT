@@ -5184,6 +5184,14 @@ Public Class Form1
                         Return
                     End If
 
+                    Dim expectedRegion As RectRegion = GetLiteAutoPotBarRegion(_pendingLitePointCapture)
+                    If Not IsPointInsideRegion(expectedRegion, clientPoint.X, clientPoint.Y) Then
+                        Dim barName As String = If(_pendingLitePointCapture = LitePointCaptureKind.Hp, "HP", "Mana")
+                        AppendLog($"Lite AutoPots: right click must be inside the configured {barName} bar ({expectedRegion.X}, {expectedRegion.Y}, {expectedRegion.W}, {expectedRegion.H}).")
+                        _liteRightMouseWasDown = rightDown
+                        Return
+                    End If
+
                     If _pendingLitePointCapture = LitePointCaptureKind.Hp Then
                         _liteAutoPotHpPointX = Math.Max(0, clientPoint.X)
                         _liteAutoPotHpPointY = Math.Max(0, clientPoint.Y)
@@ -5202,6 +5210,31 @@ Public Class Form1
         End If
         _liteRightMouseWasDown = rightDown
     End Sub
+
+    Private Function GetLiteAutoPotBarRegion(kind As LitePointCaptureKind) As RectRegion
+        If kind = LitePointCaptureKind.Hp Then
+            Return BuildRectOrFallback("hp_bar", BotConfig.DefaultHpBarRect())
+        End If
+        Return BuildRectOrFallback("mp_bar", BotConfig.DefaultMpBarRect())
+    End Function
+
+    Private Shared Function IsPointInsideRegion(region As RectRegion, pointX As Integer, pointY As Integer) As Boolean
+        Return region IsNot Nothing AndAlso pointX >= region.X AndAlso pointX < region.X + region.W AndAlso pointY >= region.Y AndAlso pointY < region.Y + region.H
+    End Function
+
+    Private Shared Function NormalizeLiteAutoPotPoint(region As RectRegion, ByRef pointX As Integer, ByRef pointY As Integer) As Boolean
+        If region Is Nothing OrElse pointX < 0 OrElse pointY < 0 Then
+            Return False
+        End If
+
+        Dim originalX As Integer = pointX
+        Dim originalY As Integer = pointY
+        pointX = Math.Max(region.X, Math.Min(region.X + region.W - 1, pointX))
+        If pointY < region.Y OrElse pointY >= region.Y + region.H Then
+            pointY = region.Y + Math.Max(0, region.H \ 2)
+        End If
+        Return pointX <> originalX OrElse pointY <> originalY
+    End Function
 
     Private Shared Function GetLiteAutoPotTriggerPercent(barRegion As RectRegion, pointX As Integer) As Integer
         If barRegion Is Nothing OrElse pointX < 0 OrElse barRegion.W <= 0 Then
@@ -8636,6 +8669,14 @@ Public Class Form1
             Else
                 _liteAutoPotMpPointX = -1
                 _liteAutoPotMpPointY = -1
+            End If
+            Dim hpPointAdjusted As Boolean = NormalizeLiteAutoPotPoint(GetLiteAutoPotBarRegion(LitePointCaptureKind.Hp), _liteAutoPotHpPointX, _liteAutoPotHpPointY)
+            Dim mpPointAdjusted As Boolean = NormalizeLiteAutoPotPoint(GetLiteAutoPotBarRegion(LitePointCaptureKind.Mp), _liteAutoPotMpPointX, _liteAutoPotMpPointY)
+            If hpPointAdjusted Then
+                AppendLog($"Lite AutoPots: adjusted saved HP point to {_liteAutoPotHpPointX}, {_liteAutoPotHpPointY} for the current HP bar.")
+            End If
+            If mpPointAdjusted Then
+                AppendLog($"Lite AutoPots: adjusted saved Mana point to {_liteAutoPotMpPointX}, {_liteAutoPotMpPointY} for the current Mana bar.")
             End If
             _pendingLitePointCapture = LitePointCaptureKind.None
             UpdateLiteAutoPotUi()
