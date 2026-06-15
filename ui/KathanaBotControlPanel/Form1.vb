@@ -19,7 +19,6 @@ Public Class Form1
     Private Shared ReadOnly LiteSecondarySkillKeys As String() = {"F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10"}
     Private Shared ReadOnly CustomCombatDefaultKeys As String() = {"F11", "F12", "F13"}
     Private Shared ReadOnly DefaultGameWindowTitle As String = "Kathana - The Reign of Shadow"
-    Private Shared ReadOnly PreferredProcessWindowTitle As String = "Kathana - The Reign of Shadow"
     Private Const PreferredProcessName As String = "KathanaGame"
     Private Shared ReadOnly LiteWindowSize As New Size(920, 660)
     Private Shared ReadOnly FullWindowSize As New Size(1450, 900)
@@ -95,7 +94,7 @@ Public Class Form1
     Private Const HelpScopeLeveling As String = "leveling"
     Private Const HelpScopeDiagnostics As String = "diagnostics"
 
-    Private txtWindowTitle As TextBox
+    Private lblSelectedProcess As Label
     Private nudLoopMs As NumericUpDown
     Private nudRetargetMs As NumericUpDown
     Private nudForcedRetargetMs As NumericUpDown
@@ -694,7 +693,6 @@ Public Class Form1
     End Sub
 
     Private Sub SetupLiveConfigBindings()
-        AddHandler txtWindowTitle.TextChanged, AddressOf LiveConfigChanged
         If cboNotificationProvider IsNot Nothing Then
             AddHandler cboNotificationProvider.SelectedIndexChanged, AddressOf NotificationProviderChanged
         End If
@@ -2611,9 +2609,9 @@ Public Class Form1
     Private Function BuildCombatTab() As TabPage
         Dim tab As New TabPage("Combat Full") With {.BackColor = Color.FromArgb(20, 20, 20)}
         Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 1, .Padding = New Padding(8)}
-        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 52.0F))
-        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 18.0F))
-        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 30.0F))
+        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
+        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 21.0F))
+        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 29.0F))
         tab.Controls.Add(root)
 
         Dim left As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
@@ -2668,10 +2666,17 @@ Public Class Form1
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 130.0F))
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
 
-        generalLayout.Controls.Add(New Label() With {.Text = "Window Title", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
-        txtWindowTitle = New TextBox() With {.Dock = DockStyle.Fill}
-        generalLayout.Controls.Add(txtWindowTitle, 1, 0)
-        generalLayout.SetColumnSpan(txtWindowTitle, 3)
+        generalLayout.Controls.Add(New Label() With {.Text = "Selected Process", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
+        lblSelectedProcess = New Label() With {
+            .Text = "No process selected",
+            .Dock = DockStyle.Fill,
+            .TextAlign = ContentAlignment.MiddleLeft,
+            .BorderStyle = BorderStyle.Fixed3D,
+            .AutoEllipsis = True,
+            .Padding = New Padding(4, 0, 4, 0)
+        }
+        generalLayout.Controls.Add(lblSelectedProcess, 1, 0)
+        generalLayout.SetColumnSpan(lblSelectedProcess, 3)
 
         generalLayout.Controls.Add(New Label() With {.Text = "Loop (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
         nudLoopMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 20, .Maximum = 1000, .Value = 80}
@@ -3847,86 +3852,96 @@ Public Class Form1
     End Function
 
     Private Function BuildCenterControlPanel() As Panel
-        Dim panel As New Panel() With {.Dock = DockStyle.Fill, .Padding = New Padding(12), .AutoScroll = True}
+        Dim panel As New Panel() With {.Dock = DockStyle.Fill, .Padding = New Padding(8), .AutoScroll = True}
+        Dim content As New TableLayoutPanel() With {
+            .Dock = DockStyle.Top,
+            .AutoSize = True,
+            .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            .ColumnCount = 1,
+            .RowCount = 22,
+            .GrowStyle = TableLayoutPanelGrowStyle.FixedSize,
+            .Margin = New Padding(0),
+            .Padding = New Padding(4)
+        }
+        content.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        For rowIndex As Integer = 0 To content.RowCount - 1
+            content.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+        Next
+
         lblFullEdition = New Label() With {
             .Text = "FULL VERSION - for more powerful computers",
-            .Top = 0,
-            .Left = 8,
-            .Width = 320,
-            .Height = 24,
+            .Dock = DockStyle.Fill,
+            .AutoSize = True,
+            .MinimumSize = New Size(0, 24),
             .ForeColor = Color.FromArgb(80, 170, 255),
             .Font = New Font("Segoe UI", 9.0F, FontStyle.Bold),
-            .TextAlign = ContentAlignment.MiddleLeft
+            .TextAlign = ContentAlignment.MiddleCenter,
+            .AutoEllipsis = True
         }
         lblRunState = New Label() With {
             .Text = "BOT PAUSED",
-            .Top = 28,
-            .Left = 8,
-            .Width = 210,
-            .Height = 30,
+            .Dock = DockStyle.Fill,
+            .MinimumSize = New Size(0, 30),
             .BackColor = Color.FromArgb(110, 45, 45),
             .ForeColor = Color.White,
             .TextAlign = ContentAlignment.MiddleCenter,
-            .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold)
+            .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold),
+            .Margin = New Padding(3, 2, 3, 4)
         }
         lblShortcutHint = New Label() With {
             .Text = "Shortcut: Ctrl+Shift -> Pause / Resume",
-            .Top = 62,
-            .Left = 8,
-            .Width = 280,
-            .Height = 28,
+            .Dock = DockStyle.Fill,
+            .AutoSize = True,
+            .MinimumSize = New Size(0, 24),
             .ForeColor = Color.Gold,
-            .TextAlign = ContentAlignment.MiddleLeft
+            .TextAlign = ContentAlignment.MiddleCenter,
+            .AutoEllipsis = True
         }
-        lblState = New Label() With {.Text = "Status: Searching for target...", .Top = 94, .Left = 8, .Width = 300, .Height = 22}
-        lblSystem = New Label() With {.Text = "System Active: False", .Top = 122, .Left = 8, .Width = 260, .Height = 22, .ForeColor = Color.LightGreen}
-        lblHp = New Label() With {.Text = "HP%: 0", .Top = 150, .Left = 8, .Width = 120, .Height = 22, .ForeColor = Color.LimeGreen}
-        lblMp = New Label() With {.Text = "MP%: 0", .Top = 150, .Left = 136, .Width = 120, .Height = 22, .ForeColor = Color.DeepSkyBlue}
-        lblMobName = New Label() With {.Text = "Mob: (none) | Life: n/a", .Top = 174, .Left = 8, .Width = 360, .Height = 22, .ForeColor = Color.LightSkyBlue}
-        lblExpRate = New Label() With {.Text = "Prana/EXP: 0.00% | Rate: Calculating (1m)", .Top = 196, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.Khaki}
-        lblRupiahsRate = New Label() With {.Text = "Rupiahs: n/a | Rate: Calculating (1m)", .Top = 218, .Left = 8, .Width = 300, .Height = 22, .ForeColor = Color.Gold}
-        btnAttack = New Button() With {.Text = "Attack", .Top = 252, .Left = 8, .Width = 210, .Height = 42, .BackColor = Color.FromArgb(40, 180, 80), .ForeColor = Color.White}
-        btnSaveSettings = New Button() With {.Text = "Save Settings", .Top = 306, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(55, 55, 55), .ForeColor = Color.White}
-        btnStopBot = New Button() With {.Text = "Stop Bot", .Top = 356, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(20, 130, 210), .ForeColor = Color.White}
-        btnBypassLimits = New Button() With {.Text = "Ignore Skill Min HP/MP: OFF", .Top = 406, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
+        lblState = CreateResponsiveCenterLabel("Status: Searching for target...", Color.White)
+        lblSystem = CreateResponsiveCenterLabel("System Active: False", Color.LightGreen)
+        lblHp = CreateResponsiveCenterLabel("HP%: 0", Color.LimeGreen)
+        lblMp = CreateResponsiveCenterLabel("MP%: 0", Color.DeepSkyBlue)
+        lblMobName = CreateResponsiveCenterLabel("Mob: (none) | Life: n/a", Color.LightSkyBlue)
+        lblExpRate = CreateResponsiveCenterLabel("Prana/EXP: 0.00% | Rate: Calculating (1m)", Color.Khaki)
+        lblRupiahsRate = CreateResponsiveCenterLabel("Rupiahs: n/a | Rate: Calculating (1m)", Color.Gold)
+        btnAttack = CreateResponsiveCenterButton("Attack", Color.FromArgb(40, 180, 80), 42)
+        btnSaveSettings = CreateResponsiveCenterButton("Save Settings", Color.FromArgb(55, 55, 55))
+        btnStopBot = CreateResponsiveCenterButton("Stop Bot", Color.FromArgb(20, 130, 210))
+        btnBypassLimits = CreateResponsiveCenterButton("Ignore Skill Min HP/MP: OFF", Color.FromArgb(110, 45, 45))
         btnBypassStuck = New Button() With {
             .Text = If(_bypassStuckTarget, "Auto Retarget If Stuck: ON", "Auto Retarget If Stuck: OFF"),
-            .Top = 456,
-            .Left = 8,
-            .Width = 210,
-            .Height = 38,
+            .Dock = DockStyle.Fill,
+            .MinimumSize = New Size(0, 38),
+            .Margin = New Padding(3, 3, 3, 3),
             .BackColor = If(_bypassStuckTarget, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
             .ForeColor = Color.White
         }
-        btnRetargetNow = New Button() With {.Text = "Retarget Now (E)", .Top = 506, .Left = 8, .Width = 210, .Height = 38, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
+        btnRetargetNow = CreateResponsiveCenterButton("Retarget Now (E)", Color.FromArgb(155, 90, 25))
         btnPartyAutoAccept = New Button() With {
             .Text = If(_partyAutoAccept, "Auto Accept Party/Ress: ON", "Auto Accept Party/Ress: OFF"),
-            .Top = 556,
-            .Left = 8,
-            .Width = 210,
-            .Height = 38,
+            .Dock = DockStyle.Fill,
+            .MinimumSize = New Size(0, 38),
+            .Margin = New Padding(3, 3, 3, 3),
             .BackColor = If(_partyAutoAccept, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
             .ForeColor = Color.White
         }
-        Dim lblPartyAskEvery As New Label() With {.Text = "Ask Party Every (sec)", .Top = 602, .Left = 8, .Width = 210, .Height = 22}
-        nudPartyAskSeconds = New NumericUpDown() With {.Top = 624, .Left = 8, .Width = 210, .Height = 28, .Minimum = 5, .Maximum = 600, .Value = 30}
-        Dim lblPartyAskText As New Label() With {.Text = "Auto Ask Party Text", .Top = 658, .Left = 8, .Width = 210, .Height = 22}
-        txtPartyAskText = New TextBox() With {.Top = 680, .Left = 8, .Width = 210, .Height = 28, .Text = DefaultPartyAskCommand}
+        Dim lblPartyAskEvery As Label = CreateResponsiveCenterLabel("Ask Party Every (sec)", Color.White)
+        nudPartyAskSeconds = New NumericUpDown() With {.Dock = DockStyle.Fill, .MinimumSize = New Size(0, 28), .Minimum = 5, .Maximum = 600, .Value = 30, .Margin = New Padding(3, 0, 3, 4)}
+        Dim lblPartyAskText As Label = CreateResponsiveCenterLabel("Auto Ask Party Text", Color.White)
+        txtPartyAskText = New TextBox() With {.Dock = DockStyle.Fill, .MinimumSize = New Size(0, 28), .Text = DefaultPartyAskCommand, .Margin = New Padding(3, 0, 3, 4)}
         btnPartyAsk = New Button() With {
             .Text = If(_partyAskEnabled, "Auto Ask Party (add): ON", "Auto Ask Party (add): OFF"),
-            .Top = 714,
-            .Left = 8,
-            .Width = 210,
-            .Height = 38,
+            .Dock = DockStyle.Fill,
+            .MinimumSize = New Size(0, 38),
+            .Margin = New Padding(3, 3, 3, 3),
             .BackColor = If(_partyAskEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
             .ForeColor = Color.White
         }
         btnHelp = New Button() With {
             .Text = "Explanation (EN/ES/FIL)",
-            .Top = 764,
-            .Left = 8,
-            .Width = 210,
-            .Height = 38,
+            .Dock = DockStyle.Fill,
+            .MinimumSize = New Size(0, 38),
+            .Margin = New Padding(3, 3, 3, 3),
             .BackColor = Color.FromArgb(70, 70, 70),
             .ForeColor = Color.White,
             .AccessibleDescription = HelpScopeCombat
@@ -3941,31 +3956,85 @@ Public Class Form1
         AddHandler btnPartyAsk.Click, AddressOf TogglePartyAskClicked
         AddHandler txtPartyAskText.TextChanged, AddressOf PartyAskTextChanged
         AddHandler btnHelp.Click, AddressOf HelpClicked
-        panel.Controls.Add(lblFullEdition)
-        panel.Controls.Add(lblRunState)
-        panel.Controls.Add(lblShortcutHint)
-        panel.Controls.Add(lblState)
-        panel.Controls.Add(lblSystem)
-        panel.Controls.Add(lblHp)
-        panel.Controls.Add(lblMp)
-        panel.Controls.Add(lblMobName)
-        panel.Controls.Add(lblExpRate)
-        panel.Controls.Add(lblRupiahsRate)
-        panel.Controls.Add(btnAttack)
-        panel.Controls.Add(btnSaveSettings)
-        panel.Controls.Add(btnStopBot)
-        panel.Controls.Add(btnBypassLimits)
-        panel.Controls.Add(btnBypassStuck)
-        panel.Controls.Add(btnRetargetNow)
-        panel.Controls.Add(btnPartyAutoAccept)
-        panel.Controls.Add(lblPartyAskEvery)
-        panel.Controls.Add(nudPartyAskSeconds)
-        panel.Controls.Add(lblPartyAskText)
-        panel.Controls.Add(txtPartyAskText)
-        panel.Controls.Add(btnPartyAsk)
-        panel.Controls.Add(btnHelp)
+        Dim hpMpLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .ColumnCount = 2, .RowCount = 1, .Margin = New Padding(0)}
+        hpMpLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
+        hpMpLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
+        hpMpLayout.Controls.Add(lblHp, 0, 0)
+        hpMpLayout.Controls.Add(lblMp, 1, 0)
+
+        Dim controls As Control() = {
+            lblFullEdition, lblRunState, lblShortcutHint, lblState, lblSystem, hpMpLayout,
+            lblMobName, lblExpRate, lblRupiahsRate, btnAttack, btnSaveSettings, btnStopBot,
+            btnBypassLimits, btnBypassStuck, btnRetargetNow, btnPartyAutoAccept,
+            lblPartyAskEvery, nudPartyAskSeconds, lblPartyAskText, txtPartyAskText, btnPartyAsk, btnHelp
+        }
+        For rowIndex As Integer = 0 To controls.Length - 1
+            content.Controls.Add(controls(rowIndex), 0, rowIndex)
+        Next
+
+        panel.Controls.Add(content)
+        AddHandler panel.ClientSizeChanged,
+            Sub(_sender As Object, _args As EventArgs)
+                UpdateFullCenterPanelScale(panel, content)
+            End Sub
+        UpdateFullCenterPanelScale(panel, content)
         Return panel
     End Function
+
+    Private Shared Function CreateResponsiveCenterLabel(text As String, foreColor As Color) As Label
+        Return New Label() With {
+            .Text = text,
+            .Dock = DockStyle.Fill,
+            .AutoSize = True,
+            .MinimumSize = New Size(0, 22),
+            .ForeColor = foreColor,
+            .TextAlign = ContentAlignment.MiddleLeft,
+            .AutoEllipsis = True,
+            .Margin = New Padding(3, 1, 3, 1)
+        }
+    End Function
+
+    Private Shared Function CreateResponsiveCenterButton(text As String, backColor As Color, Optional minimumHeight As Integer = 38) As Button
+        Return New Button() With {
+            .Text = text,
+            .Dock = DockStyle.Fill,
+            .MinimumSize = New Size(0, minimumHeight),
+            .BackColor = backColor,
+            .ForeColor = Color.White,
+            .Margin = New Padding(3, 3, 3, 3)
+        }
+    End Function
+
+    Private Sub UpdateFullCenterPanelScale(panel As Panel, content As TableLayoutPanel)
+        If panel Is Nothing OrElse content Is Nothing OrElse panel.ClientSize.Width < 80 Then
+            Return
+        End If
+
+        Dim usableWidth As Integer = Math.Max(80, panel.ClientSize.Width - panel.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth)
+        Dim scale As Single = CSng(Math.Max(0.78R, Math.Min(1.15R, usableWidth / 275.0R)))
+        Dim normalSize As Single = CSng(8.6F * scale)
+        Dim headerSize As Single = CSng(8.8F * scale)
+        Dim runSize As Single = CSng(10.0F * scale)
+
+        SetScaledControlFont(content, normalSize)
+        SetScaledControlFont(lblFullEdition, headerSize)
+        SetScaledControlFont(lblRunState, runSize)
+        content.Padding = New Padding(Math.Max(2, CInt(Math.Round(usableWidth * 0.025R))))
+    End Sub
+
+    Private Shared Sub SetScaledControlFont(control As Control, size As Single)
+        If control Is Nothing Then
+            Return
+        End If
+
+        Dim boundedSize As Single = Math.Max(6.75F, Math.Min(11.5F, size))
+        If Math.Abs(control.Font.Size - boundedSize) >= 0.15F Then
+            control.Font = New Font(control.Font.FontFamily, boundedSize, control.Font.Style, GraphicsUnit.Point)
+        End If
+        For Each child As Control In control.Controls
+            SetScaledControlFont(child, size)
+        Next
+    End Sub
 
     Private Function BuildLogPanel() As GroupBox
         Dim group As New GroupBox() With {.Text = "Bot Debug Log - Real-time", .Dock = DockStyle.Fill}
@@ -4115,7 +4184,7 @@ Public Class Form1
     End Function
 
     Private Sub SeedDefaults()
-        txtWindowTitle.Text = DefaultGameWindowTitle
+        UpdateSelectedProcessDisplay(GetSelectedProcessWindow())
         dgvRegions.Rows.Add(True, "hp_bar", "1", "22", "218", "14")
         dgvRegions.Rows.Add(True, "mp_bar", "3", "39", "216", "10")
         dgvRegions.Rows.Add(True, "mob_name_rect", "0", "53", "218", "22")
@@ -4317,7 +4386,7 @@ Public Class Form1
 
     Private Sub StopEdition(edition As BotEdition, triggeredByButton As Boolean, context As String)
         Dim engine As BotEngine = GetEngineForEdition(edition)
-        Dim hardStopSent As Boolean = engine.HardStopMovement(txtWindowTitle.Text.Trim(), context)
+        Dim hardStopSent As Boolean = engine.HardStopMovement(GetSelectedWindowTitleForFallback(edition), context)
         If triggeredByButton Then
             If hardStopSent Then
                 AppendLog($"Hard stop macro sent for {edition} ({context}).")
@@ -4898,12 +4967,11 @@ Public Class Form1
             selected = GetSelectedProcessWindow()
         End If
         If selected Is Nothing Then
+            UpdateSelectedProcessDisplay(Nothing)
             Return
         End If
 
-        If txtWindowTitle IsNot Nothing AndAlso Not txtWindowTitle.IsDisposed AndAlso String.IsNullOrWhiteSpace(txtWindowTitle.Text) Then
-            txtWindowTitle.Text = selected.WindowTitle
-        End If
+        UpdateSelectedProcessDisplay(selected)
         If txtProcessRename IsNot Nothing AndAlso Not txtProcessRename.IsDisposed Then
             txtProcessRename.Text = selected.WindowTitle
         End If
@@ -4911,6 +4979,7 @@ Public Class Form1
             txtLiteProcessRename.Text = selected.WindowTitle
         End If
         SyncProcessSelectionAcrossLists(selected.MainWindowHandle)
+        PushLiveConfig()
     End Sub
 
     Private Sub ApplyProcessRenameClicked(sender As Object, e As EventArgs)
@@ -4928,7 +4997,6 @@ Public Class Form1
 
         If SetWindowText(selected.MainWindowHandle, newTitle) Then
             AppendLog($"Window renamed for PID {selected.ProcessId}: '{newTitle}'.")
-            txtWindowTitle.Text = newTitle
             If txtProcessRename IsNot Nothing Then
                 txtProcessRename.Text = newTitle
             End If
@@ -5074,21 +5142,29 @@ Public Class Form1
         Return GetSelectedProcessWindowForEdition(If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full))
     End Function
 
-    Private Shared Function IsPreferredKathanaWindowTitle(title As String) As Boolean
-        Dim value As String = If(title, "").Trim()
-        If value = "" Then
-            Return False
+    Private Sub UpdateSelectedProcessDisplay(selected As ProcessWindowEntry)
+        If lblSelectedProcess Is Nothing OrElse lblSelectedProcess.IsDisposed Then
+            Return
+        End If
+        If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
+            lblSelectedProcess.Text = "No process selected"
+            Return
         End If
 
-        Return value.Equals(PreferredProcessWindowTitle, StringComparison.OrdinalIgnoreCase) OrElse
-               value.Equals(DefaultGameWindowTitle, StringComparison.OrdinalIgnoreCase) OrElse
-               value.IndexOf("The Coming of the Dark Ages", StringComparison.OrdinalIgnoreCase) >= 0
+        lblSelectedProcess.Text = $"{selected.ProcessName} (PID {selected.ProcessId}) - {selected.WindowTitle}"
+    End Sub
+
+    Private Function GetSelectedWindowTitleForFallback(edition As BotEdition) As String
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(edition)
+        If selected IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(selected.WindowTitle) Then
+            Return selected.WindowTitle.Trim()
+        End If
+        Return DefaultGameWindowTitle
     End Function
 
     Private Shared Function IsPreferredKathanaWindow(entry As ProcessWindowEntry) As Boolean
         Return entry IsNot Nothing AndAlso
-            entry.ProcessName.Equals(PreferredProcessName, StringComparison.OrdinalIgnoreCase) AndAlso
-            IsPreferredKathanaWindowTitle(entry.WindowTitle)
+            entry.ProcessName.Equals(PreferredProcessName, StringComparison.OrdinalIgnoreCase)
     End Function
 
     Private Function GetProcessRenameText() As String
@@ -5502,7 +5578,7 @@ Public Class Form1
             "",
             "1) QUICK START",
             "- Open game in windowed mode.",
-            "- Verify Window Title in Vision tab.",
+            "- Select the game process in Process List.",
             "- Press Attack to start bot loop.",
             "- Press Stop Bot to hard stop movement and stop loop.",
             "- You can also toggle pause/resume with Ctrl+Shift when game or control panel is focused.",
@@ -5546,7 +5622,7 @@ Public Class Form1
             "- Help (EN/ES/FIL): opens this multilingual guide.",
             "",
             "6) VISION TAB - VISION + WINDOW SETUP",
-            "- Window Title: used to find game window.",
+            "- Selected Process: read-only status showing the process used by Vision and combat.",
             "- Loop (ms): bot loop delay.",
             "- Retarget (ms): baseline retarget interval.",
             "- Mob HP Presence %: threshold for valid target HP bar signal.",
@@ -5635,7 +5711,7 @@ Public Class Form1
             "",
             "1) INICIO RAPIDO",
             "- Abre el juego en modo ventana.",
-            "- Verifica Window Title en la pestana Vision.",
+            "- Selecciona el proceso del juego en Process List.",
             "- Presiona Attack para iniciar el bot.",
             "- Presiona Stop Bot para detener movimiento y loop.",
             "- Tambien puedes usar Ctrl+Shift para pausar/reanudar cuando el juego o el panel tienen foco.",
@@ -5676,7 +5752,7 @@ Public Class Form1
             "- Help (EN/ES/FIL): abre esta guia.",
             "",
             "6) PESTANA VISION",
-            "- Window Title, Loop(ms), Retarget(ms), Mob HP Presence%.",
+            "- Selected Process, Loop(ms), Retarget(ms), Mob HP Presence%.",
             "- Show Overlay para calibracion visual.",
             "- Capture Snapshot para capturar imagen del cliente.",
             "",
@@ -5742,7 +5818,7 @@ Public Class Form1
             "- Ctrl+Shift alterna pausa/reanudar cuando el juego o el panel estan en foco.",
             "",
             "19) SOLUCION DE PROBLEMAS",
-            "- Sin acciones: valida Window Title y prueba Capture Snapshot.",
+            "- Sin acciones: selecciona el proceso correcto y prueba Capture Snapshot.",
             "- Objetivos incorrectos: recalibra regiones y revisa filtro de monstruos.",
             "- Sin notificaciones: revisa el proveedor seleccionado, webhook/canal y el internet.",
             "- Error al renombrar proceso: algunas apps bloquean SetWindowText."
@@ -5756,7 +5832,7 @@ Public Class Form1
             "",
             "1) MABILIS NA SETUP",
             "- Buksan ang game sa windowed mode.",
-            "- I-check ang Window Title sa Vision tab.",
+            "- Piliin ang game process sa Process List.",
             "- Pindutin ang Attack para simulan ang bot.",
             "- Pindutin ang Stop Bot para ihinto ang movement at loop.",
             "- Puwede ring Ctrl+Shift para pause/resume kapag focused ang game o control panel.",
@@ -5797,7 +5873,7 @@ Public Class Form1
             "- Help (EN/ES/FIL): bubuksan ang multilingual guide.",
             "",
             "6) VISION TAB",
-            "- Window Title, Loop(ms), Retarget(ms), Mob HP Presence%.",
+            "- Selected Process, Loop(ms), Retarget(ms), Mob HP Presence%.",
             "- Show Overlay para madaling calibration ng regions.",
             "- Capture Snapshot para kumuha ng current game image.",
             "",
@@ -5864,7 +5940,7 @@ Public Class Form1
             "- Ctrl+Shift pause/resume toggle gumagana kapag active ang game o control panel.",
             "",
             "19) TROUBLESHOOTING",
-            "- Walang action: i-check Window Title at subukan ang Capture Snapshot.",
+            "- Walang action: piliin ang tamang process at subukan ang Capture Snapshot.",
             "- Maling target: i-recalibrate regions at ayusin monster filter.",
             "- Walang notification: i-check ang napiling provider, webhook/channel, at internet.",
             "- Rename fail: may apps na hindi pumapayag sa window title change."
@@ -5904,7 +5980,7 @@ Public Class Form1
                     "KATHANABOT - VISION TAB EXPLANATION (ENGLISH)",
                     "============================================================",
                     "",
-                    "- Window Title is the name used to find the game client.",
+                    "- Selected Process shows the process currently used by Vision and combat; change it in Process List.",
                     "- Loop (ms) sets the main scan and action speed.",
                     "- Normal Retarget (ms) and Forced Retarget (ms) tune when the bot sends E again.",
                     "- Mob HP Presence % is the minimum HP-bar signal required to trust the current target.",
@@ -6038,7 +6114,7 @@ Public Class Form1
                     "KATHANABOT - EXPLICACION DE LA PESTANA VISION (ESPANOL)",
                     "============================================================",
                     "",
-                    "- Window Title es el nombre usado para encontrar el cliente del juego.",
+                    "- Selected Process muestra el proceso usado por Vision y combate; cambialo en Process List.",
                     "- Loop (ms) define la velocidad del ciclo principal.",
                     "- Normal Retarget (ms) y Forced Retarget (ms) ajustan cuando el bot vuelve a usar E.",
                     "- Mob HP Presence % es la senal minima para confiar en la barra de HP del objetivo.",
@@ -6169,7 +6245,7 @@ Public Class Form1
                     "KATHANABOT - PALIWANAG NG VISION TAB (FILIPINO)",
                     "============================================================",
                     "",
-                    "- Window Title ang pangalan na gamit para hanapin ang game client.",
+                    "- Selected Process ang kasalukuyang process na gamit ng Vision at combat; piliin ito sa Process List.",
                     "- Loop (ms) ang bilis ng main scan/action cycle.",
                     "- Normal Retarget (ms) at Forced Retarget (ms) ang timing kung kailan muling mag-E ang bot.",
                     "- Mob HP Presence % ang minimum signal para paniwalaan ang HP bar ng target.",
@@ -6269,12 +6345,7 @@ Public Class Form1
     End Function
 
     Private Sub ManualRetargetClicked(sender As Object, e As EventArgs)
-        Dim title As String = txtWindowTitle.Text.Trim()
-        If title = "" Then
-            AppendLog("Manual retarget failed: window title is empty.")
-            Return
-        End If
-
+        Dim title As String = GetSelectedWindowTitleForFallback(BotEdition.Full)
         If _fullEngine.ManualRetarget(title) Then
             AppendLog("Manual retarget requested (E sent).")
         Else
@@ -6686,13 +6757,17 @@ Public Class Form1
     End Sub
 
     Private Function IsGameWindowForeground() As Boolean
-        Dim targetTitle As String = If(txtWindowTitle IsNot Nothing, txtWindowTitle.Text, "").Trim()
-        If targetTitle = "" Then
-            Return False
-        End If
-
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindow()
         Dim hwnd As IntPtr = GetForegroundWindow()
         If hwnd = IntPtr.Zero Then
+            Return False
+        End If
+        If selected IsNot Nothing AndAlso selected.MainWindowHandle <> IntPtr.Zero Then
+            Return hwnd = selected.MainWindowHandle
+        End If
+
+        Dim targetTitle As String = GetSelectedWindowTitleForFallback(If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full))
+        If targetTitle = "" Then
             Return False
         End If
 
@@ -7457,7 +7532,7 @@ Public Class Form1
         Dim cfg As New BotConfig()
         Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Lite)
         cfg.LiteModeEnabled = True
-        cfg.WindowTitle = If(txtWindowTitle IsNot Nothing, txtWindowTitle.Text.Trim(), DefaultGameWindowTitle)
+        cfg.WindowTitle = If(selected IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(selected.WindowTitle), selected.WindowTitle.Trim(), DefaultGameWindowTitle)
         cfg.SelectedWindowHandle = If(selected IsNot Nothing, selected.MainWindowHandle, IntPtr.Zero)
         cfg.LiteHpCheckPointX = _liteAutoPotHpPointX
         cfg.LiteHpCheckPointY = _liteAutoPotHpPointY
@@ -7532,7 +7607,7 @@ Public Class Form1
     Private Function BuildConfig() As BotConfig
         Dim cfg As New BotConfig()
         Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
-        cfg.WindowTitle = txtWindowTitle.Text.Trim()
+        cfg.WindowTitle = If(selected IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(selected.WindowTitle), selected.WindowTitle.Trim(), DefaultGameWindowTitle)
         cfg.SelectedWindowHandle = If(selected IsNot Nothing, selected.MainWindowHandle, IntPtr.Zero)
         ApplyBarColorSettingsToConfig(cfg)
         cfg.LoopMs = CInt(nudLoopMs.Value)
@@ -8371,17 +8446,9 @@ Public Class Form1
             If hasSeparatedState AndAlso appState IsNot Nothing Then
                 state = If(appState.Full, New PersistedListState())
                 liteState = If(appState.Lite, New PersistedLiteState())
-                If txtWindowTitle IsNot Nothing Then
-                    Dim sharedTitle As String = If(appState.WindowTitle, "").Trim()
-                    txtWindowTitle.Text = If(sharedTitle = "", DefaultGameWindowTitle, sharedTitle)
-                End If
             Else
                 state = JsonSerializer.Deserialize(Of PersistedListState)(raw)
                 liteState = New PersistedLiteState()
-                If txtWindowTitle IsNot Nothing AndAlso state IsNot Nothing AndAlso state.SavedConfig IsNot Nothing Then
-                    Dim legacyTitle As String = If(state.SavedConfig.WindowTitle, "").Trim()
-                    txtWindowTitle.Text = If(legacyTitle = "", DefaultGameWindowTitle, legacyTitle)
-                End If
             End If
             If state Is Nothing Then
                 Return
@@ -8624,7 +8691,7 @@ Public Class Form1
             }
 
             Dim appState As New PersistedAppState With {
-                .WindowTitle = If(txtWindowTitle IsNot Nothing AndAlso txtWindowTitle.Text.Trim() <> "", txtWindowTitle.Text.Trim(), DefaultGameWindowTitle),
+                .WindowTitle = GetSelectedWindowTitleForFallback(If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full)),
                 .Full = fullState,
                 .Lite = liteState
             }
@@ -8692,9 +8759,6 @@ Public Class Form1
             Return
         End If
 
-        If txtWindowTitle IsNot Nothing AndAlso String.IsNullOrWhiteSpace(txtWindowTitle.Text) Then
-            txtWindowTitle.Text = DefaultGameWindowTitle
-        End If
         ApplyBarColorConfigToUi(cfg)
         SetNumericControlValue(nudLoopMs, cfg.LoopMs)
         SetNumericControlValue(nudRetargetMs, cfg.RetargetMs)

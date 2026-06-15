@@ -83,7 +83,7 @@ Public Class ChatTranslationOverlayForm
         End If
 
         Dim clientRect As Rectangle
-        If Not BotEngine.TryGetClientScreenRect(cfg.WindowTitle, clientRect) Then
+        If Not BotEngine.TryGetClientScreenRect(cfg, clientRect) Then
             Hide()
             Return
         End If

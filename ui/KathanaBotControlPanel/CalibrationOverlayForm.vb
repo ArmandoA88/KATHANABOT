@@ -78,7 +78,7 @@ Public Class CalibrationOverlayForm
         End If
 
         Dim clientRect As System.Drawing.Rectangle
-        If BotEngine.TryGetClientScreenRect(cfg.WindowTitle, clientRect) Then
+        If BotEngine.TryGetClientScreenRect(cfg, clientRect) Then
             If Bounds <> clientRect Then
                 Bounds = clientRect
             End If
@@ -558,6 +558,7 @@ Public Class CalibrationOverlayForm
     Private Function CloneConfig(src As BotConfig) As BotConfig
         Dim cfg As New BotConfig()
         cfg.WindowTitle = src.WindowTitle
+        cfg.SelectedWindowHandle = src.SelectedWindowHandle
         cfg.HpBar = CloneRegion(src.HpBar)
         cfg.MpBar = CloneRegion(src.MpBar)
         cfg.MobNameRect = CloneRegion(src.MobNameRect)

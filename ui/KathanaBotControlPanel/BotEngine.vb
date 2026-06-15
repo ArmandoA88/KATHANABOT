@@ -7841,12 +7841,20 @@ Public Class BotEngine
     End Function
 
     Public Function ManualRetarget(windowTitle As String) As Boolean
-        Dim title As String = If(windowTitle, "").Trim()
-        If title = "" Then
-            Return False
+        Dim cfg As BotConfig
+        SyncLock _sync
+            cfg = _config
+        End SyncLock
+
+        Dim hwnd As IntPtr = ResolveGameWindow(cfg)
+        If hwnd = IntPtr.Zero Then
+            Dim title As String = If(windowTitle, "").Trim()
+            If title = "" Then
+                Return False
+            End If
+            hwnd = FindGameWindow(title)
         End If
 
-        Dim hwnd As IntPtr = FindGameWindow(title)
         If hwnd = IntPtr.Zero Then
             Return False
         End If
@@ -8318,6 +8326,15 @@ Public Class BotEngine
 
     Public Shared Function TryGetClientScreenRect(windowTitle As String, ByRef rect As Rectangle) As Boolean
         Dim hwnd As IntPtr = FindGameWindow(windowTitle)
+        Return TryGetClientScreenRect(hwnd, rect)
+    End Function
+
+    Public Shared Function TryGetClientScreenRect(cfg As BotConfig, ByRef rect As Rectangle) As Boolean
+        Dim hwnd As IntPtr = ResolveGameWindow(cfg)
+        Return TryGetClientScreenRect(hwnd, rect)
+    End Function
+
+    Private Shared Function TryGetClientScreenRect(hwnd As IntPtr, ByRef rect As Rectangle) As Boolean
         If hwnd = IntPtr.Zero Then
             rect = Rectangle.Empty
             Return False
