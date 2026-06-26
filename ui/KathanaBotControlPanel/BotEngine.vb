@@ -211,8 +211,12 @@ Public Class BotConfig
     Public Property LiteModeEnabled As Boolean = False
     Public Property LiteHpCheckPointX As Integer = -1
     Public Property LiteHpCheckPointY As Integer = -1
+    Public Property LiteHpCheckColorEnabled As Boolean = False
+    Public Property LiteHpCheckColorArgb As Integer = 0
     Public Property LiteMpCheckPointX As Integer = -1
     Public Property LiteMpCheckPointY As Integer = -1
+    Public Property LiteMpCheckColorEnabled As Boolean = False
+    Public Property LiteMpCheckColorArgb As Integer = 0
     Public Property CustomBarColorsEnabled As Boolean = False
     Public Property HpBarColorArgb As Integer = DefaultHpBarColorArgb()
     Public Property MpBarColorArgb As Integer = DefaultMpBarColorArgb()
@@ -1514,17 +1518,16 @@ Public Class BotEngine
                 Dim liteMpPct As Double = If(hasLiteMpPoint, 0, 100)
 
                 If hasLiteHpPoint Then
-                    liteHpPct = ComputeClientPotionPointPercent(liteFrame, cfg.LiteHpCheckPointX, cfg.LiteHpCheckPointY, True, cfg, hpScanOk)
+                    liteHpPct = ComputeClientPotionPointPercent(liteFrame, cfg.LiteHpCheckPointX, cfg.LiteHpCheckPointY, True, cfg, cfg.LiteHpCheckColorEnabled, cfg.LiteHpCheckColorArgb, hpScanOk)
                 End If
 
                 If hasLiteMpPoint Then
-                    liteMpPct = ComputeClientPotionPointPercent(liteFrame, cfg.LiteMpCheckPointX, cfg.LiteMpCheckPointY, False, cfg, mpScanOk)
+                    liteMpPct = ComputeClientPotionPointPercent(liteFrame, cfg.LiteMpCheckPointX, cfg.LiteMpCheckPointY, False, cfg, cfg.LiteMpCheckColorEnabled, cfg.LiteMpCheckColorArgb, mpScanOk)
                 End If
 
                 Dim liteAttackHpPct As Double = If(hpScanOk, liteHpPct, 100.0)
                 Dim liteAttackMpPct As Double = If(mpScanOk, liteMpPct, 100.0)
                 Dim liteCaptureGlitch As Boolean = liteFullFrameGlitch OrElse (hasLiteHpPoint AndAlso Not hpScanOk) OrElse (hasLiteMpPoint AndAlso Not mpScanOk)
-                ApplyVisionStabilityFilter(liteAttackHpPct, liteAttackMpPct, 0, "", liteCaptureGlitch)
 
                 Dim liteReason As String = ""
                 Dim liteActionSent As Boolean = False
@@ -7602,6 +7605,10 @@ Public Class BotEngine
         End If
 
         Dim role As String = If(action.Role, "").Trim().ToLowerInvariant()
+        If cfg.LiteModeEnabled AndAlso (role = "heal" OrElse role = "max_health" OrElse role = "mana") Then
+            Return ConfirmLitePointSupportActionStillNeeded(cfg, hwnd, action, role)
+        End If
+
         Dim targetRegion As RectRegion = If(role = "mana", mpRegion, hpRegion)
         Dim firstSample As Double = If(role = "mana", mpPercent, hpPercent)
         If firstSample <= 0.25R AndAlso Not IsNearZeroSupportConfirmed(role, hwnd, targetRegion) Then
@@ -7655,6 +7662,40 @@ Public Class BotEngine
         Else
             hpPercent = secondSample
         End If
+        Return False
+    End Function
+
+    Private Function ConfirmLitePointSupportActionStillNeeded(cfg As BotConfig, hwnd As IntPtr, action As ActionRule, role As String) As Boolean
+        Dim isMana As Boolean = String.Equals(role, "mana", StringComparison.OrdinalIgnoreCase)
+        Dim pointX As Integer = If(isMana, cfg.LiteMpCheckPointX, cfg.LiteHpCheckPointX)
+        Dim pointY As Integer = If(isMana, cfg.LiteMpCheckPointY, cfg.LiteHpCheckPointY)
+        If pointX < 0 OrElse pointY < 0 Then
+            Return False
+        End If
+
+        Using frame As Bitmap = CaptureClient(hwnd)
+            Dim ok As Boolean = False
+            Dim sample As Double = ComputeClientPotionPointPercent(
+                frame,
+                pointX,
+                pointY,
+                Not isMana,
+                cfg,
+                If(isMana, cfg.LiteMpCheckColorEnabled, cfg.LiteHpCheckColorEnabled),
+                If(isMana, cfg.LiteMpCheckColorArgb, cfg.LiteHpCheckColorArgb),
+                ok)
+
+            If Not ok Then
+                RaiseEvent LogLine($"Lite AutoPots: confirmation read failed before {action.KeyName} ({action.Role}).")
+                Return False
+            End If
+
+            If sample <= Math.Max(1, action.TriggerPercent) Then
+                Return True
+            End If
+        End Using
+
+        RaiseEvent LogLine($"Lite AutoPots: skipped {action.KeyName} ({action.Role}) because the selected pixel still matches.")
         Return False
     End Function
 
@@ -8655,7 +8696,7 @@ Public Class BotEngine
         End Try
     End Function
 
-    Private Shared Function ComputeClientPotionPointPercent(frame As Bitmap, clientX As Integer, clientY As Integer, isHp As Boolean, cfg As BotConfig, ByRef success As Boolean) As Double
+    Private Shared Function ComputeClientPotionPointPercent(frame As Bitmap, clientX As Integer, clientY As Integer, isHp As Boolean, cfg As BotConfig, sampleColorEnabled As Boolean, sampleColorArgb As Integer, ByRef success As Boolean) As Double
         success = False
         If frame Is Nothing Then
             Return 0
@@ -8668,6 +8709,19 @@ Public Class BotEngine
         End If
 
         Dim profile As BarColorProfile = CreateBarColorProfile(isHp, cfg)
+        If sampleColorEnabled Then
+            Try
+                Dim sampled As Color = Color.FromArgb(sampleColorArgb)
+                profile.UseCustom = True
+                profile.TargetR = sampled.R
+                profile.TargetG = sampled.G
+                profile.TargetB = sampled.B
+                profile.Tolerance = Math.Max(10, Math.Min(70, If(cfg IsNot Nothing, cfg.BarColorTolerance, BotConfig.DefaultBarColorTolerance)))
+            Catch
+                sampleColorEnabled = False
+            End Try
+        End If
+
         Using buffer As New BitmapReadBuffer(frame)
             Dim matches As Integer = 0
             Dim validSamples As Integer = 0

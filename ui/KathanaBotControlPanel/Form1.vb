@@ -356,8 +356,12 @@ Public Class Form1
     Private _lootNamePickupPointY As Integer = -1
     Private _liteAutoPotHpPointX As Integer = -1
     Private _liteAutoPotHpPointY As Integer = -1
+    Private _liteAutoPotHpColorEnabled As Boolean = False
+    Private _liteAutoPotHpColorArgb As Integer = 0
     Private _liteAutoPotMpPointX As Integer = -1
     Private _liteAutoPotMpPointY As Integer = -1
+    Private _liteAutoPotMpColorEnabled As Boolean = False
+    Private _liteAutoPotMpColorArgb As Integer = 0
     Private _pendingLitePointCapture As LitePointCaptureKind = LitePointCaptureKind.None
     Private _liteRightMouseWasDown As Boolean = False
     Private _customBarColorsEnabled As Boolean = False
@@ -583,9 +587,13 @@ Public Class Form1
         Public Property HpPointEnabled As Boolean = False
         Public Property HpPointX As Integer = -1
         Public Property HpPointY As Integer = -1
+        Public Property HpPointColorEnabled As Boolean = False
+        Public Property HpPointColorArgb As Integer = 0
         Public Property MpPointEnabled As Boolean = False
         Public Property MpPointX As Integer = -1
         Public Property MpPointY As Integer = -1
+        Public Property MpPointColorEnabled As Boolean = False
+        Public Property MpPointColorArgb As Integer = 0
         Public Property PromptAutoAcceptEnabled As Boolean = False
         Public Property AskForPartyEnabled As Boolean = False
         Public Property AskForPartySeconds As Decimal = 30D
@@ -2513,8 +2521,12 @@ Public Class Form1
             End If
             _liteAutoPotHpPointX = -1
             _liteAutoPotHpPointY = -1
+            _liteAutoPotHpColorEnabled = False
+            _liteAutoPotHpColorArgb = 0
             _liteAutoPotMpPointX = -1
             _liteAutoPotMpPointY = -1
+            _liteAutoPotMpColorEnabled = False
+            _liteAutoPotMpColorArgb = 0
             _pendingLitePointCapture = LitePointCaptureKind.None
             UpdateLiteAutoPotUi()
             UpdateLitePromptAutoAcceptButton()
@@ -5268,14 +5280,25 @@ Public Class Form1
                         Return
                     End If
 
+                    Dim sampledColor As Color
+                    If Not TrySampleLiteAutoPotPointColor(selected.MainWindowHandle, clientPoint.X, clientPoint.Y, sampledColor) Then
+                        AppendLog("Lite AutoPots: unable to sample the selected pixel color. Keep the Tantra window visible and try again.")
+                        _liteRightMouseWasDown = rightDown
+                        Return
+                    End If
+
                     If _pendingLitePointCapture = LitePointCaptureKind.Hp Then
                         _liteAutoPotHpPointX = Math.Max(0, clientPoint.X)
                         _liteAutoPotHpPointY = Math.Max(0, clientPoint.Y)
-                        AppendLog($"Lite AutoPots: HP point saved at {_liteAutoPotHpPointX}, {_liteAutoPotHpPointY}.")
+                        _liteAutoPotHpColorEnabled = True
+                        _liteAutoPotHpColorArgb = sampledColor.ToArgb()
+                        AppendLog($"Lite AutoPots: HP point saved at {_liteAutoPotHpPointX}, {_liteAutoPotHpPointY}; sampled RGB {sampledColor.R}, {sampledColor.G}, {sampledColor.B}.")
                     ElseIf _pendingLitePointCapture = LitePointCaptureKind.Mp Then
                         _liteAutoPotMpPointX = Math.Max(0, clientPoint.X)
                         _liteAutoPotMpPointY = Math.Max(0, clientPoint.Y)
-                        AppendLog($"Lite AutoPots: Mana point saved at {_liteAutoPotMpPointX}, {_liteAutoPotMpPointY}.")
+                        _liteAutoPotMpColorEnabled = True
+                        _liteAutoPotMpColorArgb = sampledColor.ToArgb()
+                        AppendLog($"Lite AutoPots: Mana point saved at {_liteAutoPotMpPointX}, {_liteAutoPotMpPointY}; sampled RGB {sampledColor.R}, {sampledColor.G}, {sampledColor.B}.")
                     End If
                     _pendingLitePointCapture = LitePointCaptureKind.None
                     UpdateLiteAutoPotUi()
@@ -5286,6 +5309,22 @@ Public Class Form1
         End If
         _liteRightMouseWasDown = rightDown
     End Sub
+
+    Private Shared Function TrySampleLiteAutoPotPointColor(hwnd As IntPtr, clientX As Integer, clientY As Integer, ByRef sampledColor As Color) As Boolean
+        sampledColor = Color.Empty
+        If hwnd = IntPtr.Zero OrElse clientX < 0 OrElse clientY < 0 Then
+            Return False
+        End If
+
+        Using frame As Bitmap = BotEngine.CaptureClient(hwnd)
+            If frame Is Nothing OrElse clientX >= frame.Width OrElse clientY >= frame.Height Then
+                Return False
+            End If
+
+            sampledColor = frame.GetPixel(clientX, clientY)
+            Return True
+        End Using
+    End Function
 
     Private Function GetLiteAutoPotBarRegion(kind As LitePointCaptureKind) As RectRegion
         If kind = LitePointCaptureKind.Hp Then
@@ -7536,8 +7575,12 @@ Public Class Form1
         cfg.SelectedWindowHandle = If(selected IsNot Nothing, selected.MainWindowHandle, IntPtr.Zero)
         cfg.LiteHpCheckPointX = _liteAutoPotHpPointX
         cfg.LiteHpCheckPointY = _liteAutoPotHpPointY
+        cfg.LiteHpCheckColorEnabled = _liteAutoPotHpColorEnabled
+        cfg.LiteHpCheckColorArgb = _liteAutoPotHpColorArgb
         cfg.LiteMpCheckPointX = _liteAutoPotMpPointX
         cfg.LiteMpCheckPointY = _liteAutoPotMpPointY
+        cfg.LiteMpCheckColorEnabled = _liteAutoPotMpColorEnabled
+        cfg.LiteMpCheckColorArgb = _liteAutoPotMpColorArgb
         ApplyBarColorSettingsToConfig(cfg)
         cfg.LoopMs = 80
         cfg.RetargetMs = 550
@@ -8680,9 +8723,13 @@ Public Class Form1
                 .HpPointEnabled = (_liteAutoPotHpPointX >= 0 AndAlso _liteAutoPotHpPointY >= 0),
                 .HpPointX = _liteAutoPotHpPointX,
                 .HpPointY = _liteAutoPotHpPointY,
+                .HpPointColorEnabled = _liteAutoPotHpColorEnabled,
+                .HpPointColorArgb = _liteAutoPotHpColorArgb,
                 .MpPointEnabled = (_liteAutoPotMpPointX >= 0 AndAlso _liteAutoPotMpPointY >= 0),
                 .MpPointX = _liteAutoPotMpPointX,
                 .MpPointY = _liteAutoPotMpPointY,
+                .MpPointColorEnabled = _liteAutoPotMpColorEnabled,
+                .MpPointColorArgb = _liteAutoPotMpColorArgb,
                 .PromptAutoAcceptEnabled = _litePartyAutoAccept,
                 .AskForPartyEnabled = _litePartyAskEnabled,
                 .AskForPartySeconds = If(nudLitePartyAskSeconds IsNot Nothing, nudLitePartyAskSeconds.Value, 30D),
@@ -8726,23 +8773,35 @@ Public Class Form1
             If source.HpPointEnabled Then
                 _liteAutoPotHpPointX = Math.Max(0, source.HpPointX)
                 _liteAutoPotHpPointY = Math.Max(0, source.HpPointY)
+                _liteAutoPotHpColorEnabled = source.HpPointColorEnabled
+                _liteAutoPotHpColorArgb = source.HpPointColorArgb
             Else
                 _liteAutoPotHpPointX = -1
                 _liteAutoPotHpPointY = -1
+                _liteAutoPotHpColorEnabled = False
+                _liteAutoPotHpColorArgb = 0
             End If
             If source.MpPointEnabled Then
                 _liteAutoPotMpPointX = Math.Max(0, source.MpPointX)
                 _liteAutoPotMpPointY = Math.Max(0, source.MpPointY)
+                _liteAutoPotMpColorEnabled = source.MpPointColorEnabled
+                _liteAutoPotMpColorArgb = source.MpPointColorArgb
             Else
                 _liteAutoPotMpPointX = -1
                 _liteAutoPotMpPointY = -1
+                _liteAutoPotMpColorEnabled = False
+                _liteAutoPotMpColorArgb = 0
             End If
             Dim hpPointAdjusted As Boolean = NormalizeLiteAutoPotPoint(GetLiteAutoPotBarRegion(LitePointCaptureKind.Hp), _liteAutoPotHpPointX, _liteAutoPotHpPointY)
             Dim mpPointAdjusted As Boolean = NormalizeLiteAutoPotPoint(GetLiteAutoPotBarRegion(LitePointCaptureKind.Mp), _liteAutoPotMpPointX, _liteAutoPotMpPointY)
             If hpPointAdjusted Then
+                _liteAutoPotHpColorEnabled = False
+                _liteAutoPotHpColorArgb = 0
                 AppendLog($"Lite AutoPots: adjusted saved HP point to {_liteAutoPotHpPointX}, {_liteAutoPotHpPointY} for the current HP bar.")
             End If
             If mpPointAdjusted Then
+                _liteAutoPotMpColorEnabled = False
+                _liteAutoPotMpColorArgb = 0
                 AppendLog($"Lite AutoPots: adjusted saved Mana point to {_liteAutoPotMpPointX}, {_liteAutoPotMpPointY} for the current Mana bar.")
             End If
             _pendingLitePointCapture = LitePointCaptureKind.None
