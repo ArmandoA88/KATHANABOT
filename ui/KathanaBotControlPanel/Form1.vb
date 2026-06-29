@@ -122,6 +122,10 @@ Public Class Form1
     Private btnPickLootNamePickupPoint As Button
     Private btnClearLootNamePickupPoint As Button
     Private lblLootNamePickupPoint As Label
+    Private btnPickArrowUnbundlePoint As Button
+    Private btnRemoveArrowUnbundlePoint As Button
+    Private btnClearArrowUnbundlePoints As Button
+    Private lblArrowUnbundlePoints As Label
 
     Private NotInheritable Class ChatLanguageOption
         Public Property Label As String
@@ -144,6 +148,7 @@ Public Class Form1
     Private chkLootPickup As CheckBox
     Private chkLootNameAutoPickup As CheckBox
     Private chkLootNamePickupRestoreCursor As CheckBox
+    Private chkArrowUnbundleEnabled As CheckBox
     Private nudLootNamePickupOffsetX As NumericUpDown
     Private nudLootNamePickupOffsetY As NumericUpDown
     Private nudLootPickupSeconds As NumericUpDown
@@ -151,8 +156,10 @@ Public Class Form1
     Private nudLootNamePickupFPressCount As NumericUpDown
     Private nudLootNamePickupFPressGapMs As NumericUpDown
     Private nudLootNamePickupMouseHoldMs As NumericUpDown
+    Private nudArrowUnbundleSeconds As NumericUpDown
     Private lstMonsterFilter As ListBox
     Private lstLootFilter As ListBox
+    Private lstArrowUnbundlePoints As ListBox
     Private txtMonsterName As TextBox
     Private txtLootName As TextBox
     Private chkLevelingAgent As CheckBox
@@ -351,10 +358,14 @@ Public Class Form1
     Private _ctrlShiftWasDown As Boolean = False
     Private _isPickingLootRejectPoint As Boolean = False
     Private _isPickingLootNamePickupPoint As Boolean = False
+    Private _isPickingArrowUnbundlePoint As Boolean = False
+    Private _arrowUnbundleLeftMouseWasDown As Boolean = False
+    Private _arrowUnbundleUiSyncInProgress As Boolean = False
     Private _lootRejectPointX As Integer = -1
     Private _lootRejectPointY As Integer = -1
     Private _lootNamePickupPointX As Integer = -1
     Private _lootNamePickupPointY As Integer = -1
+    Private ReadOnly _arrowUnbundlePoints As New List(Of LootScanPoint)()
     Private _liteAutoPotHpPointX As Integer = -1
     Private _liteAutoPotHpPointY As Integer = -1
     Private _liteAutoPotHpColorEnabled As Boolean = False
@@ -558,6 +569,9 @@ Public Class Form1
         Public Property LootRejectPointEnabled As Boolean = False
         Public Property LootRejectPointX As Integer = -1
         Public Property LootRejectPointY As Integer = -1
+        Public Property ArrowUnbundleEnabled As Boolean = False
+        Public Property ArrowUnbundleSeconds As Decimal = 60D
+        Public Property ArrowUnbundlePoints As List(Of LootScanPoint) = New List(Of LootScanPoint)()
         Public Property PromptAutoAcceptEnabled As Boolean = True
         Public Property AskForPartyEnabled As Boolean = False
         Public Property AskForPartySeconds As Decimal = 30D
@@ -881,6 +895,12 @@ Public Class Form1
         If chkLootNamePickupRestoreCursor IsNot Nothing Then
             AddHandler chkLootNamePickupRestoreCursor.CheckedChanged, AddressOf LiveConfigChanged
         End If
+        If chkArrowUnbundleEnabled IsNot Nothing Then
+            AddHandler chkArrowUnbundleEnabled.CheckedChanged, AddressOf LiveConfigChanged
+        End If
+        If nudArrowUnbundleSeconds IsNot Nothing Then
+            AddHandler nudArrowUnbundleSeconds.ValueChanged, AddressOf LiveConfigChanged
+        End If
         If nudPartyAskSeconds IsNot Nothing Then
             AddHandler nudPartyAskSeconds.ValueChanged, AddressOf LiveConfigChanged
         End If
@@ -1103,6 +1123,12 @@ Public Class Form1
         If chkLootNamePickupRestoreCursor IsNot Nothing Then
             AddHandler chkLootNamePickupRestoreCursor.CheckedChanged, AddressOf PersistListSettingsChanged
         End If
+        If chkArrowUnbundleEnabled IsNot Nothing Then
+            AddHandler chkArrowUnbundleEnabled.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudArrowUnbundleSeconds IsNot Nothing Then
+            AddHandler nudArrowUnbundleSeconds.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
         If chkHighMaxHpSpecial IsNot Nothing Then
             AddHandler chkHighMaxHpSpecial.CheckedChanged, AddressOf PersistListSettingsChanged
         End If
@@ -1307,8 +1333,10 @@ Public Class Form1
         _pendingBarColorPick = kind
         _isPickingLootRejectPoint = False
         _isPickingLootNamePickupPoint = False
+        _isPickingArrowUnbundlePoint = False
         UpdateLootRejectPointUi()
         UpdateLootNamePickupPointUi()
+        UpdateArrowUnbundleUi()
         UpdateBarColorUi()
         FocusVisionSnapshotForPick(If(kind = BarColorPickKind.Hp, "HP bar color", "MP bar color"))
     End Sub
@@ -3183,9 +3211,11 @@ Public Class Form1
         left.Controls.Add(BuildLootFilterGroup(), 0, 0)
         left.Controls.Add(BuildLootScanSettingsGroup(), 0, 1)
 
-        Dim right As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 1}
-        right.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        Dim right As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
+        right.RowStyles.Add(New RowStyle(SizeType.Percent, 62.0F))
+        right.RowStyles.Add(New RowStyle(SizeType.Percent, 38.0F))
         right.Controls.Add(BuildLootNameAutoPickupGroup(), 0, 0)
+        right.Controls.Add(BuildArrowUnbundleGroup(), 0, 1)
 
         root.Controls.Add(left, 0, 0)
         root.Controls.Add(right, 1, 0)
@@ -3293,6 +3323,67 @@ Public Class Form1
         layout.Controls.Add(note, 0, 8)
         layout.SetColumnSpan(note, 2)
         group.Controls.Add(layout)
+        Return group
+    End Function
+
+    Private Function BuildArrowUnbundleGroup() As GroupBox
+        Dim group As New GroupBox() With {.Text = "Arrow Unbundle Double Right-Click", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 6}
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 170.0F))
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 48.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
+
+        chkArrowUnbundleEnabled = New CheckBox() With {.Text = "Enable arrow unbundle", .Dock = DockStyle.Fill, .Checked = False}
+        layout.Controls.Add(chkArrowUnbundleEnabled, 0, 0)
+        layout.SetColumnSpan(chkArrowUnbundleEnabled, 2)
+
+        layout.Controls.Add(New Label() With {.Text = "Every Seconds", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
+        nudArrowUnbundleSeconds = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1D, .Maximum = 9999D, .Value = 60D, .Width = 120}
+        layout.Controls.Add(nudArrowUnbundleSeconds, 1, 1)
+
+        lblArrowUnbundlePoints = New Label() With {.Text = "Arrow Points: 0", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        layout.Controls.Add(lblArrowUnbundlePoints, 0, 2)
+        layout.SetColumnSpan(lblArrowUnbundlePoints, 2)
+
+        lstArrowUnbundlePoints = New ListBox() With {.Dock = DockStyle.Fill, .IntegralHeight = False}
+        AddHandler lstArrowUnbundlePoints.SelectedIndexChanged,
+            Sub(_s As Object, _e As EventArgs)
+                If Not _arrowUnbundleUiSyncInProgress Then
+                    UpdateArrowUnbundleUi()
+                End If
+            End Sub
+        layout.Controls.Add(lstArrowUnbundlePoints, 0, 3)
+        layout.SetColumnSpan(lstArrowUnbundlePoints, 2)
+
+        Dim note As New Label() With {
+            .Text = "For arrows: the bot double right-clicks these inventory spots on the interval to unbundle arrow stacks. Multiple points are used in order.",
+            .Dock = DockStyle.Fill,
+            .ForeColor = Color.LightSteelBlue,
+            .TextAlign = ContentAlignment.TopLeft
+        }
+        layout.Controls.Add(note, 0, 4)
+        layout.SetColumnSpan(note, 2)
+
+        Dim buttons As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(0)}
+        btnPickArrowUnbundlePoint = New Button() With {.Text = "Add Point", .Width = 92, .Height = 30, .BackColor = Color.FromArgb(45, 95, 140), .ForeColor = Color.White}
+        AddHandler btnPickArrowUnbundlePoint.Click, AddressOf PickArrowUnbundlePointClicked
+        btnRemoveArrowUnbundlePoint = New Button() With {.Text = "Remove", .Width = 86, .Height = 30, .BackColor = Color.FromArgb(105, 80, 45), .ForeColor = Color.White}
+        AddHandler btnRemoveArrowUnbundlePoint.Click, AddressOf RemoveArrowUnbundlePointClicked
+        btnClearArrowUnbundlePoints = New Button() With {.Text = "Clear", .Width = 74, .Height = 30, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
+        AddHandler btnClearArrowUnbundlePoints.Click, AddressOf ClearArrowUnbundlePointsClicked
+        buttons.Controls.Add(btnPickArrowUnbundlePoint)
+        buttons.Controls.Add(btnRemoveArrowUnbundlePoint)
+        buttons.Controls.Add(btnClearArrowUnbundlePoints)
+        layout.Controls.Add(buttons, 0, 5)
+        layout.SetColumnSpan(buttons, 2)
+
+        group.Controls.Add(layout)
+        UpdateArrowUnbundleUi()
         Return group
     End Function
 
@@ -4285,9 +4376,17 @@ Public Class Form1
         If chkLootNamePickupRestoreCursor IsNot Nothing Then
             chkLootNamePickupRestoreCursor.Checked = True
         End If
+        If chkArrowUnbundleEnabled IsNot Nothing Then
+            chkArrowUnbundleEnabled.Checked = False
+        End If
+        If nudArrowUnbundleSeconds IsNot Nothing Then
+            nudArrowUnbundleSeconds.Value = 60D
+        End If
         _lootNamePickupPointX = -1
         _lootNamePickupPointY = -1
         _isPickingLootNamePickupPoint = False
+        _isPickingArrowUnbundlePoint = False
+        _arrowUnbundlePoints.Clear()
         nudAutoPotHp.Value = 1D
         nudAutoPotMp.Value = 1D
         nudAlarmVolume.Value = 1D
@@ -4318,6 +4417,7 @@ Public Class Form1
         _alarmVolumePercent = CInt(nudAlarmVolume.Value)
         UpdateAttackButtonAppearance(False)
         UpdateLootNamePickupPointUi()
+        UpdateArrowUnbundleUi()
         UpdateNotificationProviderUi()
         UpdatePromptAutoAcceptButton()
         UpdatePartyAskButton()
@@ -4809,7 +4909,9 @@ Public Class Form1
     Private Sub PickLootRejectPointClicked(sender As Object, e As EventArgs)
         _isPickingLootRejectPoint = True
         _isPickingLootNamePickupPoint = False
+        _isPickingArrowUnbundlePoint = False
         UpdateLootNamePickupPointUi()
+        UpdateArrowUnbundleUi()
         UpdateLootRejectPointUi()
         FocusVisionSnapshotForPick("Loot reject")
     End Sub
@@ -4827,7 +4929,9 @@ Public Class Form1
     Private Sub PickLootNamePickupPointClicked(sender As Object, e As EventArgs)
         _isPickingLootNamePickupPoint = True
         _isPickingLootRejectPoint = False
+        _isPickingArrowUnbundlePoint = False
         UpdateLootRejectPointUi()
+        UpdateArrowUnbundleUi()
         UpdateLootNamePickupPointUi()
         FocusVisionSnapshotForPick("Loot pickup-point")
     End Sub
@@ -4840,6 +4944,105 @@ Public Class Form1
         PushLiveConfig()
         SavePersistedListState(False)
         AppendLog("Loot name auto-pickup point cleared.")
+    End Sub
+
+    Private Sub PickArrowUnbundlePointClicked(sender As Object, e As EventArgs)
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+        If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
+            AppendLog("Arrow unbundle: select a Full game process window first.")
+            Return
+        End If
+
+        _isPickingArrowUnbundlePoint = True
+        _arrowUnbundleLeftMouseWasDown = False
+        _isPickingLootRejectPoint = False
+        _isPickingLootNamePickupPoint = False
+        UpdateLootRejectPointUi()
+        UpdateLootNamePickupPointUi()
+        UpdateArrowUnbundleUi()
+        AppendLog("Arrow unbundle: click the inventory arrow stack spot directly inside the selected game window.")
+        NativeMethods.SetForegroundWindow(selected.MainWindowHandle)
+    End Sub
+
+    Private Sub RemoveArrowUnbundlePointClicked(sender As Object, e As EventArgs)
+        If lstArrowUnbundlePoints Is Nothing OrElse lstArrowUnbundlePoints.SelectedIndex < 0 OrElse lstArrowUnbundlePoints.SelectedIndex >= _arrowUnbundlePoints.Count Then
+            Return
+        End If
+
+        Dim removed As LootScanPoint = _arrowUnbundlePoints(lstArrowUnbundlePoints.SelectedIndex)
+        _arrowUnbundlePoints.RemoveAt(lstArrowUnbundlePoints.SelectedIndex)
+        UpdateArrowUnbundleUi()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        AppendLog($"Arrow unbundle point removed: x={removed.X}, y={removed.Y}.")
+    End Sub
+
+    Private Sub ClearArrowUnbundlePointsClicked(sender As Object, e As EventArgs)
+        _isPickingArrowUnbundlePoint = False
+        _arrowUnbundleLeftMouseWasDown = False
+        _arrowUnbundlePoints.Clear()
+        UpdateArrowUnbundleUi()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        AppendLog("Arrow unbundle points cleared.")
+    End Sub
+
+    Private Sub HandlePendingArrowUnbundlePointCapture()
+        Try
+            If Not _isPickingArrowUnbundlePoint Then
+                Return
+            End If
+
+            Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+            If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
+                Return
+            End If
+
+            Dim leftDown As Boolean = (GetAsyncKeyState(CInt(Keys.LButton)) And &H8000S) <> 0
+            If leftDown AndAlso Not _arrowUnbundleLeftMouseWasDown Then
+                Dim screenPoint As NativeMethods.POINT
+                If NativeMethods.GetCursorPos(screenPoint) Then
+                    Dim hoveredWindow As IntPtr = NativeMethods.WindowFromPoint(screenPoint)
+                    Dim hoveredRoot As IntPtr = If(hoveredWindow <> IntPtr.Zero, NativeMethods.GetAncestor(hoveredWindow, NativeMethods.GA_ROOT), IntPtr.Zero)
+                    If hoveredRoot <> selected.MainWindowHandle Then
+                        _arrowUnbundleLeftMouseWasDown = leftDown
+                        Return
+                    End If
+
+                    Dim clientPoint As NativeMethods.POINT = screenPoint
+                    If NativeMethods.ScreenToClient(selected.MainWindowHandle, clientPoint) Then
+                        Dim clientRect As NativeMethods.RECT
+                        If Not NativeMethods.GetClientRect(selected.MainWindowHandle, clientRect) Then
+                            _arrowUnbundleLeftMouseWasDown = leftDown
+                            Return
+                        End If
+
+                        Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
+                        Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
+                        If clientPoint.X < 0 OrElse clientPoint.Y < 0 OrElse clientPoint.X >= clientWidth OrElse clientPoint.Y >= clientHeight Then
+                            AppendLog("Arrow unbundle: click must be inside the selected game window.")
+                            _arrowUnbundleLeftMouseWasDown = leftDown
+                            Return
+                        End If
+
+                        _arrowUnbundlePoints.Add(New LootScanPoint(Math.Max(0, clientPoint.X), Math.Max(0, clientPoint.Y)))
+                        _isPickingArrowUnbundlePoint = False
+                        _arrowUnbundleLeftMouseWasDown = leftDown
+                        UpdateArrowUnbundleUi()
+                        PushLiveConfig()
+                        SavePersistedListState(False)
+                        AppendLog($"Arrow unbundle point added from game window: x={clientPoint.X}, y={clientPoint.Y}.")
+                    End If
+                End If
+            End If
+
+            _arrowUnbundleLeftMouseWasDown = leftDown
+        Catch ex As Exception
+            _isPickingArrowUnbundlePoint = False
+            _arrowUnbundleLeftMouseWasDown = False
+            UpdateArrowUnbundleUi()
+            AppendLog("Arrow unbundle point capture failed: " & ex.Message)
+        End Try
     End Sub
 
     Private Sub SnapshotMouseClick(sender As Object, e As MouseEventArgs)
@@ -4878,6 +5081,14 @@ Public Class Form1
             PushLiveConfig()
             SavePersistedListState(False)
             AppendLog($"Loot reject point set: x={_lootRejectPointX}, y={_lootRejectPointY}.")
+            Return
+        End If
+
+        If _isPickingArrowUnbundlePoint Then
+            _isPickingArrowUnbundlePoint = False
+            _arrowUnbundleLeftMouseWasDown = False
+            UpdateArrowUnbundleUi()
+            AppendLog("Arrow unbundle point pick canceled from snapshot; use Add Point, then click directly inside the game window.")
             Return
         End If
 
@@ -4961,6 +5172,57 @@ Public Class Form1
 
         If btnClearLootNamePickupPoint IsNot Nothing Then
             btnClearLootNamePickupPoint.Enabled = (_lootNamePickupPointX >= 0 AndAlso _lootNamePickupPointY >= 0)
+        End If
+
+        If picSnapshot IsNot Nothing Then
+            picSnapshot.Cursor = If(IsSnapshotPickActive(), Cursors.Cross, Cursors.Default)
+        End If
+    End Sub
+
+    Private Sub UpdateArrowUnbundleUi()
+        If lblArrowUnbundlePoints IsNot Nothing Then
+            lblArrowUnbundlePoints.Text = $"Arrow Points: {_arrowUnbundlePoints.Count}"
+        End If
+
+        If lstArrowUnbundlePoints IsNot Nothing Then
+            Dim selectedIndex As Integer = lstArrowUnbundlePoints.SelectedIndex
+            _arrowUnbundleUiSyncInProgress = True
+            lstArrowUnbundlePoints.BeginUpdate()
+            Try
+                lstArrowUnbundlePoints.Items.Clear()
+                For i As Integer = 0 To _arrowUnbundlePoints.Count - 1
+                    Dim pt As LootScanPoint = _arrowUnbundlePoints(i)
+                    If pt IsNot Nothing Then
+                        lstArrowUnbundlePoints.Items.Add($"{i + 1}. {pt.X}, {pt.Y}")
+                    End If
+                Next
+                If selectedIndex >= 0 AndAlso selectedIndex < lstArrowUnbundlePoints.Items.Count Then
+                    If lstArrowUnbundlePoints.SelectedIndex <> selectedIndex Then
+                        lstArrowUnbundlePoints.SelectedIndex = selectedIndex
+                    End If
+                ElseIf lstArrowUnbundlePoints.Items.Count > 0 Then
+                    Dim lastIndex As Integer = lstArrowUnbundlePoints.Items.Count - 1
+                    If lstArrowUnbundlePoints.SelectedIndex <> lastIndex Then
+                        lstArrowUnbundlePoints.SelectedIndex = lastIndex
+                    End If
+                End If
+            Finally
+                lstArrowUnbundlePoints.EndUpdate()
+                _arrowUnbundleUiSyncInProgress = False
+            End Try
+        End If
+
+        If btnPickArrowUnbundlePoint IsNot Nothing Then
+            btnPickArrowUnbundlePoint.Text = If(_isPickingArrowUnbundlePoint, "Click Game...", "Add Point")
+            btnPickArrowUnbundlePoint.BackColor = If(_isPickingArrowUnbundlePoint, Color.FromArgb(175, 110, 30), Color.FromArgb(45, 95, 140))
+        End If
+
+        If btnRemoveArrowUnbundlePoint IsNot Nothing Then
+            btnRemoveArrowUnbundlePoint.Enabled = (lstArrowUnbundlePoints IsNot Nothing AndAlso lstArrowUnbundlePoints.SelectedIndex >= 0)
+        End If
+
+        If btnClearArrowUnbundlePoints IsNot Nothing Then
+            btnClearArrowUnbundlePoints.Enabled = _arrowUnbundlePoints.Count > 0
         End If
 
         If picSnapshot IsNot Nothing Then
@@ -5232,6 +5494,9 @@ Public Class Form1
 
         _pendingLitePointCapture = kind
         _liteRightMouseWasDown = False
+        _isPickingArrowUnbundlePoint = False
+        _arrowUnbundleLeftMouseWasDown = False
+        UpdateArrowUnbundleUi()
         UpdateLiteAutoPotUi()
         AppendLog($"Lite AutoPots: switching to Tantra. Make sure HP and Mana are full, then RIGHT click the {(If(kind = LitePointCaptureKind.Hp, "HP", "Mana"))} bar where the potion should be used.")
         AppendLog("Lite AutoPots: click inside the bar where there are no numbers or letters so Lite can sample the full bar color, then keep the HP window in the same place.")
@@ -6614,6 +6879,7 @@ Public Class Form1
         PushLiveConfig()
         Dim st As BotStatus = GetStatusForEdition(_edition)
         HandlePendingLitePointCapture()
+        HandlePendingArrowUnbundlePointCapture()
         If _fullEngine.IsRunning() Then
             HandlePeriodicStatsNotification(_fullStatus)
         End If
@@ -6701,6 +6967,9 @@ Public Class Form1
             $"LootNamePickupPoint: {If(_lootNamePickupPointX >= 0 AndAlso _lootNamePickupPointY >= 0, _lootNamePickupPointX.ToString() & "," & _lootNamePickupPointY.ToString(), "not set")}{Environment.NewLine}" &
             $"LootNameMatchThreshold%: {If(nudLootNameMatchThreshold IsNot Nothing, nudLootNameMatchThreshold.Value.ToString(), DefaultLootNameMatchThresholdPercent.ToString())}{Environment.NewLine}" &
             $"LootRejectPoint: {If(_lootRejectPointX >= 0 AndAlso _lootRejectPointY >= 0, _lootRejectPointX.ToString() & "," & _lootRejectPointY.ToString(), "not set")}{Environment.NewLine}" &
+            $"ArrowUnbundleEnabled: {If(chkArrowUnbundleEnabled IsNot Nothing AndAlso chkArrowUnbundleEnabled.Checked, "True", "False")}{Environment.NewLine}" &
+            $"ArrowUnbundleSeconds: {If(nudArrowUnbundleSeconds IsNot Nothing, nudArrowUnbundleSeconds.Value.ToString(), "60")}{Environment.NewLine}" &
+            $"ArrowUnbundlePoints: {FormatLootScanPoints(_arrowUnbundlePoints)}{Environment.NewLine}" &
             $"AlarmVolume%: {_alarmVolumePercent}{Environment.NewLine}" &
             $"HpZeroAlarm: {_hpZeroAlarmActive}{Environment.NewLine}" &
             $"HpZeroPending: {_hpZeroPending}{Environment.NewLine}" &
@@ -6780,6 +7049,7 @@ Public Class Form1
         End If
         _ctrlShiftWasDown = comboDown
         HandlePendingLitePointCapture()
+        HandlePendingArrowUnbundlePointCapture()
     End Sub
 
     Private Sub HandleCtrlShiftTogglePress()
@@ -7814,6 +8084,9 @@ Public Class Form1
         cfg.LootRejectClickEnabled = (_lootRejectPointX >= 0 AndAlso _lootRejectPointY >= 0)
         cfg.LootRejectPointX = _lootRejectPointX
         cfg.LootRejectPointY = _lootRejectPointY
+        cfg.ArrowUnbundleEnabled = (chkArrowUnbundleEnabled IsNot Nothing AndAlso chkArrowUnbundleEnabled.Checked)
+        cfg.ArrowUnbundleIntervalMs = CInt(Math.Round(CDbl(If(nudArrowUnbundleSeconds IsNot Nothing, nudArrowUnbundleSeconds.Value, 60D)) * 1000.0R))
+        cfg.ArrowUnbundlePoints = CloneLootScanPoints(_arrowUnbundlePoints)
 
         cfg.DeniedMobs.Clear()
         cfg.LootAllowedNames.Clear()
@@ -8595,10 +8868,22 @@ Public Class Form1
                 _lootRejectPointX = -1
                 _lootRejectPointY = -1
             End If
+            If chkArrowUnbundleEnabled IsNot Nothing Then
+                chkArrowUnbundleEnabled.Checked = state.ArrowUnbundleEnabled
+            End If
+            If nudArrowUnbundleSeconds IsNot Nothing Then
+                nudArrowUnbundleSeconds.Value = Math.Max(nudArrowUnbundleSeconds.Minimum, Math.Min(nudArrowUnbundleSeconds.Maximum, state.ArrowUnbundleSeconds))
+            End If
+            _arrowUnbundlePoints.Clear()
+            If state.ArrowUnbundlePoints IsNot Nothing Then
+                _arrowUnbundlePoints.AddRange(CloneLootScanPoints(state.ArrowUnbundlePoints))
+            End If
             _isPickingLootRejectPoint = False
             _isPickingLootNamePickupPoint = False
+            _isPickingArrowUnbundlePoint = False
             UpdateLootRejectPointUi()
             UpdateLootNamePickupPointUi()
+            UpdateArrowUnbundleUi()
             _partyAutoAccept = state.PromptAutoAcceptEnabled
             UpdatePromptAutoAcceptButton()
             _partyAskEnabled = state.AskForPartyEnabled
@@ -8729,6 +9014,9 @@ Public Class Form1
                 .LootRejectPointEnabled = (_lootRejectPointX >= 0 AndAlso _lootRejectPointY >= 0),
                 .LootRejectPointX = _lootRejectPointX,
                 .LootRejectPointY = _lootRejectPointY,
+                .ArrowUnbundleEnabled = (chkArrowUnbundleEnabled IsNot Nothing AndAlso chkArrowUnbundleEnabled.Checked),
+                .ArrowUnbundleSeconds = If(nudArrowUnbundleSeconds IsNot Nothing, nudArrowUnbundleSeconds.Value, 60D),
+                .ArrowUnbundlePoints = CloneLootScanPoints(_arrowUnbundlePoints),
                 .PromptAutoAcceptEnabled = _partyAutoAccept,
                 .AskForPartyEnabled = _partyAskEnabled,
                 .AskForPartySeconds = If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D),
@@ -9091,6 +9379,14 @@ Public Class Form1
         End If
         _isPickingLootRejectPoint = False
         UpdateLootRejectPointUi()
+        If chkArrowUnbundleEnabled IsNot Nothing Then
+            chkArrowUnbundleEnabled.Checked = cfg.ArrowUnbundleEnabled
+        End If
+        SetNumericControlValue(nudArrowUnbundleSeconds, CDec(Math.Max(1.0R, cfg.ArrowUnbundleIntervalMs / 1000.0R)))
+        _arrowUnbundlePoints.Clear()
+        _arrowUnbundlePoints.AddRange(CloneLootScanPoints(If(cfg.ArrowUnbundlePoints, New List(Of LootScanPoint)())))
+        _isPickingArrowUnbundlePoint = False
+        UpdateArrowUnbundleUi()
 
         UpsertRegionRow("hp_bar", cfg.HpBar)
         UpsertRegionRow("mp_bar", cfg.MpBar)

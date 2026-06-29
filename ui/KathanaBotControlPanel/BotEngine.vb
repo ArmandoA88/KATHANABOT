@@ -276,6 +276,9 @@ Public Class BotConfig
     Public Property LootRejectClickEnabled As Boolean = False
     Public Property LootRejectPointX As Integer = -1
     Public Property LootRejectPointY As Integer = -1
+    Public Property ArrowUnbundleEnabled As Boolean = False
+    Public Property ArrowUnbundleIntervalMs As Integer = 60000
+    Public Property ArrowUnbundlePoints As List(Of LootScanPoint) = New List(Of LootScanPoint)()
     Public Property LootAllowedNames As List(Of String) = New List(Of String)()
     Public Property LootNameMatchThresholdPercent As Integer = 80
     Public Property PartyAutoAcceptEnabled As Boolean = True
@@ -556,7 +559,10 @@ Friend Module NativeMethods
     Friend Const WM_MOUSEMOVE As Integer = &H200
     Friend Const WM_LBUTTONDOWN As Integer = &H201
     Friend Const WM_LBUTTONUP As Integer = &H202
+    Friend Const WM_RBUTTONDOWN As Integer = &H204
+    Friend Const WM_RBUTTONUP As Integer = &H205
     Friend Const MK_LBUTTON As Integer = &H1
+    Friend Const MK_RBUTTON As Integer = &H2
     Friend Const MOUSEEVENTF_LEFTDOWN As UInteger = &H2UI
     Friend Const MOUSEEVENTF_LEFTUP As UInteger = &H4UI
 
@@ -858,6 +864,8 @@ Public Class BotEngine
     Private _lastFullFrameCaptureAttemptAt As DateTime = DateTime.MinValue
     Private _lastLootPickup As DateTime = DateTime.MinValue
     Private _pendingLootPickupVerifyAt As DateTime = DateTime.MinValue
+    Private _lastArrowUnbundleAt As DateTime = DateTime.MinValue
+    Private _arrowUnbundleNextIndex As Integer = 0
     Private _firstHitPending As Boolean = False
     Private _firstHitTargetSignature As String = ""
     Private _firstHitWindowUntil As DateTime = DateTime.MinValue
@@ -1152,6 +1160,8 @@ Public Class BotEngine
             _lastCharacterName = ""
             _lastLootPickup = DateTime.MinValue
             _pendingLootPickupVerifyAt = DateTime.MinValue
+            _lastArrowUnbundleAt = DateTime.MinValue
+            _arrowUnbundleNextIndex = 0
             _firstHitPending = False
             _firstHitTargetSignature = ""
             _firstHitWindowUntil = DateTime.MinValue
@@ -1344,6 +1354,8 @@ Public Class BotEngine
             _lootScannerAltHeld = False
             _lootScannerProcessingTask = Nothing
             _pendingLootPickupVerifyAt = DateTime.MinValue
+            _lastArrowUnbundleAt = DateTime.MinValue
+            _arrowUnbundleNextIndex = 0
         End SyncLock
         ReleaseLootScannerAltKey()
         ClearLatestLoopFrame()
@@ -2307,6 +2319,7 @@ Public Class BotEngine
             End If
 
             TryHandleLootPickup(cfg, hwnd, now, actionSent OrElse _firstHitPending)
+            TryHandleArrowUnbundle(cfg, hwnd, fullClientWidth, fullClientHeight, now, actionSent OrElse _firstHitPending)
             UpdateLevelingAgentRuntimeState(cfg, now, hpPct, mpPct, targetWindowVisible, effectiveTargetValid, actionSent, forcedRetarget OrElse unreachableTriggered, unreachableLockActive, reason)
 
             Dim statsOcrDue As Boolean = IsStatsOcrDue(now)
@@ -6230,6 +6243,43 @@ Public Class BotEngine
         _pendingLootPickupVerifyAt = now.AddMilliseconds(Math.Max(120, cfg.LootPickupVerifyDelayMs))
     End Sub
 
+    Private Sub TryHandleArrowUnbundle(cfg As BotConfig, hwnd As IntPtr, clientWidth As Integer, clientHeight As Integer, now As DateTime, actionSent As Boolean)
+        If cfg Is Nothing OrElse hwnd = IntPtr.Zero OrElse Not cfg.ArrowUnbundleEnabled Then
+            Return
+        End If
+
+        Dim points As List(Of LootScanPoint) = If(cfg.ArrowUnbundlePoints, New List(Of LootScanPoint)()).
+            Where(Function(sourcePoint) sourcePoint IsNot Nothing AndAlso sourcePoint.X >= 0 AndAlso sourcePoint.Y >= 0).
+            Select(Function(sourcePoint) New LootScanPoint(sourcePoint.X, sourcePoint.Y)).
+            ToList()
+        If points.Count = 0 Then
+            Return
+        End If
+
+        If actionSent AndAlso _lastAttackAction <> DateTime.MinValue AndAlso (now - _lastAttackAction).TotalMilliseconds < 220 Then
+            Return
+        End If
+
+        Dim intervalMs As Integer = Math.Max(1000, cfg.ArrowUnbundleIntervalMs)
+        If _lastArrowUnbundleAt <> DateTime.MinValue AndAlso (now - _lastArrowUnbundleAt).TotalMilliseconds < intervalMs Then
+            Return
+        End If
+
+        If _arrowUnbundleNextIndex < 0 OrElse _arrowUnbundleNextIndex >= points.Count Then
+            _arrowUnbundleNextIndex = 0
+        End If
+
+        Dim pt As LootScanPoint = points(_arrowUnbundleNextIndex)
+        Dim clickX As Integer = Math.Max(0, Math.Min(Math.Max(0, clientWidth - 1), pt.X))
+        Dim clickY As Integer = Math.Max(0, Math.Min(Math.Max(0, clientHeight - 1), pt.Y))
+        If DoubleRightClickClientPoint(hwnd, clickX, clickY, 10, 35, 90) Then
+            _lastArrowUnbundleAt = now
+            _arrowUnbundleNextIndex = (_arrowUnbundleNextIndex + 1) Mod points.Count
+            SetLastAction($"Double right-click arrow unbundle ({clickX},{clickY})")
+            RaiseEvent LogLine($"Arrow unbundle double right-click sent at {clickX},{clickY}.")
+        End If
+    End Sub
+
     Private Function GetCachedPranaExpPercent() As Double
         If _expOcrTask IsNot Nothing AndAlso _expOcrTask.IsCompleted Then
             Try
@@ -9897,6 +9947,35 @@ Public Class BotEngine
                 Thread.Sleep(downUpDelayMs)
             End If
             NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_LBUTTONUP), IntPtr.Zero, New IntPtr(lParam))
+            Return True
+        Catch
+            Return False
+        End Try
+    End Function
+
+    Public Shared Function DoubleRightClickClientPoint(hwnd As IntPtr, x As Integer, y As Integer, Optional moveDelayMs As Integer = 10, Optional downUpDelayMs As Integer = 35, Optional clickGapMs As Integer = 90) As Boolean
+        If hwnd = IntPtr.Zero Then
+            Return False
+        End If
+
+        Dim lParam As Integer = (x And &HFFFF) Or ((y And &HFFFF) << 16)
+        Try
+            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_MOUSEMOVE), IntPtr.Zero, New IntPtr(lParam))
+            If moveDelayMs > 0 Then
+                Thread.Sleep(moveDelayMs)
+            End If
+
+            For i As Integer = 0 To 1
+                NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_RBUTTONDOWN), New IntPtr(NativeMethods.MK_RBUTTON), New IntPtr(lParam))
+                If downUpDelayMs > 0 Then
+                    Thread.Sleep(downUpDelayMs)
+                End If
+                NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_RBUTTONUP), IntPtr.Zero, New IntPtr(lParam))
+                If i = 0 AndAlso clickGapMs > 0 Then
+                    Thread.Sleep(clickGapMs)
+                End If
+            Next
+
             Return True
         Catch
             Return False
