@@ -347,6 +347,7 @@ Public Class Form1
     Private _windowMissingFirstSeenUtc As DateTime = DateTime.MinValue
     Private _deathNotificationLatched As Boolean = False
     Private _windowMissingNotificationLatched As Boolean = False
+    Private _gameDisconnectedNotificationLatched As Boolean = False
     Private _ctrlShiftWasDown As Boolean = False
     Private _isPickingLootRejectPoint As Boolean = False
     Private _isPickingLootNamePickupPoint As Boolean = False
@@ -4208,6 +4209,8 @@ Public Class Form1
         dgvRegions.Rows.Add(True, "party_invite_scan_rect", "349", "318", "328", "124")
         dgvRegions.Rows.Add(True, "party_invite_ok_rect", "463", "410", "59", "21")
         dgvRegions.Rows.Add(True, "party_list_rect", "0", "24", "168", "244")
+        Dim defaultDisconnect As RectRegion = BotConfig.DefaultDisconnectMessageRect()
+        dgvRegions.Rows.Add(True, "disconnect_message_rect", defaultDisconnect.X.ToString(), defaultDisconnect.Y.ToString(), defaultDisconnect.W.ToString(), defaultDisconnect.H.ToString())
         Dim defaultMapX As RectRegion = BotConfig.DefaultMapCoordinateXRect()
         Dim defaultMapY As RectRegion = BotConfig.DefaultMapCoordinateYRect()
         dgvRegions.Rows.Add(True, "map_coordinate_x_rect", defaultMapX.X.ToString(), defaultMapX.Y.ToString(), defaultMapX.W.ToString(), defaultMapX.H.ToString())
@@ -6853,6 +6856,7 @@ Public Class Form1
             _liteStatus = status
             UpdateLiteStatus(statusText, status)
             UpdateAttackButtonAppearance(False)
+            HandleGameDisconnectedAlert(status)
             UpdateTaskbarStatusIndicator()
             Return
         End If
@@ -6989,6 +6993,7 @@ Public Class Form1
         End If
         HandleChatTranslation(status)
         UpdateAttackButtonAppearance(False)
+        HandleGameDisconnectedAlert(status)
         HandleHpZeroAlarm(status)
         HandleWindowMissingAlarm(status)
         ApplyHealthUiTint(status.HpPercent, status.Running)
@@ -7342,6 +7347,34 @@ Public Class Form1
                (DateTime.UtcNow - firstSeenUtc).TotalMilliseconds >= CriticalAlertConfirmMs
     End Function
 
+    Private Sub HandleGameDisconnectedAlert(status As BotStatus)
+        If status Is Nothing Then
+            Return
+        End If
+
+        If status.Running AndAlso status.WindowFound AndAlso status.GameDisconnected Then
+            If Not _gameDisconnectedNotificationLatched Then
+                _gameDisconnectedNotificationLatched = True
+                AppendLog($"Game disconnect detected. Sending alert via {GetNotificationDestinationSummary()}.")
+                Task.Run(
+                    Async Function()
+                        Dim sent As Boolean = Await SendPhoneNotificationAsync("KathanaBot Game Disconnected", "The game reported: connection to server has failed. Please try again.", DeathNotificationRetryCount)
+                        If sent Then
+                            AppendLogSafe("Game disconnect alert sent.")
+                        Else
+                            AppendLogSafe("Game disconnect alert failed.")
+                        End If
+                    End Function)
+            End If
+            Return
+        End If
+
+        If _gameDisconnectedNotificationLatched AndAlso ((Not status.Running) OrElse (Not status.GameDisconnected)) Then
+            _gameDisconnectedNotificationLatched = False
+            AppendLog("Game disconnect alert reset.")
+        End If
+    End Sub
+
     Private Sub HandleWindowMissingAlarm(status As BotStatus)
         If status Is Nothing Then
             Return
@@ -7597,6 +7630,7 @@ Public Class Form1
         cfg.DiscordGlobalWebhookUrl = GetDiscordGlobalWebhookUrl()
         cfg.DiscordItemWebhookUrl = GetDiscordItemWebhookUrl()
         cfg.DiscordStatsWebhookUrl = GetDiscordStatsWebhookUrl()
+        cfg.NtfyTopic = If(txtNtfyTopic IsNot Nothing, txtNtfyTopic.Text.Trim(), "")
         cfg.Actions = New List(Of ActionRule)()
 
         For Each action As PersistedCombatAction In GetPersistedLiteActions()
@@ -7677,6 +7711,7 @@ Public Class Form1
         cfg.DiscordGlobalWebhookUrl = GetDiscordGlobalWebhookUrl()
         cfg.DiscordItemWebhookUrl = GetDiscordItemWebhookUrl()
         cfg.DiscordStatsWebhookUrl = GetDiscordStatsWebhookUrl()
+        cfg.NtfyTopic = If(txtNtfyTopic IsNot Nothing, txtNtfyTopic.Text.Trim(), "")
         cfg.ItemNtfyTopic = If(txtItemNtfyTopic IsNot Nothing, txtItemNtfyTopic.Text.Trim(), "")
         cfg.LevelingAgentEnabled = (chkLevelingAgent IsNot Nothing AndAlso chkLevelingAgent.Checked)
         cfg.LevelingPreferredMobs = ParseCommaSeparatedList(If(txtLevelingPreferredMobs IsNot Nothing, txtLevelingPreferredMobs.Text, ""))
@@ -7753,6 +7788,7 @@ Public Class Form1
         cfg.PartyInviteScanRect = BuildRect("party_invite_scan_rect")
         cfg.PartyInviteOkRect = BuildRect("party_invite_ok_rect")
         cfg.PartyListRect = BuildRect("party_list_rect")
+        cfg.DisconnectMessageRect = BuildRectOrFallback("disconnect_message_rect", BotConfig.DefaultDisconnectMessageRect())
         cfg.MapRect = BuildRectOrFallback("map_rect", New RectRegion(0, 0, 1024, 768))
         Dim legacyMapCoordinateRect As RectRegion = BuildRectOrFallback("map_coordinate_rect", BotConfig.DefaultMapCoordinateRect())
         cfg.MapCoordinateXRect = BuildRectOrFallback("map_coordinate_x_rect", BotConfig.SplitMapCoordinateRect(legacyMapCoordinateRect, True))
@@ -8887,6 +8923,10 @@ Public Class Form1
             txtDiscordStatsWebhookUrl.Text = statsWebhook
         End If
         UpdateNotificationProviderUi()
+        If txtNtfyTopic IsNot Nothing Then
+            Dim globalTopic As String = If(cfg.NtfyTopic, "").Trim()
+            txtNtfyTopic.Text = If(globalTopic = "", DefaultNtfyTopicName, globalTopic)
+        End If
         If txtItemNtfyTopic IsNot Nothing Then
             txtItemNtfyTopic.Text = If(cfg.ItemNtfyTopic, "").Trim()
         End If
@@ -9063,6 +9103,7 @@ Public Class Form1
         UpsertRegionRow("party_invite_scan_rect", cfg.PartyInviteScanRect)
         UpsertRegionRow("party_invite_ok_rect", cfg.PartyInviteOkRect)
         UpsertRegionRow("party_list_rect", cfg.PartyListRect)
+        UpsertRegionRow("disconnect_message_rect", If(cfg.DisconnectMessageRect, BotConfig.DefaultDisconnectMessageRect()))
         RemoveRegionRow("map_rect")
         Dim mapCoordinateXRect As RectRegion = ResolveMapCoordinateXRect(cfg)
         Dim mapCoordinateYRect As RectRegion = ResolveMapCoordinateYRect(cfg)

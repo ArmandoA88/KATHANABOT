@@ -149,6 +149,10 @@ Public Class BotConfig
         Return New RectRegion(0, 78, 215, 12)
     End Function
 
+    Public Shared Function DefaultDisconnectMessageRect() As RectRegion
+        Return New RectRegion(0, 0, 360, 130)
+    End Function
+
     Public Shared Function DefaultHpBarColorArgb() As Integer
         Return Color.FromArgb(230, 0, 0).ToArgb()
     End Function
@@ -240,6 +244,7 @@ Public Class BotConfig
     Public Property PartyInviteScanRect As RectRegion = New RectRegion(349, 318, 328, 124)
     Public Property PartyInviteOkRect As RectRegion = New RectRegion(463, 410, 59, 21)
     Public Property PartyListRect As RectRegion = New RectRegion(0, 24, 168, 244)
+    Public Property DisconnectMessageRect As RectRegion = DefaultDisconnectMessageRect()
     Public Property MapRect As RectRegion = New RectRegion(0, 0, 1024, 768)
     Public Property MapCoordinateRect As RectRegion = DefaultMapCoordinateRect()
     Public Property MapCoordinateXRect As RectRegion = DefaultMapCoordinateXRect()
@@ -284,6 +289,7 @@ Public Class BotConfig
     Public Property DiscordItemWebhookUrl As String = ""
     Public Property DiscordStatsWebhookUrl As String = ""
     Public Property ItemNtfyTopic As String = ""
+    Public Property NtfyTopic As String = ""
     Public Property LevelingAgentEnabled As Boolean = False
     Public Property LevelingPreferredMobs As List(Of String) = New List(Of String)()
     Public Property LevelingStopHpEnabled As Boolean = True
@@ -527,6 +533,7 @@ Public Class BotStatus
     Public Property RepairTriggerCount As Integer
     Public Property NotAttackingReason As String = ""
     Public Property ErrorMessage As String = ""
+    Public Property GameDisconnected As Boolean
     Public Property AgentEnabled As Boolean
     Public Property AgentState As String = "Disabled"
     Public Property AgentReason As String = ""
@@ -723,6 +730,9 @@ Public Class BotEngine
     Private Const PartyInviteOcrMinIntervalMs As Integer = 900
     Private Const PartyListScanMinIntervalMs As Integer = 700
     Private Const UnreachableOcrMinIntervalMs As Integer = 260
+    Private Const DisconnectOcrMinIntervalMs As Integer = 1000
+    Private Const DisconnectConfirmWindowMs As Integer = 5000
+    Private Const DisconnectConfirmRequiredCount As Integer = 2
     Private Const UnreachableConfirmWindowMs As Integer = 900
     Private Const UnreachableConfirmRequiredCount As Integer = 2
     Private Const RepairConfirmRequiredCount As Integer = 5
@@ -878,6 +888,13 @@ Public Class BotEngine
     Private _lastUnreachableTrigger As DateTime = DateTime.MinValue
     Private _unreachableLatched As Boolean = False
     Private _unreachableClearCount As Integer = 0
+    Private _lastDisconnectScan As DateTime = DateTime.MinValue
+    Private _disconnectOcrTask As Task(Of String) = Nothing
+    Private _lastDisconnectCandidate As String = ""
+    Private _disconnectConfirmCount As Integer = 0
+    Private _disconnectLastMatchAt As DateTime = DateTime.MinValue
+    Private _disconnectLatched As Boolean = False
+    Private _disconnectClearCount As Integer = 0
     Private _repairConfirmCount As Integer = 0
     Private _repairLastMatchAt As DateTime = DateTime.MinValue
     Private ReadOnly _repairMatchTimes As New Queue(Of DateTime)()
@@ -1165,6 +1182,13 @@ Public Class BotEngine
             _lastUnreachableTrigger = DateTime.MinValue
             _unreachableLatched = False
             _unreachableClearCount = 0
+            _lastDisconnectScan = DateTime.MinValue
+            _disconnectOcrTask = Nothing
+            _lastDisconnectCandidate = ""
+            _disconnectConfirmCount = 0
+            _disconnectLastMatchAt = DateTime.MinValue
+            _disconnectLatched = False
+            _disconnectClearCount = 0
             _repairConfirmCount = 0
             _repairLastMatchAt = DateTime.MinValue
             _repairMatchTimes.Clear()
@@ -1434,6 +1458,7 @@ Public Class BotEngine
                                   s.TargetValid = False
                                   s.NotAttackingReason = "Window not found."
                                   s.ErrorMessage = "Game window not found."
+                                  s.GameDisconnected = False
                               End Sub)
                     RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
                     Await Task.Delay(loopDelayMs, token)
@@ -1457,6 +1482,7 @@ Public Class BotEngine
                                   s.TargetValid = False
                                   s.NotAttackingReason = "Lite HP/MP scan failed."
                                   s.ErrorMessage = "Unable to read Lite bar coordinates."
+                                  s.GameDisconnected = False
                               End Sub)
                     RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
                     Await Task.Delay(loopDelayMs, token)
@@ -1475,10 +1501,11 @@ Public Class BotEngine
                 Dim litePartyInviteScanRegion As New RectRegion(0, 0, 1, 1)
                 Dim litePartyInviteOkRegion As New RectRegion(0, 0, 1, 1)
                 Dim litePartyListRegion As New RectRegion(0, 0, 1, 1)
+                Dim liteDisconnectMessageRegion As New RectRegion(0, 0, 1, 1)
                 Dim liteMapCoordinateXRegion As New RectRegion(0, 0, 1, 1)
                 Dim liteMapCoordinateYRegion As New RectRegion(0, 0, 1, 1)
                 Dim liteChatRegion As New RectRegion(0, 0, 1, 1)
-                ResolveVisionRegions(cfg, clientWidth, clientHeight, liteHpRegion, liteMpRegion, liteMobNameRegion, liteMobHpRegion, liteUnreachableTextRegion, litePranaExpRegion, liteRupiahsRegion, litePartyInviteScanRegion, litePartyInviteOkRegion, litePartyListRegion, liteMapCoordinateXRegion, liteMapCoordinateYRegion, liteChatRegion)
+                ResolveVisionRegions(cfg, clientWidth, clientHeight, liteHpRegion, liteMpRegion, liteMobNameRegion, liteMobHpRegion, liteUnreachableTextRegion, litePranaExpRegion, liteRupiahsRegion, litePartyInviteScanRegion, litePartyInviteOkRegion, litePartyListRegion, liteDisconnectMessageRegion, liteMapCoordinateXRegion, liteMapCoordinateYRegion, liteChatRegion)
 
                 Dim hasLiteHpPoint As Boolean = cfg.LiteHpCheckPointX >= 0 AndAlso cfg.LiteHpCheckPointY >= 0
                 Dim hasLiteMpPoint As Boolean = cfg.LiteMpCheckPointX >= 0 AndAlso cfg.LiteMpCheckPointY >= 0
@@ -1531,6 +1558,11 @@ Public Class BotEngine
 
                 Dim liteReason As String = ""
                 Dim liteActionSent As Boolean = False
+                Dim liteGameDisconnected As Boolean = TryHandleDisconnectMessageFromClientRegion(cfg, hwnd, now, liteDisconnectMessageRegion)
+                If liteGameDisconnected Then
+                    liteReason = "Game disconnected message detected."
+                    liteScanWarning = If(liteScanWarning = "", "Game disconnected from server.", liteScanWarning & " Game disconnected from server.")
+                End If
                 If liteFrame IsNot Nothing Then
                     liteActionSent = TryHandleAutoAcceptPrompts(cfg, hwnd, liteFrame, now, litePartyInviteScanRegion, litePartyInviteOkRegion)
                     If liteActionSent Then
@@ -1538,18 +1570,18 @@ Public Class BotEngine
                     End If
                 End If
 
-                If Not liteActionSent Then
+                If Not liteGameDisconnected AndAlso Not liteActionSent Then
                     liteActionSent = TryHandlePartyAsk(cfg, hwnd, now)
                     If liteActionSent Then
                         liteReason = "Party ask command sent."
                     End If
                 End If
 
-                If Not liteActionSent AndAlso (hpScanOk OrElse mpScanOk) Then
+                If Not liteGameDisconnected AndAlso Not liteActionSent AndAlso (hpScanOk OrElse mpScanOk) Then
                     liteActionSent = TrySendSupportActions(cfg, hwnd, liteAttackHpPct, liteAttackMpPct)
                 End If
 
-                If Not liteActionSent Then
+                If Not liteGameDisconnected AndAlso Not liteActionSent Then
                     Dim liteBurst As List(Of ActionRule) = ChooseAttackBurstActions(cfg, liteAttackHpPct, liteAttackMpPct, True, True, False, liteReason)
                     If liteBurst.Count > 0 Then
                         Dim sentKeys As New List(Of String)()
@@ -1597,9 +1629,10 @@ Public Class BotEngine
                               s.RupiahsTotal = -1
                               s.RupiahsPerHour = -1
                               s.MobName = ""
-                              s.TargetValid = True
+                              s.TargetValid = Not liteGameDisconnected
                               s.NotAttackingReason = If(liteActionSent, "", If(String.IsNullOrWhiteSpace(liteReason), "No enabled Lite action is ready.", liteReason))
                               s.ErrorMessage = liteScanWarning
+                              s.GameDisconnected = liteGameDisconnected
                           End Sub)
                 If liteFrame IsNot Nothing Then
                     liteFrame.Dispose()
@@ -1619,6 +1652,7 @@ Public Class BotEngine
             Dim partyInviteScanRegion As New RectRegion(0, 0, 1, 1)
             Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
             Dim partyListRegion As New RectRegion(0, 0, 1, 1)
+            Dim disconnectMessageRegion As New RectRegion(0, 0, 1, 1)
             Dim mapCoordinateXRegion As New RectRegion(0, 0, 1, 1)
             Dim mapCoordinateYRegion As New RectRegion(0, 0, 1, 1)
             Dim chatRegion As New RectRegion(0, 0, 1, 1)
@@ -1638,6 +1672,7 @@ Public Class BotEngine
                               s.RupiahsPerHour = -1
                               s.NotAttackingReason = "Capture failed."
                               s.ErrorMessage = "Unable to read game client size."
+                              s.GameDisconnected = False
                           End Sub)
                 RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
                 Await Task.Delay(loopDelayMs, token)
@@ -1646,7 +1681,7 @@ Public Class BotEngine
 
             Dim fullClientWidth As Integer = Math.Max(1, fullClientRect.Right - fullClientRect.Left)
             Dim fullClientHeight As Integer = Math.Max(1, fullClientRect.Bottom - fullClientRect.Top)
-            ResolveVisionRegions(cfg, fullClientWidth, fullClientHeight, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, partyListRegion, mapCoordinateXRegion, mapCoordinateYRegion, chatRegion)
+            ResolveVisionRegions(cfg, fullClientWidth, fullClientHeight, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, partyListRegion, disconnectMessageRegion, mapCoordinateXRegion, mapCoordinateYRegion, chatRegion)
             Dim mobLifeRegion As RectRegion = ResolveMobLifeRegion(cfg, fullClientWidth, fullClientHeight)
             Dim lootScanPolygon As List(Of DrawingPoint) = ResolveLootScanPolygon(cfg, fullClientWidth, fullClientHeight)
             Dim activeHwnd As IntPtr = NativeMethods.GetForegroundWindow()
@@ -1742,12 +1777,45 @@ Public Class BotEngine
                               s.RupiahsPerHour = -1
                               s.NotAttackingReason = "Capture failed."
                               s.ErrorMessage = "Unable to capture game client."
+                              s.GameDisconnected = False
                           End Sub)
                 RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
                 Await Task.Delay(loopDelayMs, token)
                 Continue While
             End If
             Dim captureGlitch As Boolean = If(frame IsNot Nothing, IsLikelyVisionCaptureGlitch(frame, hpRegion, mpRegion, hpPct, mpPct), (Not fullHpScanOk OrElse Not fullMpScanOk))
+            Dim gameDisconnected As Boolean =
+                If(frame IsNot Nothing,
+                   TryHandleDisconnectMessage(cfg, hwnd, frame, now, disconnectMessageRegion),
+                   TryHandleDisconnectMessageFromClientRegion(cfg, hwnd, now, disconnectMessageRegion))
+            If gameDisconnected Then
+                ReleaseLootScannerAltKey()
+                Dim disconnectWarning As String = If(visionWarning = "", "Game disconnected from server.", visionWarning & " Game disconnected from server.")
+                UpdateLevelingAgentState(cfg, LevelingAgentState.GuardedStop, "Game disconnected from server.")
+                SetStatus(Sub(s)
+                              s.WindowFound = True
+                              s.HpPercent = Math.Round(hpPct, 1)
+                              s.MpPercent = Math.Round(mpPct, 1)
+                              s.MobHpPercent = Math.Round(mobHpPct, 1)
+                              s.MobMaxHp = -1
+                              s.MobHpText = ""
+                              s.RupiahsTotal = -1
+                              s.RupiahsPerHour = -1
+                              s.TargetValid = False
+                              s.NotAttackingReason = "Game disconnected message detected."
+                              s.ErrorMessage = disconnectWarning
+                              s.GameDisconnected = True
+                          End Sub)
+                If frame IsNot Nothing Then
+                    frame.Dispose()
+                End If
+                If mobHpRegionFrame IsNot Nothing Then
+                    mobHpRegionFrame.Dispose()
+                End If
+                RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
+                Await Task.Delay(loopDelayMs, token)
+                Continue While
+            End If
 
             Dim lootScanWatch As Stopwatch = Stopwatch.StartNew()
             TryHandlePendingLootScannerCapture(cfg, hwnd, activeHwnd, frame, lootScanPolygon, now)
@@ -2270,6 +2338,7 @@ Public Class BotEngine
                           s.TargetValid = effectiveTargetValid
                           s.NotAttackingReason = If(actionSent, "", reason)
                           s.ErrorMessage = visionWarning
+                          s.GameDisconnected = False
                       End Sub)
             If frame IsNot Nothing Then
                 frame.Dispose()
@@ -2289,6 +2358,7 @@ Public Class BotEngine
                 SetStatus(Sub(s)
                               s.NotAttackingReason = "Loop recovered from error."
                               s.ErrorMessage = ex.Message
+                              s.GameDisconnected = False
                           End Sub)
                 RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
                 Thread.Sleep(Math.Max(50, loopDelayMs))
@@ -6582,6 +6652,142 @@ Public Class BotEngine
         Return ""
     End Function
 
+    Private Function TryHandleDisconnectMessage(cfg As BotConfig, hwnd As IntPtr, frame As Bitmap, now As DateTime, disconnectMessageRegion As RectRegion) As Boolean
+        If cfg Is Nothing OrElse hwnd = IntPtr.Zero OrElse frame Is Nothing OrElse disconnectMessageRegion Is Nothing Then
+            Return _disconnectLatched
+        End If
+
+        If _disconnectOcrTask IsNot Nothing AndAlso _disconnectOcrTask.IsCompleted Then
+            Try
+                _lastDisconnectCandidate = If(_disconnectOcrTask.Result, "").Trim()
+            Catch
+                _lastDisconnectCandidate = ""
+            End Try
+            _disconnectOcrTask = Nothing
+            ProcessDisconnectOcrResult(_lastDisconnectCandidate, now)
+        End If
+
+        If _disconnectOcrTask IsNot Nothing Then
+            Return _disconnectLatched
+        End If
+
+        If _lastDisconnectScan <> DateTime.MinValue AndAlso (now - _lastDisconnectScan).TotalMilliseconds < DisconnectOcrMinIntervalMs Then
+            Return _disconnectLatched
+        End If
+
+        Dim rect As Rectangle = disconnectMessageRegion.Clamp(frame.Width, frame.Height)
+        If rect.Width <= 1 OrElse rect.Height <= 1 Then
+            Return _disconnectLatched
+        End If
+
+        Dim crop As New Bitmap(rect.Width, rect.Height, PixelFormat.Format24bppRgb)
+        Try
+            Using g As Graphics = Graphics.FromImage(crop)
+                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
+            End Using
+
+            _lastDisconnectScan = now
+            _disconnectOcrTask = Task.Run(
+                Function()
+                    Try
+                        Using enlarged As Bitmap = EnlargeBitmap(crop, 3)
+                            Dim text As String = If(OcrReader.ReadScreenTextIsolated(enlarged), "").Trim()
+                            If text = "" Then
+                                text = If(OcrReader.ReadName(enlarged), "").Trim()
+                            End If
+                            Return text
+                        End Using
+                    Catch
+                        Return ""
+                    Finally
+                        crop.Dispose()
+                    End Try
+                End Function)
+        Catch
+            crop.Dispose()
+        End Try
+
+        Return _disconnectLatched
+    End Function
+
+    Private Function TryHandleDisconnectMessageFromClientRegion(cfg As BotConfig, hwnd As IntPtr, now As DateTime, disconnectMessageRegion As RectRegion) As Boolean
+        If cfg Is Nothing OrElse hwnd = IntPtr.Zero OrElse disconnectMessageRegion Is Nothing Then
+            Return _disconnectLatched
+        End If
+
+        Dim crop As Bitmap = CaptureClientRegion(hwnd, disconnectMessageRegion)
+        If crop Is Nothing Then
+            Return _disconnectLatched
+        End If
+
+        Try
+            Return TryHandleDisconnectMessage(cfg, hwnd, crop, now, New RectRegion(0, 0, crop.Width, crop.Height))
+        Finally
+            crop.Dispose()
+        End Try
+    End Function
+
+    Private Sub ProcessDisconnectOcrResult(rawText As String, now As DateTime)
+        Dim matched As Boolean = IsDisconnectPrompt(rawText)
+        If matched Then
+            _disconnectClearCount = 0
+            If _disconnectLastMatchAt = DateTime.MinValue OrElse (now - _disconnectLastMatchAt).TotalMilliseconds > DisconnectConfirmWindowMs Then
+                _disconnectConfirmCount = 1
+            Else
+                _disconnectConfirmCount += 1
+            End If
+            _disconnectLastMatchAt = now
+
+            If Not _disconnectLatched AndAlso _disconnectConfirmCount >= DisconnectConfirmRequiredCount Then
+                _disconnectLatched = True
+                _disconnectConfirmCount = 0
+                RaiseEvent LogLine("Game disconnected message detected by OCR.")
+            End If
+            Return
+        End If
+
+        _disconnectConfirmCount = 0
+        _disconnectLastMatchAt = DateTime.MinValue
+        _lastDisconnectCandidate = ""
+        If _disconnectLatched Then
+            _disconnectClearCount += 1
+            If _disconnectClearCount >= UnreachableClearRequiredCount Then
+                _disconnectLatched = False
+                _disconnectClearCount = 0
+                RaiseEvent LogLine("Game disconnected message cleared.")
+            End If
+        End If
+    End Sub
+
+    Private Shared Function IsDisconnectPrompt(rawText As String) As Boolean
+        If String.IsNullOrWhiteSpace(rawText) Then
+            Return False
+        End If
+
+        Dim norm As String = NormalizeForLooseTextMatch(rawText)
+        If norm = "" Then
+            Return False
+        End If
+
+        Dim compact As String = norm.Replace(" ", "")
+        If compact.Contains("connectiontoserverhasfailed", StringComparison.OrdinalIgnoreCase) OrElse
+           compact.Contains("serverhasfailedpleasetryagain", StringComparison.OrdinalIgnoreCase) OrElse
+           compact.Contains("sorryconnectiontoserver", StringComparison.OrdinalIgnoreCase) Then
+            Return True
+        End If
+
+        If AreTextsClose(norm, "sorry connection to server has failed please try again") OrElse
+           AreTextsClose(norm, "connection to server has failed please try again") Then
+            Return True
+        End If
+
+        Dim hasConnection As Boolean = norm.Contains("connection", StringComparison.OrdinalIgnoreCase) OrElse norm.Contains("connect", StringComparison.OrdinalIgnoreCase)
+        Dim hasServer As Boolean = norm.Contains("server", StringComparison.OrdinalIgnoreCase)
+        Dim hasFailed As Boolean = norm.Contains("failed", StringComparison.OrdinalIgnoreCase) OrElse norm.Contains("fail", StringComparison.OrdinalIgnoreCase)
+        Dim hasTryAgain As Boolean = norm.Contains("try again", StringComparison.OrdinalIgnoreCase)
+        Return hasConnection AndAlso hasServer AndAlso hasFailed AndAlso hasTryAgain
+    End Function
+
     Private Function TryHandleUnreachableTarget(cfg As BotConfig, hwnd As IntPtr, frame As Bitmap, now As DateTime, unreachableTextRegion As RectRegion) As Boolean
         If cfg Is Nothing OrElse hwnd = IntPtr.Zero OrElse frame Is Nothing Then
             Return False
@@ -8202,7 +8408,7 @@ Public Class BotEngine
             Return ""
         End If
 
-        Return $"{status.Running}|{status.RunStartedAtUtc:O}|{status.WindowFound}|{status.NotAttackingReason}|{status.ErrorMessage}|{status.AgentState}|{status.AgentReason}|{status.AgentGuardrailTriggered}|{status.TargetValid}|{status.MobName}|{status.MobHpText}|{status.MapCoordinateText}|{status.MapCoordinateX}|{status.MapCoordinateY}|{status.MapCoordinateConfidence}|{status.MapCoordinateDebugLog}|{status.HoldPlaceActive}|{status.HoldPlaceReason}|{status.HoldPlaceDistance:0.0}|{status.RepairConfirmCount}|{status.RepairTriggerCount}"
+        Return $"{status.Running}|{status.RunStartedAtUtc:O}|{status.WindowFound}|{status.NotAttackingReason}|{status.ErrorMessage}|{status.GameDisconnected}|{status.AgentState}|{status.AgentReason}|{status.AgentGuardrailTriggered}|{status.TargetValid}|{status.MobName}|{status.MobHpText}|{status.MapCoordinateText}|{status.MapCoordinateX}|{status.MapCoordinateY}|{status.MapCoordinateConfidence}|{status.MapCoordinateDebugLog}|{status.HoldPlaceActive}|{status.HoldPlaceReason}|{status.HoldPlaceDistance:0.0}|{status.RepairConfirmCount}|{status.RepairTriggerCount}"
     End Function
 
     Private Function CloneStatus(src As BotStatus) As BotStatus
@@ -8276,6 +8482,7 @@ Public Class BotEngine
             .RepairTriggerCount = src.RepairTriggerCount,
             .NotAttackingReason = src.NotAttackingReason,
             .ErrorMessage = src.ErrorMessage,
+            .GameDisconnected = src.GameDisconnected,
             .AgentEnabled = src.AgentEnabled,
             .AgentState = src.AgentState,
             .AgentReason = src.AgentReason,
@@ -8574,10 +8781,11 @@ Public Class BotEngine
         Dim partyInviteScanRegion As New RectRegion(0, 0, 1, 1)
         Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
         Dim partyListRegion As New RectRegion(0, 0, 1, 1)
+        Dim disconnectMessageRegion As New RectRegion(0, 0, 1, 1)
         Dim mapCoordinateXRegion As New RectRegion(0, 0, 1, 1)
         Dim mapCoordinateYRegion As New RectRegion(0, 0, 1, 1)
         Dim chatRegion As New RectRegion(0, 0, 1, 1)
-        ResolveVisionRegions(If(cfg, BotConfig.CreateDefault()), clientWidth, clientHeight, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, partyListRegion, mapCoordinateXRegion, mapCoordinateYRegion, chatRegion)
+        ResolveVisionRegions(If(cfg, BotConfig.CreateDefault()), clientWidth, clientHeight, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, partyListRegion, disconnectMessageRegion, mapCoordinateXRegion, mapCoordinateYRegion, chatRegion)
 
         For i As Integer = 1 To safeIterations
             Dim captureWatch As Stopwatch = Stopwatch.StartNew()
@@ -9226,7 +9434,7 @@ Public Class BotEngine
         Return colored / CDbl(total)
     End Function
 
-    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef unreachableTextRect As RectRegion, ByRef pranaExpRect As RectRegion, ByRef rupiahsRect As RectRegion, ByRef partyInviteScanRect As RectRegion, ByRef partyInviteOkRect As RectRegion, ByRef partyListRect As RectRegion, ByRef mapCoordinateXRect As RectRegion, ByRef mapCoordinateYRect As RectRegion, ByRef chatRect As RectRegion)
+    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef unreachableTextRect As RectRegion, ByRef pranaExpRect As RectRegion, ByRef rupiahsRect As RectRegion, ByRef partyInviteScanRect As RectRegion, ByRef partyInviteOkRect As RectRegion, ByRef partyListRect As RectRegion, ByRef disconnectMessageRect As RectRegion, ByRef mapCoordinateXRect As RectRegion, ByRef mapCoordinateYRect As RectRegion, ByRef chatRect As RectRegion)
         hpBar = CloneRegion(cfg.HpBar)
         mpBar = CloneRegion(cfg.MpBar)
         mobNameRect = CloneRegion(cfg.MobNameRect)
@@ -9237,6 +9445,7 @@ Public Class BotEngine
         partyInviteScanRect = CloneRegion(cfg.PartyInviteScanRect)
         partyInviteOkRect = CloneRegion(cfg.PartyInviteOkRect)
         partyListRect = CloneRegion(cfg.PartyListRect)
+        disconnectMessageRect = CloneRegion(cfg.DisconnectMessageRect)
         mapCoordinateXRect = CloneRegion(GetEffectiveMapCoordinateXRect(cfg))
         mapCoordinateYRect = CloneRegion(GetEffectiveMapCoordinateYRect(cfg))
         chatRect = CloneRegion(cfg.ChatRect)
@@ -9264,6 +9473,7 @@ Public Class BotEngine
         partyInviteScanRect = ScaleRegionLeftTop(cfg.PartyInviteScanRect, sx, sy)
         partyInviteOkRect = ScaleRegionLeftTop(cfg.PartyInviteOkRect, sx, sy)
         partyListRect = ScaleRegionLeftTop(cfg.PartyListRect, sx, sy)
+        disconnectMessageRect = ScaleRegionLeftTop(cfg.DisconnectMessageRect, sx, sy)
         mapCoordinateXRect = ScaleRegionLeftTop(GetEffectiveMapCoordinateXRect(cfg), sx, sy)
         mapCoordinateYRect = ScaleRegionLeftTop(GetEffectiveMapCoordinateYRect(cfg), sx, sy)
         chatRect = ScaleRegionLeftTop(cfg.ChatRect, sx, sy)
@@ -9349,6 +9559,7 @@ Public Class BotEngine
                SameRegion(cfg.PartyInviteScanRect, New RectRegion(349, 318, 328, 124)) AndAlso
                SameRegion(cfg.PartyInviteOkRect, New RectRegion(463, 410, 59, 21)) AndAlso
                SameRegion(cfg.PartyListRect, New RectRegion(0, 24, 168, 244)) AndAlso
+               SameRegion(cfg.DisconnectMessageRect, BotConfig.DefaultDisconnectMessageRect()) AndAlso
                SameRegion(cfg.MapCoordinateRect, BotConfig.DefaultMapCoordinateRect()) AndAlso
                SameRegion(GetEffectiveMapCoordinateXRect(cfg), BotConfig.DefaultMapCoordinateXRect()) AndAlso
                SameRegion(GetEffectiveMapCoordinateYRect(cfg), BotConfig.DefaultMapCoordinateYRect()) AndAlso

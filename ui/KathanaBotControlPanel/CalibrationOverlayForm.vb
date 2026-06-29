@@ -112,6 +112,7 @@ Public Class CalibrationOverlayForm
         DrawRegion(e.Graphics, "party_invite_scan_rect", _currentConfig.PartyInviteScanRect, Color.FromArgb(170, 180, 120, 240), "Party Scan")
         DrawRegion(e.Graphics, "party_invite_ok_rect", _currentConfig.PartyInviteOkRect, Color.FromArgb(170, 120, 220, 160), "Party OK")
         DrawRegion(e.Graphics, "party_list_rect", _currentConfig.PartyListRect, Color.FromArgb(120, 255, 90, 90), "Party List")
+        DrawRegion(e.Graphics, "disconnect_message_rect", _currentConfig.DisconnectMessageRect, Color.FromArgb(170, 255, 120, 120), "Disconnect")
         DrawRegion(e.Graphics, "map_coordinate_x_rect", _currentConfig.MapCoordinateXRect, Color.FromArgb(170, 70, 255, 170), "Map X")
         DrawRegion(e.Graphics, "map_coordinate_y_rect", _currentConfig.MapCoordinateYRect, Color.FromArgb(170, 90, 230, 255), "Map Y")
         DrawRegion(e.Graphics, "chat_rect", _currentConfig.ChatRect, Color.FromArgb(170, 255, 200, 110), "Chat")
@@ -345,7 +346,7 @@ Public Class CalibrationOverlayForm
     End Sub
 
     Private Function HitTestRegion(pt As System.Drawing.Point) As String
-        Dim keys As String() = {"chat_rect", "map_coordinate_y_rect", "map_coordinate_x_rect", "party_list_rect", "party_invite_ok_rect", "party_invite_scan_rect", "rupiahs_rect", "prana_exp_rect", "unreachable_text_rect", "mob_life_rect", "mob_hp_rect", "mob_name_rect", "mp_bar", "hp_bar"}
+        Dim keys As String() = {"chat_rect", "map_coordinate_y_rect", "map_coordinate_x_rect", "disconnect_message_rect", "party_list_rect", "party_invite_ok_rect", "party_invite_scan_rect", "rupiahs_rect", "prana_exp_rect", "unreachable_text_rect", "mob_life_rect", "mob_hp_rect", "mob_name_rect", "mp_bar", "hp_bar"}
         For Each key In keys
             If Not IsRegionOverlayEnabled(key) Then
                 Continue For
@@ -463,6 +464,8 @@ Public Class CalibrationOverlayForm
                 Return _currentConfig.PartyInviteOkRect
             Case "party_list_rect"
                 Return _currentConfig.PartyListRect
+            Case "disconnect_message_rect"
+                Return _currentConfig.DisconnectMessageRect
             Case "map_coordinate_x_rect"
                 Return _currentConfig.MapCoordinateXRect
             Case "map_coordinate_y_rect"
@@ -498,6 +501,8 @@ Public Class CalibrationOverlayForm
                 _currentConfig.PartyInviteOkRect = value
             Case "party_list_rect"
                 _currentConfig.PartyListRect = value
+            Case "disconnect_message_rect"
+                _currentConfig.DisconnectMessageRect = value
             Case "map_coordinate_x_rect"
                 _currentConfig.MapCoordinateXRect = value
                 _currentConfig.MapCoordinateRect = BotConfig.CombineMapCoordinateRects(_currentConfig.MapCoordinateXRect, _currentConfig.MapCoordinateYRect)
@@ -570,6 +575,7 @@ Public Class CalibrationOverlayForm
         cfg.PartyInviteScanRect = CloneRegion(src.PartyInviteScanRect)
         cfg.PartyInviteOkRect = CloneRegion(src.PartyInviteOkRect)
         cfg.PartyListRect = CloneRegion(src.PartyListRect)
+        cfg.DisconnectMessageRect = CloneRegion(src.DisconnectMessageRect)
         cfg.MapRect = CloneRegion(src.MapRect)
         cfg.MapCoordinateRect = CloneRegion(src.MapCoordinateRect)
         cfg.MapCoordinateXRect = CloneRegion(src.MapCoordinateXRect)
