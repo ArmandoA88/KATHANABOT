@@ -1594,7 +1594,7 @@ Public Class BotEngine
                 End If
 
                 If Not liteGameDisconnected AndAlso Not liteActionSent Then
-                    Dim liteBurst As List(Of ActionRule) = ChooseAttackBurstActions(cfg, liteAttackHpPct, liteAttackMpPct, True, True, False, liteReason)
+                    Dim liteBurst As List(Of ActionRule) = ChooseAttackBurstActions(cfg, liteAttackHpPct, liteAttackMpPct, True, True, False, False, liteReason)
                     If liteBurst.Count > 0 Then
                         Dim sentKeys As New List(Of String)()
                         For Each attackAction As ActionRule In liteBurst
@@ -2201,7 +2201,11 @@ Public Class BotEngine
 
                 ' Support keys can fire without blocking attack/buff in the same loop.
                 Dim allowBlindAttack As Boolean = AllowBlindAttackWhenTargetMissing AndAlso (Not monsterFilterActive) AndAlso (Not monsterFilterBlockedTarget) AndAlso (Not avoidHighMaxHpTarget) AndAlso (Not _lastNavigationTravelActive)
-                Dim attackBurst As List(Of ActionRule) = ChooseAttackBurstActions(cfg, hpPct, mpPct, effectiveTargetValid, allowBlindAttack, highMaxHpAttackActive, reason)
+                Dim suppressOffensiveBuffsForBlacklist As Boolean =
+                    monsterFilterActive AndAlso
+                    (Not monsterFilterWhitelistMode) AndAlso
+                    (monsterFilterBlockedTarget OrElse blacklistLockActive)
+                Dim attackBurst As List(Of ActionRule) = ChooseAttackBurstActions(cfg, hpPct, mpPct, effectiveTargetValid, allowBlindAttack, highMaxHpAttackActive, suppressOffensiveBuffsForBlacklist, reason)
                 If attackBurst.Count > 0 Then
                     Dim sentKeys As New List(Of String)()
                     Dim targetSignature As String = If(normMobName <> "", normMobName, If(mobName <> "", mobName, $"{mobHpPct:0.0}"))
@@ -7766,6 +7770,11 @@ Public Class BotEngine
         Return role = "heal" OrElse role = "max_health" OrElse role = "mana"
     End Function
 
+    Private Shared Function IsOffensiveBuffRole(role As String) As Boolean
+        Dim normalized As String = If(role, "").Trim().ToLowerInvariant()
+        Return normalized = "buff" OrElse normalized = "high_max_hp"
+    End Function
+
     Private Shared Function IsRepairRole(role As String) As Boolean
         Return String.Equals(role, "repair", StringComparison.OrdinalIgnoreCase)
     End Function
@@ -8164,7 +8173,7 @@ Public Class BotEngine
         Return False
     End Function
 
-    Private Function ChooseAttackBurstActions(cfg As BotConfig, hpPercent As Double, mpPercent As Double, targetValid As Boolean, allowBlindAttack As Boolean, highMaxHpAttackActive As Boolean, ByRef reason As String) As List(Of ActionRule)
+    Private Function ChooseAttackBurstActions(cfg As BotConfig, hpPercent As Double, mpPercent As Double, targetValid As Boolean, allowBlindAttack As Boolean, highMaxHpAttackActive As Boolean, suppressOffensiveBuffs As Boolean, ByRef reason As String) As List(Of ActionRule)
         Dim ordered = cfg.Actions.Where(Function(a) a.Enabled).OrderBy(Function(a) a.Priority).ToList()
         If ordered.Count = 0 Then
             reason = "No enabled keys."
@@ -8175,25 +8184,31 @@ Public Class BotEngine
         Dim statBlocked As Boolean = False
         Dim cooldownBlocked As Boolean = False
         Dim highMaxHpRoleWaitingForLifeRead As Boolean = False
+        Dim offensiveBuffBlocked As Boolean = False
         Dim selected As New List(Of ActionRule)()
         Dim usedKeys As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
 
         For Each action In ordered
-            If action.Role = "high_max_hp" AndAlso Not highMaxHpAttackActive Then
-                highMaxHpRoleWaitingForLifeRead = True
-                hasAttackKey = True
-                Continue For
-            End If
-
+            Dim role As String = If(action.Role, "").Trim().ToLowerInvariant()
             Dim isAttackLike As Boolean =
-                action.Role = "attack" OrElse
-                action.Role = "buff" OrElse
-                action.Role = "special" OrElse
-                action.Role = "high_max_hp"
+                role = "attack" OrElse
+                role = "buff" OrElse
+                role = "special" OrElse
+                role = "high_max_hp"
             If Not isAttackLike Then
                 Continue For
             End If
             hasAttackKey = True
+
+            If suppressOffensiveBuffs AndAlso IsOffensiveBuffRole(role) Then
+                offensiveBuffBlocked = True
+                Continue For
+            End If
+
+            If role = "high_max_hp" AndAlso Not highMaxHpAttackActive Then
+                highMaxHpRoleWaitingForLifeRead = True
+                Continue For
+            End If
 
             If (Not cfg.BypassHpMpLimits) AndAlso (hpPercent < action.MinHpPercent OrElse mpPercent < action.MinMpPercent) Then
                 statBlocked = True
@@ -8226,6 +8241,8 @@ Public Class BotEngine
             reason = "No enabled attack/buff/high_max_hp keys."
         ElseIf Not targetValid AndAlso Not allowBlindAttack Then
             reason = "No target detected."
+        ElseIf offensiveBuffBlocked Then
+            reason = "Buff keys paused because monster blacklist blocked the selected target."
         ElseIf highMaxHpRoleWaitingForLifeRead Then
             reason = "High Max HP keys waiting for mob_life_rect Max HP OCR."
         ElseIf statBlocked AndAlso (Not cfg.BypassHpMpLimits) Then
