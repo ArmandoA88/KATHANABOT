@@ -153,6 +153,10 @@ Public Class BotConfig
         Return New RectRegion(0, 0, 360, 130)
     End Function
 
+    Public Shared Function DefaultDisconnectOkRect() As RectRegion
+        Return New RectRegion(151, 98, 59, 22)
+    End Function
+
     Public Shared Function DefaultHpBarColorArgb() As Integer
         Return Color.FromArgb(230, 0, 0).ToArgb()
     End Function
@@ -245,6 +249,7 @@ Public Class BotConfig
     Public Property PartyInviteOkRect As RectRegion = New RectRegion(463, 410, 59, 21)
     Public Property PartyListRect As RectRegion = New RectRegion(0, 24, 168, 244)
     Public Property DisconnectMessageRect As RectRegion = DefaultDisconnectMessageRect()
+    Public Property DisconnectOkRect As RectRegion = DefaultDisconnectOkRect()
     Public Property MapRect As RectRegion = New RectRegion(0, 0, 1024, 768)
     Public Property MapCoordinateRect As RectRegion = DefaultMapCoordinateRect()
     Public Property MapCoordinateXRect As RectRegion = DefaultMapCoordinateXRect()
@@ -565,6 +570,7 @@ Friend Module NativeMethods
     Friend Const MK_RBUTTON As Integer = &H2
     Friend Const MOUSEEVENTF_LEFTDOWN As UInteger = &H2UI
     Friend Const MOUSEEVENTF_LEFTUP As UInteger = &H4UI
+    Friend Const SW_RESTORE As Integer = 9
 
     <StructLayout(LayoutKind.Sequential)>
     Friend Structure POINT
@@ -586,6 +592,10 @@ Friend Module NativeMethods
 
     <DllImport("user32.dll", SetLastError:=True)>
     Friend Function SetForegroundWindow(hWnd As IntPtr) As Boolean
+    End Function
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function ShowWindow(hWnd As IntPtr, nCmdShow As Integer) As Boolean
     End Function
 
     <DllImport("user32.dll", SetLastError:=True)>
@@ -9627,6 +9637,7 @@ Public Class BotEngine
                SameRegion(cfg.PartyInviteOkRect, New RectRegion(463, 410, 59, 21)) AndAlso
                SameRegion(cfg.PartyListRect, New RectRegion(0, 24, 168, 244)) AndAlso
                SameRegion(cfg.DisconnectMessageRect, BotConfig.DefaultDisconnectMessageRect()) AndAlso
+               SameRegion(cfg.DisconnectOkRect, BotConfig.DefaultDisconnectOkRect()) AndAlso
                SameRegion(cfg.MapCoordinateRect, BotConfig.DefaultMapCoordinateRect()) AndAlso
                SameRegion(GetEffectiveMapCoordinateXRect(cfg), BotConfig.DefaultMapCoordinateXRect()) AndAlso
                SameRegion(GetEffectiveMapCoordinateYRect(cfg), BotConfig.DefaultMapCoordinateYRect()) AndAlso

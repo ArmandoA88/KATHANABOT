@@ -370,6 +370,12 @@ Public Class Form1
     Private _isPickingLootNamePickupPoint As Boolean = False
     Private _isPickingArrowUnbundlePoint As Boolean = False
     Private _arrowUnbundleLeftMouseWasDown As Boolean = False
+    Private _isPickingAutoRelaunchClick As Boolean = False
+    Private _autoRelaunchRightMouseWasDown As Boolean = False
+    Private _pendingAutoRelaunchClickRowIndex As Integer = -1
+    Private _autoRelaunchDragRowIndex As Integer = -1
+    Private _autoRelaunchDragStartPoint As System.Drawing.Point = System.Drawing.Point.Empty
+    Private _autoRelaunchDragInProgress As Boolean = False
     Private _arrowUnbundleUiSyncInProgress As Boolean = False
     Private _lootRejectPointX As Integer = -1
     Private _lootRejectPointY As Integer = -1
@@ -616,6 +622,7 @@ Public Class Form1
         Public Property X As Integer = 0
         Public Property Y As Integer = 0
         Public Property DelaySeconds As Decimal = 5D
+        Public Property Description As String = ""
     End Class
 
     Private Class PersistedLiteState
@@ -3215,19 +3222,25 @@ Public Class Form1
             .RowHeadersVisible = False,
             .SelectionMode = DataGridViewSelectionMode.FullRowSelect,
             .MultiSelect = False,
+            .AllowDrop = True,
             .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
             .BackgroundColor = Color.FromArgb(24, 24, 24),
             .BorderStyle = BorderStyle.FixedSingle,
             .ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
             .ColumnHeadersHeight = 24
         }
+        AddHandler dgvAutoRelaunchClicks.MouseDown, AddressOf AutoRelaunchClicksMouseDown
+        AddHandler dgvAutoRelaunchClicks.MouseMove, AddressOf AutoRelaunchClicksMouseMove
+        AddHandler dgvAutoRelaunchClicks.DragOver, AddressOf AutoRelaunchClicksDragOver
+        AddHandler dgvAutoRelaunchClicks.DragDrop, AddressOf AutoRelaunchClicksDragDrop
         dgvAutoRelaunchClicks.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Step", .HeaderText = "#", .FillWeight = 32.0F, .ReadOnly = True})
         dgvAutoRelaunchClicks.Columns.Add(New DataGridViewCheckBoxColumn() With {.Name = "Enabled", .HeaderText = "On", .FillWeight = 42.0F})
-        dgvAutoRelaunchClicks.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "X", .HeaderText = "Screen X", .FillWeight = 72.0F})
-        dgvAutoRelaunchClicks.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Y", .HeaderText = "Screen Y", .FillWeight = 72.0F})
+        dgvAutoRelaunchClicks.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "X", .HeaderText = "Game X", .FillWeight = 72.0F})
+        dgvAutoRelaunchClicks.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Y", .HeaderText = "Game Y", .FillWeight = 72.0F})
         dgvAutoRelaunchClicks.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Delay", .HeaderText = "Delay s", .FillWeight = 72.0F})
+        dgvAutoRelaunchClicks.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Description", .HeaderText = "Description", .FillWeight = 160.0F})
         For i As Integer = 1 To 5
-            dgvAutoRelaunchClicks.Rows.Add(i.ToString(), False, "0", "0", If(i = 1, "15", "5"))
+            dgvAutoRelaunchClicks.Rows.Add(i.ToString(), False, "0", "0", If(i = 1, "15", "5"), "")
         Next
         layout.Controls.Add(dgvAutoRelaunchClicks, 0, 4)
         layout.SetColumnSpan(dgvAutoRelaunchClicks, 2)
@@ -3243,7 +3256,7 @@ Public Class Form1
         layout.SetColumnSpan(clickButtonRow, 2)
 
         Dim note As New Label() With {
-            .Text = "Post-launch clicks use screen coordinates after each row's delay. Use Cursor fills the selected row with the current mouse position.",
+            .Text = "Post-launch clicks use game-window coordinates after each row's delay. Drag rows to change order. Select a row, click Use Cursor, then RIGHT click the desired spot in game.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.TopLeft
@@ -4438,6 +4451,8 @@ Public Class Form1
         dgvRegions.Rows.Add(True, "party_list_rect", "0", "24", "168", "244")
         Dim defaultDisconnect As RectRegion = BotConfig.DefaultDisconnectMessageRect()
         dgvRegions.Rows.Add(True, "disconnect_message_rect", defaultDisconnect.X.ToString(), defaultDisconnect.Y.ToString(), defaultDisconnect.W.ToString(), defaultDisconnect.H.ToString())
+        Dim defaultDisconnectOk As RectRegion = BotConfig.DefaultDisconnectOkRect()
+        dgvRegions.Rows.Add(True, "disconnect_ok_rect", defaultDisconnectOk.X.ToString(), defaultDisconnectOk.Y.ToString(), defaultDisconnectOk.W.ToString(), defaultDisconnectOk.H.ToString())
         Dim defaultMapX As RectRegion = BotConfig.DefaultMapCoordinateXRect()
         Dim defaultMapY As RectRegion = BotConfig.DefaultMapCoordinateYRect()
         dgvRegions.Rows.Add(True, "map_coordinate_x_rect", defaultMapX.X.ToString(), defaultMapX.Y.ToString(), defaultMapX.W.ToString(), defaultMapX.H.ToString())
@@ -7036,6 +7051,7 @@ Public Class Form1
         Dim st As BotStatus = GetStatusForEdition(_edition)
         HandlePendingLitePointCapture()
         HandlePendingArrowUnbundlePointCapture()
+        HandlePendingAutoRelaunchClickCapture()
         If _fullEngine.IsRunning() Then
             HandlePeriodicStatsNotification(_fullStatus)
         End If
@@ -7206,6 +7222,7 @@ Public Class Form1
         _ctrlShiftWasDown = comboDown
         HandlePendingLitePointCapture()
         HandlePendingArrowUnbundlePointCapture()
+        HandlePendingAutoRelaunchClickCapture()
     End Sub
 
     Private Sub HandleCtrlShiftTogglePress()
@@ -7805,8 +7822,116 @@ Public Class Form1
         ScheduleGameRelaunch("manual test", stopRunningBots:=False, force:=True)
     End Sub
 
+    Private Sub AutoRelaunchClicksMouseDown(sender As Object, e As MouseEventArgs)
+        _autoRelaunchDragRowIndex = -1
+        _autoRelaunchDragStartPoint = System.Drawing.Point.Empty
+        If e.Button <> MouseButtons.Left OrElse dgvAutoRelaunchClicks Is Nothing Then
+            Return
+        End If
+
+        Dim hit As DataGridView.HitTestInfo = dgvAutoRelaunchClicks.HitTest(e.X, e.Y)
+        If hit.RowIndex < 0 OrElse hit.RowIndex >= dgvAutoRelaunchClicks.Rows.Count Then
+            Return
+        End If
+
+        _autoRelaunchDragRowIndex = hit.RowIndex
+        _autoRelaunchDragStartPoint = New System.Drawing.Point(e.X, e.Y)
+    End Sub
+
+    Private Sub AutoRelaunchClicksMouseMove(sender As Object, e As MouseEventArgs)
+        If dgvAutoRelaunchClicks Is Nothing OrElse _autoRelaunchDragRowIndex < 0 Then
+            Return
+        End If
+        If (e.Button And MouseButtons.Left) <> MouseButtons.Left Then
+            Return
+        End If
+        If dgvAutoRelaunchClicks.IsCurrentCellInEditMode Then
+            Return
+        End If
+
+        Dim dragSize As Size = SystemInformation.DragSize
+        Dim dragBounds As New Rectangle(
+            _autoRelaunchDragStartPoint.X - (dragSize.Width \ 2),
+            _autoRelaunchDragStartPoint.Y - (dragSize.Height \ 2),
+            dragSize.Width,
+            dragSize.Height)
+        If dragBounds.Contains(e.Location) Then
+            Return
+        End If
+
+        _autoRelaunchDragInProgress = True
+        Try
+            dgvAutoRelaunchClicks.DoDragDrop(_autoRelaunchDragRowIndex, DragDropEffects.Move)
+        Finally
+            _autoRelaunchDragInProgress = False
+            _autoRelaunchDragRowIndex = -1
+            _autoRelaunchDragStartPoint = System.Drawing.Point.Empty
+        End Try
+    End Sub
+
+    Private Sub AutoRelaunchClicksDragOver(sender As Object, e As DragEventArgs)
+        e.Effect = If(_autoRelaunchDragInProgress AndAlso _autoRelaunchDragRowIndex >= 0, DragDropEffects.Move, DragDropEffects.None)
+    End Sub
+
+    Private Sub AutoRelaunchClicksDragDrop(sender As Object, e As DragEventArgs)
+        If dgvAutoRelaunchClicks Is Nothing OrElse _autoRelaunchDragRowIndex < 0 OrElse _autoRelaunchDragRowIndex >= dgvAutoRelaunchClicks.Rows.Count Then
+            Return
+        End If
+
+        Dim clientPoint As System.Drawing.Point = dgvAutoRelaunchClicks.PointToClient(New System.Drawing.Point(e.X, e.Y))
+        Dim hit As DataGridView.HitTestInfo = dgvAutoRelaunchClicks.HitTest(clientPoint.X, clientPoint.Y)
+        Dim dropIndex As Integer = If(hit.RowIndex >= 0, hit.RowIndex, dgvAutoRelaunchClicks.Rows.Count)
+        ReorderAutoRelaunchClickRow(_autoRelaunchDragRowIndex, dropIndex)
+    End Sub
+
+    Private Sub ReorderAutoRelaunchClickRow(sourceIndex As Integer, dropIndex As Integer)
+        If dgvAutoRelaunchClicks Is Nothing OrElse sourceIndex < 0 OrElse sourceIndex >= dgvAutoRelaunchClicks.Rows.Count Then
+            Return
+        End If
+
+        If dropIndex > sourceIndex Then
+            dropIndex -= 1
+        End If
+        dropIndex = Math.Max(0, Math.Min(dgvAutoRelaunchClicks.Rows.Count - 1, dropIndex))
+        If dropIndex = sourceIndex Then
+            Return
+        End If
+
+        CommitPendingGridEdits()
+        Dim sourceRow As DataGridViewRow = dgvAutoRelaunchClicks.Rows(sourceIndex)
+        Dim values(dgvAutoRelaunchClicks.Columns.Count - 1) As Object
+        For i As Integer = 0 To dgvAutoRelaunchClicks.Columns.Count - 1
+            values(i) = sourceRow.Cells(i).Value
+        Next
+
+        dgvAutoRelaunchClicks.Rows.RemoveAt(sourceIndex)
+        dgvAutoRelaunchClicks.Rows.Insert(dropIndex, values)
+        RenumberAutoRelaunchClickRows()
+        dgvAutoRelaunchClicks.ClearSelection()
+        dgvAutoRelaunchClicks.Rows(dropIndex).Selected = True
+        dgvAutoRelaunchClicks.CurrentCell = dgvAutoRelaunchClicks.Rows(dropIndex).Cells("Step")
+        SavePersistedListState(False)
+        AppendLog($"Auto relaunch click step moved to row {dropIndex + 1}.")
+    End Sub
+
+    Private Sub RenumberAutoRelaunchClickRows()
+        If dgvAutoRelaunchClicks Is Nothing Then
+            Return
+        End If
+
+        For i As Integer = 0 To dgvAutoRelaunchClicks.Rows.Count - 1
+            dgvAutoRelaunchClicks.Rows(i).Cells("Step").Value = (i + 1).ToString()
+        Next
+    End Sub
+
     Private Sub AutoRelaunchUseCursorClicked(sender As Object, e As EventArgs)
         If dgvAutoRelaunchClicks Is Nothing Then
+            Return
+        End If
+
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+        If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
+            AppendLog("Auto relaunch click setup: select a Full game process window first.")
             Return
         End If
 
@@ -7815,24 +7940,103 @@ Public Class Form1
             rowIndex = 0
         End If
 
-        Dim cursorPoint As NativeMethods.POINT
-        If Not NativeMethods.GetCursorPos(cursorPoint) Then
-            AppendLog("Auto relaunch click setup failed: unable to read cursor position.")
+        _isPickingAutoRelaunchClick = True
+        _autoRelaunchRightMouseWasDown = False
+        _pendingAutoRelaunchClickRowIndex = rowIndex
+        _isPickingArrowUnbundlePoint = False
+        _arrowUnbundleLeftMouseWasDown = False
+        UpdateAutoRelaunchUseCursorUi()
+        UpdateArrowUnbundleUi()
+        AppendLog($"Auto relaunch click step {rowIndex + 1}: RIGHT click the desired spot inside the selected game window.")
+        NativeMethods.SetForegroundWindow(selected.MainWindowHandle)
+    End Sub
+
+    Private Sub HandlePendingAutoRelaunchClickCapture()
+        Try
+            If Not _isPickingAutoRelaunchClick Then
+                Return
+            End If
+
+            Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+            If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
+                Return
+            End If
+
+            Dim rightDown As Boolean = (GetAsyncKeyState(CInt(Keys.RButton)) And &H8000S) <> 0
+            If rightDown AndAlso Not _autoRelaunchRightMouseWasDown Then
+                Dim screenPoint As NativeMethods.POINT
+                If NativeMethods.GetCursorPos(screenPoint) Then
+                    Dim hoveredWindow As IntPtr = NativeMethods.WindowFromPoint(screenPoint)
+                    Dim hoveredRoot As IntPtr = If(hoveredWindow <> IntPtr.Zero, NativeMethods.GetAncestor(hoveredWindow, NativeMethods.GA_ROOT), IntPtr.Zero)
+                    If hoveredRoot <> selected.MainWindowHandle Then
+                        AppendLog("Auto relaunch click setup: right click must be inside the selected game window.")
+                        _autoRelaunchRightMouseWasDown = rightDown
+                        Return
+                    End If
+
+                    Dim clientPoint As NativeMethods.POINT = screenPoint
+                    If NativeMethods.ScreenToClient(selected.MainWindowHandle, clientPoint) Then
+                        Dim clientRect As NativeMethods.RECT
+                        If Not NativeMethods.GetClientRect(selected.MainWindowHandle, clientRect) Then
+                            _autoRelaunchRightMouseWasDown = rightDown
+                            Return
+                        End If
+
+                        Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
+                        Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
+                        If clientPoint.X < 0 OrElse clientPoint.Y < 0 OrElse clientPoint.X >= clientWidth OrElse clientPoint.Y >= clientHeight Then
+                            AppendLog("Auto relaunch click setup: right click must be inside the selected game window.")
+                            _autoRelaunchRightMouseWasDown = rightDown
+                            Return
+                        End If
+
+                        Dim rowIndex As Integer = _pendingAutoRelaunchClickRowIndex
+                        If rowIndex < 0 OrElse dgvAutoRelaunchClicks Is Nothing OrElse rowIndex >= dgvAutoRelaunchClicks.Rows.Count Then
+                            rowIndex = 0
+                        End If
+
+                        Dim row As DataGridViewRow = dgvAutoRelaunchClicks.Rows(rowIndex)
+                        row.Cells("Enabled").Value = True
+                        row.Cells("X").Value = Math.Max(0, clientPoint.X).ToString()
+                        row.Cells("Y").Value = Math.Max(0, clientPoint.Y).ToString()
+                        If String.IsNullOrWhiteSpace(If(row.Cells("Delay").Value, "").ToString()) Then
+                            row.Cells("Delay").Value = If(rowIndex = 0, "15", "5")
+                        End If
+
+                        _isPickingAutoRelaunchClick = False
+                        _autoRelaunchRightMouseWasDown = rightDown
+                        _pendingAutoRelaunchClickRowIndex = -1
+                        UpdateAutoRelaunchUseCursorUi()
+                        SavePersistedListState(False)
+                        AppendLog($"Auto relaunch click step {rowIndex + 1} set to game {clientPoint.X},{clientPoint.Y}.")
+                    End If
+                End If
+            End If
+
+            _autoRelaunchRightMouseWasDown = rightDown
+        Catch ex As Exception
+            _isPickingAutoRelaunchClick = False
+            _autoRelaunchRightMouseWasDown = False
+            _pendingAutoRelaunchClickRowIndex = -1
+            UpdateAutoRelaunchUseCursorUi()
+            AppendLog("Auto relaunch click capture failed: " & ex.Message)
+        End Try
+    End Sub
+
+    Private Sub UpdateAutoRelaunchUseCursorUi()
+        If btnAutoRelaunchUseCursor Is Nothing Then
             Return
         End If
 
-        Dim row As DataGridViewRow = dgvAutoRelaunchClicks.Rows(rowIndex)
-        row.Cells("Enabled").Value = True
-        row.Cells("X").Value = cursorPoint.X.ToString()
-        row.Cells("Y").Value = cursorPoint.Y.ToString()
-        If String.IsNullOrWhiteSpace(If(row.Cells("Delay").Value, "").ToString()) Then
-            row.Cells("Delay").Value = If(rowIndex = 0, "15", "5")
-        End If
-        SavePersistedListState(False)
-        AppendLog($"Auto relaunch click step {rowIndex + 1} set to screen {cursorPoint.X},{cursorPoint.Y}.")
+        btnAutoRelaunchUseCursor.Text = If(_isPickingAutoRelaunchClick, "RIGHT click...", "Use Cursor")
+        btnAutoRelaunchUseCursor.BackColor = If(_isPickingAutoRelaunchClick, Color.FromArgb(175, 110, 30), Color.FromArgb(45, 95, 140))
     End Sub
 
     Private Sub AutoRelaunchClearClicksClicked(sender As Object, e As EventArgs)
+        _isPickingAutoRelaunchClick = False
+        _autoRelaunchRightMouseWasDown = False
+        _pendingAutoRelaunchClickRowIndex = -1
+        UpdateAutoRelaunchUseCursorUi()
         ResetAutoRelaunchClickGrid()
         SavePersistedListState(False)
         AppendLog("Auto relaunch post-launch clicks cleared.")
@@ -7845,7 +8049,7 @@ Public Class Form1
 
         dgvAutoRelaunchClicks.Rows.Clear()
         For i As Integer = 1 To 5
-            dgvAutoRelaunchClicks.Rows.Add(i.ToString(), False, "0", "0", If(i = 1, "15", "5"))
+            dgvAutoRelaunchClicks.Rows.Add(i.ToString(), False, "0", "0", If(i = 1, "15", "5"), "")
         Next
     End Sub
 
@@ -7884,17 +8088,19 @@ Public Class Form1
             Integer.TryParse(If(row.Cells("X").Value, "0").ToString(), x)
             Integer.TryParse(If(row.Cells("Y").Value, "0").ToString(), y)
             Decimal.TryParse(If(row.Cells("Delay").Value, "0").ToString(), delaySeconds)
+            Dim description As String = If(row.Cells("Description").Value, "").ToString().Trim()
 
             steps.Add(New PersistedAutoRelaunchClick With {
                 .Enabled = enabled,
                 .X = Math.Max(0, Math.Min(32767, x)),
                 .Y = Math.Max(0, Math.Min(32767, y)),
-                .DelaySeconds = Math.Max(0D, Math.Min(600D, delaySeconds))
+                .DelaySeconds = Math.Max(0D, Math.Min(600D, delaySeconds)),
+                .Description = description
             })
         Next
 
         While steps.Count < 5
-            steps.Add(New PersistedAutoRelaunchClick With {.Enabled = False, .X = 0, .Y = 0, .DelaySeconds = If(steps.Count = 0, 15D, 5D)})
+            steps.Add(New PersistedAutoRelaunchClick With {.Enabled = False, .X = 0, .Y = 0, .DelaySeconds = If(steps.Count = 0, 15D, 5D), .Description = ""})
         End While
         If steps.Count > 5 Then
             steps = steps.Take(5).ToList()
@@ -7910,7 +8116,8 @@ Public Class Form1
                 .Enabled = True,
                 .X = Math.Max(0, Math.Min(32767, stepInfo.X)),
                 .Y = Math.Max(0, Math.Min(32767, stepInfo.Y)),
-                .DelaySeconds = Math.Max(0D, Math.Min(600D, stepInfo.DelaySeconds))
+                .DelaySeconds = Math.Max(0D, Math.Min(600D, stepInfo.DelaySeconds)),
+                .Description = If(stepInfo.Description, "").Trim()
             }).
             ToList()
     End Function
@@ -7923,17 +8130,18 @@ Public Class Form1
         dgvAutoRelaunchClicks.Rows.Clear()
         Dim normalized As List(Of PersistedAutoRelaunchClick) = If(steps, New List(Of PersistedAutoRelaunchClick)())
         For i As Integer = 0 To 4
-            Dim stepInfo As PersistedAutoRelaunchClick = If(i < normalized.Count AndAlso normalized(i) IsNot Nothing, normalized(i), New PersistedAutoRelaunchClick With {.Enabled = False, .X = 0, .Y = 0, .DelaySeconds = If(i = 0, 15D, 5D)})
+            Dim stepInfo As PersistedAutoRelaunchClick = If(i < normalized.Count AndAlso normalized(i) IsNot Nothing, normalized(i), New PersistedAutoRelaunchClick With {.Enabled = False, .X = 0, .Y = 0, .DelaySeconds = If(i = 0, 15D, 5D), .Description = ""})
             dgvAutoRelaunchClicks.Rows.Add(
                 (i + 1).ToString(),
                 stepInfo.Enabled,
                 Math.Max(0, Math.Min(32767, stepInfo.X)).ToString(),
                 Math.Max(0, Math.Min(32767, stepInfo.Y)).ToString(),
-                Math.Max(0D, Math.Min(600D, stepInfo.DelaySeconds)).ToString("0.###"))
+                Math.Max(0D, Math.Min(600D, stepInfo.DelaySeconds)).ToString("0.###"),
+                If(stepInfo.Description, "").Trim())
         Next
     End Sub
 
-    Private Sub ExecuteAutoRelaunchClickSteps(steps As List(Of PersistedAutoRelaunchClick), trigger As String)
+    Private Sub ExecuteAutoRelaunchClickSteps(steps As List(Of PersistedAutoRelaunchClick), trigger As String, preferredHwnd As IntPtr, preferredTitle As String)
         If steps Is Nothing OrElse steps.Count = 0 Then
             Return
         End If
@@ -7947,12 +8155,23 @@ Public Class Form1
                 Thread.Sleep(delayMs)
             End If
 
-            If NativeMethods.SetCursorPos(stepInfo.X, stepInfo.Y) Then
+            Dim clickPoint As NativeMethods.POINT
+            Dim clickHwnd As IntPtr = ResolveAutoRelaunchClickWindow(preferredHwnd, preferredTitle)
+            Dim mappedToClient As Boolean = TryMapAutoRelaunchClientPointToScreen(clickHwnd, stepInfo.X, stepInfo.Y, clickPoint)
+            If Not mappedToClient Then
+                clickPoint = New NativeMethods.POINT With {.X = stepInfo.X, .Y = stepInfo.Y}
+            Else
+                EnsureAutoRelaunchClickWindowForeground(clickHwnd, i + 1)
+            End If
+
+            If NativeMethods.SetCursorPos(clickPoint.X, clickPoint.Y) Then
                 Thread.Sleep(80)
-                NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTDOWN, CUInt(stepInfo.X), CUInt(stepInfo.Y), 0UI, UIntPtr.Zero)
+                NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTDOWN, CUInt(clickPoint.X), CUInt(clickPoint.Y), 0UI, UIntPtr.Zero)
                 Thread.Sleep(70)
-                NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTUP, CUInt(stepInfo.X), CUInt(stepInfo.Y), 0UI, UIntPtr.Zero)
-                AppendLogSafe($"Auto relaunch post-launch click {i + 1} sent at {stepInfo.X},{stepInfo.Y} ({trigger}).")
+                NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTUP, CUInt(clickPoint.X), CUInt(clickPoint.Y), 0UI, UIntPtr.Zero)
+                Dim description As String = If(String.IsNullOrWhiteSpace(stepInfo.Description), "", $" [{stepInfo.Description.Trim()}]")
+                Dim coordinateNote As String = If(mappedToClient, $"game {stepInfo.X},{stepInfo.Y} -> screen {clickPoint.X},{clickPoint.Y}", $"screen {clickPoint.X},{clickPoint.Y}")
+                AppendLogSafe($"Auto relaunch post-launch click {i + 1}{description} sent at {coordinateNote} ({trigger}).")
             Else
                 AppendLogSafe($"Auto relaunch post-launch click {i + 1} skipped: SetCursorPos failed.")
             End If
@@ -7962,6 +8181,99 @@ Public Class Form1
             NativeMethods.SetCursorPos(previousCursor.X, previousCursor.Y)
         End If
     End Sub
+
+    Private Function ResolveAutoRelaunchClickWindow(preferredHwnd As IntPtr, preferredTitle As String) As IntPtr
+        If IsUsableClientWindow(preferredHwnd) Then
+            Return preferredHwnd
+        End If
+
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+        If selected IsNot Nothing AndAlso IsUsableClientWindow(selected.MainWindowHandle) Then
+            Return selected.MainWindowHandle
+        End If
+
+        Dim title As String = If(preferredTitle, "").Trim()
+        If title <> "" Then
+            Dim titleHwnd As IntPtr = NativeMethods.FindWindow(Nothing, title)
+            If IsUsableClientWindow(titleHwnd) Then
+                Return titleHwnd
+            End If
+        End If
+
+        Dim defaultHwnd As IntPtr = NativeMethods.FindWindow(Nothing, DefaultGameWindowTitle)
+        If IsUsableClientWindow(defaultHwnd) Then
+            Return defaultHwnd
+        End If
+
+        Return IntPtr.Zero
+    End Function
+
+    Private Sub EnsureAutoRelaunchClickWindowForeground(hwnd As IntPtr, stepNumber As Integer)
+        If hwnd = IntPtr.Zero Then
+            Return
+        End If
+
+        Try
+            If NativeMethods.IsIconic(hwnd) Then
+                NativeMethods.ShowWindow(hwnd, NativeMethods.SW_RESTORE)
+                Thread.Sleep(250)
+            End If
+
+            For attempt As Integer = 1 To 3
+                NativeMethods.SetForegroundWindow(hwnd)
+                Thread.Sleep(180)
+
+                Dim foreground As IntPtr = NativeMethods.GetForegroundWindow()
+                Dim foregroundRoot As IntPtr = If(foreground <> IntPtr.Zero, NativeMethods.GetAncestor(foreground, NativeMethods.GA_ROOT), IntPtr.Zero)
+                If foreground = hwnd OrElse foregroundRoot = hwnd Then
+                    Return
+                End If
+            Next
+
+            AppendLogSafe($"Auto relaunch post-launch click {stepNumber}: game window did not become foreground; clicking mapped game coordinates anyway.")
+        Catch ex As Exception
+            AppendLogSafe($"Auto relaunch post-launch click {stepNumber}: unable to foreground game window: {ex.Message}")
+        End Try
+    End Sub
+
+    Private Shared Function IsUsableClientWindow(hwnd As IntPtr) As Boolean
+        If hwnd = IntPtr.Zero Then
+            Return False
+        End If
+
+        Dim clientRect As NativeMethods.RECT
+        If Not NativeMethods.GetClientRect(hwnd, clientRect) Then
+            Return False
+        End If
+
+        Return (clientRect.Right - clientRect.Left) > 0 AndAlso (clientRect.Bottom - clientRect.Top) > 0
+    End Function
+
+    Private Shared Function TryMapAutoRelaunchClientPointToScreen(hwnd As IntPtr, clientX As Integer, clientY As Integer, ByRef screenPoint As NativeMethods.POINT) As Boolean
+        screenPoint = New NativeMethods.POINT With {.X = 0, .Y = 0}
+        If hwnd = IntPtr.Zero OrElse clientX < 0 OrElse clientY < 0 Then
+            Return False
+        End If
+
+        Dim clientRect As NativeMethods.RECT
+        If Not NativeMethods.GetClientRect(hwnd, clientRect) Then
+            Return False
+        End If
+
+        Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
+        Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
+        If clientX >= clientWidth OrElse clientY >= clientHeight Then
+            Return False
+        End If
+
+        Dim pt As New NativeMethods.POINT With {.X = clientX, .Y = clientY}
+        If Not NativeMethods.ClientToScreen(hwnd, pt) Then
+            Return False
+        End If
+
+        screenPoint = pt
+        Return True
+    End Function
 
     Private Sub ScheduleGameRelaunch(trigger As String, Optional stopRunningBots As Boolean = True, Optional force As Boolean = False)
         If (Not force) AndAlso Not IsAutoRelaunchGameEnabled() Then
@@ -7982,6 +8294,10 @@ Public Class Form1
         Dim now As DateTime = DateTime.UtcNow
         Dim delaySeconds As Integer = GetAutoRelaunchDelaySeconds()
         Dim postLaunchClicks As List(Of PersistedAutoRelaunchClick) = GetEnabledAutoRelaunchClickSteps()
+        Dim selectedForClicks As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+        Dim postLaunchClickHwnd As IntPtr = If(selectedForClicks IsNot Nothing, selectedForClicks.MainWindowHandle, IntPtr.Zero)
+        Dim postLaunchClickTitle As String = If(selectedForClicks IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(selectedForClicks.WindowTitle), selectedForClicks.WindowTitle.Trim(), GetSelectedWindowTitleForFallback(BotEdition.Full))
+        Dim restartEdition As BotEdition? = If(stopRunningBots, GetRunningEdition(), Nothing)
         Dim cooldownSeconds As Integer = Math.Max(30, delaySeconds + 10)
         If Not force Then
             If _autoRelaunchPending Then
@@ -8027,9 +8343,25 @@ Public Class Form1
                         End If
                     End If
 
-                    Process.Start(psi)
+                    Dim launchedProcess As Process = Process.Start(psi)
                     AppendLogSafe($"Auto relaunch started game ({trigger}).")
-                    ExecuteAutoRelaunchClickSteps(postLaunchClicks, trigger)
+                    If launchedProcess IsNot Nothing Then
+                        Try
+                            For attempt As Integer = 1 To 20
+                                launchedProcess.Refresh()
+                                If launchedProcess.MainWindowHandle <> IntPtr.Zero Then
+                                    postLaunchClickHwnd = launchedProcess.MainWindowHandle
+                                    Exit For
+                                End If
+                                Await Task.Delay(250)
+                            Next
+                        Catch
+                        End Try
+                    End If
+                    ExecuteAutoRelaunchClickSteps(postLaunchClicks, trigger, postLaunchClickHwnd, postLaunchClickTitle)
+                    If restartEdition.HasValue Then
+                        Await RestartEditionAfterAutoRelaunchAsync(restartEdition.Value, postLaunchClickHwnd, postLaunchClickTitle, trigger)
+                    End If
                 Catch ex As Exception
                     AppendLogSafe("Auto relaunch failed: " & ex.Message)
                 Finally
@@ -8037,6 +8369,89 @@ Public Class Form1
                 End Try
             End Function)
     End Sub
+
+    Private Async Function RestartEditionAfterAutoRelaunchAsync(edition As BotEdition, preferredHwnd As IntPtr, preferredTitle As String, trigger As String) As Task
+        AppendLogSafe($"Auto relaunch waiting for game to be ready before restarting {edition}.")
+
+        Dim readyHwnd As IntPtr = Await WaitForAutoRelaunchReadyWindowAsync(preferredHwnd, preferredTitle, TimeSpan.FromSeconds(90))
+        If readyHwnd = IntPtr.Zero Then
+            AppendLogSafe($"Auto relaunch did not restart {edition}: game window was not capture-ready after relaunch.")
+            Return
+        End If
+
+        If IsDisposed OrElse Not IsHandleCreated Then
+            Return
+        End If
+
+        BeginInvoke(New Action(
+            Sub()
+                Try
+                    RefreshProcessWindowList(False, readyHwnd)
+                    SyncProcessSelectionAcrossLists(readyHwnd)
+                    UpdateSelectedProcessDisplay(GetSelectedProcessWindowForEdition(edition))
+                    If IsEditionRunning(edition) Then
+                        AppendLog($"Auto relaunch restart skipped: {edition} is already running.")
+                        Return
+                    End If
+
+                    AppendLog($"Auto relaunch restarting {edition} after {trigger}.")
+                    StartEdition(edition, False)
+                Catch ex As Exception
+                    AppendLog("Auto relaunch restart failed: " & ex.Message)
+                End Try
+            End Sub))
+    End Function
+
+    Private Async Function WaitForAutoRelaunchReadyWindowAsync(preferredHwnd As IntPtr, preferredTitle As String, timeout As TimeSpan) As Task(Of IntPtr)
+        Dim deadline As DateTime = DateTime.UtcNow.Add(timeout)
+        Dim lastLogUtc As DateTime = DateTime.MinValue
+
+        Do
+            Dim hwnd As IntPtr = ResolveAutoRelaunchRestartWindow(preferredHwnd, preferredTitle)
+            If hwnd <> IntPtr.Zero Then
+                Using frame As Bitmap = BotEngine.CaptureClient(hwnd)
+                    If frame IsNot Nothing AndAlso frame.Width > 10 AndAlso frame.Height > 10 Then
+                        Return hwnd
+                    End If
+                End Using
+            End If
+
+            If lastLogUtc = DateTime.MinValue OrElse (DateTime.UtcNow - lastLogUtc).TotalSeconds >= 10 Then
+                AppendLogSafe("Auto relaunch restart waiting: game capture is not ready yet.")
+                lastLogUtc = DateTime.UtcNow
+            End If
+
+            Await Task.Delay(1000)
+        Loop While DateTime.UtcNow < deadline
+
+        Return IntPtr.Zero
+    End Function
+
+    Private Function ResolveAutoRelaunchRestartWindow(preferredHwnd As IntPtr, preferredTitle As String) As IntPtr
+        If IsUsableClientWindow(preferredHwnd) Then
+            Return preferredHwnd
+        End If
+
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+        If selected IsNot Nothing AndAlso IsUsableClientWindow(selected.MainWindowHandle) Then
+            Return selected.MainWindowHandle
+        End If
+
+        Dim title As String = If(preferredTitle, "").Trim()
+        If title <> "" Then
+            Dim titleHwnd As IntPtr = NativeMethods.FindWindow(Nothing, title)
+            If IsUsableClientWindow(titleHwnd) Then
+                Return titleHwnd
+            End If
+        End If
+
+        Dim defaultHwnd As IntPtr = NativeMethods.FindWindow(Nothing, DefaultGameWindowTitle)
+        If IsUsableClientWindow(defaultHwnd) Then
+            Return defaultHwnd
+        End If
+
+        Return IntPtr.Zero
+    End Function
 
     Private Sub HandleGameDisconnectedAlert(status As BotStatus)
         If status Is Nothing Then
@@ -8047,6 +8462,7 @@ Public Class Form1
             If Not _gameDisconnectedNotificationLatched Then
                 _gameDisconnectedNotificationLatched = True
                 AppendLog($"Game disconnect detected. Sending alert via {GetNotificationDestinationSummary()}.")
+                TryClickDisconnectOkBeforeRelaunch()
                 ScheduleGameRelaunch("server disconnect")
                 Task.Run(
                     Async Function()
@@ -8065,6 +8481,78 @@ Public Class Form1
             _gameDisconnectedNotificationLatched = False
             AppendLog("Game disconnect alert reset.")
         End If
+    End Sub
+
+    Private Sub TryClickDisconnectOkBeforeRelaunch()
+        Try
+            Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+            If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
+                AppendLog("Disconnect OK skipped: select a Full game process window first.")
+                Return
+            End If
+
+            Dim cfg As BotConfig = BuildConfig()
+            Dim okRegion As RectRegion = If(cfg.DisconnectOkRect, BotConfig.DefaultDisconnectOkRect())
+            Dim clientRect As NativeMethods.RECT
+            If Not NativeMethods.GetClientRect(selected.MainWindowHandle, clientRect) Then
+                AppendLog("Disconnect OK skipped: game client rect unavailable.")
+                Return
+            End If
+
+            Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
+            Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
+            Dim rect As Rectangle = okRegion.Clamp(clientWidth, clientHeight)
+            If rect.Width <= 0 OrElse rect.Height <= 0 Then
+                AppendLog("Disconnect OK skipped: OK rectangle is outside the game client.")
+                Return
+            End If
+
+            Dim clientX As Integer = rect.Left + (rect.Width \ 2)
+            Dim clientY As Integer = rect.Top + (rect.Height \ 2)
+            Dim screenPoint As New NativeMethods.POINT With {.X = clientX, .Y = clientY}
+            If Not NativeMethods.ClientToScreen(selected.MainWindowHandle, screenPoint) Then
+                AppendLog("Disconnect OK skipped: unable to map OK rectangle to screen.")
+                Return
+            End If
+
+            Dim previousCursor As NativeMethods.POINT
+            Dim hadCursor As Boolean = NativeMethods.GetCursorPos(previousCursor)
+            Dim clicked As Boolean = False
+            Try
+                For attempt As Integer = 1 To 3
+                    NativeMethods.SetForegroundWindow(selected.MainWindowHandle)
+                    Thread.Sleep(180)
+                    If Not NativeMethods.SetCursorPos(screenPoint.X, screenPoint.Y) Then
+                        Continue For
+                    End If
+
+                    Thread.Sleep(80)
+                    NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTDOWN, CUInt(screenPoint.X), CUInt(screenPoint.Y), 0UI, UIntPtr.Zero)
+                    Thread.Sleep(90)
+                    NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTUP, CUInt(screenPoint.X), CUInt(screenPoint.Y), 0UI, UIntPtr.Zero)
+                    clicked = True
+                    Thread.Sleep(220)
+
+                    If attempt = 1 Then
+                        BotEngine.ClickClientRegionCenter(selected.MainWindowHandle, okRegion, clientWidth, clientHeight)
+                    End If
+                Next
+
+                BotEngine.SendKey(selected.MainWindowHandle, "ENTER", 60, True)
+            Finally
+                If hadCursor Then
+                    NativeMethods.SetCursorPos(previousCursor.X, previousCursor.Y)
+                End If
+            End Try
+
+            If clicked Then
+                AppendLog($"Disconnect OK physical click sent at game {clientX},{clientY} -> screen {screenPoint.X},{screenPoint.Y}.")
+            Else
+                AppendLog("Disconnect OK click failed.")
+            End If
+        Catch ex As Exception
+            AppendLog("Disconnect OK click failed: " & ex.Message)
+        End Try
     End Sub
 
     Private Sub HandleWindowMissingAlarm(status As BotStatus)
@@ -8482,6 +8970,7 @@ Public Class Form1
         cfg.PartyInviteOkRect = BuildRect("party_invite_ok_rect")
         cfg.PartyListRect = BuildRect("party_list_rect")
         cfg.DisconnectMessageRect = BuildRectOrFallback("disconnect_message_rect", BotConfig.DefaultDisconnectMessageRect())
+        cfg.DisconnectOkRect = BuildRectOrFallback("disconnect_ok_rect", BotConfig.DefaultDisconnectOkRect())
         cfg.MapRect = BuildRectOrFallback("map_rect", New RectRegion(0, 0, 1024, 768))
         Dim legacyMapCoordinateRect As RectRegion = BuildRectOrFallback("map_coordinate_rect", BotConfig.DefaultMapCoordinateRect())
         cfg.MapCoordinateXRect = BuildRectOrFallback("map_coordinate_x_rect", BotConfig.SplitMapCoordinateRect(legacyMapCoordinateRect, True))
@@ -9837,6 +10326,7 @@ Public Class Form1
         UpsertRegionRow("party_invite_ok_rect", cfg.PartyInviteOkRect)
         UpsertRegionRow("party_list_rect", cfg.PartyListRect)
         UpsertRegionRow("disconnect_message_rect", If(cfg.DisconnectMessageRect, BotConfig.DefaultDisconnectMessageRect()))
+        UpsertRegionRow("disconnect_ok_rect", If(cfg.DisconnectOkRect, BotConfig.DefaultDisconnectOkRect()))
         RemoveRegionRow("map_rect")
         Dim mapCoordinateXRect As RectRegion = ResolveMapCoordinateXRect(cfg)
         Dim mapCoordinateYRect As RectRegion = ResolveMapCoordinateYRect(cfg)
