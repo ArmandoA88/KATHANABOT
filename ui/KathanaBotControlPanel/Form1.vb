@@ -81,6 +81,7 @@ Public Class Form1
     Private _combatTab As TabPage
     Private _visionTab As TabPage
     Private _autoPotTab As TabPage
+    Private _autoRelaunchTab As TabPage
     Private _autoLootTab As TabPage
     Private _levelingTab As TabPage
     Private _holdPlaceTab As TabPage
@@ -275,6 +276,13 @@ Public Class Form1
     Private lblNtfyItemTopic As Label
     Private txtStatsNtfyTopic As TextBox
     Private lblNtfyStatsTopic As Label
+    Private chkAutoRelaunchGame As CheckBox
+    Private txtAutoRelaunchExePath As TextBox
+    Private btnBrowseAutoRelaunchExe As Button
+    Private nudAutoRelaunchDelaySeconds As NumericUpDown
+    Private dgvAutoRelaunchClicks As DataGridView
+    Private btnAutoRelaunchUseCursor As Button
+    Private btnAutoRelaunchClearClicks As Button
     Private btnHelp As Button
     Private nudPartyAskSeconds As NumericUpDown
     Private txtPartyAskText As TextBox
@@ -355,6 +363,8 @@ Public Class Form1
     Private _deathNotificationLatched As Boolean = False
     Private _windowMissingNotificationLatched As Boolean = False
     Private _gameDisconnectedNotificationLatched As Boolean = False
+    Private _autoRelaunchPending As Boolean = False
+    Private _lastAutoRelaunchAttemptUtc As DateTime = DateTime.MinValue
     Private _ctrlShiftWasDown As Boolean = False
     Private _isPickingLootRejectPoint As Boolean = False
     Private _isPickingLootNamePickupPoint As Boolean = False
@@ -588,6 +598,10 @@ Public Class Form1
         Public Property NtfyTopic As String = ""
         Public Property StatsNtfyTopic As String = ""
         Public Property StatsNtfyIntervalMinutes As Decimal = 30D
+        Public Property AutoRelaunchGameEnabled As Boolean = False
+        Public Property AutoRelaunchGameExePath As String = ""
+        Public Property AutoRelaunchDelaySeconds As Decimal = 5D
+        Public Property AutoRelaunchClicks As List(Of PersistedAutoRelaunchClick) = New List(Of PersistedAutoRelaunchClick)()
         Public Property AutoPotHpPercent As Decimal = 80D
         Public Property AutoPotMpPercent As Decimal = 35D
         Public Property AlarmVolumePercent As Integer = 85
@@ -595,6 +609,13 @@ Public Class Form1
         Public Property MonsterNames As List(Of String) = New List(Of String)()
         Public Property LootNames As List(Of String) = New List(Of String)()
         Public Property CombatActions As List(Of PersistedCombatAction) = New List(Of PersistedCombatAction)()
+    End Class
+
+    Private Class PersistedAutoRelaunchClick
+        Public Property Enabled As Boolean = False
+        Public Property X As Integer = 0
+        Public Property Y As Integer = 0
+        Public Property DelaySeconds As Decimal = 5D
     End Class
 
     Private Class PersistedLiteState
@@ -752,6 +773,25 @@ Public Class Form1
         If nudStatsNtfyIntervalMinutes IsNot Nothing Then
             AddHandler nudStatsNtfyIntervalMinutes.ValueChanged, AddressOf LiveConfigChanged
             AddHandler nudStatsNtfyIntervalMinutes.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If chkAutoRelaunchGame IsNot Nothing Then
+            AddHandler chkAutoRelaunchGame.CheckedChanged, AddressOf PersistListSettingsChanged
+        End If
+        If txtAutoRelaunchExePath IsNot Nothing Then
+            AddHandler txtAutoRelaunchExePath.TextChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudAutoRelaunchDelaySeconds IsNot Nothing Then
+            AddHandler nudAutoRelaunchDelaySeconds.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If dgvAutoRelaunchClicks IsNot Nothing Then
+            AddHandler dgvAutoRelaunchClicks.CellValueChanged, AddressOf PersistListSettingsChanged
+            AddHandler dgvAutoRelaunchClicks.CellEndEdit, AddressOf PersistListSettingsChanged
+            AddHandler dgvAutoRelaunchClicks.CurrentCellDirtyStateChanged,
+                Sub(_s As Object, _e As EventArgs)
+                    If dgvAutoRelaunchClicks.IsCurrentCellDirty Then
+                        dgvAutoRelaunchClicks.CommitEdit(DataGridViewDataErrorContexts.Commit)
+                    End If
+                End Sub
         End If
         If txtLootScanAreaPoints IsNot Nothing Then
             AddHandler txtLootScanAreaPoints.TextChanged, AddressOf LiveConfigChanged
@@ -1853,7 +1893,7 @@ Public Class Form1
             .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold),
             .DrawMode = TabDrawMode.OwnerDrawFixed,
             .SizeMode = TabSizeMode.Fixed,
-            .ItemSize = New Size(180, 42)
+            .ItemSize = New Size(145, 42)
         }
         AddHandler _mainTabs.DrawItem, AddressOf MainTabsDrawItem
         AddHandler _mainTabs.SelectedIndexChanged, AddressOf MainTabsSelectedIndexChanged
@@ -1871,10 +1911,12 @@ Public Class Form1
         _combatTab = BuildCombatTab()
         _visionTab = BuildVisionTab()
         _autoPotTab = BuildAutoPotTab()
+        _autoRelaunchTab = BuildAutoRelaunchTab()
         _mainTabs.TabPages.Add(_liteTab)
         _mainTabs.TabPages.Add(_combatTab)
         _mainTabs.TabPages.Add(_visionTab)
         _mainTabs.TabPages.Add(_autoPotTab)
+        _mainTabs.TabPages.Add(_autoRelaunchTab)
         _autoLootTab = BuildAutoLootTab()
         _mainTabs.TabPages.Add(_autoLootTab)
         _levelingTab = BuildLevelingTab()
@@ -3117,6 +3159,100 @@ Public Class Form1
         tab.Controls.Add(root)
         AddTabExplanationButton(tab, HelpScopeAutoPot)
         Return tab
+    End Function
+
+    Private Function BuildAutoRelaunchTab() As TabPage
+        Dim tab As New TabPage("Auto Relaunch") With {.BackColor = Color.FromArgb(20, 20, 20)}
+        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 1, .Padding = New Padding(12)}
+        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        root.Controls.Add(BuildAutoRelaunchGroup(), 0, 0)
+        tab.Controls.Add(root)
+        Return tab
+    End Function
+
+    Private Function BuildAutoRelaunchGroup() As GroupBox
+        Dim group As New GroupBox() With {.Text = "Auto Relaunch Game", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 7}
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 130.0F))
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 48.0F))
+
+        chkAutoRelaunchGame = New CheckBox() With {.Text = "Enable when game closes, crashes, or disconnects", .Dock = DockStyle.Fill, .Checked = False}
+        layout.Controls.Add(chkAutoRelaunchGame, 0, 0)
+        layout.SetColumnSpan(chkAutoRelaunchGame, 2)
+
+        layout.Controls.Add(New Label() With {.Text = "Game EXE", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
+        Dim pathPanel As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1, .Margin = New Padding(0)}
+        pathPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        pathPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 84.0F))
+        txtAutoRelaunchExePath = New TextBox() With {.Dock = DockStyle.Fill}
+        btnBrowseAutoRelaunchExe = New Button() With {.Text = "Browse", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(45, 95, 140), .ForeColor = Color.White}
+        AddHandler btnBrowseAutoRelaunchExe.Click, AddressOf BrowseAutoRelaunchExeClicked
+        pathPanel.Controls.Add(txtAutoRelaunchExePath, 0, 0)
+        pathPanel.Controls.Add(btnBrowseAutoRelaunchExe, 1, 0)
+        layout.Controls.Add(pathPanel, 1, 1)
+
+        layout.Controls.Add(New Label() With {.Text = "Delay Seconds", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
+        nudAutoRelaunchDelaySeconds = New NumericUpDown() With {.Minimum = 0D, .Maximum = 300D, .Value = 5D, .Dock = DockStyle.Left, .Width = 100}
+        layout.Controls.Add(nudAutoRelaunchDelaySeconds, 1, 2)
+
+        Dim btnTestRelaunch As New Button() With {.Text = "Test Launch", .Width = 110, .Height = 30, .BackColor = Color.FromArgb(42, 120, 80), .ForeColor = Color.White}
+        AddHandler btnTestRelaunch.Click, AddressOf TestAutoRelaunchClicked
+        layout.Controls.Add(btnTestRelaunch, 1, 3)
+
+        dgvAutoRelaunchClicks = New DataGridView() With {
+            .Dock = DockStyle.Fill,
+            .AllowUserToAddRows = False,
+            .AllowUserToDeleteRows = False,
+            .AllowUserToResizeRows = False,
+            .RowHeadersVisible = False,
+            .SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            .MultiSelect = False,
+            .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+            .BackgroundColor = Color.FromArgb(24, 24, 24),
+            .BorderStyle = BorderStyle.FixedSingle,
+            .ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
+            .ColumnHeadersHeight = 24
+        }
+        dgvAutoRelaunchClicks.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Step", .HeaderText = "#", .FillWeight = 32.0F, .ReadOnly = True})
+        dgvAutoRelaunchClicks.Columns.Add(New DataGridViewCheckBoxColumn() With {.Name = "Enabled", .HeaderText = "On", .FillWeight = 42.0F})
+        dgvAutoRelaunchClicks.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "X", .HeaderText = "Screen X", .FillWeight = 72.0F})
+        dgvAutoRelaunchClicks.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Y", .HeaderText = "Screen Y", .FillWeight = 72.0F})
+        dgvAutoRelaunchClicks.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Delay", .HeaderText = "Delay s", .FillWeight = 72.0F})
+        For i As Integer = 1 To 5
+            dgvAutoRelaunchClicks.Rows.Add(i.ToString(), False, "0", "0", If(i = 1, "15", "5"))
+        Next
+        layout.Controls.Add(dgvAutoRelaunchClicks, 0, 4)
+        layout.SetColumnSpan(dgvAutoRelaunchClicks, 2)
+
+        Dim clickButtonRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(0)}
+        btnAutoRelaunchUseCursor = New Button() With {.Text = "Use Cursor", .Width = 98, .Height = 28, .BackColor = Color.FromArgb(45, 95, 140), .ForeColor = Color.White}
+        AddHandler btnAutoRelaunchUseCursor.Click, AddressOf AutoRelaunchUseCursorClicked
+        btnAutoRelaunchClearClicks = New Button() With {.Text = "Clear Clicks", .Width = 98, .Height = 28, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
+        AddHandler btnAutoRelaunchClearClicks.Click, AddressOf AutoRelaunchClearClicksClicked
+        clickButtonRow.Controls.Add(btnAutoRelaunchUseCursor)
+        clickButtonRow.Controls.Add(btnAutoRelaunchClearClicks)
+        layout.Controls.Add(clickButtonRow, 0, 5)
+        layout.SetColumnSpan(clickButtonRow, 2)
+
+        Dim note As New Label() With {
+            .Text = "Post-launch clicks use screen coordinates after each row's delay. Use Cursor fills the selected row with the current mouse position.",
+            .Dock = DockStyle.Fill,
+            .ForeColor = Color.LightSteelBlue,
+            .TextAlign = ContentAlignment.TopLeft
+        }
+        layout.Controls.Add(note, 0, 6)
+        layout.SetColumnSpan(note, 2)
+
+        group.Controls.Add(layout)
+        Return group
     End Function
 
     Private Function BuildAutoPotUnstuckGroup() As GroupBox
@@ -4408,6 +4544,16 @@ Public Class Form1
         If txtDiscordStatsWebhookUrl IsNot Nothing Then
             txtDiscordStatsWebhookUrl.Text = ""
         End If
+        If chkAutoRelaunchGame IsNot Nothing Then
+            chkAutoRelaunchGame.Checked = False
+        End If
+        If txtAutoRelaunchExePath IsNot Nothing Then
+            txtAutoRelaunchExePath.Text = ""
+        End If
+        If nudAutoRelaunchDelaySeconds IsNot Nothing Then
+            nudAutoRelaunchDelaySeconds.Value = 5D
+        End If
+        ResetAutoRelaunchClickGrid()
         If nudPartyAskSeconds IsNot Nothing Then
             nudPartyAskSeconds.Value = 30
         End If
@@ -4571,6 +4717,16 @@ Public Class Form1
                     dgvRegions.CommitEdit(DataGridViewDataErrorContexts.Commit)
                 End If
                 dgvRegions.EndEdit()
+            Catch
+            End Try
+        End If
+
+        If dgvAutoRelaunchClicks IsNot Nothing Then
+            Try
+                If dgvAutoRelaunchClicks.IsCurrentCellDirty Then
+                    dgvAutoRelaunchClicks.CommitEdit(DataGridViewDataErrorContexts.Commit)
+                End If
+                dgvAutoRelaunchClicks.EndEdit()
             Catch
             End Try
         End If
@@ -7617,6 +7773,271 @@ Public Class Form1
                (DateTime.UtcNow - firstSeenUtc).TotalMilliseconds >= CriticalAlertConfirmMs
     End Function
 
+    Private Sub BrowseAutoRelaunchExeClicked(sender As Object, e As EventArgs)
+        Using dialog As New OpenFileDialog()
+            dialog.Title = "Select game executable"
+            dialog.Filter = "Launch files (*.exe;*.lnk;*.url;*.bat;*.cmd)|*.exe;*.lnk;*.url;*.bat;*.cmd|All files (*.*)|*.*"
+            dialog.CheckFileExists = True
+            dialog.Multiselect = False
+            If txtAutoRelaunchExePath IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(txtAutoRelaunchExePath.Text) Then
+                Try
+                    Dim currentPath As String = txtAutoRelaunchExePath.Text.Trim()
+                    Dim currentDir As String = Path.GetDirectoryName(currentPath)
+                    If Not String.IsNullOrWhiteSpace(currentDir) AndAlso Directory.Exists(currentDir) Then
+                        dialog.InitialDirectory = currentDir
+                    End If
+                    dialog.FileName = Path.GetFileName(currentPath)
+                Catch
+                End Try
+            End If
+
+            If dialog.ShowDialog(Me) = DialogResult.OK Then
+                txtAutoRelaunchExePath.Text = dialog.FileName
+                If chkAutoRelaunchGame IsNot Nothing Then
+                    chkAutoRelaunchGame.Checked = True
+                End If
+                SavePersistedListState(False)
+            End If
+        End Using
+    End Sub
+
+    Private Sub TestAutoRelaunchClicked(sender As Object, e As EventArgs)
+        ScheduleGameRelaunch("manual test", stopRunningBots:=False, force:=True)
+    End Sub
+
+    Private Sub AutoRelaunchUseCursorClicked(sender As Object, e As EventArgs)
+        If dgvAutoRelaunchClicks Is Nothing Then
+            Return
+        End If
+
+        Dim rowIndex As Integer = If(dgvAutoRelaunchClicks.CurrentCell IsNot Nothing, dgvAutoRelaunchClicks.CurrentCell.RowIndex, 0)
+        If rowIndex < 0 OrElse rowIndex >= dgvAutoRelaunchClicks.Rows.Count Then
+            rowIndex = 0
+        End If
+
+        Dim cursorPoint As NativeMethods.POINT
+        If Not NativeMethods.GetCursorPos(cursorPoint) Then
+            AppendLog("Auto relaunch click setup failed: unable to read cursor position.")
+            Return
+        End If
+
+        Dim row As DataGridViewRow = dgvAutoRelaunchClicks.Rows(rowIndex)
+        row.Cells("Enabled").Value = True
+        row.Cells("X").Value = cursorPoint.X.ToString()
+        row.Cells("Y").Value = cursorPoint.Y.ToString()
+        If String.IsNullOrWhiteSpace(If(row.Cells("Delay").Value, "").ToString()) Then
+            row.Cells("Delay").Value = If(rowIndex = 0, "15", "5")
+        End If
+        SavePersistedListState(False)
+        AppendLog($"Auto relaunch click step {rowIndex + 1} set to screen {cursorPoint.X},{cursorPoint.Y}.")
+    End Sub
+
+    Private Sub AutoRelaunchClearClicksClicked(sender As Object, e As EventArgs)
+        ResetAutoRelaunchClickGrid()
+        SavePersistedListState(False)
+        AppendLog("Auto relaunch post-launch clicks cleared.")
+    End Sub
+
+    Private Sub ResetAutoRelaunchClickGrid()
+        If dgvAutoRelaunchClicks Is Nothing Then
+            Return
+        End If
+
+        dgvAutoRelaunchClicks.Rows.Clear()
+        For i As Integer = 1 To 5
+            dgvAutoRelaunchClicks.Rows.Add(i.ToString(), False, "0", "0", If(i = 1, "15", "5"))
+        Next
+    End Sub
+
+    Private Function IsAutoRelaunchGameEnabled() As Boolean
+        Return chkAutoRelaunchGame IsNot Nothing AndAlso chkAutoRelaunchGame.Checked
+    End Function
+
+    Private Function GetAutoRelaunchGamePath() As String
+        Return If(txtAutoRelaunchExePath IsNot Nothing, txtAutoRelaunchExePath.Text.Trim(), "")
+    End Function
+
+    Private Function GetAutoRelaunchDelaySeconds() As Integer
+        If nudAutoRelaunchDelaySeconds Is Nothing Then
+            Return 5
+        End If
+        Return CInt(Math.Max(nudAutoRelaunchDelaySeconds.Minimum, Math.Min(nudAutoRelaunchDelaySeconds.Maximum, nudAutoRelaunchDelaySeconds.Value)))
+    End Function
+
+    Private Function GetAutoRelaunchClickSteps() As List(Of PersistedAutoRelaunchClick)
+        Dim steps As New List(Of PersistedAutoRelaunchClick)()
+        If dgvAutoRelaunchClicks Is Nothing Then
+            Return steps
+        End If
+
+        For Each row As DataGridViewRow In dgvAutoRelaunchClicks.Rows
+            If row Is Nothing OrElse row.IsNewRow Then
+                Continue For
+            End If
+
+            Dim enabled As Boolean = False
+            Boolean.TryParse(If(row.Cells("Enabled").Value, "False").ToString(), enabled)
+
+            Dim x As Integer = 0
+            Dim y As Integer = 0
+            Dim delaySeconds As Decimal = 0D
+            Integer.TryParse(If(row.Cells("X").Value, "0").ToString(), x)
+            Integer.TryParse(If(row.Cells("Y").Value, "0").ToString(), y)
+            Decimal.TryParse(If(row.Cells("Delay").Value, "0").ToString(), delaySeconds)
+
+            steps.Add(New PersistedAutoRelaunchClick With {
+                .Enabled = enabled,
+                .X = Math.Max(0, Math.Min(32767, x)),
+                .Y = Math.Max(0, Math.Min(32767, y)),
+                .DelaySeconds = Math.Max(0D, Math.Min(600D, delaySeconds))
+            })
+        Next
+
+        While steps.Count < 5
+            steps.Add(New PersistedAutoRelaunchClick With {.Enabled = False, .X = 0, .Y = 0, .DelaySeconds = If(steps.Count = 0, 15D, 5D)})
+        End While
+        If steps.Count > 5 Then
+            steps = steps.Take(5).ToList()
+        End If
+
+        Return steps
+    End Function
+
+    Private Function GetEnabledAutoRelaunchClickSteps() As List(Of PersistedAutoRelaunchClick)
+        Return GetAutoRelaunchClickSteps().
+            Where(Function(stepInfo) stepInfo IsNot Nothing AndAlso stepInfo.Enabled).
+            Select(Function(stepInfo) New PersistedAutoRelaunchClick With {
+                .Enabled = True,
+                .X = Math.Max(0, Math.Min(32767, stepInfo.X)),
+                .Y = Math.Max(0, Math.Min(32767, stepInfo.Y)),
+                .DelaySeconds = Math.Max(0D, Math.Min(600D, stepInfo.DelaySeconds))
+            }).
+            ToList()
+    End Function
+
+    Private Sub ApplyAutoRelaunchClickSteps(steps As List(Of PersistedAutoRelaunchClick))
+        If dgvAutoRelaunchClicks Is Nothing Then
+            Return
+        End If
+
+        dgvAutoRelaunchClicks.Rows.Clear()
+        Dim normalized As List(Of PersistedAutoRelaunchClick) = If(steps, New List(Of PersistedAutoRelaunchClick)())
+        For i As Integer = 0 To 4
+            Dim stepInfo As PersistedAutoRelaunchClick = If(i < normalized.Count AndAlso normalized(i) IsNot Nothing, normalized(i), New PersistedAutoRelaunchClick With {.Enabled = False, .X = 0, .Y = 0, .DelaySeconds = If(i = 0, 15D, 5D)})
+            dgvAutoRelaunchClicks.Rows.Add(
+                (i + 1).ToString(),
+                stepInfo.Enabled,
+                Math.Max(0, Math.Min(32767, stepInfo.X)).ToString(),
+                Math.Max(0, Math.Min(32767, stepInfo.Y)).ToString(),
+                Math.Max(0D, Math.Min(600D, stepInfo.DelaySeconds)).ToString("0.###"))
+        Next
+    End Sub
+
+    Private Sub ExecuteAutoRelaunchClickSteps(steps As List(Of PersistedAutoRelaunchClick), trigger As String)
+        If steps Is Nothing OrElse steps.Count = 0 Then
+            Return
+        End If
+
+        Dim previousCursor As NativeMethods.POINT
+        Dim hadCursor As Boolean = NativeMethods.GetCursorPos(previousCursor)
+        For i As Integer = 0 To steps.Count - 1
+            Dim stepInfo As PersistedAutoRelaunchClick = steps(i)
+            Dim delayMs As Integer = CInt(Math.Min(600000D, Math.Max(0D, stepInfo.DelaySeconds) * 1000D))
+            If delayMs > 0 Then
+                Thread.Sleep(delayMs)
+            End If
+
+            If NativeMethods.SetCursorPos(stepInfo.X, stepInfo.Y) Then
+                Thread.Sleep(80)
+                NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTDOWN, CUInt(stepInfo.X), CUInt(stepInfo.Y), 0UI, UIntPtr.Zero)
+                Thread.Sleep(70)
+                NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTUP, CUInt(stepInfo.X), CUInt(stepInfo.Y), 0UI, UIntPtr.Zero)
+                AppendLogSafe($"Auto relaunch post-launch click {i + 1} sent at {stepInfo.X},{stepInfo.Y} ({trigger}).")
+            Else
+                AppendLogSafe($"Auto relaunch post-launch click {i + 1} skipped: SetCursorPos failed.")
+            End If
+        Next
+
+        If hadCursor Then
+            NativeMethods.SetCursorPos(previousCursor.X, previousCursor.Y)
+        End If
+    End Sub
+
+    Private Sub ScheduleGameRelaunch(trigger As String, Optional stopRunningBots As Boolean = True, Optional force As Boolean = False)
+        If (Not force) AndAlso Not IsAutoRelaunchGameEnabled() Then
+            Return
+        End If
+
+        Dim launchPath As String = GetAutoRelaunchGamePath()
+        If String.IsNullOrWhiteSpace(launchPath) Then
+            AppendLog("Auto relaunch skipped: choose the game EXE path first.")
+            Return
+        End If
+
+        If Not File.Exists(launchPath) Then
+            AppendLog($"Auto relaunch skipped: launch path does not exist: {launchPath}")
+            Return
+        End If
+
+        Dim now As DateTime = DateTime.UtcNow
+        Dim delaySeconds As Integer = GetAutoRelaunchDelaySeconds()
+        Dim postLaunchClicks As List(Of PersistedAutoRelaunchClick) = GetEnabledAutoRelaunchClickSteps()
+        Dim cooldownSeconds As Integer = Math.Max(30, delaySeconds + 10)
+        If Not force Then
+            If _autoRelaunchPending Then
+                Return
+            End If
+            If _lastAutoRelaunchAttemptUtc <> DateTime.MinValue AndAlso (now - _lastAutoRelaunchAttemptUtc).TotalSeconds < cooldownSeconds Then
+                Return
+            End If
+        End If
+
+        _autoRelaunchPending = True
+        _lastAutoRelaunchAttemptUtc = now
+
+        If stopRunningBots Then
+            If _fullEngine.IsRunning() Then
+                StopEdition(BotEdition.Full, False, $"auto relaunch: {trigger}")
+            End If
+            If _liteEngine.IsRunning() Then
+                StopEdition(BotEdition.Lite, False, $"auto relaunch: {trigger}")
+            End If
+        End If
+
+        AppendLog($"Auto relaunch scheduled after {delaySeconds}s ({trigger}): {launchPath}")
+        If postLaunchClicks.Count > 0 Then
+            AppendLog($"Auto relaunch will run {postLaunchClicks.Count} post-launch click step(s).")
+        End If
+        Task.Run(
+            Async Function()
+                Try
+                    If delaySeconds > 0 Then
+                        Await Task.Delay(TimeSpan.FromSeconds(delaySeconds))
+                    End If
+
+                    Dim psi As New ProcessStartInfo() With {
+                        .FileName = launchPath,
+                        .UseShellExecute = True
+                    }
+                    Dim extension As String = Path.GetExtension(launchPath)
+                    If extension.Equals(".exe", StringComparison.OrdinalIgnoreCase) Then
+                        Dim workingDir As String = Path.GetDirectoryName(launchPath)
+                        If Not String.IsNullOrWhiteSpace(workingDir) AndAlso Directory.Exists(workingDir) Then
+                            psi.WorkingDirectory = workingDir
+                        End If
+                    End If
+
+                    Process.Start(psi)
+                    AppendLogSafe($"Auto relaunch started game ({trigger}).")
+                    ExecuteAutoRelaunchClickSteps(postLaunchClicks, trigger)
+                Catch ex As Exception
+                    AppendLogSafe("Auto relaunch failed: " & ex.Message)
+                Finally
+                    _autoRelaunchPending = False
+                End Try
+            End Function)
+    End Sub
+
     Private Sub HandleGameDisconnectedAlert(status As BotStatus)
         If status Is Nothing Then
             Return
@@ -7626,6 +8047,7 @@ Public Class Form1
             If Not _gameDisconnectedNotificationLatched Then
                 _gameDisconnectedNotificationLatched = True
                 AppendLog($"Game disconnect detected. Sending alert via {GetNotificationDestinationSummary()}.")
+                ScheduleGameRelaunch("server disconnect")
                 Task.Run(
                     Async Function()
                         Dim sent As Boolean = Await SendPhoneNotificationAsync("KathanaBot Game Disconnected", "The game reported: connection to server has failed. Please try again.", DeathNotificationRetryCount)
@@ -7676,6 +8098,7 @@ Public Class Form1
 
             If Not _windowMissingNotificationLatched AndAlso IsCriticalAlertConfirmed(_windowMissingFirstSeenUtc, _windowMissingConfirmCount) Then
                 _windowMissingNotificationLatched = True
+                ScheduleGameRelaunch(If(captureUnavailable, "capture unavailable", "game window missing/crash"))
                 SendWindowMissingPhoneAlert(captureUnavailable)
             End If
             Return
@@ -8942,6 +9365,16 @@ Public Class Form1
                 Dim boundedStatsInterval As Decimal = Math.Max(nudStatsNtfyIntervalMinutes.Minimum, Math.Min(nudStatsNtfyIntervalMinutes.Maximum, state.StatsNtfyIntervalMinutes))
                 nudStatsNtfyIntervalMinutes.Value = boundedStatsInterval
             End If
+            If chkAutoRelaunchGame IsNot Nothing Then
+                chkAutoRelaunchGame.Checked = state.AutoRelaunchGameEnabled
+            End If
+            If txtAutoRelaunchExePath IsNot Nothing Then
+                txtAutoRelaunchExePath.Text = If(state.AutoRelaunchGameExePath, "").Trim()
+            End If
+            If nudAutoRelaunchDelaySeconds IsNot Nothing Then
+                nudAutoRelaunchDelaySeconds.Value = Math.Max(nudAutoRelaunchDelaySeconds.Minimum, Math.Min(nudAutoRelaunchDelaySeconds.Maximum, state.AutoRelaunchDelaySeconds))
+            End If
+            ApplyAutoRelaunchClickSteps(state.AutoRelaunchClicks)
             UpdateNotificationProviderUi()
             If nudAutoPotHp IsNot Nothing Then
                 Dim boundedAutoHp As Decimal = Math.Max(nudAutoPotHp.Minimum, Math.Min(nudAutoPotHp.Maximum, state.AutoPotHpPercent))
@@ -9033,6 +9466,10 @@ Public Class Form1
                 .ItemNtfyTopic = If(txtItemNtfyTopic IsNot Nothing, txtItemNtfyTopic.Text.Trim(), ""),
                 .StatsNtfyTopic = If(txtStatsNtfyTopic IsNot Nothing, txtStatsNtfyTopic.Text.Trim(), ""),
                 .StatsNtfyIntervalMinutes = If(nudStatsNtfyIntervalMinutes IsNot Nothing, nudStatsNtfyIntervalMinutes.Value, 30D),
+                .AutoRelaunchGameEnabled = (chkAutoRelaunchGame IsNot Nothing AndAlso chkAutoRelaunchGame.Checked),
+                .AutoRelaunchGameExePath = If(txtAutoRelaunchExePath IsNot Nothing, txtAutoRelaunchExePath.Text.Trim(), ""),
+                .AutoRelaunchDelaySeconds = If(nudAutoRelaunchDelaySeconds IsNot Nothing, nudAutoRelaunchDelaySeconds.Value, 5D),
+                .AutoRelaunchClicks = GetAutoRelaunchClickSteps(),
                 .AutoPotHpPercent = If(nudAutoPotHp IsNot Nothing, nudAutoPotHp.Value, 80D),
                 .AutoPotMpPercent = If(nudAutoPotMp IsNot Nothing, nudAutoPotMp.Value, 35D),
                 .AlarmVolumePercent = CInt(If(nudAlarmVolume IsNot Nothing, nudAlarmVolume.Value, CDec(_alarmVolumePercent))),
