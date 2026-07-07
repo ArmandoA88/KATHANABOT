@@ -20,6 +20,19 @@ Public Class ChatTranslationOverlayForm
     Private _entries As List(Of ChatOverlayLine) = New List(Of ChatOverlayLine)()
     Private _enabled As Boolean
 
+    Private Const OverlayMaxFontSize As Single = 10.0F
+    Private Const OverlayMinFontSize As Single = 5.5F
+    Private Const OverlayFontStep As Single = 0.5F
+    Private Const OverlayBlockHorizontalPadding As Integer = 12
+    Private Const OverlayBlockGap As Integer = 2
+    Private Const OverlayRowHeight As Integer = 18
+    Private Shared ReadOnly OverlayTextFlags As TextFormatFlags = TextFormatFlags.SingleLine Or TextFormatFlags.VerticalCenter Or TextFormatFlags.NoPadding Or TextFormatFlags.TextBoxControl
+
+    Private NotInheritable Class OverlayRenderLine
+        Public Property Text As String = ""
+        Public Property FontSize As Single = OverlayMaxFontSize
+    End Class
+
     Public Sub New(configProvider As Func(Of BotConfig))
         _configProvider = configProvider
         FormBorderStyle = FormBorderStyle.None
@@ -112,28 +125,85 @@ Public Class ChatTranslationOverlayForm
         End If
 
         e.Graphics.SmoothingMode = Drawing2D.SmoothingMode.AntiAlias
-        Dim padding As Integer = 8
-        Dim y As Integer = padding
-        Dim textWidth As Integer = Math.Max(60, ClientSize.Width - (padding * 2))
+        Dim padding As Integer = 4
+        Dim blockWidth As Integer = Math.Max(60, ClientSize.Width - (padding * 2))
+        Dim renderLines As List(Of OverlayRenderLine) = BuildRenderLayout(e.Graphics, padding, blockWidth)
+        If renderLines.Count = 0 Then
+            Return
+        End If
 
-        Using translatedFont As New Font("Segoe UI Semibold", 9.0F, FontStyle.Bold),
-              translatedBrush As New SolidBrush(Color.FromArgb(255, 244, 235, 170)),
+        Dim y As Integer = padding
+
+        Using translatedBrush As New SolidBrush(Color.FromArgb(255, 244, 235, 170)),
               panelBrush As New SolidBrush(Color.FromArgb(150, 5, 5, 5))
 
-            For Each entry As ChatOverlayLine In _entries
-                Dim translatedSize As Size = TextRenderer.MeasureText(e.Graphics, entry.TranslatedText, translatedFont, New Size(textWidth, 0), TextFormatFlags.WordBreak)
-                Dim blockHeight As Integer = translatedSize.Height + 8
-                Dim blockRect As New Rectangle(padding, y, textWidth, blockHeight)
-                e.Graphics.FillRectangle(panelBrush, blockRect)
+            For Each renderLine As OverlayRenderLine In renderLines
+                Using translatedFont As New Font("Segoe UI Semibold", renderLine.FontSize, FontStyle.Bold)
+                    Dim blockRect As New Rectangle(padding, y, blockWidth, OverlayRowHeight)
+                    e.Graphics.FillRectangle(panelBrush, blockRect)
 
-                Dim translatedRect As New Rectangle(blockRect.X + 6, blockRect.Y + 3, blockRect.Width - 12, translatedSize.Height + 2)
-                TextRenderer.DrawText(e.Graphics, entry.TranslatedText, translatedFont, translatedRect, translatedBrush.Color, TextFormatFlags.WordBreak)
+                    Dim translatedRect As New Rectangle(
+                        blockRect.X + (OverlayBlockHorizontalPadding \ 2),
+                        blockRect.Y,
+                        Math.Max(1, blockRect.Width - OverlayBlockHorizontalPadding),
+                        blockRect.Height)
+                    TextRenderer.DrawText(e.Graphics, renderLine.Text, translatedFont, translatedRect, translatedBrush.Color, OverlayTextFlags)
+                End Using
 
-                y += blockHeight + 6
+                y += OverlayRowHeight + OverlayBlockGap
                 If y >= ClientSize.Height Then
                     Exit For
                 End If
             Next
         End Using
     End Sub
+
+    Private Function BuildRenderLayout(g As Graphics, padding As Integer, blockWidth As Integer) As List(Of OverlayRenderLine)
+        Dim availableHeight As Integer = Math.Max(1, ClientSize.Height - (padding * 2))
+        Dim measureWidth As Integer = Math.Max(24, blockWidth - OverlayBlockHorizontalPadding)
+        Dim sourceEntries As List(Of ChatOverlayLine) = _entries.
+            Where(Function(entry) Not String.IsNullOrWhiteSpace(entry.TranslatedText)).
+            ToList()
+
+        While sourceEntries.Count > 0 AndAlso GetRowsHeight(sourceEntries.Count) > availableHeight
+            sourceEntries.RemoveAt(0)
+        End While
+
+        If sourceEntries.Count = 0 Then
+            Return New List(Of OverlayRenderLine)()
+        End If
+
+        Dim result As New List(Of OverlayRenderLine)()
+        For Each entry As ChatOverlayLine In sourceEntries
+            Dim text As String = If(entry.TranslatedText, "").Trim()
+            result.Add(New OverlayRenderLine With {
+                .Text = text,
+                .FontSize = ChooseSingleLineFontSize(g, text, measureWidth)
+            })
+        Next
+        Return result
+    End Function
+
+    Private Function ChooseSingleLineFontSize(g As Graphics, text As String, measureWidth As Integer) As Single
+        Dim fontSize As Single = OverlayMaxFontSize
+        While fontSize >= OverlayMinFontSize
+            Using translatedFont As New Font("Segoe UI Semibold", fontSize, FontStyle.Bold)
+                Dim measured As Size = TextRenderer.MeasureText(g, If(text, ""), translatedFont, New Size(Integer.MaxValue, Integer.MaxValue), OverlayTextFlags)
+                If measured.Width <= measureWidth Then
+                    Return fontSize
+                End If
+            End Using
+            fontSize -= OverlayFontStep
+        End While
+
+        Return OverlayMinFontSize
+    End Function
+
+    Private Shared Function GetRowsHeight(rowCount As Integer) As Integer
+        If rowCount <= 0 Then
+            Return 0
+        End If
+
+        Return (rowCount * OverlayRowHeight) + ((rowCount - 1) * OverlayBlockGap)
+    End Function
 End Class

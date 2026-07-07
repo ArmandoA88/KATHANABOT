@@ -462,10 +462,10 @@ Public Class Form1
     Private _logFilterMiscEnabled As Boolean = True
     Private ReadOnly _chatTranslator As New TranslationService()
     Private ReadOnly _chatTranslationLock As New SemaphoreSlim(1, 1)
-    Private ReadOnly _chatSeenLineKeys As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
-    Private ReadOnly _chatSeenLineOrder As New Queue(Of String)()
     Private ReadOnly _chatOverlayEntries As New List(Of ChatOverlayLine)()
+    Private _chatScreenGeneration As Integer = 0
     Private _lastChatOcrText As String = ""
+    Private _lastChatTargetLanguage As String = ""
     Private _taskbarList As ITaskbarList3 = Nothing
     Private _taskbarUnavailable As Boolean = False
     Private _uiTimingCount As Long = 0
@@ -793,12 +793,7 @@ Public Class Form1
         If dgvAutoRelaunchClicks IsNot Nothing Then
             AddHandler dgvAutoRelaunchClicks.CellValueChanged, AddressOf PersistListSettingsChanged
             AddHandler dgvAutoRelaunchClicks.CellEndEdit, AddressOf PersistListSettingsChanged
-            AddHandler dgvAutoRelaunchClicks.CurrentCellDirtyStateChanged,
-                Sub(_s As Object, _e As EventArgs)
-                    If dgvAutoRelaunchClicks.IsCurrentCellDirty Then
-                        dgvAutoRelaunchClicks.CommitEdit(DataGridViewDataErrorContexts.Commit)
-                    End If
-                End Sub
+            AddHandler dgvAutoRelaunchClicks.CurrentCellDirtyStateChanged, AddressOf AutoRelaunchClicksCurrentCellDirtyStateChanged
         End If
         If txtLootScanAreaPoints IsNot Nothing Then
             AddHandler txtLootScanAreaPoints.TextChanged, AddressOf LiveConfigChanged
@@ -4758,6 +4753,17 @@ Public Class Form1
         End If
     End Sub
 
+    Private Sub AutoRelaunchClicksCurrentCellDirtyStateChanged(sender As Object, e As EventArgs)
+        If dgvAutoRelaunchClicks Is Nothing OrElse dgvAutoRelaunchClicks.CurrentCell Is Nothing OrElse Not dgvAutoRelaunchClicks.IsCurrentCellDirty Then
+            Return
+        End If
+
+        Dim column As DataGridViewColumn = dgvAutoRelaunchClicks.Columns(dgvAutoRelaunchClicks.CurrentCell.ColumnIndex)
+        If TypeOf column Is DataGridViewCheckBoxColumn Then
+            dgvAutoRelaunchClicks.CommitEdit(DataGridViewDataErrorContexts.Commit)
+        End If
+    End Sub
+
     Private Sub CombatGridEditingControlShowing(sender As Object, e As DataGridViewEditingControlShowingEventArgs)
         Dim textEditor As TextBox = TryCast(e.Control, TextBox)
         If textEditor Is Nothing Then
@@ -7507,8 +7513,8 @@ Public Class Form1
         Dim overlayEnabled As Boolean = (chkChatTranslationOverlay IsNot Nothing AndAlso chkChatTranslationOverlay.Checked)
         If Not translationEnabled Then
             _lastChatOcrText = ""
-            _chatSeenLineKeys.Clear()
-            _chatSeenLineOrder.Clear()
+            _lastChatTargetLanguage = ""
+            _chatScreenGeneration += 1
             _chatOverlayEntries.Clear()
             HideChatTranslationOverlay()
             Return
@@ -7517,28 +7523,45 @@ Public Class Form1
         UpdateChatTranslationOverlayVisibility(overlayEnabled)
 
         Dim rawText As String = If(status.ChatOcrText, "").Trim()
-        If rawText = "" OrElse rawText.Equals(_lastChatOcrText, StringComparison.Ordinal) Then
+        Dim targetLanguage As String = GetSelectedChatTargetLanguageCode()
+        If rawText = "" Then
+            _lastChatOcrText = ""
+            _lastChatTargetLanguage = targetLanguage
+            _chatScreenGeneration += 1
+            _chatOverlayEntries.Clear()
+            RefreshChatTranslationOverlayContent()
+            Return
+        End If
+
+        If rawText.Equals(_lastChatOcrText, StringComparison.Ordinal) AndAlso targetLanguage.Equals(_lastChatTargetLanguage, StringComparison.OrdinalIgnoreCase) Then
             RefreshChatTranslationOverlayContent()
             Return
         End If
 
         _lastChatOcrText = rawText
-        Dim targetLanguage As String = GetSelectedChatTargetLanguageCode()
+        _lastChatTargetLanguage = targetLanguage
+        _chatScreenGeneration += 1
+        Dim generation As Integer = _chatScreenGeneration
         Dim lines As List(Of String) = ParseChatOcrLines(rawText)
+        _chatOverlayEntries.Clear()
+
         For Each line As String In lines
-            Dim key As String = NormalizeChatLineKey(line)
-            If key = "" OrElse _chatSeenLineKeys.Contains(key) Then
+            Dim lineText As String = If(line, "").Trim()
+            If lineText = "" Then
                 Continue For
             End If
 
-            _chatSeenLineKeys.Add(key)
-            _chatSeenLineOrder.Enqueue(key)
-            While _chatSeenLineOrder.Count > 80
-                Dim expired As String = _chatSeenLineOrder.Dequeue()
-                _chatSeenLineKeys.Remove(expired)
-            End While
+            _chatOverlayEntries.Add(New ChatOverlayLine With {
+                .SourceText = lineText,
+                .TranslatedText = lineText,
+                .CreatedAtUtc = DateTime.UtcNow
+            })
+        Next
 
-            QueueChatTranslation(line, targetLanguage)
+        RefreshChatTranslationOverlayContent()
+
+        For i As Integer = 0 To _chatOverlayEntries.Count - 1
+            QueueChatTranslation(_chatOverlayEntries(i).SourceText, targetLanguage, generation, i)
         Next
     End Sub
 
@@ -7549,9 +7572,70 @@ Public Class Form1
             If cleaned.Length < 2 Then
                 Continue For
             End If
-            results.Add(cleaned)
+            results.AddRange(SplitJoinedChatMessages(cleaned))
         Next
         Return results
+    End Function
+
+    Private Shared Function SplitJoinedChatMessages(line As String) As IEnumerable(Of String)
+        Dim cleaned As String = If(line, "").Trim()
+        If cleaned = "" Then
+            Return Enumerable.Empty(Of String)()
+        End If
+
+        cleaned = Regex.Replace(cleaned, "(?i)(?<=\s)m\]\s+(?=[A-Za-z0-9_\- ]{2,32}\s+has\s+)", " [System] ")
+        Dim starts As List(Of Integer) = FindChatMessageStartIndexes(cleaned)
+        If starts.Count <= 1 Then
+            Return New String() {NormalizeChatSystemPrefix(cleaned)}.
+                Where(Function(part) part.Length >= 2)
+        End If
+
+        Dim parts As New List(Of String)()
+        For i As Integer = 0 To starts.Count - 1
+            Dim startIndex As Integer = starts(i)
+            Dim endIndex As Integer = If(i + 1 < starts.Count, starts(i + 1), cleaned.Length)
+            If endIndex <= startIndex Then
+                Continue For
+            End If
+
+            parts.Add(cleaned.Substring(startIndex, endIndex - startIndex))
+        Next
+
+        Return parts.
+            Select(Function(part) NormalizeChatSystemPrefix(Regex.Replace(part, "\s+", " ").Trim())).
+            Where(Function(part) part.Length >= 2)
+    End Function
+
+    Private Shared Function FindChatMessageStartIndexes(line As String) As List(Of Integer)
+        Dim starts As New SortedSet(Of Integer)()
+        Dim source As String = If(line, "")
+        If source.Trim() = "" Then
+            Return starts.ToList()
+        End If
+
+        starts.Add(0)
+        For Each match As Match In Regex.Matches(source, "(?:^|\s)(?:\[[^\]]+\]\s*[^:\[]{1,32}:|[A-Za-z][A-Za-z0-9_\-]{1,23}:|m\]\s+|\[[^\]]+\]\s+)", RegexOptions.IgnoreCase)
+            Dim value As String = match.Value
+            Dim index As Integer = match.Index
+            If value.Length > 0 AndAlso Char.IsWhiteSpace(value(0)) Then
+                index += 1
+            End If
+
+            If index >= 0 AndAlso index < source.Length Then
+                starts.Add(index)
+            End If
+        Next
+
+        Return starts.ToList()
+    End Function
+
+    Private Shared Function NormalizeChatSystemPrefix(line As String) As String
+        Dim cleaned As String = If(line, "").Trim()
+        If cleaned = "" Then
+            Return ""
+        End If
+
+        Return Regex.Replace(cleaned, "^(?:\[[^\]]*syst[^\]]*\]|m\])\s*", "[System] ", RegexOptions.IgnoreCase)
     End Function
 
     Private Shared Function NormalizeChatLineKey(line As String) As String
@@ -7612,6 +7696,11 @@ Public Class Form1
             Return ""
         End If
 
+        Dim knownSystemTranslation As String = TranslateKnownSystemChatLine(lineText, targetLanguage)
+        If knownSystemTranslation <> "" Then
+            Return knownSystemTranslation
+        End If
+
         Dim colonIndex As Integer = lineText.IndexOf(":"c)
         If colonIndex > 0 Then
             Dim prefix As String = lineText.Substring(0, colonIndex + 1)
@@ -7621,6 +7710,38 @@ Public Class Form1
         End If
 
         Return Await TranslateChatMessageBodyAsync(lineText, targetLanguage)
+    End Function
+
+    Private Shared Function TranslateKnownSystemChatLine(sourceLine As String, targetLanguage As String) As String
+        Dim lineText As String = NormalizeChatSystemPrefix(If(sourceLine, ""))
+        Dim match As Match = Regex.Match(lineText, "^\[System\]\s+(.+?)\s+has\s+(logged\s+in|logged\s+out)\.?\s*$", RegexOptions.IgnoreCase)
+        If Not match.Success Then
+            Return ""
+        End If
+
+        Dim actorName As String = Regex.Replace(match.Groups(1).Value.Trim(), "\s+", " ")
+        If actorName = "" Then
+            Return ""
+        End If
+
+        Dim actionText As String = Regex.Replace(match.Groups(2).Value.Trim().ToLowerInvariant(), "\s+", " ")
+        Select Case NormalizeChatTargetLanguageCode(targetLanguage)
+            Case "es"
+                If actionText = "logged in" Then
+                    Return $"[System] {actorName} ha iniciado sesion."
+                End If
+                Return $"[System] {actorName} se ha desconectado."
+            Case "tl"
+                If actionText = "logged in" Then
+                    Return $"[System] {actorName} nag-login."
+                End If
+                Return $"[System] {actorName} nag-logout."
+            Case Else
+                If actionText = "logged in" Then
+                    Return $"[System] {actorName} has logged in."
+                End If
+                Return $"[System] {actorName} has logged out."
+        End Select
     End Function
 
     Private Async Function TranslateChatMessageBodyAsync(messageText As String, targetLanguage As String) As Task(Of String)
@@ -7671,7 +7792,7 @@ Public Class Form1
         Return leadingWhitespace & translated.Trim() & trailingWhitespace
     End Function
 
-    Private Sub QueueChatTranslation(sourceLine As String, targetLanguage As String)
+    Private Sub QueueChatTranslation(sourceLine As String, targetLanguage As String, generation As Integer, entryIndex As Integer)
         Dim lineCopy As String = If(sourceLine, "").Trim()
         If lineCopy = "" Then
             Return
@@ -7679,8 +7800,16 @@ Public Class Form1
 
         Task.Run(
             Async Function()
+                If generation <> _chatScreenGeneration Then
+                    Return
+                End If
+
                 Await _chatTranslationLock.WaitAsync()
                 Try
+                    If generation <> _chatScreenGeneration Then
+                        Return
+                    End If
+
                     Dim translated As String = Await TranslateChatLineAsync(lineCopy, targetLanguage)
                     If String.IsNullOrWhiteSpace(translated) Then
                         translated = lineCopy
@@ -7693,7 +7822,7 @@ Public Class Form1
                     BeginInvoke(
                         New Action(
                             Sub()
-                                AddTranslatedChatEntry(lineCopy, translated)
+                                ApplyTranslatedChatEntry(generation, entryIndex, lineCopy, translated)
                             End Sub))
                 Catch ex As Exception
                     If Not IsDisposed Then
@@ -7705,18 +7834,17 @@ Public Class Form1
             End Function)
     End Sub
 
-    Private Sub AddTranslatedChatEntry(sourceText As String, translatedText As String)
-        Dim entry As New ChatOverlayLine With {
-            .SourceText = sourceText,
-            .TranslatedText = translatedText,
-            .CreatedAtUtc = DateTime.UtcNow
-        }
+    Private Sub ApplyTranslatedChatEntry(generation As Integer, entryIndex As Integer, sourceText As String, translatedText As String)
+        If generation <> _chatScreenGeneration OrElse entryIndex < 0 OrElse entryIndex >= _chatOverlayEntries.Count Then
+            Return
+        End If
 
-        _chatOverlayEntries.Add(entry)
-        Dim maxEntries As Integer = Math.Max(1, CInt(If(nudChatMaxLines IsNot Nothing, nudChatMaxLines.Value, 6D)) * 4)
-        While _chatOverlayEntries.Count > maxEntries
-            _chatOverlayEntries.RemoveAt(0)
-        End While
+        Dim entry As ChatOverlayLine = _chatOverlayEntries(entryIndex)
+        If entry Is Nothing OrElse Not NormalizeChatLineKey(entry.SourceText).Equals(NormalizeChatLineKey(sourceText), StringComparison.OrdinalIgnoreCase) Then
+            Return
+        End If
+
+        entry.TranslatedText = If(String.IsNullOrWhiteSpace(translatedText), sourceText, translatedText.Trim())
 
         RefreshChatTranslationOverlayContent()
     End Sub
@@ -7739,9 +7867,7 @@ Public Class Form1
             Return
         End If
 
-        Dim maxLines As Integer = Math.Max(1, CInt(If(nudChatMaxLines IsNot Nothing, nudChatMaxLines.Value, 6D)))
         Dim visibleEntries As List(Of ChatOverlayLine) = _chatOverlayEntries.
-            Skip(Math.Max(0, _chatOverlayEntries.Count - maxLines)).
             Select(Function(entry) New ChatOverlayLine With {
                 .SourceText = entry.SourceText,
                 .TranslatedText = entry.TranslatedText,
