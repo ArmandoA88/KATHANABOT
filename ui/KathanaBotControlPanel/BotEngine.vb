@@ -242,7 +242,7 @@ Public Class BotConfig
     Public Property MobNameRect As RectRegion = DefaultMobNameRect()
     Public Property MobHpRect As RectRegion = DefaultMobHpRect()
     Public Property MobLifeRect As RectRegion = DefaultMobHpRect()
-    Public Property UnreachableTextRect As RectRegion = New RectRegion(15, 582, 128, 22)
+    Public Property UnreachableTextRect As RectRegion = New RectRegion(15, 582, 430, 22)
     Public Property PranaExpRect As RectRegion = New RectRegion(472, 745, 78, 21)
     Public Property RupiahsRect As RectRegion = New RectRegion(560, 745, 110, 21)
     Public Property PartyInviteScanRect As RectRegion = New RectRegion(349, 318, 328, 124)
@@ -449,6 +449,13 @@ Public Class BotConfig
             cfg.MpBar = DefaultMpBarRect()
             cfg.MobNameRect = DefaultMobNameRect()
             cfg.MobHpRect = DefaultMobHpRect()
+        End If
+
+        ' The original warning crop was too narrow for equipment names followed by
+        ' "is about to break", so longer item names could hide the repair keywords.
+        ' Only migrate the exact old default; preserve every custom calibration.
+        If SameRect(cfg.UnreachableTextRect, New RectRegion(15, 582, 128, 22)) Then
+            cfg.UnreachableTextRect = New RectRegion(15, 582, 430, 22)
         End If
 
         ' mob_life_rect was added after mob_hp_rect. Older saved configs can retain the
@@ -720,6 +727,10 @@ Public Class BotEngine
     Private Const TargetNameConfirmMinGapMs As Integer = 120
     Private Const TargetNameConfirmRequiredCount As Integer = 2
     Private Const ExpRateSampleMs As Integer = 60000
+    Private Const MinValidExpPerHour As Double = 0.0
+    Private Const MaxValidExpPerHour As Double = 100.0
+    Private Const MinValidRupiahsPerHour As Double = 1000.0
+    Private Const MaxValidRupiahsPerHour As Double = 1000000.0
     Private Const ExpOcrMinIntervalMs As Integer = 5000
     Private Const RupiahsOcrMinIntervalMs As Integer = 5000
     Private Const MapCoordinateOcrMinIntervalMs As Integer = 900
@@ -6385,7 +6396,7 @@ Public Class BotEngine
     End Function
 
     Private Function UpdateExpRate(expPercent As Double, now As DateTime) As Double
-        If expPercent < 0 Then
+        If Double.IsNaN(expPercent) OrElse Double.IsInfinity(expPercent) OrElse expPercent < 0 OrElse expPercent > 100 Then
             Return _lastExpPerHour
         End If
 
@@ -6405,13 +6416,18 @@ Public Class BotEngine
         If delta < -50.0 Then
             delta += 100.0
         End If
-        If delta < 0 Then
-            delta = 0
-        End If
 
         Dim hours As Double = elapsedMs / 3600000.0
-        If hours > 0 Then
-            _lastExpPerHour = delta / hours
+        If hours > 0 AndAlso delta >= 0 Then
+            Dim candidateRate As Double = delta / hours
+            If Not Double.IsNaN(candidateRate) AndAlso
+               Not Double.IsInfinity(candidateRate) AndAlso
+               candidateRate > MinValidExpPerHour AndAlso
+               candidateRate <= MaxValidExpPerHour Then
+                _lastExpPerHour = candidateRate
+            ElseIf candidateRate > MaxValidExpPerHour Then
+                RaiseEvent LogLine($"EXP/hour sample ignored as invalid ({candidateRate:0.00}%/hr; valid range is >0.00 to {MaxValidExpPerHour:0.00}%/hr). Keeping the last good rate.")
+            End If
         End If
 
         _lastExpRateSampleAt = now
@@ -6490,13 +6506,20 @@ Public Class BotEngine
         If delta < 0 Then
             _lastRupiahsRateSampleAt = now
             _lastRupiahsRateSampleTotal = rupiahsTotal
-            _lastRupiahsPerHour = -1
             Return _lastRupiahsPerHour
         End If
 
         Dim hours As Double = elapsedMs / 3600000.0
         If hours > 0 Then
-            _lastRupiahsPerHour = delta / hours
+            Dim candidateRate As Double = delta / hours
+            If Not Double.IsNaN(candidateRate) AndAlso
+               Not Double.IsInfinity(candidateRate) AndAlso
+               candidateRate >= MinValidRupiahsPerHour AndAlso
+               candidateRate <= MaxValidRupiahsPerHour Then
+                _lastRupiahsPerHour = candidateRate
+            ElseIf candidateRate > 0 Then
+                RaiseEvent LogLine($"Rupiahs/hour sample ignored as invalid ({candidateRate:N0}/hr; valid range is {MinValidRupiahsPerHour:N0} to {MaxValidRupiahsPerHour:N0}/hr). Keeping the last good rate.")
+            End If
         End If
 
         _lastRupiahsRateSampleAt = now
@@ -7057,13 +7080,46 @@ Public Class BotEngine
         End If
 
         Dim compact As String = norm.Replace(" ", "")
-        If compact.Contains("isabouttobreak", StringComparison.OrdinalIgnoreCase) OrElse
-           compact.Contains("abouttobreak", StringComparison.OrdinalIgnoreCase) Then
+        Dim exactCompactPhrases As String() = {
+            "isabouttobreak",
+            "abouttobreak",
+            "almostbroken",
+            "nearlybroken",
+            "willbreaksoon",
+            "needsrepair",
+            "needrepair",
+            "repairrequired",
+            "lowdurability",
+            "durabilitylow",
+            "durabilitycritical"
+        }
+        If exactCompactPhrases.Any(Function(phrase) compact.Contains(phrase, StringComparison.OrdinalIgnoreCase)) Then
             Return True
         End If
 
-        Return norm.Contains("about to break", StringComparison.OrdinalIgnoreCase) OrElse
-               AreTextsClose(norm, "is about to break")
+        ' The warning includes the item name and OCR commonly confuses one or two
+        ' characters. Score phrase-sized token windows so every equipment name and
+        ' small OCR variations still match without requiring an exact full line.
+        Dim repairPhrases As String() = {
+            "is about to break",
+            "about to break",
+            "almost broken",
+            "nearly broken",
+            "will break soon",
+            "needs repair",
+            "need repair",
+            "repair required",
+            "low durability",
+            "durability low",
+            "durability critical"
+        }
+        For Each phrase As String In repairPhrases
+            If GetLootMatchScore(norm, phrase) >= 0.72 Then
+                Return True
+            End If
+        Next
+
+        Return False
     End Function
 
     Private Shared Function DetectAutoAcceptPromptKind(rawText As String) As String
@@ -9630,7 +9686,7 @@ Public Class BotEngine
                SameRegion(cfg.MobNameRect, BotConfig.DefaultMobNameRect()) AndAlso
                SameRegion(cfg.MobHpRect, BotConfig.DefaultMobHpRect()) AndAlso
                SameRegion(cfg.MobLifeRect, BotConfig.DefaultMobHpRect()) AndAlso
-               SameRegion(cfg.UnreachableTextRect, New RectRegion(15, 582, 128, 22)) AndAlso
+               SameRegion(cfg.UnreachableTextRect, New RectRegion(15, 582, 430, 22)) AndAlso
                SameRegion(cfg.PranaExpRect, New RectRegion(472, 745, 78, 21)) AndAlso
                SameRegion(cfg.RupiahsRect, New RectRegion(560, 745, 110, 21)) AndAlso
                SameRegion(cfg.PartyInviteScanRect, New RectRegion(349, 318, 328, 124)) AndAlso

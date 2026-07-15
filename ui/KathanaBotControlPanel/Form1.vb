@@ -126,6 +126,7 @@ Public Class Form1
     Private btnPickArrowUnbundlePoint As Button
     Private btnRemoveArrowUnbundlePoint As Button
     Private btnClearArrowUnbundlePoints As Button
+    Private chkArrowUnbundleOverlay As CheckBox
     Private lblArrowUnbundlePoints As Label
 
     Private NotInheritable Class ChatLanguageOption
@@ -283,6 +284,7 @@ Public Class Form1
     Private dgvAutoRelaunchClicks As DataGridView
     Private btnAutoRelaunchUseCursor As Button
     Private btnAutoRelaunchClearClicks As Button
+    Private chkAutoRelaunchClickOverlay As CheckBox
     Private btnHelp As Button
     Private nudPartyAskSeconds As NumericUpDown
     Private txtPartyAskText As TextBox
@@ -343,6 +345,8 @@ Public Class Form1
     Private _litePartyAskEnabled As Boolean = False
     Private _lootScannerEnabled As Boolean = True
     Private _overlayForm As CalibrationOverlayForm
+    Private _autoRelaunchClickOverlayForm As AutoRelaunchClickOverlayForm
+    Private _arrowUnbundleOverlayForm As AutoRelaunchClickOverlayForm
     Private _chatTranslationOverlayForm As ChatTranslationOverlayForm
     Private _autoStarted As Boolean = False
     Private _alarmVolumePercent As Integer = 85
@@ -587,6 +591,7 @@ Public Class Form1
         Public Property LootRejectPointY As Integer = -1
         Public Property ArrowUnbundleEnabled As Boolean = False
         Public Property ArrowUnbundleSeconds As Decimal = 60D
+        Public Property ArrowUnbundleOverlayEnabled As Boolean = False
         Public Property ArrowUnbundlePoints As List(Of LootScanPoint) = New List(Of LootScanPoint)()
         Public Property PromptAutoAcceptEnabled As Boolean = True
         Public Property AskForPartyEnabled As Boolean = False
@@ -607,6 +612,7 @@ Public Class Form1
         Public Property AutoRelaunchGameEnabled As Boolean = False
         Public Property AutoRelaunchGameExePath As String = ""
         Public Property AutoRelaunchDelaySeconds As Decimal = 5D
+        Public Property AutoRelaunchClickOverlayEnabled As Boolean = False
         Public Property AutoRelaunchClicks As List(Of PersistedAutoRelaunchClick) = New List(Of PersistedAutoRelaunchClick)()
         Public Property AutoPotHpPercent As Decimal = 80D
         Public Property AutoPotMpPercent As Decimal = 35D
@@ -691,6 +697,8 @@ Public Class Form1
         LoadPersistedListState()
         ForceLevelingAgentOffForStartup()
         SetupLiveConfigBindings()
+        SetAutoRelaunchClickOverlayVisible(chkAutoRelaunchClickOverlay IsNot Nothing AndAlso chkAutoRelaunchClickOverlay.Checked)
+        SetArrowUnbundleOverlayVisible(chkArrowUnbundleOverlay IsNot Nothing AndAlso chkArrowUnbundleOverlay.Checked)
         ApplyDarkTheme(Me)
         UpdateBarColorUi()
         CaptureThemeSnapshot(Me)
@@ -789,6 +797,10 @@ Public Class Form1
         End If
         If nudAutoRelaunchDelaySeconds IsNot Nothing Then
             AddHandler nudAutoRelaunchDelaySeconds.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If chkAutoRelaunchClickOverlay IsNot Nothing Then
+            AddHandler chkAutoRelaunchClickOverlay.CheckedChanged, AddressOf AutoRelaunchClickOverlayChanged
+            AddHandler chkAutoRelaunchClickOverlay.CheckedChanged, AddressOf PersistListSettingsChanged
         End If
         If dgvAutoRelaunchClicks IsNot Nothing Then
             AddHandler dgvAutoRelaunchClicks.CellValueChanged, AddressOf PersistListSettingsChanged
@@ -942,6 +954,9 @@ Public Class Form1
         End If
         If nudArrowUnbundleSeconds IsNot Nothing Then
             AddHandler nudArrowUnbundleSeconds.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If chkArrowUnbundleOverlay IsNot Nothing Then
+            AddHandler chkArrowUnbundleOverlay.CheckedChanged, AddressOf ArrowUnbundleOverlayChanged
         End If
         If nudPartyAskSeconds IsNot Nothing Then
             AddHandler nudPartyAskSeconds.ValueChanged, AddressOf LiveConfigChanged
@@ -1170,6 +1185,9 @@ Public Class Form1
         End If
         If nudArrowUnbundleSeconds IsNot Nothing Then
             AddHandler nudArrowUnbundleSeconds.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If chkArrowUnbundleOverlay IsNot Nothing Then
+            AddHandler chkArrowUnbundleOverlay.CheckedChanged, AddressOf PersistListSettingsChanged
         End If
         If chkHighMaxHpSpecial IsNot Nothing Then
             AddHandler chkHighMaxHpSpecial.CheckedChanged, AddressOf PersistListSettingsChanged
@@ -3245,13 +3263,15 @@ Public Class Form1
         AddHandler btnAutoRelaunchUseCursor.Click, AddressOf AutoRelaunchUseCursorClicked
         btnAutoRelaunchClearClicks = New Button() With {.Text = "Clear Clicks", .Width = 98, .Height = 28, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
         AddHandler btnAutoRelaunchClearClicks.Click, AddressOf AutoRelaunchClearClicksClicked
+        chkAutoRelaunchClickOverlay = New CheckBox() With {.Text = "Show Click Overlay", .AutoSize = True, .Height = 28, .Padding = New Padding(8, 3, 0, 0), .ForeColor = Color.LightSkyBlue}
         clickButtonRow.Controls.Add(btnAutoRelaunchUseCursor)
         clickButtonRow.Controls.Add(btnAutoRelaunchClearClicks)
+        clickButtonRow.Controls.Add(chkAutoRelaunchClickOverlay)
         layout.Controls.Add(clickButtonRow, 0, 5)
         layout.SetColumnSpan(clickButtonRow, 2)
 
         Dim note As New Label() With {
-            .Text = "Post-launch clicks use game-window coordinates after each row's delay. Drag rows to change order. Select a row, click Use Cursor, then RIGHT click the desired spot in game.",
+            .Text = "Post-launch clicks use game-window coordinates after each row's delay. Drag rows to change order. Select a row, click Use Cursor, then RIGHT click the desired spot in game. Show Click Overlay displays every enabled location, execution step, path, and delay.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.TopLeft
@@ -3505,7 +3525,7 @@ Public Class Form1
         layout.SetColumnSpan(lstArrowUnbundlePoints, 2)
 
         Dim note As New Label() With {
-            .Text = "For arrows: the bot double right-clicks these inventory spots on the interval to unbundle arrow stacks. Multiple points are used in order.",
+            .Text = "For arrows: the bot double right-clicks these inventory spots on the interval to unbundle arrow stacks. Multiple points are used in order. Show Click Overlay displays the numbered path, coordinates, and interval over the game.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.TopLeft
@@ -3520,9 +3540,11 @@ Public Class Form1
         AddHandler btnRemoveArrowUnbundlePoint.Click, AddressOf RemoveArrowUnbundlePointClicked
         btnClearArrowUnbundlePoints = New Button() With {.Text = "Clear", .Width = 74, .Height = 30, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
         AddHandler btnClearArrowUnbundlePoints.Click, AddressOf ClearArrowUnbundlePointsClicked
+        chkArrowUnbundleOverlay = New CheckBox() With {.Text = "Show Click Overlay", .AutoSize = True, .Height = 30, .Padding = New Padding(8, 3, 0, 0), .ForeColor = Color.LightSkyBlue}
         buttons.Controls.Add(btnPickArrowUnbundlePoint)
         buttons.Controls.Add(btnRemoveArrowUnbundlePoint)
         buttons.Controls.Add(btnClearArrowUnbundlePoints)
+        buttons.Controls.Add(chkArrowUnbundleOverlay)
         layout.Controls.Add(buttons, 0, 5)
         layout.SetColumnSpan(buttons, 2)
 
@@ -4007,7 +4029,7 @@ Public Class Form1
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "MinMpPercent", .HeaderText = "MinMp%", .FillWeight = 62.0F})
         layout.Controls.Add(dgvCombat, 0, 0)
         layout.Controls.Add(New Label() With {
-            .Text = "repair role: watches unreachable_text_rect for '___ is about to break'. After 5 OCR reads inside a 10-minute rolling window it sends the key once, resets the repair OCR count, then waits for the warning text to clear before allowing another repair trigger. TriggerPercent is ignored for repair.",
+            .Text = "repair role: watches unreachable_text_rect for about-to-break, broken-soon, needs-repair, or low/critical-durability warnings (with OCR tolerance). After 5 OCR reads inside a 10-minute rolling window it sends the key once, then waits for the warning to clear. TriggerPercent is ignored.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.MiddleLeft
@@ -4438,7 +4460,7 @@ Public Class Form1
         dgvRegions.Rows.Add(True, "mob_name_rect", "0", "53", "218", "22")
         dgvRegions.Rows.Add(True, "mob_hp_rect", "0", "78", "215", "12")
         dgvRegions.Rows.Add(True, "mob_life_rect", "0", "78", "215", "12")
-        dgvRegions.Rows.Add(True, "unreachable_text_rect", "15", "582", "128", "22")
+        dgvRegions.Rows.Add(True, "unreachable_text_rect", "15", "582", "430", "22")
         dgvRegions.Rows.Add(True, "prana_exp_rect", "472", "745", "78", "21")
         dgvRegions.Rows.Add(True, "rupiahs_rect", "560", "745", "110", "21")
         dgvRegions.Rows.Add(True, "party_invite_scan_rect", "349", "318", "328", "124")
@@ -4527,6 +4549,9 @@ Public Class Form1
         End If
         If nudArrowUnbundleSeconds IsNot Nothing Then
             nudArrowUnbundleSeconds.Value = 60D
+        End If
+        If chkArrowUnbundleOverlay IsNot Nothing Then
+            chkArrowUnbundleOverlay.Checked = False
         End If
         _lootNamePickupPointX = -1
         _lootNamePickupPointY = -1
@@ -5355,6 +5380,53 @@ Public Class Form1
             picSnapshot.Cursor = If(IsSnapshotPickActive(), Cursors.Cross, Cursors.Default)
         End If
     End Sub
+
+    Private Sub ArrowUnbundleOverlayChanged(sender As Object, e As EventArgs)
+        SetArrowUnbundleOverlayVisible(chkArrowUnbundleOverlay IsNot Nothing AndAlso chkArrowUnbundleOverlay.Checked)
+    End Sub
+
+    Private Sub SetArrowUnbundleOverlayVisible(visible As Boolean)
+        If Not visible Then
+            If _arrowUnbundleOverlayForm IsNot Nothing AndAlso Not _arrowUnbundleOverlayForm.IsDisposed Then
+                _arrowUnbundleOverlayForm.Close()
+            End If
+            _arrowUnbundleOverlayForm = Nothing
+            Return
+        End If
+
+        If _arrowUnbundleOverlayForm IsNot Nothing AndAlso Not _arrowUnbundleOverlayForm.IsDisposed Then
+            Return
+        End If
+
+        _arrowUnbundleOverlayForm = New AutoRelaunchClickOverlayForm(
+            Function() ResolveAutoRelaunchClickWindow(IntPtr.Zero, ""),
+            Function() GetArrowUnbundleOverlaySteps())
+        AddHandler _arrowUnbundleOverlayForm.FormClosed,
+            Sub(_s As Object, _e As FormClosedEventArgs)
+                _arrowUnbundleOverlayForm = Nothing
+            End Sub
+        _arrowUnbundleOverlayForm.Show(Me)
+    End Sub
+
+    Private Function GetArrowUnbundleOverlaySteps() As List(Of AutoRelaunchOverlayStep)
+        Dim overlaySteps As New List(Of AutoRelaunchOverlayStep)()
+        Dim intervalSeconds As Decimal = If(nudArrowUnbundleSeconds IsNot Nothing, nudArrowUnbundleSeconds.Value, 60D)
+        For i As Integer = 0 To _arrowUnbundlePoints.Count - 1
+            Dim pointInfo As LootScanPoint = _arrowUnbundlePoints(i)
+            If pointInfo Is Nothing OrElse pointInfo.X < 0 OrElse pointInfo.Y < 0 Then
+                Continue For
+            End If
+            overlaySteps.Add(New AutoRelaunchOverlayStep With {
+                .StepNumber = overlaySteps.Count + 1,
+                .X = pointInfo.X,
+                .Y = pointInfo.Y,
+                .DelaySeconds = intervalSeconds,
+                .TimingLabel = $"every {intervalSeconds:0.###}s",
+                .Description = "double right-click"
+            })
+        Next
+        Return overlaySteps
+    End Function
 
     Private Sub UpdateArrowUnbundleUi()
         If lblArrowUnbundlePoints IsNot Nothing Then
@@ -8158,6 +8230,49 @@ Public Class Form1
         btnAutoRelaunchUseCursor.BackColor = If(_isPickingAutoRelaunchClick, Color.FromArgb(175, 110, 30), Color.FromArgb(45, 95, 140))
     End Sub
 
+    Private Sub AutoRelaunchClickOverlayChanged(sender As Object, e As EventArgs)
+        SetAutoRelaunchClickOverlayVisible(chkAutoRelaunchClickOverlay IsNot Nothing AndAlso chkAutoRelaunchClickOverlay.Checked)
+    End Sub
+
+    Private Sub SetAutoRelaunchClickOverlayVisible(visible As Boolean)
+        If Not visible Then
+            If _autoRelaunchClickOverlayForm IsNot Nothing AndAlso Not _autoRelaunchClickOverlayForm.IsDisposed Then
+                _autoRelaunchClickOverlayForm.Close()
+            End If
+            _autoRelaunchClickOverlayForm = Nothing
+            Return
+        End If
+
+        If _autoRelaunchClickOverlayForm IsNot Nothing AndAlso Not _autoRelaunchClickOverlayForm.IsDisposed Then
+            Return
+        End If
+
+        _autoRelaunchClickOverlayForm = New AutoRelaunchClickOverlayForm(
+            Function() ResolveAutoRelaunchClickWindow(IntPtr.Zero, ""),
+            Function() GetAutoRelaunchOverlaySteps())
+        AddHandler _autoRelaunchClickOverlayForm.FormClosed,
+            Sub(_s As Object, _e As FormClosedEventArgs)
+                _autoRelaunchClickOverlayForm = Nothing
+            End Sub
+        _autoRelaunchClickOverlayForm.Show(Me)
+    End Sub
+
+    Private Function GetAutoRelaunchOverlaySteps() As List(Of AutoRelaunchOverlayStep)
+        Dim enabledSteps As List(Of PersistedAutoRelaunchClick) = GetEnabledAutoRelaunchClickSteps()
+        Dim overlaySteps As New List(Of AutoRelaunchOverlayStep)()
+        For i As Integer = 0 To enabledSteps.Count - 1
+            Dim stepInfo As PersistedAutoRelaunchClick = enabledSteps(i)
+            overlaySteps.Add(New AutoRelaunchOverlayStep With {
+                .StepNumber = i + 1,
+                .X = stepInfo.X,
+                .Y = stepInfo.Y,
+                .DelaySeconds = stepInfo.DelaySeconds,
+                .Description = If(stepInfo.Description, "").Trim()
+            })
+        Next
+        Return overlaySteps
+    End Function
+
     Private Sub AutoRelaunchClearClicksClicked(sender As Object, e As EventArgs)
         _isPickingAutoRelaunchClick = False
         _autoRelaunchRightMouseWasDown = False
@@ -9912,6 +10027,9 @@ Public Class Form1
             If nudArrowUnbundleSeconds IsNot Nothing Then
                 nudArrowUnbundleSeconds.Value = Math.Max(nudArrowUnbundleSeconds.Minimum, Math.Min(nudArrowUnbundleSeconds.Maximum, state.ArrowUnbundleSeconds))
             End If
+            If chkArrowUnbundleOverlay IsNot Nothing Then
+                chkArrowUnbundleOverlay.Checked = state.ArrowUnbundleOverlayEnabled
+            End If
             _arrowUnbundlePoints.Clear()
             If state.ArrowUnbundlePoints IsNot Nothing Then
                 _arrowUnbundlePoints.AddRange(CloneLootScanPoints(state.ArrowUnbundlePoints))
@@ -9989,6 +10107,9 @@ Public Class Form1
             If nudAutoRelaunchDelaySeconds IsNot Nothing Then
                 nudAutoRelaunchDelaySeconds.Value = Math.Max(nudAutoRelaunchDelaySeconds.Minimum, Math.Min(nudAutoRelaunchDelaySeconds.Maximum, state.AutoRelaunchDelaySeconds))
             End If
+            If chkAutoRelaunchClickOverlay IsNot Nothing Then
+                chkAutoRelaunchClickOverlay.Checked = state.AutoRelaunchClickOverlayEnabled
+            End If
             ApplyAutoRelaunchClickSteps(state.AutoRelaunchClicks)
             UpdateNotificationProviderUi()
             If nudAutoPotHp IsNot Nothing Then
@@ -10064,6 +10185,7 @@ Public Class Form1
                 .LootRejectPointY = _lootRejectPointY,
                 .ArrowUnbundleEnabled = (chkArrowUnbundleEnabled IsNot Nothing AndAlso chkArrowUnbundleEnabled.Checked),
                 .ArrowUnbundleSeconds = If(nudArrowUnbundleSeconds IsNot Nothing, nudArrowUnbundleSeconds.Value, 60D),
+                .ArrowUnbundleOverlayEnabled = (chkArrowUnbundleOverlay IsNot Nothing AndAlso chkArrowUnbundleOverlay.Checked),
                 .ArrowUnbundlePoints = CloneLootScanPoints(_arrowUnbundlePoints),
                 .PromptAutoAcceptEnabled = _partyAutoAccept,
                 .AskForPartyEnabled = _partyAskEnabled,
@@ -10084,6 +10206,7 @@ Public Class Form1
                 .AutoRelaunchGameEnabled = (chkAutoRelaunchGame IsNot Nothing AndAlso chkAutoRelaunchGame.Checked),
                 .AutoRelaunchGameExePath = If(txtAutoRelaunchExePath IsNot Nothing, txtAutoRelaunchExePath.Text.Trim(), ""),
                 .AutoRelaunchDelaySeconds = If(nudAutoRelaunchDelaySeconds IsNot Nothing, nudAutoRelaunchDelaySeconds.Value, 5D),
+                .AutoRelaunchClickOverlayEnabled = (chkAutoRelaunchClickOverlay IsNot Nothing AndAlso chkAutoRelaunchClickOverlay.Checked),
                 .AutoRelaunchClicks = GetAutoRelaunchClickSteps(),
                 .AutoPotHpPercent = If(nudAutoPotHp IsNot Nothing, nudAutoPotHp.Value, 80D),
                 .AutoPotMpPercent = If(nudAutoPotMp IsNot Nothing, nudAutoPotMp.Value, 35D),
@@ -12176,6 +12299,12 @@ Public Class Form1
         StopHpZeroAlarm()
         If _overlayForm IsNot Nothing AndAlso Not _overlayForm.IsDisposed Then
             _overlayForm.Close()
+        End If
+        If _autoRelaunchClickOverlayForm IsNot Nothing AndAlso Not _autoRelaunchClickOverlayForm.IsDisposed Then
+            _autoRelaunchClickOverlayForm.Close()
+        End If
+        If _arrowUnbundleOverlayForm IsNot Nothing AndAlso Not _arrowUnbundleOverlayForm.IsDisposed Then
+            _arrowUnbundleOverlayForm.Close()
         End If
         _fullEngine.Stop()
         _liteEngine.Stop()

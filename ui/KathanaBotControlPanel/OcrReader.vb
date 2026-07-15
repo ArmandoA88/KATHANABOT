@@ -985,16 +985,19 @@ Public NotInheritable Class OcrReader
             Return -1
         End If
 
+        Dim normalized As String = NormalizePercentText(text)
         Dim score As Integer = 0
-        score += Regex.Matches(text, "\d").Count * 2
-        If text.Contains("%") Then
-            score += 8
+        score += Regex.Matches(normalized, "\d").Count * 2
+        If normalized.Contains("%") Then
+            score += 15
         End If
-        If text.Contains(".") OrElse text.Contains(",") Then
-            score += 6
+        If Regex.IsMatch(normalized, "(?<!\d)\d{1,3}\s*[\.,:]\s*\d{2}\s*%?(?!\d)") Then
+            score += 35
+        ElseIf normalized.Contains(".") OrElse normalized.Contains(",") OrElse normalized.Contains(":") Then
+            score += 5
         End If
         If value >= 0 AndAlso value <= 100 Then
-            score += 30
+            score += 25
         End If
         Return score
     End Function
@@ -1058,9 +1061,13 @@ Public NotInheritable Class OcrReader
         End If
 
         Dim normalized As String = raw.ToUpperInvariant()
-        normalized = normalized.Replace("O", "0").Replace("I", "1").Replace("L", "1").Replace("|", "1")
-        normalized = normalized.Replace(",", "").Replace(".", "").Replace(" ", "")
-        normalized = Regex.Replace(normalized, "[^0-9]", "")
+        normalized = normalized.Replace("O", "0").Replace("Q", "0").Replace("D", "0")
+        normalized = normalized.Replace("I", "1").Replace("L", "1").Replace("|", "1").Replace("!", "1")
+        normalized = normalized.Replace("Z", "2").Replace("S", "5").Replace("G", "6").Replace("B", "8")
+        normalized = normalized.Replace(".", ",").Replace(":", ",").Replace(";", ",").Replace("'", ",").Replace("`", ",")
+        normalized = Regex.Replace(normalized, "\s+", ",")
+        normalized = Regex.Replace(normalized, "[^0-9,]", "")
+        normalized = Regex.Replace(normalized, ",{2,}", ",").Trim(","c)
         Return normalized
     End Function
 
@@ -1074,8 +1081,14 @@ Public NotInheritable Class OcrReader
             Return -1
         End If
 
+        Dim groupedMatch As Match = Regex.Match(normalized, "(?<!\d)\d{1,3}(?:,\d{3})+(?!\d)")
+        Dim digits As String = If(groupedMatch.Success, Regex.Replace(groupedMatch.Value, "\D", ""), Regex.Replace(normalized, "\D", ""))
+        If digits = "" OrElse digits.Length > 15 Then
+            Return -1
+        End If
+
         Dim value As Long
-        If Long.TryParse(normalized, value) AndAlso value >= 0 Then
+        If Long.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, value) AndAlso value >= 0 Then
             Return value
         End If
         Return -1
@@ -1088,12 +1101,30 @@ Public NotInheritable Class OcrReader
 
         Dim score As Integer = Regex.Matches(text, "\d").Count * 4
         If value >= 0 Then
-            score += 20
+            score += 10
         End If
-        If Regex.IsMatch(text, "^\d{2,15}$") Then
-            score += 15
+        If Regex.IsMatch(text, "^\d{1,3}(?:,\d{3})+$") Then
+            score += 45
+        ElseIf Regex.IsMatch(text, "^\d{4,15}$") Then
+            score += 5
+        ElseIf text.Contains(",") Then
+            score -= 15
         End If
         Return score
+    End Function
+
+    Private Shared Function NormalizePercentText(raw As String) As String
+        If String.IsNullOrWhiteSpace(raw) Then
+            Return ""
+        End If
+
+        Dim normalized As String = raw.ToUpperInvariant()
+        normalized = normalized.Replace("O", "0").Replace("Q", "0").Replace("D", "0")
+        normalized = normalized.Replace("I", "1").Replace("L", "1").Replace("|", "1").Replace("!", "1")
+        normalized = normalized.Replace("Z", "2").Replace("S", "5").Replace("G", "6").Replace("B", "8")
+        normalized = Regex.Replace(normalized, "[^0-9\.,:% ]", " ")
+        normalized = Regex.Replace(normalized, "\s+", " ").Trim()
+        Return normalized
     End Function
 
     Private Shared Function ParsePercentFromText(raw As String) As Double
@@ -1101,14 +1132,34 @@ Public NotInheritable Class OcrReader
             Return -1
         End If
 
-        Dim normalized As String = raw.ToLowerInvariant()
-        normalized = normalized.Replace("o", "0").Replace("l", "1").Replace("i", "1")
-        normalized = normalized.Replace(",", ".")
-        normalized = Regex.Replace(normalized, "[^0-9.% ]", " ")
-        normalized = Regex.Replace(normalized, "\s+", " ").Trim()
+        Dim normalized As String = NormalizePercentText(raw)
         If normalized = "" Then
             Return -1
         End If
+
+        ' The game renders EXP as 46.05%. Prefer exactly two fractional digits,
+        ' while accepting comma/colon OCR substitutions for the decimal point.
+        Dim fixedDecimal As Match = Regex.Match(normalized, "(?<!\d)(\d{1,3})\s*[\.,:]\s*(\d{2})\s*%?(?!\d)")
+        If fixedDecimal.Success Then
+            Dim exactToken As String = fixedDecimal.Groups(1).Value & "." & fixedDecimal.Groups(2).Value
+            Dim exactValue As Double
+            If Double.TryParse(exactToken, NumberStyles.Float, CultureInfo.InvariantCulture, exactValue) AndAlso exactValue >= 0 AndAlso exactValue <= 100 Then
+                Return exactValue
+            End If
+        End If
+
+        ' Recover a missed decimal point when OCR kept the percent sign and split
+        ' the two fractional digits with whitespace (for example "46 05%").
+        Dim spacedDecimal As Match = Regex.Match(normalized, "(?<!\d)(\d{1,3})\s+(\d{2})\s*%(?!\d)")
+        If spacedDecimal.Success Then
+            Dim spacedToken As String = spacedDecimal.Groups(1).Value & "." & spacedDecimal.Groups(2).Value
+            Dim spacedValue As Double
+            If Double.TryParse(spacedToken, NumberStyles.Float, CultureInfo.InvariantCulture, spacedValue) AndAlso spacedValue >= 0 AndAlso spacedValue <= 100 Then
+                Return spacedValue
+            End If
+        End If
+
+        normalized = normalized.Replace(",", ".").Replace(":", ".")
 
         Dim matches = Regex.Matches(normalized, "\d{1,5}(?:\.\d{1,3})?")
         Dim best As Double = -1
