@@ -11,6 +11,7 @@ Imports System.IO
 Imports System.Diagnostics
 Imports System.Linq
 Imports System.Drawing.Imaging
+Imports System.Security.Cryptography
 Imports Velopack
 Imports Velopack.Sources
 
@@ -503,6 +504,7 @@ Public Class Form1
     Private _lastChatTargetLanguage As String = ""
     Private _updateManager As UpdateManager = Nothing
     Private _pendingUpdateInfo As UpdateInfo = Nothing
+    Private _pendingStandaloneUpdate As StandaloneUpdateRelease = Nothing
     Private _updateOperationInProgress As Boolean = False
     Private _updateCancellation As CancellationTokenSource = Nothing
     Private _updateSettingsLoading As Boolean = False
@@ -513,6 +515,16 @@ Public Class Form1
     Private _uiTimingMaxMs As Double = 0
     Private ReadOnly _diagnosticsHistory As New Queue(Of String)()
     Private Const DiagnosticsHistoryLimit As Integer = 600
+
+    Private NotInheritable Class StandaloneUpdateRelease
+        Public Property Version As Version
+        Public Property VersionText As String = ""
+        Public Property FileName As String = ""
+        Public Property DownloadUrl As String = ""
+        Public Property Sha256Url As String = ""
+        Public Property Size As Long
+        Public Property ReleaseUrl As String = ""
+    End Class
 
     Private Enum TaskbarProgressState
         NoProgress = 0
@@ -3856,7 +3868,7 @@ Public Class Form1
         btnUpdateAndRestart = New Button() With {.Text = "Update and Restart", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(35, 130, 75), .ForeColor = Color.White, .Enabled = False, .Margin = New Padding(8, 0, 8, 0)}
         AddHandler btnUpdateAndRestart.Click, AddressOf UpdateAndRestartClicked
         actions.Controls.Add(btnUpdateAndRestart, 1, 0)
-        Dim safetyNote As New Label() With {.Text = "The running bot is stopped safely before restart.", .Dock = DockStyle.Fill, .ForeColor = Color.LightSteelBlue, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(8, 0, 0, 0)}
+        Dim safetyNote As New Label() With {.Text = "Works with installed and standalone EXE builds.", .Dock = DockStyle.Fill, .ForeColor = Color.LightSteelBlue, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(8, 0, 0, 0)}
         actions.Controls.Add(safetyNote, 2, 0)
         root.Controls.Add(actions, 0, 2)
 
@@ -3880,8 +3892,8 @@ Public Class Form1
             .BackColor = Color.FromArgb(10, 10, 10),
             .ForeColor = Color.Gainsboro,
             .Font = New Font("Consolas", 10.0F, FontStyle.Regular),
-            .Text = "Automatic updating becomes active after installing KathanaBot through the Velopack Setup executable." & Environment.NewLine & Environment.NewLine &
-                "Update flow: Check Now -> Update and Restart -> download -> safe bot stop -> install -> relaunch."
+            .Text = "The standalone EXE checks GitHub directly and replaces itself after a verified download. No Setup installation is required." & Environment.NewLine & Environment.NewLine &
+                "Update flow: Check Now -> Update and Restart -> download -> SHA-256 verification -> safe bot stop -> replace -> relaunch."
         }
         root.Controls.Add(txtUpdateDetails, 0, 5)
 
@@ -5074,8 +5086,8 @@ Public Class Form1
             lblUpdateInstallMode.Text = $"Install mode: Velopack installed ({installedVersion}) - automatic updates enabled."
             lblUpdateInstallMode.ForeColor = Color.LightGreen
         Else
-            lblUpdateInstallMode.Text = "Install mode: standalone EXE - install KathanaBot-Setup.exe once to enable automatic replacement and restart."
-            lblUpdateInstallMode.ForeColor = Color.Khaki
+            lblUpdateInstallMode.Text = "Install mode: standalone EXE - direct GitHub check and verified self-replacement enabled."
+            lblUpdateInstallMode.ForeColor = Color.LightGreen
         End If
     End Sub
 
@@ -5086,6 +5098,7 @@ Public Class Form1
 
         _updateManager = Nothing
         _pendingUpdateInfo = Nothing
+        _pendingStandaloneUpdate = Nothing
         If btnUpdateAndRestart IsNot Nothing Then
             btnUpdateAndRestart.Enabled = False
         End If
@@ -5132,18 +5145,6 @@ Public Class Form1
 
         _updateManager = manager
         RefreshUpdateInstallMode()
-        If Not manager.IsInstalled Then
-            Dim portableMessage As String = "Automatic update checks require the Velopack installation. Run KathanaBot-Setup.exe once; this standalone build cannot safely replace itself."
-            SetUpdateStatus("Setup installation required.", Color.Khaki)
-            If txtUpdateDetails IsNot Nothing Then
-                txtUpdateDetails.Text = portableMessage
-            End If
-            If showErrors Then
-                MessageBox.Show(Me, portableMessage, "KathanaBot Update", MessageBoxButtons.OK, MessageBoxIcon.Information)
-            End If
-            Return
-        End If
-
         _updateOperationInProgress = True
         SetUpdateControlsBusy(True)
         SetUpdateStatus("Checking GitHub Releases...", Color.LightSkyBlue)
@@ -5152,29 +5153,39 @@ Public Class Form1
         End If
 
         Try
-            Dim updateInfo As UpdateInfo = Await manager.CheckForUpdatesAsync()
-            _pendingUpdateInfo = updateInfo
-            If updateInfo Is Nothing Then
-                SetUpdateStatus("You already have the latest version.", Color.LightGreen)
-                If txtUpdateDetails IsNot Nothing Then
-                    txtUpdateDetails.Text = $"Installed version: {manager.CurrentVersion}{Environment.NewLine}Repository: {GetUpdateRepositoryUrl()}{Environment.NewLine}Checked: {DateTime.Now:yyyy-MM-dd HH:mm:ss}"
-                End If
-                If _updateTab IsNot Nothing Then
-                    _updateTab.Text = "Update"
+            If manager.IsInstalled Then
+                Dim updateInfo As UpdateInfo = Await manager.CheckForUpdatesAsync()
+                _pendingUpdateInfo = updateInfo
+                _pendingStandaloneUpdate = Nothing
+                If updateInfo Is Nothing Then
+                    ShowNoUpdateAvailable(If(manager.CurrentVersion IsNot Nothing, manager.CurrentVersion.ToString(), GetCurrentApplicationVersionText()), "Velopack installation")
+                Else
+                    Dim target = updateInfo.TargetFullRelease
+                    Dim sizeMb As Double = Math.Max(0.0, CDbl(target.Size)) / 1024.0 / 1024.0
+                    SetUpdateStatus($"Version {target.Version} is available.", Color.Gold)
+                    If txtUpdateDetails IsNot Nothing Then
+                        txtUpdateDetails.Text = $"Available version: {target.Version}{Environment.NewLine}Current version: {manager.CurrentVersion}{Environment.NewLine}Download: {target.FileName} ({sizeMb:0.00} MB){Environment.NewLine}Mode: Velopack installation{Environment.NewLine}Repository: {GetUpdateRepositoryUrl()}{Environment.NewLine}{Environment.NewLine}Press Update and Restart to download and install it."
+                    End If
+                    MarkUpdateAvailable()
                 End If
             Else
-                Dim target = updateInfo.TargetFullRelease
-                Dim sizeMb As Double = Math.Max(0.0, CDbl(target.Size)) / 1024.0 / 1024.0
-                SetUpdateStatus($"Version {target.Version} is available.", Color.Gold)
-                If txtUpdateDetails IsNot Nothing Then
-                    txtUpdateDetails.Text = $"Available version: {target.Version}{Environment.NewLine}Current version: {manager.CurrentVersion}{Environment.NewLine}Download: {target.FileName} ({sizeMb:0.00} MB){Environment.NewLine}Repository: {GetUpdateRepositoryUrl()}{Environment.NewLine}{Environment.NewLine}Press Update and Restart to download and install it."
-                End If
-                If _updateTab IsNot Nothing Then
-                    _updateTab.Text = "Update !"
+                _pendingUpdateInfo = Nothing
+                Dim standaloneRelease As StandaloneUpdateRelease = Await CheckStandaloneReleaseAsync()
+                _pendingStandaloneUpdate = standaloneRelease
+                If standaloneRelease Is Nothing Then
+                    ShowNoUpdateAvailable(GetCurrentApplicationVersionText(), "standalone EXE")
+                Else
+                    Dim sizeMb As Double = Math.Max(0.0, CDbl(standaloneRelease.Size)) / 1024.0 / 1024.0
+                    SetUpdateStatus($"Version {standaloneRelease.VersionText} is available.", Color.Gold)
+                    If txtUpdateDetails IsNot Nothing Then
+                        txtUpdateDetails.Text = $"Available version: {standaloneRelease.VersionText}{Environment.NewLine}Current version: {GetCurrentApplicationVersionText()}{Environment.NewLine}Download: {standaloneRelease.FileName} ({sizeMb:0.00} MB){Environment.NewLine}Mode: standalone EXE self-replacement{Environment.NewLine}Security: SHA-256 checksum required{Environment.NewLine}Repository: {GetUpdateRepositoryUrl()}{Environment.NewLine}{Environment.NewLine}Press Update and Restart. No Setup installation is needed."
+                    End If
+                    MarkUpdateAvailable()
                 End If
             End If
         Catch ex As Exception
             _pendingUpdateInfo = Nothing
+            _pendingStandaloneUpdate = Nothing
             SetUpdateStatus("Update check failed: " & ex.Message, Color.LightCoral)
             If txtUpdateDetails IsNot Nothing Then
                 txtUpdateDetails.Text = "GitHub update check failed." & Environment.NewLine & Environment.NewLine & ex.ToString()
@@ -5188,13 +5199,141 @@ Public Class Form1
         End Try
     End Function
 
+    Private Sub ShowNoUpdateAvailable(currentVersion As String, mode As String)
+        SetUpdateStatus("You already have the latest version.", Color.LightGreen)
+        If txtUpdateDetails IsNot Nothing Then
+            txtUpdateDetails.Text = $"Current version: {currentVersion}{Environment.NewLine}Mode: {mode}{Environment.NewLine}Repository: {GetUpdateRepositoryUrl()}{Environment.NewLine}Checked: {DateTime.Now:yyyy-MM-dd HH:mm:ss}"
+        End If
+        If _updateTab IsNot Nothing Then
+            _updateTab.Text = "Update"
+        End If
+    End Sub
+
+    Private Sub MarkUpdateAvailable()
+        If _updateTab IsNot Nothing Then
+            _updateTab.Text = "Update !"
+        End If
+    End Sub
+
+    Private Async Function CheckStandaloneReleaseAsync() As Task(Of StandaloneUpdateRelease)
+        Dim repositoryUri As New Uri(GetUpdateRepositoryUrl())
+        Dim parts As String() = repositoryUri.AbsolutePath.Trim("/"c).Split("/"c, StringSplitOptions.RemoveEmptyEntries)
+        If parts.Length < 2 Then
+            Throw New InvalidOperationException("The GitHub repository URL must contain an owner and repository name.")
+        End If
+
+        Dim owner As String = Uri.EscapeDataString(parts(0))
+        Dim repository As String = Uri.EscapeDataString(parts(1))
+        Dim apiUrl As String = $"https://api.github.com/repos/{owner}/{repository}/releases?per_page=20"
+        Dim includePrereleases As Boolean = chkUpdateIncludePrereleases IsNot Nothing AndAlso chkUpdateIncludePrereleases.Checked
+        Dim currentVersion As Version = Nothing
+        If Not Version.TryParse(GetCurrentApplicationVersionText(), currentVersion) Then
+            Throw New InvalidOperationException("The current application version could not be read.")
+        End If
+
+        Using client As New HttpClient()
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("KathanaBot-Updater/" & GetCurrentApplicationVersionText())
+            client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json")
+            Using response As HttpResponseMessage = Await client.GetAsync(apiUrl)
+                response.EnsureSuccessStatusCode()
+                Dim raw As String = Await response.Content.ReadAsStringAsync()
+                Using document As JsonDocument = JsonDocument.Parse(raw)
+                    For Each releaseElement As JsonElement In document.RootElement.EnumerateArray()
+                        If GetUpdateJsonBoolean(releaseElement, "draft") Then
+                            Continue For
+                        End If
+                        If GetUpdateJsonBoolean(releaseElement, "prerelease") AndAlso Not includePrereleases Then
+                            Continue For
+                        End If
+
+                        Dim targetBranch As String = GetUpdateJsonString(releaseElement, "target_commitish")
+                        If Not String.IsNullOrWhiteSpace(targetBranch) AndAlso
+                           Not targetBranch.Equals("agent-ai", StringComparison.OrdinalIgnoreCase) Then
+                            Continue For
+                        End If
+
+                        Dim tagName As String = GetUpdateJsonString(releaseElement, "tag_name")
+                        Dim releaseVersion As Version = ParseReleaseVersion(tagName)
+                        If releaseVersion Is Nothing OrElse releaseVersion <= currentVersion Then
+                            Continue For
+                        End If
+
+                        Dim executableAssetName As String = "KathanaBotControlPanel-win-x64-standalone.exe"
+                        Dim checksumAssetName As String = executableAssetName & ".sha256"
+                        Dim executableUrl As String = ""
+                        Dim checksumUrl As String = ""
+                        Dim executableSize As Long = 0
+                        Dim assetsElement As JsonElement
+                        If releaseElement.TryGetProperty("assets", assetsElement) Then
+                            For Each assetElement As JsonElement In assetsElement.EnumerateArray()
+                                Dim assetName As String = GetUpdateJsonString(assetElement, "name")
+                                If assetName.Equals(executableAssetName, StringComparison.OrdinalIgnoreCase) Then
+                                    executableUrl = GetUpdateJsonString(assetElement, "browser_download_url")
+                                    Dim sizeElement As JsonElement
+                                    If assetElement.TryGetProperty("size", sizeElement) AndAlso sizeElement.ValueKind = JsonValueKind.Number Then
+                                        sizeElement.TryGetInt64(executableSize)
+                                    End If
+                                ElseIf assetName.Equals(checksumAssetName, StringComparison.OrdinalIgnoreCase) Then
+                                    checksumUrl = GetUpdateJsonString(assetElement, "browser_download_url")
+                                End If
+                            Next
+                        End If
+
+                        If String.IsNullOrWhiteSpace(executableUrl) OrElse String.IsNullOrWhiteSpace(checksumUrl) Then
+                            Throw New InvalidOperationException($"Release {tagName} does not contain both {executableAssetName} and its .sha256 file. Run the updated release workflow on agent-ai.")
+                        End If
+
+                        Return New StandaloneUpdateRelease With {
+                            .Version = releaseVersion,
+                            .VersionText = tagName.TrimStart("v"c, "V"c),
+                            .FileName = executableAssetName,
+                            .DownloadUrl = executableUrl,
+                            .Sha256Url = checksumUrl,
+                            .Size = executableSize,
+                            .ReleaseUrl = GetUpdateJsonString(releaseElement, "html_url")
+                        }
+                    Next
+                End Using
+            End Using
+        End Using
+
+        Return Nothing
+    End Function
+
+    Private Shared Function GetUpdateJsonString(element As JsonElement, propertyName As String) As String
+        Dim value As JsonElement
+        If element.TryGetProperty(propertyName, value) AndAlso value.ValueKind = JsonValueKind.String Then
+            Return If(value.GetString(), "")
+        End If
+        Return ""
+    End Function
+
+    Private Shared Function GetUpdateJsonBoolean(element As JsonElement, propertyName As String) As Boolean
+        Dim value As JsonElement
+        Return element.TryGetProperty(propertyName, value) AndAlso value.ValueKind = JsonValueKind.True
+    End Function
+
+    Private Shared Function ParseReleaseVersion(tagName As String) As Version
+        Dim match As Match = Regex.Match(If(tagName, ""), "(?i)^v?(\d+)\.(\d+)\.(\d+)")
+        If Not match.Success Then
+            Return Nothing
+        End If
+        Return New Version(Integer.Parse(match.Groups(1).Value), Integer.Parse(match.Groups(2).Value), Integer.Parse(match.Groups(3).Value))
+    End Function
+
     Private Async Sub UpdateAndRestartClicked(sender As Object, e As EventArgs)
-        If _updateOperationInProgress OrElse _updateManager Is Nothing OrElse _pendingUpdateInfo Is Nothing Then
+        Dim velopackUpdateReady As Boolean = _updateManager IsNot Nothing AndAlso _updateManager.IsInstalled AndAlso _pendingUpdateInfo IsNot Nothing
+        Dim standaloneUpdateReady As Boolean = _pendingStandaloneUpdate IsNot Nothing
+        If _updateOperationInProgress OrElse (Not velopackUpdateReady AndAlso Not standaloneUpdateReady) Then
             Return
         End If
 
         Dim runningEdition As BotEdition? = GetRunningEdition()
-        Dim prompt As String = $"Download and install KathanaBot {_pendingUpdateInfo.TargetFullRelease.Version}?"
+        Dim targetVersion As String = If(standaloneUpdateReady, _pendingStandaloneUpdate.VersionText, _pendingUpdateInfo.TargetFullRelease.Version.ToString())
+        Dim prompt As String = $"Download and install KathanaBot {targetVersion}?"
+        If standaloneUpdateReady Then
+            prompt &= Environment.NewLine & Environment.NewLine & "The standalone EXE will verify the SHA-256 checksum, replace itself, and reopen automatically."
+        End If
         If runningEdition.HasValue Then
             prompt &= Environment.NewLine & Environment.NewLine & $"The running {runningEdition.Value} bot will be stopped safely before the application restarts."
         End If
@@ -5213,28 +5352,18 @@ Public Class Form1
         End If
 
         Try
-            Dim progress As Action(Of Integer) =
-                Sub(value As Integer)
-                    If IsDisposed OrElse Not IsHandleCreated Then
-                        Return
-                    End If
-                    BeginInvoke(New Action(Sub()
-                                               Dim bounded As Integer = Math.Max(0, Math.Min(100, value))
-                                               progressUpdateDownload.Value = bounded
-                                               SetUpdateStatus($"Downloading update... {bounded}%", Color.LightSkyBlue)
-                                           End Sub))
-                End Sub
-            Await _updateManager.DownloadUpdatesAsync(_pendingUpdateInfo, progress, _updateCancellation.Token)
-            progressUpdateDownload.Value = 100
-            SetUpdateStatus("Download complete. Stopping safely and restarting...", Color.LightGreen)
-
-            runningEdition = GetRunningEdition()
-            If runningEdition.HasValue Then
-                StopEdition(runningEdition.Value, True, "software update")
+            If standaloneUpdateReady Then
+                Await DownloadStandaloneUpdateAndRestartAsync(_pendingStandaloneUpdate, _updateCancellation.Token)
+            Else
+                Dim progress As Action(Of Integer) = AddressOf ReportUpdateDownloadProgress
+                Await _updateManager.DownloadUpdatesAsync(_pendingUpdateInfo, progress, _updateCancellation.Token)
+                progressUpdateDownload.Value = 100
+                SetUpdateStatus("Download complete. Stopping safely and restarting...", Color.LightGreen)
+                StopRunningBotForUpdate()
+                SavePersistedListState(False)
+                FlushPendingLogLines()
+                _updateManager.ApplyUpdatesAndRestart(_pendingUpdateInfo.TargetFullRelease, Array.Empty(Of String)())
             End If
-            SavePersistedListState(False)
-            FlushPendingLogLines()
-            _updateManager.ApplyUpdatesAndRestart(_pendingUpdateInfo.TargetFullRelease, Array.Empty(Of String)())
         Catch ex As OperationCanceledException
             SetUpdateStatus("Update download canceled.", Color.Khaki)
         Catch ex As Exception
@@ -5244,6 +5373,114 @@ Public Class Form1
             _updateOperationInProgress = False
             SetUpdateControlsBusy(False)
         End Try
+    End Sub
+
+    Private Sub ReportUpdateDownloadProgress(value As Integer)
+        If IsDisposed OrElse Not IsHandleCreated Then
+            Return
+        End If
+        BeginInvoke(New Action(Sub()
+                                   Dim bounded As Integer = Math.Max(0, Math.Min(100, value))
+                                   progressUpdateDownload.Value = bounded
+                                   SetUpdateStatus($"Downloading update... {bounded}%", Color.LightSkyBlue)
+                               End Sub))
+    End Sub
+
+    Private Sub StopRunningBotForUpdate()
+        Dim runningEdition As BotEdition? = GetRunningEdition()
+        If runningEdition.HasValue Then
+            StopEdition(runningEdition.Value, True, "software update")
+        End If
+    End Sub
+
+    Private Async Function DownloadStandaloneUpdateAndRestartAsync(release As StandaloneUpdateRelease, cancellationToken As CancellationToken) As Task
+        Dim currentExecutable As String = Environment.ProcessPath
+        If String.IsNullOrWhiteSpace(currentExecutable) OrElse Not File.Exists(currentExecutable) Then
+            Throw New InvalidOperationException("The running standalone EXE path could not be determined.")
+        End If
+
+        Dim temporaryExecutable As String = Path.Combine(Path.GetTempPath(), $"KathanaBot-{release.VersionText}-{Guid.NewGuid():N}.exe")
+        Dim expectedHash As String = ""
+        Try
+            Using client As New HttpClient()
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("KathanaBot-Updater/" & GetCurrentApplicationVersionText())
+                client.DefaultRequestHeaders.Accept.ParseAdd("application/octet-stream")
+
+                Dim expectedHashText As String = Await client.GetStringAsync(release.Sha256Url, cancellationToken)
+                expectedHash = Regex.Match(expectedHashText, "(?i)\b[0-9a-f]{64}\b").Value.ToUpperInvariant()
+                If expectedHash.Length <> 64 Then
+                    Throw New InvalidDataException("The release checksum file is invalid.")
+                End If
+
+                Using response As HttpResponseMessage = Await client.GetAsync(release.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                    response.EnsureSuccessStatusCode()
+                    Dim totalBytes As Long = If(response.Content.Headers.ContentLength.HasValue, response.Content.Headers.ContentLength.Value, release.Size)
+                    Using source As Stream = Await response.Content.ReadAsStreamAsync(cancellationToken)
+                        Using destination As New FileStream(temporaryExecutable, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1024 * 128, True)
+                            Dim buffer(1024 * 128 - 1) As Byte
+                            Dim received As Long = 0
+                            Do
+                                Dim count As Integer = Await source.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)
+                                If count = 0 Then
+                                    Exit Do
+                                End If
+                                Await destination.WriteAsync(buffer.AsMemory(0, count), cancellationToken)
+                                received += count
+                                If totalBytes > 0 Then
+                                    ReportUpdateDownloadProgress(CInt(Math.Min(100, received * 100L \ totalBytes)))
+                                End If
+                            Loop
+                        End Using
+                    End Using
+                End Using
+            End Using
+
+            SetUpdateStatus("Verifying SHA-256 checksum...", Color.LightSkyBlue)
+            Dim actualHash As String
+            Using updateStream As FileStream = File.OpenRead(temporaryExecutable)
+                Dim hashBytes As Byte() = Await SHA256.HashDataAsync(updateStream, cancellationToken)
+                actualHash = Convert.ToHexString(hashBytes)
+            End Using
+            If Not actualHash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase) Then
+                Throw New InvalidDataException("The downloaded EXE failed SHA-256 verification and was not installed.")
+            End If
+
+            progressUpdateDownload.Value = 100
+            SetUpdateStatus("Verified. Stopping safely, replacing the EXE, and restarting...", Color.LightGreen)
+            StopRunningBotForUpdate()
+            SavePersistedListState(False)
+            FlushPendingLogLines()
+            StartStandaloneReplacement(currentExecutable, temporaryExecutable)
+            Application.Exit()
+        Catch
+            Try
+                If File.Exists(temporaryExecutable) Then
+                    File.Delete(temporaryExecutable)
+                End If
+            Catch
+            End Try
+            Throw
+        End Try
+    End Function
+
+    Private Shared Sub StartStandaloneReplacement(currentExecutable As String, downloadedExecutable As String)
+        Dim escapedCurrent As String = currentExecutable.Replace("'", "''")
+        Dim escapedDownloaded As String = downloadedExecutable.Replace("'", "''")
+        Dim escapedWorkingDirectory As String = Path.GetDirectoryName(currentExecutable).Replace("'", "''")
+        Dim processId As Integer = Environment.ProcessId
+        Dim script As String =
+            $"$ErrorActionPreference='Stop'; Wait-Process -Id {processId} -ErrorAction SilentlyContinue; " &
+            $"$source='{escapedDownloaded}'; $target='{escapedCurrent}'; $copied=$false; " &
+            "for($i=0; $i -lt 60 -and -not $copied; $i++){ try { Copy-Item -LiteralPath $source -Destination $target -Force; $copied=$true } catch { Start-Sleep -Milliseconds 500 } }; " &
+            "if(-not $copied){ exit 1 }; Remove-Item -LiteralPath $source -Force -ErrorAction SilentlyContinue; " &
+            $"Start-Process -FilePath $target -WorkingDirectory '{escapedWorkingDirectory}'"
+        Dim encodedCommand As String = Convert.ToBase64String(Encoding.Unicode.GetBytes(script))
+        Process.Start(New ProcessStartInfo("powershell.exe") With {
+            .UseShellExecute = False,
+            .CreateNoWindow = True,
+            .WindowStyle = ProcessWindowStyle.Hidden,
+            .Arguments = "-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand " & encodedCommand
+        })
     End Sub
 
     Private Sub SetUpdateStatus(message As String, color As Color)
@@ -5258,7 +5495,8 @@ Public Class Form1
             btnCheckForUpdates.Enabled = Not busy
         End If
         If btnUpdateAndRestart IsNot Nothing Then
-            btnUpdateAndRestart.Enabled = Not busy AndAlso _pendingUpdateInfo IsNot Nothing AndAlso _updateManager IsNot Nothing AndAlso _updateManager.IsInstalled
+            Dim velopackReady As Boolean = _pendingUpdateInfo IsNot Nothing AndAlso _updateManager IsNot Nothing AndAlso _updateManager.IsInstalled
+            btnUpdateAndRestart.Enabled = Not busy AndAlso (velopackReady OrElse _pendingStandaloneUpdate IsNot Nothing)
         End If
         If txtUpdateRepositoryUrl IsNot Nothing Then
             txtUpdateRepositoryUrl.Enabled = Not busy

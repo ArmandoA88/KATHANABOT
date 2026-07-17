@@ -1,6 +1,6 @@
 # Kathana Bot
 
-KathanaBot is a self-contained VB WinForms application. The recommended installation uses Velopack so the app can update itself from GitHub Releases. A timestamped standalone EXE can still be built for portable testing, but it cannot safely replace itself.
+KathanaBot is a self-contained VB WinForms application. Both the Velopack-installed build and the timestamped standalone EXE can update from GitHub Releases. The standalone build checks GitHub directly, verifies the downloaded EXE with SHA-256, replaces itself after closing, and reopens automatically.
 
 - No API URL required.
 - No Python backend required.
@@ -28,7 +28,7 @@ Install KathanaBot once with the new `KathanaBot-Setup-vX.Y.Z-<timestamp>.exe`. 
 - stop an active bot safely, apply the update, and restart;
 - optionally include prerelease versions.
 
-The standalone EXE detects that it is not Velopack-installed and explains that Setup must be run once before automatic updating is enabled.
+The standalone EXE does not require Setup. It downloads the release asset named `KathanaBotControlPanel-win-x64-standalone.exe` and its `.sha256` file, verifies the download, safely stops the bot, replaces the running EXE, and reopens it. No permanent companion files are required.
 
 ## Publish an Update on GitHub
 
@@ -48,14 +48,16 @@ GitHub's built-in `GITHUB_TOKEN` is used by the workflow, so no paid update serv
 
 Validation: the Release build succeeded with zero errors and zero warnings.
 
+To activate online updates, push these changes to `agent-ai` and publish version `1.0.43` using the `Build and publish Velopack release` GitHub workflow. Later, increase the application version and publish `1.0.44`; the standalone `1.0.43` EXE will detect it from the `Update` tab and can replace itself automatically.
+
 To activate internet updates:
 
 1. Commit and push these changes to the `agent-ai` branch.
 2. Run the `Build and publish Velopack release` workflow in GitHub Actions with version `1.0.43`.
-3. Install version `1.0.43` once using the generated Setup executable. The standalone EXE cannot update itself.
+3. Run either the generated Setup installation or the standalone `1.0.43` EXE. The standalone EXE requires no installation.
 4. Increase the application version and publish `1.0.44` from `agent-ai` using the same workflow.
 5. Start the installed `1.0.43` application or press `Check Now` in the `Update` tab. It should report that version `1.0.44` is available.
-6. Press `Update and Restart` to verify downloading, safe bot shutdown, installation, and relaunch.
+6. Press `Update and Restart` to verify downloading, SHA-256 validation, safe bot shutdown, replacement/installation, and relaunch.
 
 This process follows Velopack's official [GitHub Actions distribution flow](https://docs.velopack.io/distributing/github-actions).
 

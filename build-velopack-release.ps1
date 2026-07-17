@@ -15,6 +15,7 @@ $root = $PSScriptRoot
 $project = Join-Path $root "ui\KathanaBotControlPanel\KathanaBotControlPanel.vbproj"
 $icon = Join-Path $root "ui\KathanaBotControlPanel\assets\KathanaBot.ico"
 $publishDir = Join-Path $root "dist\velopack\publish-win-x64"
+$standalonePublishDir = Join-Path $root "dist\velopack\publish-standalone-win-x64"
 $releaseDir = Join-Path $root "dist\velopack\Releases"
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
@@ -26,7 +27,17 @@ if ($Version -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') {
     throw "Version '$Version' is not a valid release version (example: 1.0.43)."
 }
 
-New-Item -ItemType Directory -Force -Path $publishDir, $releaseDir | Out-Null
+New-Item -ItemType Directory -Force -Path $publishDir, $standalonePublishDir, $releaseDir | Out-Null
+
+$resolvedRoot = [System.IO.Path]::GetFullPath($root).TrimEnd('\') + '\'
+foreach ($generatedDirectory in @($publishDir, $standalonePublishDir, $releaseDir)) {
+    $resolvedGeneratedDirectory = [System.IO.Path]::GetFullPath($generatedDirectory)
+    if (-not $resolvedGeneratedDirectory.StartsWith($resolvedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to clean generated directory outside the repository: $resolvedGeneratedDirectory"
+    }
+    Get-ChildItem -LiteralPath $resolvedGeneratedDirectory -Force -ErrorAction SilentlyContinue |
+        Remove-Item -Recurse -Force
+}
 
 Write-Host "Restoring Velopack 1.2.0..."
 dotnet tool restore
@@ -45,6 +56,28 @@ dotnet publish $project `
     -p:DebugType=none `
     -p:DebugSymbols=false
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed." }
+
+Write-Host "Publishing the self-updating standalone EXE..."
+dotnet publish $project `
+    --configuration Release `
+    --runtime win-x64 `
+    --self-contained true `
+    --output $standalonePublishDir `
+    -p:Version=$Version `
+    -p:FileVersion="$Version.0" `
+    -p:AssemblyVersion="$Version.0" `
+    -p:PublishSingleFile=true `
+    -p:IncludeNativeLibrariesForSelfExtract=true `
+    -p:EnableCompressionInSingleFile=true `
+    -p:DebugType=none `
+    -p:DebugSymbols=false
+if ($LASTEXITCODE -ne 0) { throw "Standalone dotnet publish failed." }
+
+$standaloneAsset = Join-Path $releaseDir "KathanaBotControlPanel-win-x64-standalone.exe"
+$standaloneChecksumAsset = "$standaloneAsset.sha256"
+Copy-Item -LiteralPath (Join-Path $standalonePublishDir "KathanaBotControlPanel.exe") -Destination $standaloneAsset -Force
+$standaloneHash = (Get-FileHash -LiteralPath $standaloneAsset -Algorithm SHA256).Hash.ToLowerInvariant()
+[System.IO.File]::WriteAllText($standaloneChecksumAsset, "$standaloneHash  $(Split-Path -Leaf $standaloneAsset)`n", [System.Text.Encoding]::ASCII)
 
 Write-Host "Trying to download the previous GitHub release for delta generation..."
 $downloadArguments = @(
@@ -90,6 +123,9 @@ $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $rootSetup = Join-Path $root "KathanaBot-Setup-v$Version-$timestamp.exe"
 Copy-Item -LiteralPath $setup.FullName -Destination $rootSetup
 Write-Host "Versioned root installer: $rootSetup"
+$rootStandalone = Join-Path $root "KathanaBotControlPanel_${timestamp}_standalone.exe"
+Copy-Item -LiteralPath $standaloneAsset -Destination $rootStandalone
+Write-Host "Versioned root standalone EXE: $rootStandalone"
 
 if ($Publish) {
     if ([string]::IsNullOrWhiteSpace($GitHubToken)) {
@@ -112,6 +148,21 @@ if ($Publish) {
     }
     & dotnet @uploadArguments
     if ($LASTEXITCODE -ne 0) { throw "Velopack GitHub upload failed." }
+
+    $ghCommand = Get-Command gh -ErrorAction SilentlyContinue
+    if ($null -eq $ghCommand) {
+        throw "GitHub CLI (gh) is required to attach the standalone EXE and checksum."
+    }
+    $repositorySlug = ([Uri]$RepositoryUrl).AbsolutePath.Trim("/")
+    $previousGhToken = $env:GH_TOKEN
+    try {
+        $env:GH_TOKEN = $GitHubToken
+        & gh release upload "v$Version" $standaloneAsset $standaloneChecksumAsset --repo $repositorySlug --clobber
+        if ($LASTEXITCODE -ne 0) { throw "Standalone GitHub asset upload failed." }
+    }
+    finally {
+        $env:GH_TOKEN = $previousGhToken
+    }
 }
 
 Write-Host "Velopack release files: $releaseDir"
