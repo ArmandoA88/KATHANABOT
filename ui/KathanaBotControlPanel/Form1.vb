@@ -30,6 +30,7 @@ Public Class Form1
     Private ReadOnly _enterToggleTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _logFlushTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _rollingScreenshotTimer As New System.Windows.Forms.Timer()
+    Private ReadOnly _periodicScreenshotTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _discordShotTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _logQueueSync As New Object()
     Private ReadOnly _logThrottleSync As New Object()
@@ -116,6 +117,11 @@ Public Class Form1
     Private nudChatMaxLines As NumericUpDown
     Private lblChatTranslationStatus As Label
     Private picSnapshot As PictureBox
+    Private chkPeriodicScreenshots As CheckBox
+    Private nudPeriodicScreenshotMinutes As NumericUpDown
+    Private txtPeriodicScreenshotDirectory As TextBox
+    Private btnBrowsePeriodicScreenshotDirectory As Button
+    Private lblPeriodicScreenshotStatus As Label
     Private pnlWindowFrame As Panel
     Private btnPickLootRejectPoint As Button
     Private btnClearLootRejectPoint As Button
@@ -432,6 +438,7 @@ Public Class Form1
     Private Shared ReadOnly PersistDirectoryPath As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel")
     Private Shared ReadOnly PersistFilePath As String = Path.Combine(PersistDirectoryPath, "user_lists.json")
     Private Shared ReadOnly RollingScreenshotDirectoryPath As String = Path.Combine(PersistDirectoryPath, "screenshots")
+    Private Shared ReadOnly DefaultPeriodicScreenshotDirectoryPath As String = ResolveDefaultPeriodicScreenshotDirectory()
     Private ReadOnly _baseBackColors As New Dictionary(Of Control, Color)()
     Private ReadOnly _gridThemeSnapshots As New Dictionary(Of DataGridView, GridThemeSnapshot)()
     Private ReadOnly _keyActionEvents As New List(Of KeyActionEvent)()
@@ -454,6 +461,9 @@ Public Class Form1
     Private _rollingScreenshotInProgress As Boolean = False
     Private _rollingScreenshotSaveCount As Integer = 0
     Private _lastRollingScreenshotErrorLogUtc As DateTime = DateTime.MinValue
+    Private _periodicScreenshotInProgress As Boolean = False
+    Private _lastPeriodicScreenshotErrorLogUtc As DateTime = DateTime.MinValue
+    Private _periodicScreenshotSettingsLoading As Boolean = False
     Private _discordShotPollInProgress As Boolean = False
     Private _discordShotInitialized As Boolean = False
     Private _lastDiscordShotMessageId As String = ""
@@ -564,6 +574,9 @@ Public Class Form1
 
     Private Class PersistedAppState
         Public Property WindowTitle As String = DefaultGameWindowTitle
+        Public Property PeriodicScreenshotsEnabled As Boolean = False
+        Public Property PeriodicScreenshotIntervalMinutes As Decimal = 15D
+        Public Property PeriodicScreenshotDirectory As String = ""
         Public Property Full As PersistedListState = New PersistedListState()
         Public Property Lite As PersistedLiteState = New PersistedLiteState()
     End Class
@@ -693,6 +706,7 @@ Public Class Form1
         UpdateStyles()
         ApplyApplicationIcon()
         BuildUi()
+        AddHandler _periodicScreenshotTimer.Tick, AddressOf PeriodicScreenshotTimerTick
         SeedDefaults()
         LoadPersistedListState()
         ForceLevelingAgentOffForStartup()
@@ -725,6 +739,8 @@ Public Class Form1
         AddHandler _rollingScreenshotTimer.Tick, AddressOf RollingScreenshotTimerTick
         _rollingScreenshotTimer.Start()
 
+        ConfigurePeriodicScreenshotTimer()
+
         _discordShotTimer.Interval = DiscordShotPollIntervalMs
         AddHandler _discordShotTimer.Tick, AddressOf DiscordShotTimerTick
         _discordShotTimer.Start()
@@ -752,6 +768,12 @@ Public Class Form1
     End Sub
 
     Private Sub SetupLiveConfigBindings()
+        If chkPeriodicScreenshots IsNot Nothing Then
+            AddHandler chkPeriodicScreenshots.CheckedChanged, AddressOf PeriodicScreenshotSettingsChanged
+        End If
+        If nudPeriodicScreenshotMinutes IsNot Nothing Then
+            AddHandler nudPeriodicScreenshotMinutes.ValueChanged, AddressOf PeriodicScreenshotSettingsChanged
+        End If
         If cboNotificationProvider IsNot Nothing Then
             AddHandler cboNotificationProvider.SelectedIndexChanged, AddressOf NotificationProviderChanged
         End If
@@ -2922,9 +2944,10 @@ Public Class Form1
 
         root.Controls.Add(left, 0, 0)
 
-        Dim right As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
+        Dim right As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3}
         right.RowStyles.Add(New RowStyle(SizeType.Absolute, 260.0F))
         right.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        right.RowStyles.Add(New RowStyle(SizeType.Absolute, 118.0F))
         right.Controls.Add(BuildProcessListGroup(), 0, 0)
 
         Dim snapshotGroup As New GroupBox() With {.Text = "Snapshot", .Dock = DockStyle.Fill}
@@ -2937,11 +2960,94 @@ Public Class Form1
 
         snapshotGroup.Controls.Add(snapshotLayout)
         right.Controls.Add(snapshotGroup, 0, 1)
+        right.Controls.Add(BuildPeriodicScreenshotGroup(), 0, 2)
 
         root.Controls.Add(right, 1, 0)
 
         AddTabExplanationButton(tab, HelpScopeVision)
         Return tab
+    End Function
+
+    Private Function BuildPeriodicScreenshotGroup() As GroupBox
+        Dim group As New GroupBox() With {.Text = "Automatic Screenshots", .Dock = DockStyle.Fill}
+        Dim layout As New TableLayoutPanel() With {
+            .Dock = DockStyle.Fill,
+            .ColumnCount = 6,
+            .RowCount = 2,
+            .Padding = New Padding(6)
+        }
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 165.0F))
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 72.0F))
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 70.0F))
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 88.0F))
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 105.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 50.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 50.0F))
+
+        chkPeriodicScreenshots = New CheckBox() With {
+            .Text = "Enable automatic",
+            .Dock = DockStyle.Fill
+        }
+        layout.Controls.Add(chkPeriodicScreenshots, 0, 0)
+
+        layout.Controls.Add(New Label() With {
+            .Text = "Every (min)",
+            .Dock = DockStyle.Fill,
+            .TextAlign = ContentAlignment.MiddleLeft
+        }, 1, 0)
+        nudPeriodicScreenshotMinutes = New NumericUpDown() With {
+            .Dock = DockStyle.Fill,
+            .Minimum = 1,
+            .Maximum = 999,
+            .Value = 15,
+            .ThousandsSeparator = True
+        }
+        layout.Controls.Add(nudPeriodicScreenshotMinutes, 2, 0)
+
+        lblPeriodicScreenshotStatus = New Label() With {
+            .Text = "Off",
+            .Dock = DockStyle.Fill,
+            .ForeColor = Color.LightSteelBlue,
+            .TextAlign = ContentAlignment.MiddleLeft
+        }
+        layout.Controls.Add(lblPeriodicScreenshotStatus, 3, 0)
+        layout.SetColumnSpan(lblPeriodicScreenshotStatus, 3)
+
+        layout.Controls.Add(New Label() With {
+            .Text = "Save folder",
+            .Dock = DockStyle.Fill,
+            .TextAlign = ContentAlignment.MiddleLeft
+        }, 0, 1)
+
+        txtPeriodicScreenshotDirectory = New TextBox() With {
+            .Dock = DockStyle.Fill,
+            .ReadOnly = True,
+            .Text = DefaultPeriodicScreenshotDirectoryPath
+        }
+        layout.Controls.Add(txtPeriodicScreenshotDirectory, 1, 1)
+        layout.SetColumnSpan(txtPeriodicScreenshotDirectory, 3)
+
+        btnBrowsePeriodicScreenshotDirectory = New Button() With {
+            .Text = "Browse...",
+            .Dock = DockStyle.Fill,
+            .BackColor = Color.FromArgb(45, 95, 140),
+            .ForeColor = Color.White
+        }
+        AddHandler btnBrowsePeriodicScreenshotDirectory.Click, AddressOf BrowsePeriodicScreenshotDirectoryClicked
+        layout.Controls.Add(btnBrowsePeriodicScreenshotDirectory, 4, 1)
+
+        Dim btnOpenFolder As New Button() With {
+            .Text = "Open Folder",
+            .Dock = DockStyle.Fill,
+            .BackColor = Color.FromArgb(55, 105, 75),
+            .ForeColor = Color.White
+        }
+        AddHandler btnOpenFolder.Click, AddressOf OpenPeriodicScreenshotDirectoryClicked
+        layout.Controls.Add(btnOpenFolder, 5, 1)
+
+        group.Controls.Add(layout)
+        Return group
     End Function
 
     Private Function BuildProcessListGroup() As GroupBox
@@ -4821,6 +4927,140 @@ Public Class Form1
         Return True
     End Function
 
+    Private Shared Function ResolveDefaultPeriodicScreenshotDirectory() As String
+        Dim picturesDirectory As String = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures)
+        If String.IsNullOrWhiteSpace(picturesDirectory) Then
+            picturesDirectory = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)
+        End If
+        If String.IsNullOrWhiteSpace(picturesDirectory) Then
+            picturesDirectory = PersistDirectoryPath
+        End If
+        Return Path.Combine(picturesDirectory, "KathanaBot")
+    End Function
+
+    Private Function GetPeriodicScreenshotDirectory() As String
+        If txtPeriodicScreenshotDirectory Is Nothing OrElse String.IsNullOrWhiteSpace(txtPeriodicScreenshotDirectory.Text) Then
+            Return DefaultPeriodicScreenshotDirectoryPath
+        End If
+        Return txtPeriodicScreenshotDirectory.Text.Trim()
+    End Function
+
+    Private Sub BrowsePeriodicScreenshotDirectoryClicked(sender As Object, e As EventArgs)
+        Using dialog As New FolderBrowserDialog()
+            dialog.Description = "Select where automatic game screenshots will be saved."
+            dialog.ShowNewFolderButton = True
+            Dim currentDirectory As String = GetPeriodicScreenshotDirectory()
+            If Directory.Exists(currentDirectory) Then
+                dialog.SelectedPath = currentDirectory
+            Else
+                Dim parentDirectory As String = Path.GetDirectoryName(currentDirectory)
+                If Not String.IsNullOrWhiteSpace(parentDirectory) AndAlso Directory.Exists(parentDirectory) Then
+                    dialog.SelectedPath = parentDirectory
+                End If
+            End If
+
+            If dialog.ShowDialog(Me) <> DialogResult.OK OrElse String.IsNullOrWhiteSpace(dialog.SelectedPath) Then
+                Return
+            End If
+
+            txtPeriodicScreenshotDirectory.Text = dialog.SelectedPath.Trim()
+            ConfigurePeriodicScreenshotTimer()
+            SavePersistedListState(False)
+        End Using
+    End Sub
+
+    Private Sub OpenPeriodicScreenshotDirectoryClicked(sender As Object, e As EventArgs)
+        Dim screenshotDirectory As String = GetPeriodicScreenshotDirectory()
+        Try
+            Directory.CreateDirectory(screenshotDirectory)
+            Process.Start(New ProcessStartInfo(screenshotDirectory) With {.UseShellExecute = True})
+        Catch ex As Exception
+            Dim message As String = "Unable to open the automatic screenshot folder: " & ex.Message
+            AppendLog(message)
+            MessageBox.Show(Me, message, "Open Screenshot Folder", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        End Try
+    End Sub
+
+    Private Sub PeriodicScreenshotSettingsChanged(sender As Object, e As EventArgs)
+        If _periodicScreenshotSettingsLoading Then
+            Return
+        End If
+        ConfigurePeriodicScreenshotTimer()
+        SavePersistedListState(False)
+    End Sub
+
+    Private Sub ConfigurePeriodicScreenshotTimer()
+        _periodicScreenshotTimer.Stop()
+
+        Dim enabled As Boolean = chkPeriodicScreenshots IsNot Nothing AndAlso chkPeriodicScreenshots.Checked
+        Dim intervalMinutes As Integer = 15
+        If nudPeriodicScreenshotMinutes IsNot Nothing Then
+            intervalMinutes = Math.Max(1, Math.Min(999, CInt(nudPeriodicScreenshotMinutes.Value)))
+        End If
+
+        If enabled Then
+            _periodicScreenshotTimer.Interval = intervalMinutes * 60 * 1000
+            _periodicScreenshotTimer.Start()
+        End If
+
+        If lblPeriodicScreenshotStatus IsNot Nothing Then
+            lblPeriodicScreenshotStatus.Text = If(enabled, $"On - next capture in {intervalMinutes} min", "Off")
+            lblPeriodicScreenshotStatus.ForeColor = If(enabled, Color.LightGreen, Color.LightSteelBlue)
+        End If
+    End Sub
+
+    Private Sub PeriodicScreenshotTimerTick(sender As Object, e As EventArgs)
+        If chkPeriodicScreenshots Is Nothing OrElse Not chkPeriodicScreenshots.Checked OrElse _periodicScreenshotInProgress Then
+            Return
+        End If
+
+        _periodicScreenshotInProgress = True
+        PushLiveConfig()
+        Dim engine As BotEngine = GetRollingScreenshotEngine()
+        Dim screenshotDirectory As String = GetPeriodicScreenshotDirectory()
+        Task.Run(
+            Sub()
+                Try
+                    SavePeriodicScreenshot(engine, screenshotDirectory)
+                Finally
+                    _periodicScreenshotInProgress = False
+                End Try
+            End Sub)
+    End Sub
+
+    Private Sub SavePeriodicScreenshot(engine As BotEngine, screenshotDirectory As String)
+        If engine Is Nothing Then
+            Return
+        End If
+
+        Try
+            Directory.CreateDirectory(screenshotDirectory)
+            Using bmp As Bitmap = engine.CaptureSnapshot()
+                If bmp Is Nothing Then
+                    LogPeriodicScreenshotIssue("Automatic screenshot skipped: game capture unavailable.")
+                    Return
+                End If
+
+                Dim fileName As String = $"kathana_auto_{DateTime.Now:yyyyMMdd_HHmmss_fff}.png"
+                Dim screenshotPath As String = Path.Combine(screenshotDirectory, fileName)
+                bmp.Save(screenshotPath, ImageFormat.Png)
+                AppendLogSafe("Automatic screenshot saved: " & screenshotPath)
+            End Using
+        Catch ex As Exception
+            LogPeriodicScreenshotIssue("Automatic screenshot failed: " & ex.Message)
+        End Try
+    End Sub
+
+    Private Sub LogPeriodicScreenshotIssue(message As String)
+        Dim now As DateTime = DateTime.UtcNow
+        If _lastPeriodicScreenshotErrorLogUtc <> DateTime.MinValue AndAlso (now - _lastPeriodicScreenshotErrorLogUtc).TotalMinutes < 5 Then
+            Return
+        End If
+
+        _lastPeriodicScreenshotErrorLogUtc = now
+        AppendLogSafe(message)
+    End Sub
+
     Private Sub RollingScreenshotTimerTick(sender As Object, e As EventArgs)
         If _rollingScreenshotInProgress Then
             Return
@@ -6184,6 +6424,7 @@ Public Class Form1
             "- Mob HP Presence %: threshold for valid target HP bar signal.",
             "- Show Overlay: live region calibration overlay.",
             "- Capture Snapshot: captures current client image.",
+            "- Automatic Screenshots: beneath Snapshot, enable timed game captures, choose 1 to 999 minutes, select the save folder, or open it in File Explorer.",
             "",
             "7) VISION TAB - CALIBRATION REGIONS",
             "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, mob_life_rect, unreachable_text_rect,",
@@ -6311,6 +6552,7 @@ Public Class Form1
             "- Selected Process, Loop(ms), Retarget(ms), Mob HP Presence%.",
             "- Show Overlay para calibracion visual.",
             "- Capture Snapshot para capturar imagen del cliente.",
+            "- Automatic Screenshots permite capturas programadas de 1 a 999 minutos y elegir la carpeta de destino.",
             "",
             "7) REGIONES DE CALIBRACION",
             "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, mob_life_rect, unreachable_text_rect,",
@@ -6432,6 +6674,7 @@ Public Class Form1
             "- Selected Process, Loop(ms), Retarget(ms), Mob HP Presence%.",
             "- Show Overlay para madaling calibration ng regions.",
             "- Capture Snapshot para kumuha ng current game image.",
+            "- Automatic Screenshots para sa timed captures mula 1 hanggang 999 minuto at pagpili ng save folder.",
             "",
             "7) CALIBRATION REGIONS",
             "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, mob_life_rect, unreachable_text_rect,",
@@ -6542,6 +6785,7 @@ Public Class Form1
                     "- Mob HP Presence % is the minimum HP-bar signal required to trust the current target.",
                     "- Show Overlay opens the live calibration overlay.",
                     "- Capture Snapshot stores the current client image for region checking.",
+                    "- Automatic Screenshots is beneath Snapshot; choose 1 to 999 minutes, select the destination with Browse, or open it with Open Folder.",
                     "- Use buff key on high max HP mobs plus Max HP >= work together with the high_max_hp combat role.",
                     "- Avoid mobs over max HP plus Avoid Max HP >= skips targets above that detected Max HP and retargets.",
                     "- Chat translation settings control OCR of the chat box, overlay visibility, target language, scan speed, and number of visible translated lines.",
@@ -6676,6 +6920,7 @@ Public Class Form1
                     "- Mob HP Presence % es la senal minima para confiar en la barra de HP del objetivo.",
                     "- Show Overlay abre la capa de calibracion.",
                     "- Capture Snapshot captura la imagen actual del cliente.",
+                    "- Automatic Screenshots activa capturas programadas; elige de 1 a 999 minutos y la carpeta con Browse.",
                     "- Use buff key on high max HP mobs junto con Max HP >= trabaja con el role high_max_hp.",
                     "- Los controles de chat translation manejan OCR del chat, overlay, idioma destino, velocidad y numero de lineas.",
                     "- Calibration Regions contiene los rectangulos OCR editables, incluidas las coordenadas del mapa; cada checkbox On controla el overlay de esa region.",
@@ -6807,6 +7052,7 @@ Public Class Form1
                     "- Mob HP Presence % ang minimum signal para paniwalaan ang HP bar ng target.",
                     "- Show Overlay bubukas sa live calibration overlay.",
                     "- Capture Snapshot kukuha ng kasalukuyang image ng client.",
+                    "- Automatic Screenshots ay timed game captures; pumili ng 1 hanggang 999 minuto at save folder gamit ang Browse.",
                     "- Use buff key on high max HP mobs kasama ng Max HP >= ay para sa high_max_hp combat role.",
                     "- Ang chat translation controls ay para sa OCR ng chat, overlay visibility, target language, bilis ng scan, at dami ng visible lines.",
                     "- Calibration Regions ang editable OCR rectangles, kasama ang map coordinates; bawat On checkbox ang control ng overlay ng region.",
@@ -9959,6 +10205,24 @@ Public Class Form1
                 Return
             End If
 
+            _periodicScreenshotSettingsLoading = True
+            Try
+                If chkPeriodicScreenshots IsNot Nothing Then
+                    chkPeriodicScreenshots.Checked = (appState IsNot Nothing AndAlso appState.PeriodicScreenshotsEnabled)
+                End If
+                If nudPeriodicScreenshotMinutes IsNot Nothing Then
+                    Dim savedInterval As Decimal = If(appState IsNot Nothing, appState.PeriodicScreenshotIntervalMinutes, 15D)
+                    nudPeriodicScreenshotMinutes.Value = Math.Max(nudPeriodicScreenshotMinutes.Minimum, Math.Min(nudPeriodicScreenshotMinutes.Maximum, savedInterval))
+                End If
+                If txtPeriodicScreenshotDirectory IsNot Nothing Then
+                    Dim savedDirectory As String = If(appState IsNot Nothing, appState.PeriodicScreenshotDirectory, "")
+                    txtPeriodicScreenshotDirectory.Text = If(String.IsNullOrWhiteSpace(savedDirectory), DefaultPeriodicScreenshotDirectoryPath, savedDirectory.Trim())
+                End If
+            Finally
+                _periodicScreenshotSettingsLoading = False
+            End Try
+            ConfigurePeriodicScreenshotTimer()
+
             If state.SavedConfig IsNot Nothing Then
                 BotConfig.MigrateLegacyVisionLayout(state.SavedConfig)
                 ApplySavedConfigToUi(state.SavedConfig)
@@ -10238,6 +10502,9 @@ Public Class Form1
 
             Dim appState As New PersistedAppState With {
                 .WindowTitle = GetSelectedWindowTitleForFallback(If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full)),
+                .PeriodicScreenshotsEnabled = (chkPeriodicScreenshots IsNot Nothing AndAlso chkPeriodicScreenshots.Checked),
+                .PeriodicScreenshotIntervalMinutes = If(nudPeriodicScreenshotMinutes IsNot Nothing, nudPeriodicScreenshotMinutes.Value, 15D),
+                .PeriodicScreenshotDirectory = GetPeriodicScreenshotDirectory(),
                 .Full = fullState,
                 .Lite = liteState
             }
@@ -12293,6 +12560,7 @@ Public Class Form1
         _enterToggleTimer.Stop()
         _logFlushTimer.Stop()
         _rollingScreenshotTimer.Stop()
+        _periodicScreenshotTimer.Stop()
         _discordShotTimer.Stop()
         FlushPendingLogLines()
         SavePersistedListState(False)

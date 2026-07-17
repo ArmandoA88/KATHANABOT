@@ -51,7 +51,7 @@ Type `shot` in that data channel. The image is posted through the Stats webhook.
 ## Tabs
 
 - `Combat`: key matrix, priorities/cooldowns, start/stop, realtime log, live detected mob name, monster + loot filter
-- `Vision`: window title, loop settings, calibration regions, snapshot, low-opacity overlay
+- `Vision`: window title, loop settings, calibration regions, snapshot, automatic screenshot interval/folder, low-opacity overlay
 - `Auto-Pot`: quick trigger updates for heal/mana rows + HP=0 alarm volume + test alarm + phone alert test
 - `Unstuck`: retarget interval helper
 - `Diagnostics`: live bot status
@@ -74,7 +74,7 @@ Type `shot` in that data channel. The image is posted through the Stats webhook.
 10. Loot logic: bot presses `F`, waits about `200ms`, reads the selected name from the same name box, waits `700ms` when name is allowed, and sends random `W` or `S` when name is not on the list.
 11. Optional: click `Show Overlay` in Vision to draw calibration rectangles over the game window.
 12. Click `Save Settings`, then `Attack`.
-13. Bot automatically saves a screenshot every 15 minutes to your Pictures gallery folder: `Pictures\KathanaBot`.
+13. Optional: beneath the Vision snapshot, enable `Automatic Screenshots`, choose an interval from 1 to 999 minutes, and use `Browse...` to select the save folder. `Open Folder` opens that destination in File Explorer. The default folder is `Pictures\KathanaBot`.
 
 ### Default calibration coordinates (saved baseline)
 
