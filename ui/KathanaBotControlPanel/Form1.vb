@@ -4407,7 +4407,7 @@ Public Class Form1
             .AutoSize = True,
             .AutoSizeMode = AutoSizeMode.GrowAndShrink,
             .ColumnCount = 1,
-            .RowCount = 23,
+            .RowCount = 22,
             .GrowStyle = TableLayoutPanelGrowStyle.FixedSize,
             .Margin = New Padding(0),
             .Padding = New Padding(4)
@@ -4436,17 +4436,6 @@ Public Class Form1
             .TextAlign = ContentAlignment.MiddleCenter,
             .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold),
             .Margin = New Padding(3, 2, 3, 4)
-        }
-        Dim lblUpdateWorked As New Label() With {
-            .Text = "UPDATE WORKED",
-            .Dock = DockStyle.Fill,
-            .AutoSize = True,
-            .MinimumSize = New Size(0, 28),
-            .BackColor = Color.FromArgb(25, 80, 45),
-            .ForeColor = Color.LightGreen,
-            .TextAlign = ContentAlignment.MiddleCenter,
-            .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold),
-            .Margin = New Padding(3, 0, 3, 4)
         }
         lblShortcutHint = New Label() With {
             .Text = "Shortcut: Ctrl+Shift -> Pause / Resume",
@@ -4523,7 +4512,7 @@ Public Class Form1
         hpMpLayout.Controls.Add(lblMp, 1, 0)
 
         Dim controls As Control() = {
-            lblFullEdition, lblRunState, lblUpdateWorked, lblShortcutHint, lblState, lblSystem, hpMpLayout,
+            lblFullEdition, lblRunState, lblShortcutHint, lblState, lblSystem, hpMpLayout,
             lblMobName, lblExpRate, lblRupiahsRate, btnAttack, btnSaveSettings, btnStopBot,
             btnBypassLimits, btnBypassStuck, btnRetargetNow, btnPartyAutoAccept,
             lblPartyAskEvery, nudPartyAskSeconds, lblPartyAskText, txtPartyAskText, btnPartyAsk, btnHelp
@@ -5046,7 +5035,7 @@ Public Class Form1
     Private Shared Function GetCurrentApplicationVersionText() As String
         Dim version As Version = Reflection.Assembly.GetExecutingAssembly().GetName().Version
         If version Is Nothing Then
-            Return "1.0.44"
+            Return "1.0.45"
         End If
         Return $"{version.Major}.{version.Minor}.{Math.Max(0, version.Build)}"
     End Function
