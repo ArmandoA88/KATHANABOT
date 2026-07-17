@@ -354,6 +354,11 @@ Public Class Form1
     Private _autoRelaunchClickOverlayForm As AutoRelaunchClickOverlayForm
     Private _arrowUnbundleOverlayForm As AutoRelaunchClickOverlayForm
     Private _chatTranslationOverlayForm As ChatTranslationOverlayForm
+    Private _inGameBotToggleForm As InGameBotToggleForm
+    Private _inGameBotToggleX As Integer = -1
+    Private _inGameBotToggleY As Integer = 10
+    Private _inGameBotToggleWidth As Integer = 104
+    Private _inGameBotToggleHeight As Integer = 38
     Private _autoStarted As Boolean = False
     Private _alarmVolumePercent As Integer = 85
     Private _hpZeroAlarmActive As Boolean = False
@@ -577,6 +582,10 @@ Public Class Form1
         Public Property PeriodicScreenshotsEnabled As Boolean = False
         Public Property PeriodicScreenshotIntervalMinutes As Decimal = 15D
         Public Property PeriodicScreenshotDirectory As String = ""
+        Public Property InGameBotToggleX As Integer = -1
+        Public Property InGameBotToggleY As Integer = 10
+        Public Property InGameBotToggleWidth As Integer = 104
+        Public Property InGameBotToggleHeight As Integer = 38
         Public Property Full As PersistedListState = New PersistedListState()
         Public Property Lite As PersistedLiteState = New PersistedLiteState()
     End Class
@@ -722,6 +731,7 @@ Public Class Form1
         AddHandler _liteEngine.StatusUpdated, Sub(status As BotStatus) OnEngineStatusUpdated(BotEdition.Lite, status)
         AddHandler _fullEngine.LogLine, Sub(line As String) OnEngineLogLine(BotEdition.Full, line)
         AddHandler _liteEngine.LogLine, Sub(line As String) OnEngineLogLine(BotEdition.Lite, line)
+        InitializeInGameBotToggle()
 
         _uiTimer.Interval = 1000
         AddHandler _uiTimer.Tick, AddressOf UiTimerTick
@@ -4810,6 +4820,55 @@ Public Class Form1
         StartEdition(ResolveTargetEdition(sender), False)
     End Sub
 
+    Private Sub InitializeInGameBotToggle()
+        If _inGameBotToggleForm IsNot Nothing AndAlso Not _inGameBotToggleForm.IsDisposed Then
+            Return
+        End If
+
+        _inGameBotToggleForm = New InGameBotToggleForm(
+            AddressOf GetInGameBotToggleWindowHandle,
+            Function() GetRunningEdition().HasValue,
+            _inGameBotToggleX,
+            _inGameBotToggleY,
+            _inGameBotToggleWidth,
+            _inGameBotToggleHeight)
+        AddHandler _inGameBotToggleForm.ToggleRequested, AddressOf InGameBotToggleRequested
+        AddHandler _inGameBotToggleForm.OverlayLayoutChanged, AddressOf InGameBotToggleLayoutChanged
+    End Sub
+
+    Private Function GetInGameBotToggleWindowHandle() As IntPtr
+        Dim targetEdition As BotEdition = If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full)
+        Dim runningEdition As BotEdition? = GetRunningEdition()
+        If runningEdition.HasValue Then
+            targetEdition = runningEdition.Value
+        End If
+
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(targetEdition)
+        If selected Is Nothing OrElse Not IsPreferredKathanaWindow(selected) Then
+            Return IntPtr.Zero
+        End If
+        Return selected.MainWindowHandle
+    End Function
+
+    Private Sub InGameBotToggleRequested()
+        Dim runningEdition As BotEdition? = GetRunningEdition()
+        If runningEdition.HasValue Then
+            StopEdition(runningEdition.Value, True, "in-game toggle")
+            Return
+        End If
+
+        Dim targetEdition As BotEdition = If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full)
+        StartEdition(targetEdition, False)
+    End Sub
+
+    Private Sub InGameBotToggleLayoutChanged(clientX As Integer, clientY As Integer, overlayWidth As Integer, overlayHeight As Integer)
+        _inGameBotToggleX = Math.Max(0, clientX)
+        _inGameBotToggleY = Math.Max(0, clientY)
+        _inGameBotToggleWidth = Math.Max(80, Math.Min(320, overlayWidth))
+        _inGameBotToggleHeight = Math.Max(30, Math.Min(120, overlayHeight))
+        SavePersistedListState(False)
+    End Sub
+
     Private Sub AutoStartOnLaunch()
         If _autoStarted Then
             Return
@@ -6425,6 +6484,7 @@ Public Class Form1
             "- Show Overlay: live region calibration overlay.",
             "- Capture Snapshot: captures current client image.",
             "- Automatic Screenshots: beneath Snapshot, enable timed game captures, choose 1 to 999 minutes, select the save folder, or open it in File Explorer.",
+            "- In-game BOT ON/OFF button: click to toggle, drag to move, or drag its bottom-right grip to resize; its game-relative layout is saved.",
             "",
             "7) VISION TAB - CALIBRATION REGIONS",
             "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, mob_life_rect, unreachable_text_rect,",
@@ -10221,6 +10281,15 @@ Public Class Form1
             Finally
                 _periodicScreenshotSettingsLoading = False
             End Try
+
+            Dim savedToggleX As Integer = If(appState IsNot Nothing, appState.InGameBotToggleX, -1)
+            _inGameBotToggleX = If(savedToggleX < 0, -1, savedToggleX)
+            _inGameBotToggleY = Math.Max(0, If(appState IsNot Nothing, appState.InGameBotToggleY, 10))
+            _inGameBotToggleWidth = Math.Max(80, Math.Min(320, If(appState IsNot Nothing, appState.InGameBotToggleWidth, 104)))
+            _inGameBotToggleHeight = Math.Max(30, Math.Min(120, If(appState IsNot Nothing, appState.InGameBotToggleHeight, 38)))
+            If _inGameBotToggleForm IsNot Nothing AndAlso Not _inGameBotToggleForm.IsDisposed Then
+                _inGameBotToggleForm.ApplyLayout(_inGameBotToggleX, _inGameBotToggleY, _inGameBotToggleWidth, _inGameBotToggleHeight)
+            End If
             ConfigurePeriodicScreenshotTimer()
 
             If state.SavedConfig IsNot Nothing Then
@@ -10505,6 +10574,10 @@ Public Class Form1
                 .PeriodicScreenshotsEnabled = (chkPeriodicScreenshots IsNot Nothing AndAlso chkPeriodicScreenshots.Checked),
                 .PeriodicScreenshotIntervalMinutes = If(nudPeriodicScreenshotMinutes IsNot Nothing, nudPeriodicScreenshotMinutes.Value, 15D),
                 .PeriodicScreenshotDirectory = GetPeriodicScreenshotDirectory(),
+                .InGameBotToggleX = _inGameBotToggleX,
+                .InGameBotToggleY = _inGameBotToggleY,
+                .InGameBotToggleWidth = _inGameBotToggleWidth,
+                .InGameBotToggleHeight = _inGameBotToggleHeight,
                 .Full = fullState,
                 .Lite = liteState
             }
@@ -12573,6 +12646,11 @@ Public Class Form1
         End If
         If _arrowUnbundleOverlayForm IsNot Nothing AndAlso Not _arrowUnbundleOverlayForm.IsDisposed Then
             _arrowUnbundleOverlayForm.Close()
+        End If
+        If _inGameBotToggleForm IsNot Nothing AndAlso Not _inGameBotToggleForm.IsDisposed Then
+            RemoveHandler _inGameBotToggleForm.ToggleRequested, AddressOf InGameBotToggleRequested
+            RemoveHandler _inGameBotToggleForm.OverlayLayoutChanged, AddressOf InGameBotToggleLayoutChanged
+            _inGameBotToggleForm.Close()
         End If
         _fullEngine.Stop()
         _liteEngine.Stop()

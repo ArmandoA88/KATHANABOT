@@ -33,6 +33,8 @@ Double-click:
 
 - the newest versioned EXE in `KATHANABOT\dist\versions`
 
+When the selected Kathana game window is in the foreground, a small button appears in its client area. `BOT OFF` is red and starts the selected Full/Lite bot; `BOT ON` is green and stops the running bot. Drag the button to move it, or drag its bottom-right grip to resize it. Position and size are saved.
+
 ## Discord `shot` Command
 
 The app can watch one Discord data channel for the text command `shot`. When it sees that command, it uploads the newest rolling screenshot to the Discord Stats/Data webhook channel.
