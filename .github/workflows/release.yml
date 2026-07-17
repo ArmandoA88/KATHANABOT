@@ -1,0 +1,72 @@
+name: Build and publish Velopack release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version, for example 1.0.44
+        required: true
+        type: string
+      prerelease:
+        description: Publish as a GitHub prerelease
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: kathana-velopack-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: agent-ai
+
+      - name: Set up .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Validate version
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          if ($env:RELEASE_VERSION -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') {
+            throw 'Use a version such as 1.0.44.'
+          }
+
+      - name: Build, package, and publish GitHub release
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          IS_PRERELEASE: ${{ inputs.prerelease }}
+          REPOSITORY_URL: https://github.com/${{ github.repository }}
+          TARGET_BRANCH: agent-ai
+        run: |
+          $parameters = @{
+            Version = $env:RELEASE_VERSION
+            RepositoryUrl = $env:REPOSITORY_URL
+            TargetBranch = $env:TARGET_BRANCH
+            GitHubToken = $env:GITHUB_TOKEN
+          }
+          if ($env:IS_PRERELEASE -eq 'true') {
+            & .\build-velopack-release.ps1 @parameters -Publish -Prerelease
+          } else {
+            & .\build-velopack-release.ps1 @parameters -Publish
+          }
+
+      - name: Preserve package files as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: KathanaBot-${{ inputs.version }}-Velopack
+          path: dist/velopack/Releases/*
+          if-no-files-found: error

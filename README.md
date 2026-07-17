@@ -1,6 +1,6 @@
-# Kathana Bot (Single EXE)
+# Kathana Bot
 
-This app now runs as a single VB WinForms executable.
+KathanaBot is a self-contained VB WinForms application. The recommended installation uses Velopack so the app can update itself from GitHub Releases. A timestamped standalone EXE can still be built for portable testing, but it cannot safely replace itself.
 
 - No API URL required.
 - No Python backend required.
@@ -11,6 +11,53 @@ This app now runs as a single VB WinForms executable.
 ```powershell
 dotnet build .\ui\KathanaBotControlPanel\KathanaBotControlPanel.vbproj -c Release
 ```
+
+## Build the Installer and Update Packages
+
+```powershell
+.\build-velopack-release.ps1
+```
+
+This reads the version from the project, publishes a self-contained `win-x64` app, and creates Velopack setup/full/portable files in `dist\velopack\Releases`. When an earlier release exists, Velopack also creates a smaller delta package. The script copies a uniquely versioned installer to the repository root without overwriting older builds.
+
+Install KathanaBot once with the new `KathanaBot-Setup-vX.Y.Z-<timestamp>.exe`. Installed copies can then use the `Update` tab to:
+
+- check GitHub Releases manually or at startup;
+- display an available version and package details;
+- download with visible progress;
+- stop an active bot safely, apply the update, and restart;
+- optionally include prerelease versions.
+
+The standalone EXE detects that it is not Velopack-installed and explains that Setup must be run once before automatic updating is enabled.
+
+## Publish an Update on GitHub
+
+1. Commit and push the code containing the new version to the `agent-ai` branch.
+2. In GitHub, open `Actions` > `Build and publish Velopack release` > `Run workflow`.
+3. Enter the same semantic version as the project, such as `1.0.44`.
+4. The workflow checks out `agent-ai`, builds the app, and publishes all required Velopack assets to a `v1.0.44` GitHub Release targeting that branch.
+5. Installed users receive the update on their next startup check or when they press `Check Now`.
+
+GitHub's built-in `GITHUB_TOKEN` is used by the workflow, so no paid update service or separate secret is required for a public repository. To package and publish from a local PowerShell session instead, set `GITHUB_TOKEN` and run:
+
+```powershell
+.\build-velopack-release.ps1 -Version 1.0.44 -Publish
+```
+
+### Validation and First Update Test
+
+Validation: the Release build succeeded with zero errors and zero warnings.
+
+To activate internet updates:
+
+1. Commit and push these changes to the `agent-ai` branch.
+2. Run the `Build and publish Velopack release` workflow in GitHub Actions with version `1.0.43`.
+3. Install version `1.0.43` once using the generated Setup executable. The standalone EXE cannot update itself.
+4. Increase the application version and publish `1.0.44` from `agent-ai` using the same workflow.
+5. Start the installed `1.0.43` application or press `Check Now` in the `Update` tab. It should report that version `1.0.44` is available.
+6. Press `Update and Restart` to verify downloading, safe bot shutdown, installation, and relaunch.
+
+This process follows Velopack's official [GitHub Actions distribution flow](https://docs.velopack.io/distributing/github-actions).
 
 ## Publish Standalone EXE
 
@@ -57,6 +104,7 @@ Type `shot` in that data channel. The image is posted through the Stats webhook.
 - `Auto-Pot`: quick trigger updates for heal/mana rows + HP=0 alarm volume + test alarm + phone alert test
 - `Unstuck`: retarget interval helper
 - `Diagnostics`: live bot status
+- `Update`: GitHub/Velopack update settings, startup checks, release status, download progress, and Update and Restart
 
 ## Calibration
 

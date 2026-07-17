@@ -11,6 +11,8 @@ Imports System.IO
 Imports System.Diagnostics
 Imports System.Linq
 Imports System.Drawing.Imaging
+Imports Velopack
+Imports Velopack.Sources
 
 Public Class Form1
     Private Shared ReadOnly PrimaryKeys As String() = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"}
@@ -87,6 +89,7 @@ Public Class Form1
     Private _levelingTab As TabPage
     Private _holdPlaceTab As TabPage
     Private _diagnosticsTab As TabPage
+    Private _updateTab As TabPage
     Private Const HelpScopeAll As String = "all"
     Private Const HelpScopeLite As String = "lite"
     Private Const HelpScopeCombat As String = "combat"
@@ -95,6 +98,7 @@ Public Class Form1
     Private Const HelpScopeAutoLoot As String = "auto-loot"
     Private Const HelpScopeLeveling As String = "leveling"
     Private Const HelpScopeDiagnostics As String = "diagnostics"
+    Private Const DefaultUpdateRepositoryUrl As String = "https://github.com/ArmandoA88/KATHANABOT"
 
     Private lblSelectedProcess As Label
     Private nudLoopMs As NumericUpDown
@@ -322,6 +326,18 @@ Public Class Form1
     Private chkLogMisc As CheckBox
     Private dgvLootHistory As DataGridView
 
+    Private lblUpdateCurrentVersion As Label
+    Private lblUpdateInstallMode As Label
+    Private txtUpdateRepositoryUrl As TextBox
+    Private chkUpdateCheckAtStartup As CheckBox
+    Private chkUpdateIncludePrereleases As CheckBox
+    Private btnCheckForUpdates As Button
+    Private btnUpdateAndRestart As Button
+    Private btnOpenUpdateReleases As Button
+    Private progressUpdateDownload As ProgressBar
+    Private lblUpdateStatus As Label
+    Private txtUpdateDetails As TextBox
+
     Private nudAutoPotHp As NumericUpDown
     Private nudAutoPotMp As NumericUpDown
     Private nudStuckTargetMs As NumericUpDown
@@ -485,6 +501,11 @@ Public Class Form1
     Private _chatScreenGeneration As Integer = 0
     Private _lastChatOcrText As String = ""
     Private _lastChatTargetLanguage As String = ""
+    Private _updateManager As UpdateManager = Nothing
+    Private _pendingUpdateInfo As UpdateInfo = Nothing
+    Private _updateOperationInProgress As Boolean = False
+    Private _updateCancellation As CancellationTokenSource = Nothing
+    Private _updateSettingsLoading As Boolean = False
     Private _taskbarList As ITaskbarList3 = Nothing
     Private _taskbarUnavailable As Boolean = False
     Private _uiTimingCount As Long = 0
@@ -586,6 +607,9 @@ Public Class Form1
         Public Property InGameBotToggleY As Integer = 10
         Public Property InGameBotToggleWidth As Integer = 104
         Public Property InGameBotToggleHeight As Integer = 38
+        Public Property UpdateRepositoryUrl As String = DefaultUpdateRepositoryUrl
+        Public Property UpdateCheckAtStartup As Boolean = True
+        Public Property UpdateIncludePrereleases As Boolean = False
         Public Property Full As PersistedListState = New PersistedListState()
         Public Property Lite As PersistedLiteState = New PersistedLiteState()
     End Class
@@ -720,6 +744,7 @@ Public Class Form1
         LoadPersistedListState()
         ForceLevelingAgentOffForStartup()
         SetupLiveConfigBindings()
+        RefreshUpdateInstallMode()
         SetAutoRelaunchClickOverlayVisible(chkAutoRelaunchClickOverlay IsNot Nothing AndAlso chkAutoRelaunchClickOverlay.Checked)
         SetArrowUnbundleOverlayVisible(chkArrowUnbundleOverlay IsNot Nothing AndAlso chkArrowUnbundleOverlay.Checked)
         ApplyDarkTheme(Me)
@@ -778,6 +803,15 @@ Public Class Form1
     End Sub
 
     Private Sub SetupLiveConfigBindings()
+        If txtUpdateRepositoryUrl IsNot Nothing Then
+            AddHandler txtUpdateRepositoryUrl.TextChanged, AddressOf UpdateSettingsChanged
+        End If
+        If chkUpdateCheckAtStartup IsNot Nothing Then
+            AddHandler chkUpdateCheckAtStartup.CheckedChanged, AddressOf UpdateSettingsChanged
+        End If
+        If chkUpdateIncludePrereleases IsNot Nothing Then
+            AddHandler chkUpdateIncludePrereleases.CheckedChanged, AddressOf UpdateSettingsChanged
+        End If
         If chkPeriodicScreenshots IsNot Nothing Then
             AddHandler chkPeriodicScreenshots.CheckedChanged, AddressOf PeriodicScreenshotSettingsChanged
         End If
@@ -1945,7 +1979,7 @@ Public Class Form1
             .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold),
             .DrawMode = TabDrawMode.OwnerDrawFixed,
             .SizeMode = TabSizeMode.Fixed,
-            .ItemSize = New Size(145, 42)
+            .ItemSize = New Size(135, 42)
         }
         AddHandler _mainTabs.DrawItem, AddressOf MainTabsDrawItem
         AddHandler _mainTabs.SelectedIndexChanged, AddressOf MainTabsSelectedIndexChanged
@@ -1977,6 +2011,8 @@ Public Class Form1
         _mainTabs.TabPages.Add(_holdPlaceTab)
         _diagnosticsTab = BuildDiagnosticsTab()
         _mainTabs.TabPages.Add(_diagnosticsTab)
+        _updateTab = BuildUpdateTab()
+        _mainTabs.TabPages.Add(_updateTab)
         _mainTabs.SelectedTab = _combatTab
         UpdateMainTabIndicators()
     End Sub
@@ -3738,6 +3774,121 @@ Public Class Form1
         Return tab
     End Function
 
+    Private Function BuildUpdateTab() As TabPage
+        Dim tab As New TabPage("Update") With {.BackColor = Color.FromArgb(20, 20, 20)}
+        Dim root As New TableLayoutPanel() With {
+            .Dock = DockStyle.Fill,
+            .ColumnCount = 1,
+            .RowCount = 6,
+            .Padding = New Padding(18)
+        }
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 82.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 142.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 58.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 72.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+
+        Dim header As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1}
+        header.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 62.0F))
+        header.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 38.0F))
+        Dim title As New Label() With {
+            .Text = "KathanaBot Automatic Updates",
+            .Dock = DockStyle.Fill,
+            .Font = New Font("Segoe UI", 18.0F, FontStyle.Bold),
+            .ForeColor = Color.LightSkyBlue,
+            .TextAlign = ContentAlignment.MiddleLeft
+        }
+        header.Controls.Add(title, 0, 0)
+        lblUpdateCurrentVersion = New Label() With {
+            .Text = "Current version: " & GetCurrentApplicationVersionText(),
+            .Dock = DockStyle.Fill,
+            .Font = New Font("Segoe UI", 11.0F, FontStyle.Bold),
+            .ForeColor = Color.Gainsboro,
+            .TextAlign = ContentAlignment.MiddleRight
+        }
+        header.Controls.Add(lblUpdateCurrentVersion, 1, 0)
+        root.Controls.Add(header, 0, 0)
+
+        Dim settingsGroup As New GroupBox() With {.Text = "GitHub Releases", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
+        Dim settings As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 4, .RowCount = 3}
+        settings.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 150.0F))
+        settings.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        settings.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 190.0F))
+        settings.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 150.0F))
+        settings.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        settings.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        settings.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+
+        settings.Controls.Add(New Label() With {.Text = "Repository URL", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
+        txtUpdateRepositoryUrl = New TextBox() With {.Dock = DockStyle.Fill, .Text = DefaultUpdateRepositoryUrl}
+        settings.Controls.Add(txtUpdateRepositoryUrl, 1, 0)
+        settings.SetColumnSpan(txtUpdateRepositoryUrl, 2)
+        btnOpenUpdateReleases = New Button() With {.Text = "Open Releases", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(55, 95, 140), .ForeColor = Color.White}
+        AddHandler btnOpenUpdateReleases.Click, AddressOf OpenUpdateReleasesClicked
+        settings.Controls.Add(btnOpenUpdateReleases, 3, 0)
+
+        chkUpdateCheckAtStartup = New CheckBox() With {.Text = "Check automatically at startup", .Dock = DockStyle.Fill, .Checked = True}
+        settings.Controls.Add(chkUpdateCheckAtStartup, 0, 1)
+        settings.SetColumnSpan(chkUpdateCheckAtStartup, 2)
+        chkUpdateIncludePrereleases = New CheckBox() With {.Text = "Include prerelease versions", .Dock = DockStyle.Fill, .Checked = False}
+        settings.Controls.Add(chkUpdateIncludePrereleases, 2, 1)
+        settings.SetColumnSpan(chkUpdateIncludePrereleases, 2)
+
+        lblUpdateInstallMode = New Label() With {
+            .Text = "Install mode: checking...",
+            .Dock = DockStyle.Fill,
+            .ForeColor = Color.LightSteelBlue,
+            .TextAlign = ContentAlignment.MiddleLeft
+        }
+        settings.Controls.Add(lblUpdateInstallMode, 0, 2)
+        settings.SetColumnSpan(lblUpdateInstallMode, 4)
+        settingsGroup.Controls.Add(settings)
+        root.Controls.Add(settingsGroup, 0, 1)
+
+        Dim actions As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 1, .Padding = New Padding(0, 8, 0, 8)}
+        actions.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 33.333F))
+        actions.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 33.333F))
+        actions.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 33.334F))
+        btnCheckForUpdates = New Button() With {.Text = "Check Now", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(45, 95, 150), .ForeColor = Color.White, .Margin = New Padding(0, 0, 8, 0)}
+        AddHandler btnCheckForUpdates.Click, AddressOf CheckForUpdatesClicked
+        actions.Controls.Add(btnCheckForUpdates, 0, 0)
+        btnUpdateAndRestart = New Button() With {.Text = "Update and Restart", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(35, 130, 75), .ForeColor = Color.White, .Enabled = False, .Margin = New Padding(8, 0, 8, 0)}
+        AddHandler btnUpdateAndRestart.Click, AddressOf UpdateAndRestartClicked
+        actions.Controls.Add(btnUpdateAndRestart, 1, 0)
+        Dim safetyNote As New Label() With {.Text = "The running bot is stopped safely before restart.", .Dock = DockStyle.Fill, .ForeColor = Color.LightSteelBlue, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(8, 0, 0, 0)}
+        actions.Controls.Add(safetyNote, 2, 0)
+        root.Controls.Add(actions, 0, 2)
+
+        progressUpdateDownload = New ProgressBar() With {.Dock = DockStyle.Fill, .Minimum = 0, .Maximum = 100, .Value = 0, .Style = ProgressBarStyle.Continuous, .Margin = New Padding(0, 6, 0, 6)}
+        root.Controls.Add(progressUpdateDownload, 0, 3)
+
+        lblUpdateStatus = New Label() With {
+            .Text = "Ready to check GitHub Releases.",
+            .Dock = DockStyle.Fill,
+            .Font = New Font("Segoe UI", 11.0F, FontStyle.Bold),
+            .ForeColor = Color.LightSteelBlue,
+            .TextAlign = ContentAlignment.MiddleLeft
+        }
+        root.Controls.Add(lblUpdateStatus, 0, 4)
+
+        txtUpdateDetails = New TextBox() With {
+            .Dock = DockStyle.Fill,
+            .Multiline = True,
+            .ReadOnly = True,
+            .ScrollBars = ScrollBars.Vertical,
+            .BackColor = Color.FromArgb(10, 10, 10),
+            .ForeColor = Color.Gainsboro,
+            .Font = New Font("Consolas", 10.0F, FontStyle.Regular),
+            .Text = "Automatic updating becomes active after installing KathanaBot through the Velopack Setup executable." & Environment.NewLine & Environment.NewLine &
+                "Update flow: Check Now -> Update and Restart -> download -> safe bot stop -> install -> relaunch."
+        }
+        root.Controls.Add(txtUpdateDetails, 0, 5)
+
+        tab.Controls.Add(root)
+        Return tab
+    End Function
+
     Private Function AddScanTimerInput(parent As FlowLayoutPanel, labelText As String, minimum As Decimal, maximum As Decimal, increment As Decimal, defaultValue As Decimal) As NumericUpDown
         Dim label As New Label() With {.Text = labelText, .AutoSize = True, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.Gainsboro, .Margin = New Padding(8, 8, 2, 0)}
         Dim editor As New NumericUpDown() With {.Minimum = minimum, .Maximum = maximum, .Increment = increment, .Value = defaultValue, .Width = 72, .Margin = New Padding(0, 4, 8, 0)}
@@ -4869,6 +5020,254 @@ Public Class Form1
         SavePersistedListState(False)
     End Sub
 
+    Private Shared Function GetCurrentApplicationVersionText() As String
+        Dim version As Version = Reflection.Assembly.GetExecutingAssembly().GetName().Version
+        If version Is Nothing Then
+            Return "1.0.43"
+        End If
+        Return $"{version.Major}.{version.Minor}.{Math.Max(0, version.Build)}"
+    End Function
+
+    Private Function GetUpdateRepositoryUrl() As String
+        Dim raw As String = If(txtUpdateRepositoryUrl IsNot Nothing, txtUpdateRepositoryUrl.Text, DefaultUpdateRepositoryUrl)
+        raw = If(raw, "").Trim().TrimEnd("/"c)
+        If raw.EndsWith(".git", StringComparison.OrdinalIgnoreCase) Then
+            raw = raw.Substring(0, raw.Length - 4)
+        End If
+        Return raw
+    End Function
+
+    Private Function TryCreateUpdateManager(ByRef errorMessage As String) As UpdateManager
+        errorMessage = ""
+        Dim repositoryUrl As String = GetUpdateRepositoryUrl()
+        Dim parsed As Uri = Nothing
+        If Not Uri.TryCreate(repositoryUrl, UriKind.Absolute, parsed) OrElse
+           (Not parsed.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) AndAlso
+            Not parsed.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)) OrElse
+           parsed.Segments.Length < 3 Then
+            errorMessage = "Enter a complete GitHub repository URL, for example https://github.com/ArmandoA88/KATHANABOT."
+            Return Nothing
+        End If
+
+        Try
+            Dim includePrereleases As Boolean = chkUpdateIncludePrereleases IsNot Nothing AndAlso chkUpdateIncludePrereleases.Checked
+            Dim source As New GithubSource(repositoryUrl, Nothing, includePrereleases, Nothing)
+            Return New UpdateManager(source, Nothing, Nothing)
+        Catch ex As Exception
+            errorMessage = "Unable to initialize Velopack: " & ex.Message
+            Return Nothing
+        End Try
+    End Function
+
+    Private Sub RefreshUpdateInstallMode()
+        If lblUpdateInstallMode Is Nothing Then
+            Return
+        End If
+
+        Dim errorMessage As String = ""
+        Dim manager As UpdateManager = TryCreateUpdateManager(errorMessage)
+        If manager Is Nothing Then
+            lblUpdateInstallMode.Text = "Install mode: configuration error - " & errorMessage
+            lblUpdateInstallMode.ForeColor = Color.LightCoral
+        ElseIf manager.IsInstalled Then
+            Dim installedVersion As String = If(manager.CurrentVersion IsNot Nothing, manager.CurrentVersion.ToString(), GetCurrentApplicationVersionText())
+            lblUpdateInstallMode.Text = $"Install mode: Velopack installed ({installedVersion}) - automatic updates enabled."
+            lblUpdateInstallMode.ForeColor = Color.LightGreen
+        Else
+            lblUpdateInstallMode.Text = "Install mode: standalone EXE - install KathanaBot-Setup.exe once to enable automatic replacement and restart."
+            lblUpdateInstallMode.ForeColor = Color.Khaki
+        End If
+    End Sub
+
+    Private Sub UpdateSettingsChanged(sender As Object, e As EventArgs)
+        If _updateSettingsLoading Then
+            Return
+        End If
+
+        _updateManager = Nothing
+        _pendingUpdateInfo = Nothing
+        If btnUpdateAndRestart IsNot Nothing Then
+            btnUpdateAndRestart.Enabled = False
+        End If
+        If _updateTab IsNot Nothing Then
+            _updateTab.Text = "Update"
+        End If
+        RefreshUpdateInstallMode()
+        SavePersistedListState(False)
+    End Sub
+
+    Private Sub OpenUpdateReleasesClicked(sender As Object, e As EventArgs)
+        Dim repositoryUrl As String = GetUpdateRepositoryUrl()
+        Dim parsed As Uri = Nothing
+        If Not Uri.TryCreate(repositoryUrl, UriKind.Absolute, parsed) Then
+            MessageBox.Show(Me, "Enter a valid repository URL first.", "Open Releases", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            Return
+        End If
+
+        Try
+            Process.Start(New ProcessStartInfo(repositoryUrl & "/releases") With {.UseShellExecute = True})
+        Catch ex As Exception
+            MessageBox.Show(Me, "Unable to open GitHub Releases: " & ex.Message, "Open Releases", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        End Try
+    End Sub
+
+    Private Async Sub CheckForUpdatesClicked(sender As Object, e As EventArgs)
+        Await CheckForUpdatesAsync(True)
+    End Sub
+
+    Private Async Function CheckForUpdatesAsync(showErrors As Boolean) As Task
+        If _updateOperationInProgress Then
+            Return
+        End If
+
+        Dim errorMessage As String = ""
+        Dim manager As UpdateManager = TryCreateUpdateManager(errorMessage)
+        If manager Is Nothing Then
+            SetUpdateStatus(errorMessage, Color.LightCoral)
+            If showErrors Then
+                MessageBox.Show(Me, errorMessage, "KathanaBot Update", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            End If
+            Return
+        End If
+
+        _updateManager = manager
+        RefreshUpdateInstallMode()
+        If Not manager.IsInstalled Then
+            Dim portableMessage As String = "Automatic update checks require the Velopack installation. Run KathanaBot-Setup.exe once; this standalone build cannot safely replace itself."
+            SetUpdateStatus("Setup installation required.", Color.Khaki)
+            If txtUpdateDetails IsNot Nothing Then
+                txtUpdateDetails.Text = portableMessage
+            End If
+            If showErrors Then
+                MessageBox.Show(Me, portableMessage, "KathanaBot Update", MessageBoxButtons.OK, MessageBoxIcon.Information)
+            End If
+            Return
+        End If
+
+        _updateOperationInProgress = True
+        SetUpdateControlsBusy(True)
+        SetUpdateStatus("Checking GitHub Releases...", Color.LightSkyBlue)
+        If progressUpdateDownload IsNot Nothing Then
+            progressUpdateDownload.Value = 0
+        End If
+
+        Try
+            Dim updateInfo As UpdateInfo = Await manager.CheckForUpdatesAsync()
+            _pendingUpdateInfo = updateInfo
+            If updateInfo Is Nothing Then
+                SetUpdateStatus("You already have the latest version.", Color.LightGreen)
+                If txtUpdateDetails IsNot Nothing Then
+                    txtUpdateDetails.Text = $"Installed version: {manager.CurrentVersion}{Environment.NewLine}Repository: {GetUpdateRepositoryUrl()}{Environment.NewLine}Checked: {DateTime.Now:yyyy-MM-dd HH:mm:ss}"
+                End If
+                If _updateTab IsNot Nothing Then
+                    _updateTab.Text = "Update"
+                End If
+            Else
+                Dim target = updateInfo.TargetFullRelease
+                Dim sizeMb As Double = Math.Max(0.0, CDbl(target.Size)) / 1024.0 / 1024.0
+                SetUpdateStatus($"Version {target.Version} is available.", Color.Gold)
+                If txtUpdateDetails IsNot Nothing Then
+                    txtUpdateDetails.Text = $"Available version: {target.Version}{Environment.NewLine}Current version: {manager.CurrentVersion}{Environment.NewLine}Download: {target.FileName} ({sizeMb:0.00} MB){Environment.NewLine}Repository: {GetUpdateRepositoryUrl()}{Environment.NewLine}{Environment.NewLine}Press Update and Restart to download and install it."
+                End If
+                If _updateTab IsNot Nothing Then
+                    _updateTab.Text = "Update !"
+                End If
+            End If
+        Catch ex As Exception
+            _pendingUpdateInfo = Nothing
+            SetUpdateStatus("Update check failed: " & ex.Message, Color.LightCoral)
+            If txtUpdateDetails IsNot Nothing Then
+                txtUpdateDetails.Text = "GitHub update check failed." & Environment.NewLine & Environment.NewLine & ex.ToString()
+            End If
+            If showErrors Then
+                MessageBox.Show(Me, "Unable to check for updates: " & ex.Message, "KathanaBot Update", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            End If
+        Finally
+            _updateOperationInProgress = False
+            SetUpdateControlsBusy(False)
+        End Try
+    End Function
+
+    Private Async Sub UpdateAndRestartClicked(sender As Object, e As EventArgs)
+        If _updateOperationInProgress OrElse _updateManager Is Nothing OrElse _pendingUpdateInfo Is Nothing Then
+            Return
+        End If
+
+        Dim runningEdition As BotEdition? = GetRunningEdition()
+        Dim prompt As String = $"Download and install KathanaBot {_pendingUpdateInfo.TargetFullRelease.Version}?"
+        If runningEdition.HasValue Then
+            prompt &= Environment.NewLine & Environment.NewLine & $"The running {runningEdition.Value} bot will be stopped safely before the application restarts."
+        End If
+        If MessageBox.Show(Me, prompt, "Update and Restart", MessageBoxButtons.YesNo, MessageBoxIcon.Question) <> DialogResult.Yes Then
+            Return
+        End If
+
+        _updateOperationInProgress = True
+        _updateCancellation?.Cancel()
+        _updateCancellation?.Dispose()
+        _updateCancellation = New CancellationTokenSource()
+        SetUpdateControlsBusy(True)
+        SetUpdateStatus("Downloading update...", Color.LightSkyBlue)
+        If progressUpdateDownload IsNot Nothing Then
+            progressUpdateDownload.Value = 0
+        End If
+
+        Try
+            Dim progress As Action(Of Integer) =
+                Sub(value As Integer)
+                    If IsDisposed OrElse Not IsHandleCreated Then
+                        Return
+                    End If
+                    BeginInvoke(New Action(Sub()
+                                               Dim bounded As Integer = Math.Max(0, Math.Min(100, value))
+                                               progressUpdateDownload.Value = bounded
+                                               SetUpdateStatus($"Downloading update... {bounded}%", Color.LightSkyBlue)
+                                           End Sub))
+                End Sub
+            Await _updateManager.DownloadUpdatesAsync(_pendingUpdateInfo, progress, _updateCancellation.Token)
+            progressUpdateDownload.Value = 100
+            SetUpdateStatus("Download complete. Stopping safely and restarting...", Color.LightGreen)
+
+            runningEdition = GetRunningEdition()
+            If runningEdition.HasValue Then
+                StopEdition(runningEdition.Value, True, "software update")
+            End If
+            SavePersistedListState(False)
+            FlushPendingLogLines()
+            _updateManager.ApplyUpdatesAndRestart(_pendingUpdateInfo.TargetFullRelease, Array.Empty(Of String)())
+        Catch ex As OperationCanceledException
+            SetUpdateStatus("Update download canceled.", Color.Khaki)
+        Catch ex As Exception
+            SetUpdateStatus("Update failed: " & ex.Message, Color.LightCoral)
+            MessageBox.Show(Me, "Unable to install the update: " & ex.Message, "KathanaBot Update", MessageBoxButtons.OK, MessageBoxIcon.Error)
+        Finally
+            _updateOperationInProgress = False
+            SetUpdateControlsBusy(False)
+        End Try
+    End Sub
+
+    Private Sub SetUpdateStatus(message As String, color As Color)
+        If lblUpdateStatus IsNot Nothing Then
+            lblUpdateStatus.Text = message
+            lblUpdateStatus.ForeColor = color
+        End If
+    End Sub
+
+    Private Sub SetUpdateControlsBusy(busy As Boolean)
+        If btnCheckForUpdates IsNot Nothing Then
+            btnCheckForUpdates.Enabled = Not busy
+        End If
+        If btnUpdateAndRestart IsNot Nothing Then
+            btnUpdateAndRestart.Enabled = Not busy AndAlso _pendingUpdateInfo IsNot Nothing AndAlso _updateManager IsNot Nothing AndAlso _updateManager.IsInstalled
+        End If
+        If txtUpdateRepositoryUrl IsNot Nothing Then
+            txtUpdateRepositoryUrl.Enabled = Not busy
+        End If
+        If chkUpdateIncludePrereleases IsNot Nothing Then
+            chkUpdateIncludePrereleases.Enabled = Not busy
+        End If
+    End Sub
+
     Private Sub AutoStartOnLaunch()
         If _autoStarted Then
             Return
@@ -4884,9 +5283,15 @@ Public Class Form1
         MyBase.OnShown(e)
         AutoStartOnLaunch()
         RefreshProcessWindowList(False, IntPtr.Zero)
-        BeginInvoke(New Action(Sub()
-                                   MessageBox.Show(Me, Program.StartupNotice, "Notice", MessageBoxButtons.OK, MessageBoxIcon.Information)
-                               End Sub))
+        BeginInvoke(New Action(AddressOf ShowStartupNoticeAndCheckUpdates))
+    End Sub
+
+    Private Async Sub ShowStartupNoticeAndCheckUpdates()
+        MessageBox.Show(Me, Program.StartupNotice, "Notice", MessageBoxButtons.OK, MessageBoxIcon.Information)
+        RefreshUpdateInstallMode()
+        If chkUpdateCheckAtStartup IsNot Nothing AndAlso chkUpdateCheckAtStartup.Checked Then
+            Await CheckForUpdatesAsync(False)
+        End If
     End Sub
 
     Private Sub StopClicked(sender As Object, e As EventArgs)
@@ -10282,6 +10687,23 @@ Public Class Form1
                 _periodicScreenshotSettingsLoading = False
             End Try
 
+            _updateSettingsLoading = True
+            Try
+                If txtUpdateRepositoryUrl IsNot Nothing Then
+                    Dim savedRepositoryUrl As String = If(appState IsNot Nothing, appState.UpdateRepositoryUrl, DefaultUpdateRepositoryUrl)
+                    txtUpdateRepositoryUrl.Text = If(String.IsNullOrWhiteSpace(savedRepositoryUrl), DefaultUpdateRepositoryUrl, savedRepositoryUrl.Trim())
+                End If
+                If chkUpdateCheckAtStartup IsNot Nothing Then
+                    chkUpdateCheckAtStartup.Checked = (appState Is Nothing OrElse appState.UpdateCheckAtStartup)
+                End If
+                If chkUpdateIncludePrereleases IsNot Nothing Then
+                    chkUpdateIncludePrereleases.Checked = (appState IsNot Nothing AndAlso appState.UpdateIncludePrereleases)
+                End If
+            Finally
+                _updateSettingsLoading = False
+            End Try
+            RefreshUpdateInstallMode()
+
             Dim savedToggleX As Integer = If(appState IsNot Nothing, appState.InGameBotToggleX, -1)
             _inGameBotToggleX = If(savedToggleX < 0, -1, savedToggleX)
             _inGameBotToggleY = Math.Max(0, If(appState IsNot Nothing, appState.InGameBotToggleY, 10))
@@ -10578,6 +11000,9 @@ Public Class Form1
                 .InGameBotToggleY = _inGameBotToggleY,
                 .InGameBotToggleWidth = _inGameBotToggleWidth,
                 .InGameBotToggleHeight = _inGameBotToggleHeight,
+                .UpdateRepositoryUrl = GetUpdateRepositoryUrl(),
+                .UpdateCheckAtStartup = (chkUpdateCheckAtStartup IsNot Nothing AndAlso chkUpdateCheckAtStartup.Checked),
+                .UpdateIncludePrereleases = (chkUpdateIncludePrereleases IsNot Nothing AndAlso chkUpdateIncludePrereleases.Checked),
                 .Full = fullState,
                 .Lite = liteState
             }
@@ -12629,6 +13054,11 @@ Public Class Form1
     End Sub
 
     Protected Overrides Sub OnFormClosing(e As FormClosingEventArgs)
+        If _updateCancellation IsNot Nothing Then
+            _updateCancellation.Cancel()
+            _updateCancellation.Dispose()
+            _updateCancellation = Nothing
+        End If
         _uiTimer.Stop()
         _enterToggleTimer.Stop()
         _logFlushTimer.Stop()

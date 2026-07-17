@@ -11,6 +11,7 @@ Friend Module Program
 
     <STAThread()>
     Friend Sub Main(args As String())
+        Velopack.VelopackApp.Build().Run()
         Application.SetHighDpiMode(HighDpiMode.SystemAware)
         Application.EnableVisualStyles()
         Application.SetCompatibleTextRenderingDefault(False)

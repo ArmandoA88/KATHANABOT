@@ -7,9 +7,9 @@
     <StartupObject>Sub Main</StartupObject>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>assets\KathanaBot.ico</ApplicationIcon>
-    <Version>1.0.42</Version>
-    <FileVersion>1.0.42.0</FileVersion>
-    <AssemblyVersion>1.0.42.0</AssemblyVersion>
+    <Version>1.0.43</Version>
+    <FileVersion>1.0.43.0</FileVersion>
+    <AssemblyVersion>1.0.43.0</AssemblyVersion>
     <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
 
@@ -17,6 +17,10 @@
     <Import Include="System.Data" />
     <Import Include="System.Drawing" />
     <Import Include="System.Windows.Forms" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Velopack" Version="1.2.0" />
   </ItemGroup>
 
   <ItemGroup>

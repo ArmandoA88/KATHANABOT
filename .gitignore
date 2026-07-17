@@ -25,6 +25,7 @@ KathanaBotControlPanel - Copy*.exe
 KathanaBotControlPanel - Copy*.dll
 KathanaBotControlPanel.deps - Copy*.json
 KathanaBotControlPanel.runtimeconfig - Copy*.json
+KathanaBot-Setup-v*.exe
 
 # Standalone/self-contained publish artifacts
 KathanaBotControlPanel-standalone*.exe
