@@ -376,6 +376,7 @@ Public Class Form1
     Private _inGameBotToggleY As Integer = 10
     Private _inGameBotToggleWidth As Integer = 104
     Private _inGameBotToggleHeight As Integer = 38
+    Private _inGameBotToggleEdition As BotEdition = BotEdition.Full
     Private _autoStarted As Boolean = False
     Private _alarmVolumePercent As Integer = 85
     Private _hpZeroAlarmActive As Boolean = False
@@ -2092,6 +2093,10 @@ Public Class Form1
             Text = "KATHANA GAMEBOT - LITE ACTIVE"
         Else
             Text = "KATHANA GAMEBOT - FULL ACTIVE"
+        End If
+
+        If Not GetRunningEdition().HasValue Then
+            _inGameBotToggleEdition = _edition
         End If
 
         If WindowState = FormWindowState.Normal Then
@@ -4990,7 +4995,8 @@ Public Class Form1
 
         _inGameBotToggleForm = New InGameBotToggleForm(
             AddressOf GetInGameBotToggleWindowHandle,
-            Function() GetRunningEdition().HasValue,
+            AddressOf ResolveInGameBotToggleEdition,
+            AddressOf IsEditionRunning,
             _inGameBotToggleX,
             _inGameBotToggleY,
             _inGameBotToggleWidth,
@@ -4999,13 +5005,16 @@ Public Class Form1
         AddHandler _inGameBotToggleForm.OverlayLayoutChanged, AddressOf InGameBotToggleLayoutChanged
     End Sub
 
-    Private Function GetInGameBotToggleWindowHandle() As IntPtr
-        Dim targetEdition As BotEdition = If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full)
+    Private Function ResolveInGameBotToggleEdition() As BotEdition
         Dim runningEdition As BotEdition? = GetRunningEdition()
         If runningEdition.HasValue Then
-            targetEdition = runningEdition.Value
+            _inGameBotToggleEdition = runningEdition.Value
         End If
+        Return _inGameBotToggleEdition
+    End Function
 
+    Private Function GetInGameBotToggleWindowHandle() As IntPtr
+        Dim targetEdition As BotEdition = ResolveInGameBotToggleEdition()
         Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(targetEdition)
         If selected Is Nothing OrElse Not IsPreferredKathanaWindow(selected) Then
             Return IntPtr.Zero
@@ -5014,13 +5023,12 @@ Public Class Form1
     End Function
 
     Private Sub InGameBotToggleRequested()
-        Dim runningEdition As BotEdition? = GetRunningEdition()
-        If runningEdition.HasValue Then
-            StopEdition(runningEdition.Value, True, "in-game toggle")
+        Dim targetEdition As BotEdition = ResolveInGameBotToggleEdition()
+        If IsEditionRunning(targetEdition) Then
+            StopEdition(targetEdition, True, "in-game toggle")
             Return
         End If
 
-        Dim targetEdition As BotEdition = If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full)
         StartEdition(targetEdition, False)
     End Sub
 
@@ -5035,7 +5043,7 @@ Public Class Form1
     Private Shared Function GetCurrentApplicationVersionText() As String
         Dim version As Version = Reflection.Assembly.GetExecutingAssembly().GetName().Version
         If version Is Nothing Then
-            Return "1.0.45"
+            Return "1.0.46"
         End If
         Return $"{version.Major}.{version.Minor}.{Math.Max(0, version.Build)}"
     End Function

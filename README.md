@@ -82,7 +82,7 @@ Double-click:
 
 - the newest versioned EXE in `KATHANABOT\dist\versions`
 
-When the selected Kathana game window is in the foreground, a small button appears in its client area. `BOT OFF` is red and starts the selected Full/Lite bot; `BOT ON` is green and stops the running bot. Drag the button to move it, or drag its bottom-right grip to resize it. Position and size are saved.
+When the selected Kathana game window is in the foreground, a small button appears in its client area. `BOT OFF` is red and starts Full, while `LITE BOT OFF` starts Lite; the green `BOT ON` / `LITE BOT ON` state stops that same edition. The overlay remains assigned to Lite after stopping it, even if the control panel is showing a Full tab. Drag the button to move it, or drag its bottom-right grip to resize it. Position and size are saved.
 
 ## Discord `shot` Command
 

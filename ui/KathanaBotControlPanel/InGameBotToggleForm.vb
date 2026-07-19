@@ -24,11 +24,13 @@ Friend Class InGameBotToggleForm
     End Enum
 
     Private ReadOnly _windowProvider As Func(Of IntPtr)
-    Private ReadOnly _runningProvider As Func(Of Boolean)
+    Private ReadOnly _editionProvider As Func(Of BotEdition)
+    Private ReadOnly _runningProvider As Func(Of BotEdition, Boolean)
     Private ReadOnly _timer As New Timer()
     Private ReadOnly _toggleButton As Button
     Private ReadOnly _toolTip As New ToolTip()
     Private _lastRunning As Boolean? = Nothing
+    Private _lastEdition As BotEdition? = Nothing
     Private _clientX As Integer
     Private _clientY As Integer
     Private _overlayWidth As Integer
@@ -41,13 +43,15 @@ Friend Class InGameBotToggleForm
 
     Public Sub New(
         windowProvider As Func(Of IntPtr),
-        runningProvider As Func(Of Boolean),
+        editionProvider As Func(Of BotEdition),
+        runningProvider As Func(Of BotEdition, Boolean),
         clientX As Integer,
         clientY As Integer,
         overlayWidth As Integer,
         overlayHeight As Integer)
 
         _windowProvider = windowProvider
+        _editionProvider = editionProvider
         _runningProvider = runningProvider
         ApplyLayout(clientX, clientY, overlayWidth, overlayHeight)
 
@@ -76,8 +80,8 @@ Friend Class InGameBotToggleForm
         AddHandler _toggleButton.MouseLeave, AddressOf ToggleButtonMouseLeave
         AddHandler _toggleButton.Paint, AddressOf ToggleButtonPaint
         Controls.Add(_toggleButton)
-        _toolTip.SetToolTip(_toggleButton, "Click to turn the bot on/off. Drag to move. Drag the bottom-right grip to resize.")
-        UpdateButtonAppearance(False)
+        _toolTip.SetToolTip(_toggleButton, "Click to turn the selected Full/Lite bot on or off. Drag to move. Drag the bottom-right grip to resize.")
+        UpdateButtonAppearance(BotEdition.Full, False)
 
         _timer.Interval = 120
         AddHandler _timer.Tick, AddressOf TickUpdate
@@ -110,7 +114,7 @@ Friend Class InGameBotToggleForm
     End Property
 
     Private Sub TickUpdate(sender As Object, e As EventArgs)
-        If _windowProvider Is Nothing OrElse _runningProvider Is Nothing Then
+        If _windowProvider Is Nothing OrElse _editionProvider Is Nothing OrElse _runningProvider Is Nothing Then
             Hide()
             Return
         End If
@@ -161,7 +165,8 @@ Friend Class InGameBotToggleForm
             End If
         End If
 
-        UpdateButtonAppearance(_runningProvider.Invoke())
+        Dim edition As BotEdition = _editionProvider.Invoke()
+        UpdateButtonAppearance(edition, _runningProvider.Invoke(edition))
         If Not Visible Then
             Show()
         End If
@@ -220,8 +225,9 @@ Friend Class InGameBotToggleForm
 
         If completedInteraction = PointerInteraction.Drag AndAlso Not _pointerMoved Then
             RaiseEvent ToggleRequested()
-            If _runningProvider IsNot Nothing Then
-                UpdateButtonAppearance(_runningProvider.Invoke())
+            If _editionProvider IsNot Nothing AndAlso _runningProvider IsNot Nothing Then
+                Dim edition As BotEdition = _editionProvider.Invoke()
+                UpdateButtonAppearance(edition, _runningProvider.Invoke(edition))
             End If
         ElseIf _gameClientBounds.IsEmpty Then
             Return
@@ -261,13 +267,16 @@ Friend Class InGameBotToggleForm
         End Using
     End Sub
 
-    Private Sub UpdateButtonAppearance(running As Boolean)
-        If _lastRunning.HasValue AndAlso _lastRunning.Value = running Then
+    Private Sub UpdateButtonAppearance(edition As BotEdition, running As Boolean)
+        If _lastEdition.HasValue AndAlso _lastEdition.Value = edition AndAlso
+            _lastRunning.HasValue AndAlso _lastRunning.Value = running Then
             Return
         End If
 
+        _lastEdition = edition
         _lastRunning = running
-        _toggleButton.Text = If(running, "BOT ON", "BOT OFF")
+        Dim editionLabel As String = If(edition = BotEdition.Lite, "LITE BOT", "BOT")
+        _toggleButton.Text = $"{editionLabel} {If(running, "ON", "OFF")}"
         _toggleButton.BackColor = If(running, Color.FromArgb(25, 155, 75), Color.FromArgb(190, 45, 45))
         _toggleButton.FlatAppearance.MouseOverBackColor = If(running, Color.FromArgb(35, 175, 90), Color.FromArgb(215, 60, 60))
         _toggleButton.FlatAppearance.MouseDownBackColor = If(running, Color.FromArgb(20, 125, 60), Color.FromArgb(155, 35, 35))
