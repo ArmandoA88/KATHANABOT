@@ -153,5 +153,7 @@ The default game window is `Kathana - The Reign of Shadow` from process `Kathana
 - Use `Test Alarm + Phone` in `Auto-Pot` to trigger alarm sound and ntfy together.
 - `Test Phone Alert` and HP=0 automatic alerts publish to the ntfy channel set in `Auto-Pot` (`ntfy.sh/<your-channel>`).
 - Most setting changes auto-apply while the bot is running; stop/start is not required.
+- Skill cooldown scheduling uses a monotonic per-action timer. Full Combat reports each blocked key with its remaining cooldown instead of leaving all skills stuck after a system-clock adjustment or unrelated use of the same key.
+- The multilingual startup Notice closes automatically after five seconds; its OK button remains available for immediate dismissal.
 - If the EXE is already running, rebuild can warn about locked files.
 - Keep EXE builds serialized/versioned. Do not replace an older EXE with a new one using the same filename.

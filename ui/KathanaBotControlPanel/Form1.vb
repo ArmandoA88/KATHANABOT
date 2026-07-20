@@ -5043,7 +5043,7 @@ Public Class Form1
     Private Shared Function GetCurrentApplicationVersionText() As String
         Dim version As Version = Reflection.Assembly.GetExecutingAssembly().GetName().Version
         If version Is Nothing Then
-            Return "1.0.46"
+            Return "1.0.48"
         End If
         Return $"{version.Major}.{version.Minor}.{Math.Max(0, version.Build)}"
     End Function
@@ -5533,7 +5533,9 @@ Public Class Form1
     End Sub
 
     Private Async Sub ShowStartupNoticeAndCheckUpdates()
-        MessageBox.Show(Me, Program.StartupNotice, "Notice", MessageBoxButtons.OK, MessageBoxIcon.Information)
+        Using notice As New StartupNoticeForm(Program.StartupNotice)
+            notice.ShowDialog(Me)
+        End Using
         RefreshUpdateInstallMode()
         If chkUpdateCheckAtStartup IsNot Nothing AndAlso chkUpdateCheckAtStartup.Checked Then
             Await CheckForUpdatesAsync(False)
@@ -10018,6 +10020,7 @@ Public Class Form1
             End If
 
             cfg.Actions.Add(New ActionRule With {
+                .CooldownId = $"lite-action:{action.ActionKey.ToUpperInvariant()}",
                 .KeyName = action.ActionKey,
                 .Enabled = action.Enabled,
                 .Role = GetLiteDefaultRole(action.ActionKey),
@@ -10032,6 +10035,7 @@ Public Class Form1
         If chkLiteAutoPots IsNot Nothing AndAlso chkLiteAutoPots.Checked Then
             If _liteAutoPotHpPointX >= 0 AndAlso _liteAutoPotHpPointY >= 0 Then
                 cfg.Actions.Add(New ActionRule With {
+                    .CooldownId = "lite-autopot:hp",
                     .KeyName = "9",
                     .Enabled = True,
                     .Role = "heal",
@@ -10045,6 +10049,7 @@ Public Class Form1
 
             If _liteAutoPotMpPointX >= 0 AndAlso _liteAutoPotMpPointY >= 0 Then
                 cfg.Actions.Add(New ActionRule With {
+                    .CooldownId = "lite-autopot:mp",
                     .KeyName = "0",
                     .Enabled = True,
                     .Role = "mana",
@@ -10235,6 +10240,7 @@ Public Class Form1
             Dim cooldownSec As Double = Math.Max(0.05, ParseDouble(SafeCell(row, "CooldownSec", "1.0"), 1.0))
             Dim role As String = SafeCell(row, "Role", "attack").ToLowerInvariant()
             actions.Add(New ActionRule With {
+                .CooldownId = $"full-action:{row.Index}",
                 .KeyName = keyName,
                 .Enabled = enabled,
                 .Role = role,

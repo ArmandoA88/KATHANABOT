@@ -54,6 +54,7 @@ Public Class LootScanPoint
 End Class
 
 Public Class ActionRule
+    Public Property CooldownId As String = ""
     Public Property KeyName As String = ""
     Public Property Enabled As Boolean = True
     Public Property Role As String = "attack"
@@ -400,6 +401,7 @@ Public Class BotConfig
                 cooldownMs = 1000
             End If
             cfg.Actions.Add(New ActionRule() With {
+                .CooldownId = $"default-action:{i}",
                 .KeyName = keyName,
                 .Enabled = enabled,
                 .Role = role,
@@ -1034,7 +1036,7 @@ Public Class BotEngine
     Private _routeRecordingLastSampleAt As DateTime = DateTime.MinValue
     Private ReadOnly _routeRecordingSamples As New List(Of NavigationRouteSample)()
     Private ReadOnly _lootRandom As New Random()
-    Private ReadOnly _lastKeyTime As New Dictionary(Of String, DateTime)(StringComparer.OrdinalIgnoreCase)
+    Private ReadOnly _lastActionTick As New Dictionary(Of String, Long)(StringComparer.OrdinalIgnoreCase)
     Private _lastGoodHpPercent As Double = -1
     Private _lastGoodMpPercent As Double = -1
     Private _lastGoodMobHpPercent As Double = -1
@@ -1331,7 +1333,7 @@ Public Class BotEngine
             _lootScannerAltHeld = False
             _lootScannerProcessingTask = Nothing
             _lastFullFrameCaptureAttemptAt = DateTime.MinValue
-            _lastKeyTime.Clear()
+            _lastActionTick.Clear()
             _lastStatusRaisedAt = DateTime.MinValue
             _lastStatusRaisedSignature = ""
             SyncLock _perfSync
@@ -1627,7 +1629,7 @@ Public Class BotEngine
                                 Continue For
                             End If
 
-                            MarkKeyUsed(attackAction.KeyName)
+                            MarkActionUsed(attackAction)
                             sentKeys.Add(attackAction.KeyName)
                             _lastAttackAction = DateTime.UtcNow
                         Next
@@ -2239,7 +2241,7 @@ Public Class BotEngine
                             Continue For
                         End If
 
-                        MarkKeyUsed(attackAction.KeyName)
+                        MarkActionUsed(attackAction)
                         sentKeys.Add(attackAction.KeyName)
                         _lastAttackAction = DateTime.UtcNow
                         BeginCombatLock(targetSignature, DateTime.UtcNow)
@@ -2649,7 +2651,6 @@ Public Class BotEngine
                 For i As Integer = 1 To 2
                     If SendKey(hwnd, "S", 50) Then
                         stopSent = True
-                        MarkKeyUsed("S")
                     End If
                     Thread.Sleep(25)
                 Next
@@ -5254,7 +5255,6 @@ Public Class BotEngine
             Return False
         End If
 
-        MarkKeyUsed(keyName)
         SetLastAction($"{keyName} ({actionLabel})")
         _lastNavigationMapToggleAt = now
         _navigationMapExpectedOpen = expectMapOpen
@@ -5336,15 +5336,12 @@ Public Class BotEngine
         Dim sentAny As Boolean = False
 
         If SendKey(hwnd, "S", 120) Then
-            MarkKeyUsed("S")
             sentAny = True
         End If
         If SendKey(hwnd, turnKey, 140) Then
-            MarkKeyUsed(turnKey)
             sentAny = True
         End If
         If SendKey(hwnd, "W", 150) Then
-            MarkKeyUsed("W")
             sentAny = True
         End If
 
@@ -5432,7 +5429,6 @@ Public Class BotEngine
         Dim baseBurstMs As Integer = Math.Max(100, Math.Min(1200, cfg.NavigationMoveBurstMs))
         Dim primaryBurstMs As Integer = GetPreciseTravelBurstMs(baseBurstMs, primaryDistance)
         If SendKey(hwnd, primaryKey, primaryBurstMs) Then
-            MarkKeyUsed(primaryKey)
             SetLastAction($"{primaryKey} (travel move: {plan.NextWaypoint.Label})")
             _lastTravelInputKey = primaryKey
             _lastTravelInputDesiredDirection = primaryDirection
@@ -5525,7 +5521,6 @@ Public Class BotEngine
         Dim baseBurstMs As Integer = Math.Max(20, Math.Min(800, cfg.HoldPlaceMoveBurstMs))
         Dim primaryBurstMs As Integer = GetPreciseTravelBurstMs(baseBurstMs, primaryDistance)
         If SendKey(hwnd, primaryKey, primaryBurstMs) Then
-            MarkKeyUsed(primaryKey)
             Dim correctionMode As String = If(emergencyCorrection, "emergency leash", If(postFightReturn, "post-fight return", If(combatActive, "combat correction", "hold correction")))
             SetLastAction($"{primaryKey} (hold {correctionMode})")
             _lastHoldPlaceMoveAt = now
@@ -7900,7 +7895,7 @@ Public Class BotEngine
                 Continue For
             End If
 
-            MarkKeyUsed(action.KeyName)
+            MarkActionUsed(action)
             SetLastAction($"{action.KeyName} ({action.Role})")
             sentAny = True
         Next
@@ -7922,7 +7917,7 @@ Public Class BotEngine
                 Continue For
             End If
 
-            MarkKeyUsed(action.KeyName)
+            MarkActionUsed(action)
             SetLastAction($"{action.KeyName} ({action.Role})")
             sentAny = True
         Next
@@ -8133,7 +8128,7 @@ Public Class BotEngine
                 Continue For
             End If
 
-            MarkKeyUsed(action.KeyName)
+            MarkActionUsed(action)
             _repairLatched = True
             _repairClearCount = 0
             ResetRepairMatchWindow()
@@ -8177,7 +8172,7 @@ Public Class BotEngine
             For i As Integer = 1 To 3
                 If SendKey(hwnd, action.KeyName, FastKeyPressMs) Then
                     sentCount += 1
-                    MarkKeyUsed(action.KeyName)
+                    MarkActionUsed(action)
                 End If
                 Thread.Sleep(StopKeyRepeatGapMs)
             Next
@@ -8251,6 +8246,7 @@ Public Class BotEngine
         Dim cooldownBlocked As Boolean = False
         Dim highMaxHpRoleWaitingForLifeRead As Boolean = False
         Dim offensiveBuffBlocked As Boolean = False
+        Dim cooldownDetails As New List(Of String)()
         Dim selected As New List(Of ActionRule)()
         Dim usedKeys As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
 
@@ -8281,8 +8277,10 @@ Public Class BotEngine
                 Continue For
             End If
 
-            If Not IsReady(action) Then
+            Dim remainingCooldownMs As Long = 0
+            If Not IsReady(action, remainingCooldownMs) Then
                 cooldownBlocked = True
+                cooldownDetails.Add($"{action.KeyName}={remainingCooldownMs}ms")
                 Continue For
             End If
 
@@ -8314,7 +8312,7 @@ Public Class BotEngine
         ElseIf statBlocked AndAlso (Not cfg.BypassHpMpLimits) Then
             reason = "HP/MP limits blocked all attack keys."
         ElseIf cooldownBlocked Then
-            reason = "All attack keys are on cooldown."
+            reason = $"Attack cooldowns remaining: {String.Join(", ", cooldownDetails)}."
         Else
             reason = "No eligible attack key."
         End If
@@ -8323,23 +8321,63 @@ Public Class BotEngine
     End Function
 
     Private Function IsReady(action As ActionRule) As Boolean
+        Dim remainingMs As Long = 0
+        Return IsReady(action, remainingMs)
+    End Function
+
+    Private Function IsReady(action As ActionRule, ByRef remainingMs As Long) As Boolean
+        remainingMs = 0
+        If action Is Nothing Then
+            Return False
+        End If
+
+        Dim cooldownId As String = GetActionCooldownId(action)
+        Dim nowTick As Long = Environment.TickCount64
         SyncLock _sync
-            If Not _lastKeyTime.ContainsKey(action.KeyName) Then
+            Dim lastTick As Long = 0
+            If Not _lastActionTick.TryGetValue(cooldownId, lastTick) Then
                 Return True
             End If
-            Dim elapsedMs As Double = (DateTime.UtcNow - _lastKeyTime(action.KeyName)).TotalMilliseconds
-            Return elapsedMs >= action.CooldownMs
+
+            ' TickCount64 is monotonic. If an impossible timestamp is ever observed,
+            ' discard it instead of leaving the action blocked indefinitely.
+            If lastTick < 0 OrElse nowTick < 0 OrElse lastTick > nowTick Then
+                _lastActionTick.Remove(cooldownId)
+                Return True
+            End If
+
+            Dim cooldownMs As Long = Math.Max(0L, CLng(action.CooldownMs))
+            Dim elapsedMs As Long = nowTick - lastTick
+            remainingMs = Math.Max(0L, cooldownMs - elapsedMs)
+            If remainingMs = 0 Then
+                _lastActionTick.Remove(cooldownId)
+                Return True
+            End If
+            Return False
         End SyncLock
     End Function
 
-    Private Sub MarkKeyUsed(keyName As String)
-        If String.IsNullOrWhiteSpace(keyName) Then
+    Private Sub MarkActionUsed(action As ActionRule)
+        If action Is Nothing Then
             Return
         End If
+
+        Dim cooldownId As String = GetActionCooldownId(action)
         SyncLock _sync
-            _lastKeyTime(keyName) = DateTime.UtcNow
+            _lastActionTick(cooldownId) = Environment.TickCount64
         End SyncLock
     End Sub
+
+    Private Shared Function GetActionCooldownId(action As ActionRule) As String
+        Dim configuredId As String = If(action.CooldownId, "").Trim()
+        If configuredId <> "" Then
+            Return configuredId
+        End If
+
+        Dim keyName As String = If(action.KeyName, "").Trim().ToUpperInvariant()
+        Dim role As String = If(action.Role, "").Trim().ToLowerInvariant()
+        Return $"fallback:{keyName}:{role}:{action.Priority}"
+    End Function
 
     Private Sub SetLastAction(text As String)
         SetStatus(Sub(s)
