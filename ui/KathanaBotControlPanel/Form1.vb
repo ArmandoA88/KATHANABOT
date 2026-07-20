@@ -510,6 +510,7 @@ Public Class Form1
     Private _updateOperationInProgress As Boolean = False
     Private _updateCancellation As CancellationTokenSource = Nothing
     Private _updateSettingsLoading As Boolean = False
+    Private _updateTabState As UpdateTabState = UpdateTabState.Unknown
     Private _taskbarList As ITaskbarList3 = Nothing
     Private _taskbarUnavailable As Boolean = False
     Private _uiTimingCount As Long = 0
@@ -611,6 +612,14 @@ Public Class Form1
         None
         Hp
         Mp
+    End Enum
+
+    Private Enum UpdateTabState
+        Unknown
+        Checking
+        Latest
+        Available
+        [Error]
     End Enum
 
     Private Class PersistedAppState
@@ -2128,6 +2137,22 @@ Public Class Form1
         Dim isActive As Boolean = IsMainTabActive(tab)
         Dim backColor As Color = GetMainTabBackColor(isActive, isSelected)
         Dim foreColor As Color = If(isActive OrElse isSelected, Color.White, Color.Gainsboro)
+        If tab Is _updateTab Then
+            Select Case _updateTabState
+                Case UpdateTabState.Latest
+                    backColor = If(isSelected, Color.FromArgb(47, 154, 87), Color.FromArgb(34, 118, 68))
+                    foreColor = Color.White
+                Case UpdateTabState.Available
+                    backColor = If(isSelected, Color.Gold, Color.FromArgb(210, 165, 20))
+                    foreColor = Color.FromArgb(25, 25, 25)
+                Case UpdateTabState.Checking
+                    backColor = If(isSelected, Color.FromArgb(55, 125, 185), Color.FromArgb(38, 91, 140))
+                    foreColor = Color.White
+                Case UpdateTabState.Error
+                    backColor = If(isSelected, Color.FromArgb(170, 65, 65), Color.FromArgb(125, 45, 45))
+                    foreColor = Color.White
+            End Select
+        End If
         Dim bounds As Rectangle = e.Bounds
 
         Using backgroundBrush As New SolidBrush(backColor)
@@ -3861,7 +3886,7 @@ Public Class Form1
         AddHandler btnOpenUpdateReleases.Click, AddressOf OpenUpdateReleasesClicked
         settings.Controls.Add(btnOpenUpdateReleases, 3, 0)
 
-        chkUpdateCheckAtStartup = New CheckBox() With {.Text = "Check automatically at startup", .Dock = DockStyle.Fill, .Checked = True}
+        chkUpdateCheckAtStartup = New CheckBox() With {.Text = "Check when app opens (bot start always checks)", .Dock = DockStyle.Fill, .Checked = True}
         settings.Controls.Add(chkUpdateCheckAtStartup, 0, 1)
         settings.SetColumnSpan(chkUpdateCheckAtStartup, 2)
         chkUpdateIncludePrereleases = New CheckBox() With {.Text = "Include prerelease versions", .Dock = DockStyle.Fill, .Checked = False}
@@ -4973,6 +4998,7 @@ Public Class Form1
         CommitPendingGridEdits()
         PushLiveConfig()
         engine.Start()
+        CheckForUpdatesAfterBotStart(edition)
         UpdateAttackButtonAppearance(False)
         If autoStart Then
             AppendLog($"Auto-start on launch enabled for {edition}.")
@@ -5061,7 +5087,7 @@ Public Class Form1
     Private Shared Function GetCurrentApplicationVersionText() As String
         Dim version As Version = Reflection.Assembly.GetExecutingAssembly().GetName().Version
         If version Is Nothing Then
-            Return "1.0.50"
+            Return "1.0.51"
         End If
         Return $"{version.Major}.{version.Minor}.{Math.Max(0, version.Build)}"
     End Function
@@ -5128,9 +5154,7 @@ Public Class Form1
         If btnUpdateAndRestart IsNot Nothing Then
             btnUpdateAndRestart.Enabled = False
         End If
-        If _updateTab IsNot Nothing Then
-            _updateTab.Text = "Update"
-        End If
+        SetUpdateTabState(UpdateTabState.Unknown)
         RefreshUpdateInstallMode()
         SavePersistedListState(False)
     End Sub
@@ -5154,6 +5178,11 @@ Public Class Form1
         Await CheckForUpdatesAsync(True)
     End Sub
 
+    Private Async Sub CheckForUpdatesAfterBotStart(edition As BotEdition)
+        AppendLog($"{edition} bot started. Checking for application updates automatically.")
+        Await CheckForUpdatesAsync(False)
+    End Sub
+
     Private Async Function CheckForUpdatesAsync(showErrors As Boolean) As Task
         If _updateOperationInProgress Then
             Return
@@ -5163,6 +5192,7 @@ Public Class Form1
         Dim manager As UpdateManager = TryCreateUpdateManager(errorMessage)
         If manager Is Nothing Then
             SetUpdateStatus(errorMessage, Color.LightCoral)
+            SetUpdateTabState(UpdateTabState.Error)
             If showErrors Then
                 MessageBox.Show(Me, errorMessage, "KathanaBot Update", MessageBoxButtons.OK, MessageBoxIcon.Warning)
             End If
@@ -5174,6 +5204,7 @@ Public Class Form1
         _updateOperationInProgress = True
         SetUpdateControlsBusy(True)
         SetUpdateStatus("Checking GitHub Releases...", Color.LightSkyBlue)
+        SetUpdateTabState(UpdateTabState.Checking)
         If progressUpdateDownload IsNot Nothing Then
             progressUpdateDownload.Value = 0
         End If
@@ -5215,6 +5246,7 @@ Public Class Form1
             _pendingUpdateInfo = Nothing
             _pendingStandaloneUpdate = Nothing
             SetUpdateStatus("Update check failed: " & ex.Message, Color.LightCoral)
+            SetUpdateTabState(UpdateTabState.Error)
             If txtUpdateDetails IsNot Nothing Then
                 txtUpdateDetails.Text = "GitHub update check failed." & Environment.NewLine & Environment.NewLine & ex.ToString()
             End If
@@ -5232,15 +5264,30 @@ Public Class Form1
         If txtUpdateDetails IsNot Nothing Then
             txtUpdateDetails.Text = $"Current version: {currentVersion}{Environment.NewLine}Mode: {mode}{Environment.NewLine}Repository: {GetUpdateRepositoryUrl()}{Environment.NewLine}Checked: {DateTime.Now:yyyy-MM-dd HH:mm:ss}{Environment.NewLine}{Environment.NewLine}{BuildBundledUpdateHistoryText()}"
         End If
-        If _updateTab IsNot Nothing Then
-            _updateTab.Text = "Update"
-        End If
+        SetUpdateTabState(UpdateTabState.Latest)
     End Sub
 
     Private Sub MarkUpdateAvailable()
+        SetUpdateTabState(UpdateTabState.Available)
+    End Sub
+
+    Private Sub SetUpdateTabState(state As UpdateTabState)
+        _updateTabState = state
         If _updateTab IsNot Nothing Then
-            _updateTab.Text = "Update !"
+            Select Case state
+                Case UpdateTabState.Latest
+                    _updateTab.Text = "Update OK"
+                Case UpdateTabState.Available
+                    _updateTab.Text = "Update !"
+                Case UpdateTabState.Checking
+                    _updateTab.Text = "Update ..."
+                Case UpdateTabState.Error
+                    _updateTab.Text = "Update ?"
+                Case Else
+                    _updateTab.Text = "Update"
+            End Select
         End If
+        UpdateMainTabIndicators()
     End Sub
 
     Private Async Function CheckStandaloneReleaseAsync() As Task(Of StandaloneUpdateRelease)
@@ -5339,17 +5386,17 @@ Public Class Form1
 
     Private Shared Function BuildBundledUpdateHistoryText() As String
         Return String.Join(Environment.NewLine, New String() {
-            "WHAT CHANGED IN 1.0.50",
-            "- Added Evade Dadatis in Vision. Fresh Dadati OCR blocks attacks, taps W/S, and forces an E retarget while the game window is on.",
-            "- Improved party counting for partial parties, dead members, dark-red HP bars, and terrain-heavy backgrounds.",
-            "- Added release notes and recent change history directly to Automatic Updates.",
+            "WHAT CHANGED IN 1.0.51",
+            "- Every successful Full or Lite bot start now checks for updates automatically without delaying bot startup.",
+            "- The Update tab turns green when this version is current and yellow when a newer semantic version is available.",
+            "- Auto-update version control identifies this build as 1.0.51 and rejects older or equal standalone releases.",
             "",
             "RECENT CHANGE HISTORY (LAST 5)",
-            "1. Dadati evade: avoids the unkillable Dadati target by moving and retargeting instead of attacking forever.",
-            "2. Party status: counts non-full parties more accurately and separates living from dead members.",
-            "3. Mob-name OCR: compares multiple enhanced samples and keeps the strongest complete name through capture flicker.",
-            "4. Combat cooldowns: uses monotonic per-skill timing so attacks do not remain incorrectly stuck on cooldown.",
-            "5. Startup Notice: automatically closes after five seconds while keeping the OK button available."
+            "1. Automatic update status: bot starts trigger a check and the tab color reports latest or available.",
+            "2. Dadati evade: avoids the unkillable Dadati target by moving and retargeting instead of attacking forever.",
+            "3. Party status: counts non-full parties more accurately and separates living from dead members.",
+            "4. Mob-name OCR: compares multiple enhanced samples and keeps the strongest complete name through capture flicker.",
+            "5. Combat cooldowns and startup Notice: stable per-skill timing plus automatic Notice closing after five seconds."
         })
     End Function
 

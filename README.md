@@ -6,6 +6,7 @@ KathanaBot is a self-contained VB WinForms application. Both the Velopack-instal
 - No Python backend required.
 - Bot logic runs inside the UI executable.
 - Vision includes an optional Dadati evade: block attacks on the detected Dadati, tap W/S to reposition, and force an E retarget.
+- Every Full or Lite bot start checks for updates asynchronously; the Update tab is green when current and yellow when a newer version is available.
 
 ## Build / Rebuild
 
