@@ -82,7 +82,7 @@ Double-click:
 
 - the newest versioned EXE in `KATHANABOT\dist\versions`
 
-When the selected Kathana game window is in the foreground, a small button appears in its client area. `BOT OFF` is red and starts Full, while `LITE BOT OFF` starts Lite; the green `BOT ON` / `LITE BOT ON` state stops that same edition. The overlay remains assigned to Lite after stopping it, even if the control panel is showing a Full tab. Drag the button to move it, or drag its bottom-right grip to resize it. Position and size are saved.
+When the selected Kathana game window is in the foreground, a small control overlay appears in its client area. `BOT OFF` is red and starts Full, while `LITE BOT OFF` starts Lite; the green `BOT ON` / `LITE BOT ON` state stops that same edition. The `SKILL` slider changes only client skill cooldown speed from `0.1x` (ten times slower) through `1.0x` (normal) to `10.0x` (ten times faster); rendering, movement, animation, input, and the external overlay stay unchanged. Returning the slider to `1.0x` restores the original game code immediately. A red `!` beside the multiplier means scaling is not active; the main log reports the exact reason. The verified runtime patch supports only the matching offline/private `KathanaGame.exe` build and should not be used with anti-cheat enabled. Drag the bot button to move the overlay, or drag its grip to resize it. Position, size, and cooldown multiplier are saved.
 
 ## Discord `shot` Command
 

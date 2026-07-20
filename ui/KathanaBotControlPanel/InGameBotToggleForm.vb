@@ -2,20 +2,21 @@ Friend Class InGameBotToggleForm
     Inherits Form
 
     Public Event ToggleRequested()
+    Public Event SkillCooldownScaleChanged(multiplier As Decimal)
     Public Event OverlayLayoutChanged(clientX As Integer, clientY As Integer, overlayWidth As Integer, overlayHeight As Integer)
 
     Private Const WS_EX_TOOLWINDOW As Integer = &H80
     Private Const WS_EX_NOACTIVATE As Integer = &H8000000
     Private Const GA_ROOT As UInteger = 2UI
-    Private Const DefaultOverlayWidth As Integer = 104
-    Private Const DefaultOverlayHeight As Integer = 38
+    Private Const DefaultOverlayWidth As Integer = 260
+    Private Const DefaultOverlayHeight As Integer = 84
     Private Const OverlayMargin As Integer = 10
     Private Const ResizeGripSize As Integer = 13
     Private Const DragThreshold As Integer = 3
-    Private Const MinimumOverlayWidth As Integer = 80
-    Private Const MinimumOverlayHeight As Integer = 30
-    Private Const MaximumOverlayWidth As Integer = 320
-    Private Const MaximumOverlayHeight As Integer = 120
+    Private Const MinimumOverlayWidth As Integer = 210
+    Private Const MinimumOverlayHeight As Integer = 72
+    Private Const MaximumOverlayWidth As Integer = 420
+    Private Const MaximumOverlayHeight As Integer = 180
 
     Private Enum PointerInteraction
         None
@@ -26,8 +27,12 @@ Friend Class InGameBotToggleForm
     Private ReadOnly _windowProvider As Func(Of IntPtr)
     Private ReadOnly _editionProvider As Func(Of BotEdition)
     Private ReadOnly _runningProvider As Func(Of BotEdition, Boolean)
+    Private ReadOnly _skillCooldownScaleProvider As Func(Of Decimal)
+    Private ReadOnly _skillCooldownScaleApplier As Func(Of IntPtr, Decimal, Boolean)
     Private ReadOnly _timer As New Timer()
     Private ReadOnly _toggleButton As Button
+    Private ReadOnly _skillCooldownTrack As TrackBar
+    Private ReadOnly _skillCooldownLabel As Label
     Private ReadOnly _toolTip As New ToolTip()
     Private _lastRunning As Boolean? = Nothing
     Private _lastEdition As BotEdition? = Nothing
@@ -40,11 +45,14 @@ Friend Class InGameBotToggleForm
     Private _pointerDownScreen As System.Drawing.Point = System.Drawing.Point.Empty
     Private _interactionStartBounds As System.Drawing.Rectangle = System.Drawing.Rectangle.Empty
     Private _pointerMoved As Boolean = False
+    Private _updatingSkillCooldownScale As Boolean = False
 
     Public Sub New(
         windowProvider As Func(Of IntPtr),
         editionProvider As Func(Of BotEdition),
         runningProvider As Func(Of BotEdition, Boolean),
+        skillCooldownScaleProvider As Func(Of Decimal),
+        skillCooldownScaleApplier As Func(Of IntPtr, Decimal, Boolean),
         clientX As Integer,
         clientY As Integer,
         overlayWidth As Integer,
@@ -53,6 +61,8 @@ Friend Class InGameBotToggleForm
         _windowProvider = windowProvider
         _editionProvider = editionProvider
         _runningProvider = runningProvider
+        _skillCooldownScaleProvider = skillCooldownScaleProvider
+        _skillCooldownScaleApplier = skillCooldownScaleApplier
         ApplyLayout(clientX, clientY, overlayWidth, overlayHeight)
 
         FormBorderStyle = FormBorderStyle.None
@@ -63,8 +73,20 @@ Friend Class InGameBotToggleForm
         BackColor = Color.FromArgb(12, 12, 12)
         Padding = New Padding(2)
 
+        Dim layout As New TableLayoutPanel() With {
+            .Dock = DockStyle.Fill,
+            .ColumnCount = 1,
+            .RowCount = 2,
+            .Margin = New Padding(0),
+            .Padding = New Padding(0),
+            .BackColor = BackColor
+        }
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 48.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 52.0F))
+
         _toggleButton = New Button() With {
             .Dock = DockStyle.Fill,
+            .Margin = New Padding(0, 0, 0, 2),
             .FlatStyle = FlatStyle.Flat,
             .Font = New Font("Segoe UI", 9.0F, FontStyle.Bold),
             .ForeColor = Color.White,
@@ -79,9 +101,50 @@ Friend Class InGameBotToggleForm
         AddHandler _toggleButton.MouseUp, AddressOf ToggleButtonMouseUp
         AddHandler _toggleButton.MouseLeave, AddressOf ToggleButtonMouseLeave
         AddHandler _toggleButton.Paint, AddressOf ToggleButtonPaint
-        Controls.Add(_toggleButton)
-        _toolTip.SetToolTip(_toggleButton, "Click to turn the selected Full/Lite bot on or off. Drag to move. Drag the bottom-right grip to resize.")
+        layout.Controls.Add(_toggleButton, 0, 0)
+        _toolTip.SetToolTip(_toggleButton, "Click to turn the selected Full/Lite bot on or off. Drag to move. Drag the grip to resize.")
         UpdateButtonAppearance(BotEdition.Full, False)
+
+        Dim timeLayout As New TableLayoutPanel() With {
+            .Dock = DockStyle.Fill,
+            .ColumnCount = 2,
+            .RowCount = 1,
+            .Margin = New Padding(0),
+            .Padding = New Padding(0),
+            .BackColor = Color.FromArgb(24, 24, 24)
+        }
+        timeLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 88.0F))
+        timeLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+
+        _skillCooldownLabel = New Label() With {
+            .Dock = DockStyle.Fill,
+            .Margin = New Padding(2, 0, 0, 0),
+            .Text = "SKILL 1.0x",
+            .TextAlign = ContentAlignment.MiddleCenter,
+            .Font = New Font("Segoe UI", 8.0F, FontStyle.Bold),
+            .ForeColor = Color.Gainsboro
+        }
+        _skillCooldownTrack = New TrackBar() With {
+            .Dock = DockStyle.Fill,
+            .Margin = New Padding(0),
+            .Minimum = 1,
+            .Maximum = 100,
+            .Value = 10,
+            .SmallChange = 1,
+            .LargeChange = 1,
+            .TickFrequency = 10,
+            .TickStyle = TickStyle.BottomRight,
+            .AutoSize = False,
+            .BackColor = Color.FromArgb(24, 24, 24),
+            .TabStop = False
+        }
+        AddHandler _skillCooldownTrack.Scroll, AddressOf SkillCooldownTrackScrolled
+        timeLayout.Controls.Add(_skillCooldownLabel, 0, 0)
+        timeLayout.Controls.Add(_skillCooldownTrack, 1, 0)
+        layout.Controls.Add(timeLayout, 0, 1)
+        Controls.Add(layout)
+        _toolTip.SetToolTip(_skillCooldownTrack, "Skill cooldown speed: 0.1x is slower, 1.0x is normal, and 10.0x is faster.")
+        UpdateSkillCooldownAppearance(1D)
 
         _timer.Interval = 120
         AddHandler _timer.Tick, AddressOf TickUpdate
@@ -124,6 +187,13 @@ Friend Class InGameBotToggleForm
             Hide()
             Return
         End If
+
+        Dim multiplier As Decimal = If(_skillCooldownScaleProvider Is Nothing, 1D, Math.Max(0.1D, Math.Min(10D, _skillCooldownScaleProvider.Invoke())))
+        Dim scaleApplied As Boolean = (multiplier = 1D)
+        If _skillCooldownScaleApplier IsNot Nothing Then
+            scaleApplied = _skillCooldownScaleApplier.Invoke(hwnd, multiplier)
+        End If
+        UpdateSkillCooldownAppearance(multiplier, scaleApplied)
 
         Dim foreground As IntPtr = NativeMethods.GetForegroundWindow()
         If foreground = IntPtr.Zero OrElse NativeMethods.GetAncestor(foreground, GA_ROOT) <> NativeMethods.GetAncestor(hwnd, GA_ROOT) Then
@@ -282,6 +352,37 @@ Friend Class InGameBotToggleForm
         _toggleButton.FlatAppearance.MouseDownBackColor = If(running, Color.FromArgb(20, 125, 60), Color.FromArgb(155, 35, 35))
     End Sub
 
+    Private Sub SkillCooldownTrackScrolled(sender As Object, e As EventArgs)
+        If _updatingSkillCooldownScale Then
+            Return
+        End If
+        Dim multiplier As Decimal = Math.Max(0.1D, Math.Min(10D, CDec(_skillCooldownTrack.Value) / 10D))
+        UpdateSkillCooldownAppearance(multiplier)
+        RaiseEvent SkillCooldownScaleChanged(multiplier)
+    End Sub
+
+    Private Sub UpdateSkillCooldownAppearance(multiplier As Decimal, Optional applied As Boolean = True)
+        multiplier = Math.Max(0.1D, Math.Min(10D, multiplier))
+        Dim sliderValue As Integer = Math.Max(1, Math.Min(100, CInt(Math.Round(multiplier * 10D))))
+        _updatingSkillCooldownScale = True
+        Try
+            If _skillCooldownTrack.Value <> sliderValue Then
+                _skillCooldownTrack.Value = sliderValue
+            End If
+        Finally
+            _updatingSkillCooldownScale = False
+        End Try
+        If applied Then
+            _skillCooldownLabel.Text = $"SKILL {multiplier:0.0}x"
+            _skillCooldownLabel.ForeColor = If(multiplier = 1D, Color.Gainsboro, Color.FromArgb(90, 190, 255))
+            _toolTip.SetToolTip(_skillCooldownLabel, $"Skill cooldown scaling is active at {multiplier:0.0}x.")
+        Else
+            _skillCooldownLabel.Text = $"SKILL {multiplier:0.0}x !"
+            _skillCooldownLabel.ForeColor = Color.FromArgb(255, 105, 105)
+            _toolTip.SetToolTip(_skillCooldownLabel, "Skill cooldown scaling is not active. See the control-panel log for the exact reason.")
+        End If
+    End Sub
+
     Protected Overrides Sub Dispose(disposing As Boolean)
         If disposing Then
             _timer.Stop()
@@ -293,6 +394,7 @@ Friend Class InGameBotToggleForm
             RemoveHandler _toggleButton.MouseUp, AddressOf ToggleButtonMouseUp
             RemoveHandler _toggleButton.MouseLeave, AddressOf ToggleButtonMouseLeave
             RemoveHandler _toggleButton.Paint, AddressOf ToggleButtonPaint
+            RemoveHandler _skillCooldownTrack.Scroll, AddressOf SkillCooldownTrackScrolled
         End If
         MyBase.Dispose(disposing)
     End Sub

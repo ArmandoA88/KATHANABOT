@@ -374,9 +374,12 @@ Public Class Form1
     Private _inGameBotToggleForm As InGameBotToggleForm
     Private _inGameBotToggleX As Integer = -1
     Private _inGameBotToggleY As Integer = 10
-    Private _inGameBotToggleWidth As Integer = 104
-    Private _inGameBotToggleHeight As Integer = 38
+    Private _inGameBotToggleWidth As Integer = 260
+    Private _inGameBotToggleHeight As Integer = 84
     Private _inGameBotToggleEdition As BotEdition = BotEdition.Full
+    Private ReadOnly _skillCooldownScaler As New SkillCooldownScaler()
+    Private _skillCooldownMultiplier As Decimal = 1D
+    Private _lastSkillCooldownScaleError As String = ""
     Private _autoStarted As Boolean = False
     Private _alarmVolumePercent As Integer = 85
     Private _hpZeroAlarmActive As Boolean = False
@@ -618,8 +621,9 @@ Public Class Form1
         Public Property PeriodicScreenshotDirectory As String = ""
         Public Property InGameBotToggleX As Integer = -1
         Public Property InGameBotToggleY As Integer = 10
-        Public Property InGameBotToggleWidth As Integer = 104
-        Public Property InGameBotToggleHeight As Integer = 38
+        Public Property InGameBotToggleWidth As Integer = 260
+        Public Property InGameBotToggleHeight As Integer = 84
+        Public Property SkillCooldownMultiplier As Decimal = 1D
         Public Property UpdateRepositoryUrl As String = DefaultUpdateRepositoryUrl
         Public Property UpdateCheckAtStartup As Boolean = True
         Public Property UpdateIncludePrereleases As Boolean = False
@@ -4997,11 +5001,14 @@ Public Class Form1
             AddressOf GetInGameBotToggleWindowHandle,
             AddressOf ResolveInGameBotToggleEdition,
             AddressOf IsEditionRunning,
+            Function() _skillCooldownMultiplier,
+            AddressOf EnsureSkillCooldownScale,
             _inGameBotToggleX,
             _inGameBotToggleY,
             _inGameBotToggleWidth,
             _inGameBotToggleHeight)
         AddHandler _inGameBotToggleForm.ToggleRequested, AddressOf InGameBotToggleRequested
+        AddHandler _inGameBotToggleForm.SkillCooldownScaleChanged, AddressOf InGameSkillCooldownScaleChanged
         AddHandler _inGameBotToggleForm.OverlayLayoutChanged, AddressOf InGameBotToggleLayoutChanged
     End Sub
 
@@ -5032,18 +5039,48 @@ Public Class Form1
         StartEdition(targetEdition, False)
     End Sub
 
+    Private Sub InGameSkillCooldownScaleChanged(multiplier As Decimal)
+        multiplier = Math.Max(0.1D, Math.Min(10D, multiplier))
+        If _skillCooldownMultiplier = multiplier Then
+            Return
+        End If
+
+        _skillCooldownMultiplier = multiplier
+        SavePersistedListState(False)
+        EnsureSkillCooldownScale(GetInGameBotToggleWindowHandle(), multiplier)
+        If multiplier = 1D Then
+            AppendLog("Skill cooldown speed restored to normal (1.0x).")
+        Else
+            AppendLog($"Skill cooldown speed set to {multiplier:0.0}x.")
+        End If
+    End Sub
+
+    Private Function EnsureSkillCooldownScale(gameWindow As IntPtr, multiplier As Decimal) As Boolean
+        Dim errorMessage As String = ""
+        If _skillCooldownScaler.TrySetMultiplier(gameWindow, CSng(multiplier), errorMessage) Then
+            _lastSkillCooldownScaleError = ""
+            Return True
+        End If
+
+        If Not String.Equals(_lastSkillCooldownScaleError, errorMessage, StringComparison.Ordinal) Then
+            _lastSkillCooldownScaleError = errorMessage
+            AppendLog("Unable to apply skill cooldown scale: " & errorMessage)
+        End If
+        Return False
+    End Function
+
     Private Sub InGameBotToggleLayoutChanged(clientX As Integer, clientY As Integer, overlayWidth As Integer, overlayHeight As Integer)
         _inGameBotToggleX = Math.Max(0, clientX)
         _inGameBotToggleY = Math.Max(0, clientY)
-        _inGameBotToggleWidth = Math.Max(80, Math.Min(320, overlayWidth))
-        _inGameBotToggleHeight = Math.Max(30, Math.Min(120, overlayHeight))
+        _inGameBotToggleWidth = Math.Max(210, Math.Min(420, overlayWidth))
+        _inGameBotToggleHeight = Math.Max(72, Math.Min(180, overlayHeight))
         SavePersistedListState(False)
     End Sub
 
     Private Shared Function GetCurrentApplicationVersionText() As String
         Dim version As Version = Reflection.Assembly.GetExecutingAssembly().GetName().Version
         If version Is Nothing Then
-            Return "1.0.46"
+            Return "1.0.50"
         End If
         Return $"{version.Major}.{version.Minor}.{Math.Max(0, version.Build)}"
     End Function
@@ -10953,8 +10990,9 @@ Public Class Form1
             Dim savedToggleX As Integer = If(appState IsNot Nothing, appState.InGameBotToggleX, -1)
             _inGameBotToggleX = If(savedToggleX < 0, -1, savedToggleX)
             _inGameBotToggleY = Math.Max(0, If(appState IsNot Nothing, appState.InGameBotToggleY, 10))
-            _inGameBotToggleWidth = Math.Max(80, Math.Min(320, If(appState IsNot Nothing, appState.InGameBotToggleWidth, 104)))
-            _inGameBotToggleHeight = Math.Max(30, Math.Min(120, If(appState IsNot Nothing, appState.InGameBotToggleHeight, 38)))
+            _inGameBotToggleWidth = Math.Max(210, Math.Min(420, If(appState IsNot Nothing, appState.InGameBotToggleWidth, 260)))
+            _inGameBotToggleHeight = Math.Max(72, Math.Min(180, If(appState IsNot Nothing, appState.InGameBotToggleHeight, 84)))
+            _skillCooldownMultiplier = Math.Max(0.1D, Math.Min(10D, If(appState IsNot Nothing, appState.SkillCooldownMultiplier, 1D)))
             If _inGameBotToggleForm IsNot Nothing AndAlso Not _inGameBotToggleForm.IsDisposed Then
                 _inGameBotToggleForm.ApplyLayout(_inGameBotToggleX, _inGameBotToggleY, _inGameBotToggleWidth, _inGameBotToggleHeight)
             End If
@@ -11246,6 +11284,7 @@ Public Class Form1
                 .InGameBotToggleY = _inGameBotToggleY,
                 .InGameBotToggleWidth = _inGameBotToggleWidth,
                 .InGameBotToggleHeight = _inGameBotToggleHeight,
+                .SkillCooldownMultiplier = _skillCooldownMultiplier,
                 .UpdateRepositoryUrl = GetUpdateRepositoryUrl(),
                 .UpdateCheckAtStartup = (chkUpdateCheckAtStartup IsNot Nothing AndAlso chkUpdateCheckAtStartup.Checked),
                 .UpdateIncludePrereleases = (chkUpdateIncludePrereleases IsNot Nothing AndAlso chkUpdateIncludePrereleases.Checked),
@@ -13325,9 +13364,11 @@ Public Class Form1
         End If
         If _inGameBotToggleForm IsNot Nothing AndAlso Not _inGameBotToggleForm.IsDisposed Then
             RemoveHandler _inGameBotToggleForm.ToggleRequested, AddressOf InGameBotToggleRequested
+            RemoveHandler _inGameBotToggleForm.SkillCooldownScaleChanged, AddressOf InGameSkillCooldownScaleChanged
             RemoveHandler _inGameBotToggleForm.OverlayLayoutChanged, AddressOf InGameBotToggleLayoutChanged
             _inGameBotToggleForm.Close()
         End If
+        _skillCooldownScaler.Dispose()
         _fullEngine.Stop()
         _liteEngine.Stop()
         MyBase.OnFormClosing(e)
