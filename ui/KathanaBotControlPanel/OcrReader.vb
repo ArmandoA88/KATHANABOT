@@ -235,7 +235,9 @@ Public NotInheritable Class OcrReader
     End Function
 
     Private Shared Function ReadNameStaFallback(source As Bitmap) As String
-        Return RunOnStaWorker(Function() ReadNameInternal(source), 700, "")
+        ' Name recognition evaluates several color/scale variants and can exceed the
+        ' old timeout on slower systems even though OCR is still making progress.
+        Return RunOnStaWorker(Function() ReadNameInternal(source), 1800, "")
     End Function
 
     Private Shared Function ReadPercentStaFallback(source As Bitmap) As Double
@@ -332,29 +334,20 @@ Public NotInheritable Class OcrReader
         Dim bestText As String = ""
         Dim bestScore As Integer = -1
 
-        Using baseScaled As Bitmap = ScaleBitmap(source, 4)
-            If TryReadNameCandidate(engine, baseScaled, bestText, bestScore, 20) Then
-                Return bestText
-            End If
-            Using candidate As Bitmap = ToGrayHighContrast(baseScaled)
-                If TryReadNameCandidate(engine, candidate, bestText, bestScore, 20) Then
-                    Return bestText
-                End If
-            End Using
-            Using candidate As Bitmap = ToBinary(baseScaled, 150, False)
-                If TryReadNameCandidate(engine, candidate, bestText, bestScore, 20) Then
-                    Return bestText
-                End If
-            End Using
-            Using candidate As Bitmap = ToBinary(baseScaled, 150, True)
-                If TryReadNameCandidate(engine, candidate, bestText, bestScore, 20) Then
-                    Return bestText
-                End If
-            End Using
-            Using candidate As Bitmap = IsolateLightText(baseScaled)
-                TryReadNameCandidate(engine, candidate, bestText, bestScore, 20)
-            End Using
-        End Using
+        ' Mob names are small anti-aliased text and can be white, yellow, orange, or
+        ' red depending on the target. Evaluate every representation instead of
+        ' accepting the first plausible OCR result; the raw image is often only a
+        ' partial read while a color-isolated or larger sample contains the full name.
+        Dim candidates As List(Of Bitmap) = BuildNameCandidates(source)
+        Try
+            For Each candidate As Bitmap In candidates
+                TryReadNameCandidate(engine, candidate, bestText, bestScore)
+            Next
+        Finally
+            For Each candidate As Bitmap In candidates
+                candidate.Dispose()
+            Next
+        End Try
 
         Return bestText
     End Function
@@ -456,15 +449,14 @@ Public NotInheritable Class OcrReader
         Return bestValue
     End Function
 
-    Private Shared Function TryReadNameCandidate(engine As OcrEngine, candidate As Bitmap, ByRef bestText As String, ByRef bestScore As Integer, acceptScore As Integer) As Boolean
+    Private Shared Sub TryReadNameCandidate(engine As OcrEngine, candidate As Bitmap, ByRef bestText As String, ByRef bestScore As Integer)
         Dim text As String = ReadNameAsync(engine, candidate).GetAwaiter().GetResult()
         Dim score As Integer = ScoreText(text)
         If score > bestScore Then
             bestScore = score
             bestText = text
         End If
-        Return score >= acceptScore
-    End Function
+    End Sub
 
     Private Shared Function TryReadPercentCandidate(engine As OcrEngine, candidate As Bitmap, ByRef bestPercent As Double, ByRef bestScore As Integer, acceptScore As Integer) As Boolean
         Dim text As String = ReadRawTextAsync(engine, candidate).GetAwaiter().GetResult()
@@ -509,9 +501,31 @@ Public NotInheritable Class OcrReader
             Return ""
         End If
 
-        Dim cleaned As String = Regex.Replace(result.Text, "[^A-Za-z0-9 '\-()]", " ")
+        Dim bestText As String = ""
+        Dim bestScore As Integer = -1
+        For Each line In result.Lines
+            Dim cleanedLine As String = CleanNameText(line.Text)
+            Dim lineScore As Integer = ScoreText(cleanedLine)
+            If lineScore > bestScore Then
+                bestScore = lineScore
+                bestText = cleanedLine
+            End If
+        Next
+
+        If bestText = "" Then
+            bestText = CleanNameText(result.Text)
+        End If
+        Return bestText
+    End Function
+
+    Private Shared Function CleanNameText(raw As String) As String
+        If String.IsNullOrWhiteSpace(raw) Then
+            Return ""
+        End If
+
+        Dim cleaned As String = Regex.Replace(raw, "[^A-Za-z0-9 '\-()]", " ")
         cleaned = Regex.Replace(cleaned, "\s+", " ").Trim()
-        If cleaned.Length < 2 Then
+        If cleaned.Length < 2 OrElse Not Regex.IsMatch(cleaned, "[A-Za-z]") Then
             Return ""
         End If
         Return cleaned
@@ -639,6 +653,30 @@ Public NotInheritable Class OcrReader
         Return list
     End Function
 
+    Private Shared Function BuildNameCandidates(source As Bitmap) As List(Of Bitmap)
+        Dim list As New List(Of Bitmap)()
+        Dim baseScaled As Bitmap = ScaleBitmap(source, 4)
+        Dim largeScaled As Bitmap = ScaleBitmap(source, 6)
+        Dim pixelScaled As Bitmap = ScaleBitmapNearestNeighbor(source, 6)
+
+        list.Add(baseScaled)
+        list.Add(largeScaled)
+        list.Add(pixelScaled)
+        list.Add(ToGrayHighContrast(baseScaled))
+        list.Add(ToGrayHighContrast(largeScaled))
+        list.Add(IsolateLightText(baseScaled))
+        list.Add(IsolateLightText(largeScaled))
+        list.Add(IsolateLifeDigits(baseScaled))
+        list.Add(IsolateLifeDigits(largeScaled))
+        list.Add(ToBinary(baseScaled, 125, False))
+        list.Add(ToBinary(baseScaled, 155, False))
+        list.Add(ToBinary(largeScaled, 125, False))
+        list.Add(ToBinary(largeScaled, 155, False))
+        list.Add(ToBinary(pixelScaled, 140, False))
+        list.Add(ToBinary(pixelScaled, 140, True))
+        Return list
+    End Function
+
     Private Shared Function BuildHpFractionCandidates(source As Bitmap) As List(Of Bitmap)
         Dim list As New List(Of Bitmap)()
         Dim baseScaled As Bitmap = ScaleBitmap(source, 6)
@@ -691,6 +729,19 @@ Public NotInheritable Class OcrReader
         Using g As Graphics = Graphics.FromImage(enlarged)
             g.InterpolationMode = InterpolationMode.HighQualityBicubic
             g.PixelOffsetMode = PixelOffsetMode.HighQuality
+            g.DrawImage(source, New Rectangle(0, 0, w, h), New Rectangle(0, 0, source.Width, source.Height), GraphicsUnit.Pixel)
+        End Using
+        Return enlarged
+    End Function
+
+    Private Shared Function ScaleBitmapNearestNeighbor(source As Bitmap, scale As Integer) As Bitmap
+        Dim w As Integer = Math.Max(1, source.Width * scale)
+        Dim h As Integer = Math.Max(1, source.Height * scale)
+        Dim enlarged As New Bitmap(w, h, PixelFormat.Format24bppRgb)
+
+        Using g As Graphics = Graphics.FromImage(enlarged)
+            g.InterpolationMode = InterpolationMode.NearestNeighbor
+            g.PixelOffsetMode = PixelOffsetMode.Half
             g.DrawImage(source, New Rectangle(0, 0, w, h), New Rectangle(0, 0, source.Width, source.Height), GraphicsUnit.Pixel)
         End Using
         Return enlarged
@@ -974,9 +1025,23 @@ Public NotInheritable Class OcrReader
         End If
 
         Dim compact As String = text.Trim()
-        Dim alphaNum As Integer = Regex.Matches(compact, "[A-Za-z0-9]").Count
+        Dim letters As Integer = Regex.Matches(compact, "[A-Za-z]").Count
+        Dim digits As Integer = Regex.Matches(compact, "[0-9]").Count
         Dim spaces As Integer = Regex.Matches(compact, "\s").Count
-        Dim score As Integer = (alphaNum * 3) + compact.Length - spaces
+        If letters = 0 Then
+            Return -1
+        End If
+
+        Dim score As Integer = (letters * 5) + (digits * 2) + compact.Length - spaces
+        If letters >= 3 Then
+            score += 12
+        End If
+        If Regex.IsMatch(compact, "\bLv\s*\.?\s*\d{1,3}\b", RegexOptions.IgnoreCase) Then
+            score += 18
+        End If
+        If compact.Length > 64 Then
+            score -= (compact.Length - 64) * 2
+        End If
         Return score
     End Function
 

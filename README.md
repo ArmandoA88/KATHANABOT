@@ -155,5 +155,6 @@ The default game window is `Kathana - The Reign of Shadow` from process `Kathana
 - Most setting changes auto-apply while the bot is running; stop/start is not required.
 - Skill cooldown scheduling uses a monotonic per-action timer. Full Combat reports each blocked key with its remaining cooldown instead of leaving all skills stuck after a system-clock adjustment or unrelated use of the same key.
 - The multilingual startup Notice closes automatically after five seconds; its OK button remains available for immediate dismissal.
+- Mob-name OCR compares multiple enlarged, pixel-preserving, high-contrast, and color-isolated samples, then keeps the strongest complete reading stable through brief capture flicker.
 - If the EXE is already running, rebuild can warn about locked files.
 - Keep EXE builds serialized/versioned. Do not replace an older EXE with a new one using the same filename.

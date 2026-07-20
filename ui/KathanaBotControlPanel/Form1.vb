@@ -5043,7 +5043,7 @@ Public Class Form1
     Private Shared Function GetCurrentApplicationVersionText() As String
         Dim version As Version = Reflection.Assembly.GetExecutingAssembly().GetName().Version
         If version Is Nothing Then
-            Return "1.0.48"
+            Return "1.0.49"
         End If
         Return $"{version.Major}.{version.Minor}.{Math.Max(0, version.Build)}"
     End Function

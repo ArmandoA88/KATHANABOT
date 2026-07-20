@@ -728,6 +728,7 @@ Public Class BotEngine
     Private Const HardcodedVisionStatsIntervalMinutes As Integer = 30
     Private Const TargetNameConfirmMinGapMs As Integer = 120
     Private Const TargetNameConfirmRequiredCount As Integer = 2
+    Private Const MobNameOcrRetentionMs As Integer = 2400
     Private Const ExpRateSampleMs As Integer = 60000
     Private Const MinValidExpPerHour As Double = 0.0
     Private Const MaxValidExpPerHour As Double = 100.0
@@ -5982,7 +5983,7 @@ Public Class BotEngine
                     _cachedMobName = candidate
                     _lastMobNameDetectedAt = now
                 ElseIf _lastMobNameDetectedAt = DateTime.MinValue OrElse
-                       (now - _lastMobNameDetectedAt).TotalMilliseconds > 1200 Then
+                       (now - _lastMobNameDetectedAt).TotalMilliseconds > MobNameOcrRetentionMs Then
                     _cachedMobName = ""
                 End If
                 _lastMobNameRead = now
