@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = $PSScriptRoot
 $projectPath = Join-Path $repositoryRoot 'tools\SecurePakBrowser\SecurePakBrowser.csproj'
 $publishPath = Join-Path $repositoryRoot 'tools\SecurePakBrowser\publish'
-$rootExecutable = Join-Path $repositoryRoot 'KathanaSecurePakBrowser.exe'
+$rootExecutable = Join-Path $repositoryRoot 'HTRD KAT MOD Browser.exe'
 
 dotnet publish $projectPath `
     --configuration Release `
@@ -14,7 +14,7 @@ dotnet publish $projectPath `
     --self-contained true `
     --output $publishPath
 
-$publishedExecutable = Join-Path $publishPath 'KathanaSecurePakBrowser.exe'
+$publishedExecutable = Join-Path $publishPath 'HTRD KAT MOD Browser.exe'
 if (-not (Test-Path -LiteralPath $publishedExecutable -PathType Leaf)) {
     throw "Publish did not produce $publishedExecutable"
 }
@@ -25,7 +25,7 @@ try {
 catch {
     $publishedVersion = (Get-Item -LiteralPath $publishedExecutable).VersionInfo.FileVersion
     $shortVersion = ($publishedVersion -split '\.')[0..2] -join '.'
-    $rootExecutable = Join-Path $repositoryRoot "KathanaSecurePakBrowser-v$shortVersion.exe"
+    $rootExecutable = Join-Path $repositoryRoot "HTRD KAT MOD Browser-v$shortVersion.exe"
     Copy-Item -LiteralPath $publishedExecutable -Destination $rootExecutable -Force
     Write-Warning "The unversioned executable is currently open. Published to $rootExecutable instead."
 }

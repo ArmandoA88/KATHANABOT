@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace KathanaSecurePakBrowser;
 
@@ -17,7 +18,13 @@ internal sealed class MainForm : Form
         HideSelection = false,
         MultiSelect = true
     };
-    private readonly TextBox searchBox = new() { Width = 280, PlaceholderText = "Search paths..." };
+    private readonly TextBox searchBox = new()
+    {
+        Width = 360,
+        PlaceholderText = "Global search: name:, folder:, ext:"
+    };
+    private readonly System.Windows.Forms.Timer searchDebounceTimer = new() { Interval = 180 };
+    private readonly ToolStripButton clearSearchButton = new("Clear") { Enabled = false, ToolTipText = "Clear search (Esc)" };
     private readonly TextBox detailsBox = new()
     {
         Dock = DockStyle.Fill,
@@ -42,19 +49,33 @@ internal sealed class MainForm : Form
     public MainForm(string? initialPath)
     {
         this.initialPath = initialPath;
-        Text = "Kathana SecurePak Editor";
+        Text = "HTRD KAT MOD Browser";
+        try
+        {
+            Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+        }
+        catch
+        {
+            // The embedded application icon remains available to Windows Explorer.
+        }
         Width = 1220;
         Height = 760;
         MinimumSize = new Size(860, 520);
         StartPosition = FormStartPosition.CenterScreen;
         AllowDrop = true;
+        KeyPreview = true;
 
         BuildInterface();
         Shown += async (_, _) => await OpenInitialArchiveAsync();
         FormClosing += OnFormClosing;
-        FormClosed += (_, _) => archive?.Dispose();
+        FormClosed += (_, _) =>
+        {
+            searchDebounceTimer.Dispose();
+            archive?.Dispose();
+        };
         DragEnter += OnDragEnter;
         DragDrop += OnDragDrop;
+        KeyDown += OnMainFormKeyDown;
     }
 
     private void BuildInterface()
@@ -69,6 +90,7 @@ internal sealed class MainForm : Form
         editTextButton.Click += async (_, _) => await EditSelectedTextAsync();
         revertButton.Click += (_, _) => RevertSelected();
         saveAsButton.Click += async (_, _) => await SaveArchiveAsAsync();
+        clearSearchButton.Click += (_, _) => searchBox.Clear();
         ToolStripControlHost searchHost = new(searchBox) { Margin = new Padding(12, 0, 4, 0) };
         toolbar.Items.AddRange([
             openButton,
@@ -84,6 +106,7 @@ internal sealed class MainForm : Form
             new ToolStripSeparator(),
             new ToolStripLabel("Find:"),
             searchHost,
+            clearSearchButton,
             new ToolStripLabel("Source stays unchanged until Save As") { ForeColor = Color.DarkGreen }
         ]);
 
@@ -110,7 +133,18 @@ internal sealed class MainForm : Form
         Controls.Add(statusStrip);
 
         folderTree.AfterSelect += (_, _) => RefreshFileList();
-        searchBox.TextChanged += (_, _) => RefreshFileList();
+        searchDebounceTimer.Tick += (_, _) =>
+        {
+            searchDebounceTimer.Stop();
+            RefreshFileList();
+        };
+        searchBox.TextChanged += (_, _) =>
+        {
+            clearSearchButton.Enabled = searchBox.TextLength > 0;
+            searchDebounceTimer.Stop();
+            searchDebounceTimer.Start();
+        };
+        searchBox.KeyDown += OnSearchBoxKeyDown;
         fileList.SelectedIndexChanged += (_, _) => UpdateSelection();
         fileList.DoubleClick += async (_, _) => await OpenSelectedEntryAsync();
     }
@@ -219,17 +253,20 @@ internal sealed class MainForm : Form
         string folder = folderTree.SelectedNode?.Tag as string ?? string.Empty;
         string query = searchBox.Text.Trim();
         bool rootSelected = folder.Length == 0;
+        bool searchActive = query.Length != 0;
 
         IEnumerable<SecurePakEntry> entries = archive.Entries;
-        if (!rootSelected)
+        // A typed search is global so a previously selected folder never hides a
+        // valid match. Clear the search to return to normal folder browsing.
+        if (!searchActive && !rootSelected)
         {
             string prefix = folder + "/";
             entries = entries.Where(entry => entry.Folder.Equals(folder, StringComparison.OrdinalIgnoreCase) ||
                 entry.Path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
         }
-        if (query.Length != 0)
+        if (searchActive)
         {
-            entries = entries.Where(entry => entry.Path.Contains(query, StringComparison.OrdinalIgnoreCase));
+            entries = entries.Where(entry => MatchesSearch(entry, query));
         }
 
         fileList.BeginUpdate();
@@ -254,9 +291,79 @@ internal sealed class MainForm : Form
             fileList.Items.Add(item);
         }
         fileList.EndUpdate();
-        statusLabel.Text = $"Showing {fileList.Items.Count:N0} of {archive.Entries.Count:N0} files | " +
+        string resultKind = searchActive ? $"global result{(fileList.Items.Count == 1 ? "" : "s")}" : "files";
+        statusLabel.Text = $"Showing {fileList.Items.Count:N0} {resultKind} of {archive.Entries.Count:N0} | " +
             $"{replacements.Count:N0} modified";
         UpdateSelection();
+    }
+
+    private static bool MatchesSearch(SecurePakEntry entry, string query)
+    {
+        foreach (Match match in Regex.Matches(query, "(?:[^\\s\\\"]+|\\\"[^\\\"]*\\\")+"))
+        {
+            string token = match.Value.Trim();
+            bool excluded = token.StartsWith('-') && token.Length > 1;
+            if (excluded) token = token[1..];
+            token = token.Trim('"');
+            if (token.Length == 0) continue;
+
+            string field = "path";
+            string value = token;
+            int separator = token.IndexOf(':');
+            if (separator > 0)
+            {
+                string candidateField = token[..separator].ToLowerInvariant();
+                if (candidateField is "name" or "folder" or "path" or "ext" or "type")
+                {
+                    field = candidateField;
+                    value = token[(separator + 1)..].Trim('"');
+                }
+            }
+            if (value.Length == 0) continue;
+
+            bool found = field switch
+            {
+                "name" => entry.FileName.Contains(value, StringComparison.OrdinalIgnoreCase),
+                "folder" => entry.Folder.Contains(value, StringComparison.OrdinalIgnoreCase),
+                "ext" or "type" => Path.GetExtension(entry.FileName).TrimStart('.')
+                    .Equals(value.TrimStart('.'), StringComparison.OrdinalIgnoreCase),
+                _ => entry.Path.Contains(value, StringComparison.OrdinalIgnoreCase)
+            };
+            if (excluded ? found : !found) return false;
+        }
+        return true;
+    }
+
+    private void OnSearchBoxKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.KeyCode == Keys.Escape)
+        {
+            searchBox.Clear();
+            e.SuppressKeyPress = true;
+            return;
+        }
+        if (e.KeyCode != Keys.Enter) return;
+
+        searchDebounceTimer.Stop();
+        RefreshFileList();
+        if (fileList.Items.Count > 0)
+        {
+            fileList.Items[0].Selected = true;
+            fileList.Items[0].Focused = true;
+            fileList.EnsureVisible(0);
+            fileList.Focus();
+        }
+        e.SuppressKeyPress = true;
+    }
+
+    private void OnMainFormKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Control && e.KeyCode == Keys.F)
+        {
+            searchBox.Focus();
+            searchBox.SelectAll();
+            e.SuppressKeyPress = true;
+        }
     }
 
     private void UpdateSelection()
@@ -648,8 +755,8 @@ internal sealed class MainForm : Form
     {
         string modifiedMarker = replacements.Count > 0 ? " *" : string.Empty;
         Text = archive is null
-            ? "Kathana SecurePak Editor"
-            : $"Kathana SecurePak Editor — {Path.GetFileName(archive.FilePath)}{modifiedMarker}";
+            ? "HTRD KAT MOD Browser"
+            : $"HTRD KAT MOD Browser — {Path.GetFileName(archive.FilePath)}{modifiedMarker}";
     }
 
     private void OnFormClosing(object? sender, FormClosingEventArgs e)

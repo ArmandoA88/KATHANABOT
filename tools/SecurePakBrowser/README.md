@@ -1,4 +1,4 @@
-# Kathana SecurePak Editor
+# HTRD KAT MOD Browser
 
 This is a browser and safe editor for the SecurePak v4 archive loaded by the
 matching `KathanaGame.exe`. It reconstructs the original folder tree and
@@ -7,7 +7,7 @@ text, and builds a new loader-compatible archive.
 
 ## Use
 
-Run `KathanaSecurePakBrowser.exe` from the repository root. When `data.pak` is
+Run `HTRD KAT MOD Browser.exe` from the repository root. When `data.pak` is
 beside it, the browser opens that archive automatically. You can also use **Open
 PAK**, drag a `.pak` file onto the window, or pass a path on the command line.
 
@@ -15,6 +15,12 @@ Double-click a file to preview it. Use **Extract selected** or **Extract all**
 to write copies to a destination you choose. Every original entry read verifies
 its CRC32. Archive paths are checked before extraction so an entry cannot escape
 the selected destination folder.
+
+Search is global whenever the Find box contains text. Plain words match complete
+archive paths; use `name:forge`, `folder:resource/map`, or `ext:tcc` to target a
+field. Multiple terms must all match, quoted phrases keep spaces together, and a
+leading minus excludes matches (for example `ext:tcc -folder:test`). Press
+`Ctrl+F` to focus search, Enter to select the first result, and Escape to clear it.
 
 ## Modify files
 
@@ -84,7 +90,7 @@ From the repository root:
 ```
 
 The script publishes a self-contained, single-file Windows x64 application and
-copies `KathanaSecurePakBrowser.exe` to the repository root. The source targets
+copies `HTRD KAT MOD Browser.exe` to the repository root. The source targets
 .NET 9 and uses Monocypher for the loader-compatible cryptography and
 K4os.Compression.LZ4 for raw LZ4 blocks.
 

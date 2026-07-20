@@ -5,9 +5,13 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>KathanaSecurePakBrowser</AssemblyName>
+    <AssemblyName>HTRD KAT MOD Browser</AssemblyName>
     <RootNamespace>KathanaSecurePakBrowser</RootNamespace>
     <Version>1.2.0</Version>
+    <Product>HTRD KAT MOD Browser</Product>
+    <AssemblyTitle>HTRD KAT MOD Browser</AssemblyTitle>
+    <Description>SecurePak browser and editor for HTRD KAT MOD</Description>
+    <ApplicationIcon>assets\htrd-kat-mod.ico</ApplicationIcon>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>

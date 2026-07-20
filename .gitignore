@@ -9,6 +9,7 @@ dist/
 
 # VS settings
 .vs/
+.vscode/
 
 # OCR runtime data can be placed here if desired
 # tessdata/
@@ -28,6 +29,12 @@ KathanaBotControlPanel.runtimeconfig - Copy*.json
 KathanaBot-Setup-v*.exe
 KathanaSecurePakBrowser.exe
 KathanaSecurePakBrowser-v*.exe
+HTRD KAT MOD Browser*.exe
+tools/SecurePakBrowser/publish/
+
+# Proprietary/local game archives and extracted contents
+data.pak
+datapak/
 
 # Standalone/self-contained publish artifacts
 KathanaBotControlPanel-standalone*.exe
