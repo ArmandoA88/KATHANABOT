@@ -110,6 +110,7 @@ Public Class Form1
     Private nudHighMaxHpThreshold As NumericUpDown
     Private chkAvoidHighMaxHpTargets As CheckBox
     Private nudAvoidHighMaxHpThreshold As NumericUpDown
+    Private chkEvadeDadati As CheckBox
     Private lstProcessWindows As ListBox
     Private txtProcessRename As TextBox
     Private btnOverlayToggle As Button
@@ -525,6 +526,7 @@ Public Class Form1
         Public Property Sha256Url As String = ""
         Public Property Size As Long
         Public Property ReleaseUrl As String = ""
+        Public Property ReleaseNotes As String = ""
     End Class
 
     Private Enum TaskbarProgressState
@@ -980,6 +982,9 @@ Public Class Form1
         If nudAvoidHighMaxHpThreshold IsNot Nothing Then
             AddHandler nudAvoidHighMaxHpThreshold.ValueChanged, AddressOf LiveConfigChanged
         End If
+        If chkEvadeDadati IsNot Nothing Then
+            AddHandler chkEvadeDadati.CheckedChanged, AddressOf LiveConfigChanged
+        End If
         AddHandler nudAutoPotHp.ValueChanged, AddressOf LiveConfigChanged
         AddHandler nudAutoPotMp.ValueChanged, AddressOf LiveConfigChanged
         If nudStuckTargetMs IsNot Nothing Then
@@ -1279,6 +1284,9 @@ Public Class Form1
         End If
         If nudAvoidHighMaxHpThreshold IsNot Nothing Then
             AddHandler nudAvoidHighMaxHpThreshold.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If chkEvadeDadati IsNot Nothing Then
+            AddHandler chkEvadeDadati.CheckedChanged, AddressOf PersistListSettingsChanged
         End If
         If nudForcedRetargetMs IsNot Nothing Then
             AddHandler nudForcedRetargetMs.ValueChanged, AddressOf PersistListSettingsChanged
@@ -2848,7 +2856,7 @@ Public Class Form1
         left.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
 
         Dim generalGroup As New GroupBox() With {.Text = "Vision + Window Setup", .Dock = DockStyle.Fill}
-        Dim generalLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 4, .RowCount = 11}
+        Dim generalLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 4, .RowCount = 12}
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 130.0F))
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 130.0F))
@@ -2920,19 +2928,27 @@ Public Class Form1
         }
         generalLayout.Controls.Add(nudAvoidHighMaxHpThreshold, 3, 5)
 
+        chkEvadeDadati = New CheckBox() With {
+            .Text = "Evade Dadatis (tap W/S, then retarget; game window must be on)",
+            .Dock = DockStyle.Fill,
+            .Checked = False
+        }
+        generalLayout.Controls.Add(chkEvadeDadati, 0, 6)
+        generalLayout.SetColumnSpan(chkEvadeDadati, 4)
+
         Dim hint As New Label() With {.Text = "Mob HP Presence % = red-fill in mob_hp_rect. High max HP buff and avoid-high-HP use mob_life_rect to read Max HP numbers.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.LightGreen}
-        generalLayout.Controls.Add(hint, 0, 6)
+        generalLayout.Controls.Add(hint, 0, 7)
         generalLayout.SetColumnSpan(hint, 4)
 
         chkChatTranslationEnabled = New CheckBox() With {.Text = "Enable chat translation OCR", .Dock = DockStyle.Fill}
-        generalLayout.Controls.Add(chkChatTranslationEnabled, 0, 7)
+        generalLayout.Controls.Add(chkChatTranslationEnabled, 0, 8)
         generalLayout.SetColumnSpan(chkChatTranslationEnabled, 2)
 
         chkChatTranslationOverlay = New CheckBox() With {.Text = "Show translated overlay", .Dock = DockStyle.Fill, .Checked = True}
-        generalLayout.Controls.Add(chkChatTranslationOverlay, 2, 7)
+        generalLayout.Controls.Add(chkChatTranslationOverlay, 2, 8)
         generalLayout.SetColumnSpan(chkChatTranslationOverlay, 2)
 
-        generalLayout.Controls.Add(New Label() With {.Text = "Target Lang", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 8)
+        generalLayout.Controls.Add(New Label() With {.Text = "Target Lang", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 9)
         cboChatTargetLanguage = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList}
         cboChatTargetLanguage.DisplayMember = NameOf(ChatLanguageOption.Label)
         cboChatTargetLanguage.ValueMember = NameOf(ChatLanguageOption.Code)
@@ -2940,15 +2956,15 @@ Public Class Form1
         cboChatTargetLanguage.Items.Add(New ChatLanguageOption("Espanol", "es"))
         cboChatTargetLanguage.Items.Add(New ChatLanguageOption("Filipino", "tl"))
         SelectChatTargetLanguage("en")
-        generalLayout.Controls.Add(cboChatTargetLanguage, 1, 8)
+        generalLayout.Controls.Add(cboChatTargetLanguage, 1, 9)
 
-        generalLayout.Controls.Add(New Label() With {.Text = "Chat Scan (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 2, 8)
+        generalLayout.Controls.Add(New Label() With {.Text = "Chat Scan (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 2, 9)
         nudChatScanMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 250, .Maximum = 5000, .Value = 700}
-        generalLayout.Controls.Add(nudChatScanMs, 3, 8)
+        generalLayout.Controls.Add(nudChatScanMs, 3, 9)
 
-        generalLayout.Controls.Add(New Label() With {.Text = "Overlay Lines", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 9)
+        generalLayout.Controls.Add(New Label() With {.Text = "Overlay Lines", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 10)
         nudChatMaxLines = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 1, .Maximum = 12, .Value = 6}
-        generalLayout.Controls.Add(nudChatMaxLines, 1, 9)
+        generalLayout.Controls.Add(nudChatMaxLines, 1, 10)
 
         lblChatTranslationStatus = New Label() With {
             .Text = "Chat Translation: idle. Calibrate chat_rect in Regions, then keep the chat window visible.",
@@ -2956,7 +2972,7 @@ Public Class Form1
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.MiddleLeft
         }
-        generalLayout.Controls.Add(lblChatTranslationStatus, 0, 10)
+        generalLayout.Controls.Add(lblChatTranslationStatus, 0, 11)
         generalLayout.SetColumnSpan(lblChatTranslationStatus, 4)
 
         generalGroup.Controls.Add(generalLayout)
@@ -3897,8 +3913,7 @@ Public Class Form1
             .BackColor = Color.FromArgb(10, 10, 10),
             .ForeColor = Color.Gainsboro,
             .Font = New Font("Consolas", 10.0F, FontStyle.Regular),
-            .Text = "The standalone EXE checks GitHub directly and replaces itself after a verified download. No Setup installation is required." & Environment.NewLine & Environment.NewLine &
-                "Update flow: Check Now -> Update and Restart -> download -> SHA-256 verification -> safe bot stop -> replace -> relaunch."
+            .Text = BuildBundledUpdateHistoryText()
         }
         root.Controls.Add(txtUpdateDetails, 0, 5)
 
@@ -4779,6 +4794,9 @@ Public Class Form1
         If nudAvoidHighMaxHpThreshold IsNot Nothing Then
             nudAvoidHighMaxHpThreshold.Value = 2000D
         End If
+        If chkEvadeDadati IsNot Nothing Then
+            chkEvadeDadati.Checked = False
+        End If
 
         Dim keyIndex As Integer = 1
         dgvCombat.Rows.Clear()
@@ -5043,7 +5061,7 @@ Public Class Form1
     Private Shared Function GetCurrentApplicationVersionText() As String
         Dim version As Version = Reflection.Assembly.GetExecutingAssembly().GetName().Version
         If version Is Nothing Then
-            Return "1.0.49"
+            Return "1.0.50"
         End If
         Return $"{version.Major}.{version.Minor}.{Math.Max(0, version.Build)}"
     End Function
@@ -5172,7 +5190,8 @@ Public Class Form1
                     Dim sizeMb As Double = Math.Max(0.0, CDbl(target.Size)) / 1024.0 / 1024.0
                     SetUpdateStatus($"Version {target.Version} is available.", Color.Gold)
                     If txtUpdateDetails IsNot Nothing Then
-                        txtUpdateDetails.Text = $"Available version: {target.Version}{Environment.NewLine}Current version: {manager.CurrentVersion}{Environment.NewLine}Download: {target.FileName} ({sizeMb:0.00} MB){Environment.NewLine}Mode: Velopack installation{Environment.NewLine}Repository: {GetUpdateRepositoryUrl()}{Environment.NewLine}{Environment.NewLine}Press Update and Restart to download and install it."
+                        Dim releaseNotes As String = If(String.IsNullOrWhiteSpace(target.NotesMarkdown), BuildBundledUpdateHistoryText(), target.NotesMarkdown.Trim())
+                        txtUpdateDetails.Text = $"Available version: {target.Version}{Environment.NewLine}Current version: {manager.CurrentVersion}{Environment.NewLine}Download: {target.FileName} ({sizeMb:0.00} MB){Environment.NewLine}Mode: Velopack installation{Environment.NewLine}Repository: {GetUpdateRepositoryUrl()}{Environment.NewLine}{Environment.NewLine}WHAT CHANGED{Environment.NewLine}{releaseNotes}{Environment.NewLine}{Environment.NewLine}Press Update and Restart to download and install it."
                     End If
                     MarkUpdateAvailable()
                 End If
@@ -5186,7 +5205,8 @@ Public Class Form1
                     Dim sizeMb As Double = Math.Max(0.0, CDbl(standaloneRelease.Size)) / 1024.0 / 1024.0
                     SetUpdateStatus($"Version {standaloneRelease.VersionText} is available.", Color.Gold)
                     If txtUpdateDetails IsNot Nothing Then
-                        txtUpdateDetails.Text = $"Available version: {standaloneRelease.VersionText}{Environment.NewLine}Current version: {GetCurrentApplicationVersionText()}{Environment.NewLine}Download: {standaloneRelease.FileName} ({sizeMb:0.00} MB){Environment.NewLine}Mode: standalone EXE self-replacement{Environment.NewLine}Security: SHA-256 checksum required{Environment.NewLine}Repository: {GetUpdateRepositoryUrl()}{Environment.NewLine}{Environment.NewLine}Press Update and Restart. No Setup installation is needed."
+                        Dim releaseNotes As String = If(String.IsNullOrWhiteSpace(standaloneRelease.ReleaseNotes), BuildBundledUpdateHistoryText(), standaloneRelease.ReleaseNotes.Trim())
+                        txtUpdateDetails.Text = $"Available version: {standaloneRelease.VersionText}{Environment.NewLine}Current version: {GetCurrentApplicationVersionText()}{Environment.NewLine}Download: {standaloneRelease.FileName} ({sizeMb:0.00} MB){Environment.NewLine}Mode: standalone EXE self-replacement{Environment.NewLine}Security: SHA-256 checksum required{Environment.NewLine}Repository: {GetUpdateRepositoryUrl()}{Environment.NewLine}{Environment.NewLine}WHAT CHANGED{Environment.NewLine}{releaseNotes}{Environment.NewLine}{Environment.NewLine}Press Update and Restart. No Setup installation is needed."
                     End If
                     MarkUpdateAvailable()
                 End If
@@ -5210,7 +5230,7 @@ Public Class Form1
     Private Sub ShowNoUpdateAvailable(currentVersion As String, mode As String)
         SetUpdateStatus("You already have the latest version.", Color.LightGreen)
         If txtUpdateDetails IsNot Nothing Then
-            txtUpdateDetails.Text = $"Current version: {currentVersion}{Environment.NewLine}Mode: {mode}{Environment.NewLine}Repository: {GetUpdateRepositoryUrl()}{Environment.NewLine}Checked: {DateTime.Now:yyyy-MM-dd HH:mm:ss}"
+            txtUpdateDetails.Text = $"Current version: {currentVersion}{Environment.NewLine}Mode: {mode}{Environment.NewLine}Repository: {GetUpdateRepositoryUrl()}{Environment.NewLine}Checked: {DateTime.Now:yyyy-MM-dd HH:mm:ss}{Environment.NewLine}{Environment.NewLine}{BuildBundledUpdateHistoryText()}"
         End If
         If _updateTab IsNot Nothing Then
             _updateTab.Text = "Update"
@@ -5298,7 +5318,8 @@ Public Class Form1
                             .DownloadUrl = executableUrl,
                             .Sha256Url = checksumUrl,
                             .Size = executableSize,
-                            .ReleaseUrl = GetUpdateJsonString(releaseElement, "html_url")
+                            .ReleaseUrl = GetUpdateJsonString(releaseElement, "html_url"),
+                            .ReleaseNotes = GetUpdateJsonString(releaseElement, "body")
                         }
                     Next
                 End Using
@@ -5314,6 +5335,22 @@ Public Class Form1
             Return If(value.GetString(), "")
         End If
         Return ""
+    End Function
+
+    Private Shared Function BuildBundledUpdateHistoryText() As String
+        Return String.Join(Environment.NewLine, New String() {
+            "WHAT CHANGED IN 1.0.50",
+            "- Added Evade Dadatis in Vision. Fresh Dadati OCR blocks attacks, taps W/S, and forces an E retarget while the game window is on.",
+            "- Improved party counting for partial parties, dead members, dark-red HP bars, and terrain-heavy backgrounds.",
+            "- Added release notes and recent change history directly to Automatic Updates.",
+            "",
+            "RECENT CHANGE HISTORY (LAST 5)",
+            "1. Dadati evade: avoids the unkillable Dadati target by moving and retargeting instead of attacking forever.",
+            "2. Party status: counts non-full parties more accurately and separates living from dead members.",
+            "3. Mob-name OCR: compares multiple enhanced samples and keeps the strongest complete name through capture flicker.",
+            "4. Combat cooldowns: uses monotonic per-skill timing so attacks do not remain incorrectly stuck on cooldown.",
+            "5. Startup Notice: automatically closes after five seconds while keeping the OK button available."
+        })
     End Function
 
     Private Shared Function GetUpdateJsonBoolean(element As JsonElement, propertyName As String) As Boolean
@@ -7501,6 +7538,7 @@ Public Class Form1
                     "- Automatic Screenshots is beneath Snapshot; choose 1 to 999 minutes, select the destination with Browse, or open it with Open Folder.",
                     "- Use buff key on high max HP mobs plus Max HP >= work together with the high_max_hp combat role.",
                     "- Avoid mobs over max HP plus Avoid Max HP >= skips targets above that detected Max HP and retargets.",
+                    "- Evade Dadatis blocks attacks on a freshly recognized Dadati, taps W and S to shift position, then forces an E retarget.",
                     "- Chat translation settings control OCR of the chat box, overlay visibility, target language, scan speed, and number of visible translated lines.",
                     "- Calibration Regions is the editable rectangle list for HP, MP, target name, target HP, map coordinates, chat, and other OCR areas; each On checkbox controls that region's overlay.",
                     "- Map coordinate OCR is split into map_coordinate_x_rect for the 3-digit X axis and map_coordinate_y_rect for the 3-digit Y axis.",
@@ -7635,6 +7673,7 @@ Public Class Form1
                     "- Capture Snapshot captura la imagen actual del cliente.",
                     "- Automatic Screenshots activa capturas programadas; elige de 1 a 999 minutos y la carpeta con Browse.",
                     "- Use buff key on high max HP mobs junto con Max HP >= trabaja con el role high_max_hp.",
+                    "- Evade Dadatis bloquea ataques contra Dadati, pulsa W y S para mover al personaje y luego fuerza un retarget con E.",
                     "- Los controles de chat translation manejan OCR del chat, overlay, idioma destino, velocidad y numero de lineas.",
                     "- Calibration Regions contiene los rectangulos OCR editables, incluidas las coordenadas del mapa; cada checkbox On controla el overlay de esa region.",
                     "- Las coordenadas del mapa se dividen en map_coordinate_x_rect para el eje X de 3 digitos y map_coordinate_y_rect para el eje Y de 3 digitos.",
@@ -7767,6 +7806,7 @@ Public Class Form1
                     "- Capture Snapshot kukuha ng kasalukuyang image ng client.",
                     "- Automatic Screenshots ay timed game captures; pumili ng 1 hanggang 999 minuto at save folder gamit ang Browse.",
                     "- Use buff key on high max HP mobs kasama ng Max HP >= ay para sa high_max_hp combat role.",
+                    "- Evade Dadatis hinaharang ang pag-atake sa Dadati, tina-tap ang W at S para gumalaw, at saka nagfo-force ng E retarget.",
                     "- Ang chat translation controls ay para sa OCR ng chat, overlay visibility, target language, bilis ng scan, at dami ng visible lines.",
                     "- Calibration Regions ang editable OCR rectangles, kasama ang map coordinates; bawat On checkbox ang control ng overlay ng region.",
                     "- Hiwalay ang map coordinates: map_coordinate_x_rect para sa 3-digit X axis at map_coordinate_y_rect para sa 3-digit Y axis.",
@@ -8117,6 +8157,7 @@ Public Class Form1
             $"HighMaxHpThreshold: {If(nudHighMaxHpThreshold IsNot Nothing, nudHighMaxHpThreshold.Value.ToString("N0"), "2000")}{Environment.NewLine}" &
             $"AvoidHighMaxHp: {If(chkAvoidHighMaxHpTargets IsNot Nothing AndAlso chkAvoidHighMaxHpTargets.Checked, "True", "False")}{Environment.NewLine}" &
             $"AvoidHighMaxHpThreshold: {If(nudAvoidHighMaxHpThreshold IsNot Nothing, nudAvoidHighMaxHpThreshold.Value.ToString("N0"), "2000")}{Environment.NewLine}" &
+            $"EvadeDadati: {If(chkEvadeDadati IsNot Nothing AndAlso chkEvadeDadati.Checked, "True", "False")}{Environment.NewLine}" &
             $"ChatTranslationEnabled: {If(chkChatTranslationEnabled IsNot Nothing AndAlso chkChatTranslationEnabled.Checked, "True", "False")}{Environment.NewLine}" &
             $"ChatTranslationOverlay: {If(chkChatTranslationOverlay IsNot Nothing AndAlso chkChatTranslationOverlay.Checked, "True", "False")}{Environment.NewLine}" &
             $"DisabledRegionOverlays: {String.Join(", ", BuildDisabledCalibrationRegionOverlays())}{Environment.NewLine}" &
@@ -10083,6 +10124,7 @@ Public Class Form1
         cfg.HighMaxHpThreshold = CInt(If(nudHighMaxHpThreshold IsNot Nothing, nudHighMaxHpThreshold.Value, 2000D))
         cfg.AvoidHighMaxHpEnabled = (chkAvoidHighMaxHpTargets IsNot Nothing AndAlso chkAvoidHighMaxHpTargets.Checked)
         cfg.AvoidHighMaxHpThreshold = CInt(If(nudAvoidHighMaxHpThreshold IsNot Nothing, nudAvoidHighMaxHpThreshold.Value, 2000D))
+        cfg.EvadeDadatiEnabled = (chkEvadeDadati IsNot Nothing AndAlso chkEvadeDadati.Checked)
         cfg.BypassHpMpLimits = _bypassHpMpLimits
         cfg.BypassStuckTarget = _bypassStuckTarget
         cfg.PartyAutoAcceptEnabled = _partyAutoAccept
@@ -11354,6 +11396,9 @@ Public Class Form1
             chkAvoidHighMaxHpTargets.Checked = cfg.AvoidHighMaxHpEnabled
         End If
         SetNumericControlValue(nudAvoidHighMaxHpThreshold, CDec(Math.Max(100, cfg.AvoidHighMaxHpThreshold)))
+        If chkEvadeDadati IsNot Nothing Then
+            chkEvadeDadati.Checked = cfg.EvadeDadatiEnabled
+        End If
 
         _bypassHpMpLimits = cfg.BypassHpMpLimits
         If btnBypassLimits IsNot Nothing Then

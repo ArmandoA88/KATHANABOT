@@ -238,6 +238,7 @@ Public Class BotConfig
     Public Property HighMaxHpThreshold As Integer = 2000
     Public Property AvoidHighMaxHpEnabled As Boolean = False
     Public Property AvoidHighMaxHpThreshold As Integer = 2000
+    Public Property EvadeDadatiEnabled As Boolean = False
     Public Property HpBar As RectRegion = DefaultHpBarRect()
     Public Property MpBar As RectRegion = DefaultMpBarRect()
     Public Property MobNameRect As RectRegion = DefaultMobNameRect()
@@ -775,10 +776,13 @@ Public Class BotEngine
     Private Const FreshZeroSupportConfirmSamples As Integer = 3
     Private Const FreshZeroSupportConfirmDelayMs As Integer = 35
     Private Const RetargetBufferMs As Integer = 300
+    Private Const DadatiEvadeCooldownMs As Integer = 1200
+    Private Const DadatiMovementTapMs As Integer = 140
+    Private Const DadatiMovementGapMs As Integer = 45
     Private Const BaseClientWidth As Integer = 1024
     Private Const BaseClientHeight As Integer = 768
     Private Const MaxPartyMembers As Integer = 7
-    Private Const PartyListBarBandGapRows As Integer = 2
+    Private Const PartyListMinimumNamePixels As Integer = 18
     Private Const FastKeyPressMs As Integer = 12
     Private Const AttackBurstKeysPerLoop As Integer = 3
     Private Const AttackBurstGapMs As Integer = 4
@@ -856,6 +860,7 @@ Public Class BotEngine
     Private _task As Task
     Private _lastNormalRetarget As DateTime = DateTime.MinValue
     Private _lastForcedRetarget As DateTime = DateTime.MinValue
+    Private _lastDadatiEvadeAt As DateTime = DateTime.MinValue
     Private _lastTargetWindowSeen As DateTime = DateTime.MinValue
     Private _lastLivingTargetSignalAt As DateTime = DateTime.MinValue
     Private _lastTargetValidAt As DateTime = DateTime.MinValue
@@ -911,6 +916,9 @@ Public Class BotEngine
     Private _lastPartySize As Integer = 0
     Private _lastPartyAliveCount As Integer = 0
     Private _lastPartyAllAlive As Boolean = False
+    Private _pendingPartySize As Integer = -1
+    Private _pendingPartyAliveCount As Integer = -1
+    Private _pendingPartyConfirmCount As Integer = 0
     Private _lastUnreachableScan As DateTime = DateTime.MinValue
     Private _unreachableOcrTask As Task(Of String) = Nothing
     Private _lastUnreachableCandidate As String = ""
@@ -1154,6 +1162,7 @@ Public Class BotEngine
             _status.ErrorMessage = ""
             _lastNormalRetarget = DateTime.MinValue
             _lastForcedRetarget = DateTime.MinValue
+            _lastDadatiEvadeAt = DateTime.MinValue
             _lastTargetWindowSeen = DateTime.MinValue
             _lastLivingTargetSignalAt = DateTime.MinValue
             _lastTargetValidAt = DateTime.MinValue
@@ -1207,6 +1216,9 @@ Public Class BotEngine
             _lastPartySize = 0
             _lastPartyAliveCount = 0
             _lastPartyAllAlive = False
+            _pendingPartySize = -1
+            _pendingPartyAliveCount = -1
+            _pendingPartyConfirmCount = 0
             _lastUnreachableScan = DateTime.MinValue
             _unreachableOcrTask = Nothing
             _lastUnreachableCandidate = ""
@@ -1877,7 +1889,10 @@ Public Class BotEngine
                 frame IsNot Nothing OrElse
                 targetWindowSignalNoName OrElse
                 (mobHpPct >= Math.Max(0.6, cfg.MobHpPresenceThreshold * 0.7))
-            Dim forceMobNameRefresh As Boolean = monsterFilterActive AndAlso targetWindowSignalNoName AndAlso ((now - _lastMobNameRead).TotalMilliseconds >= 180)
+            Dim forceMobNameRefresh As Boolean =
+                (monsterFilterActive OrElse cfg.EvadeDadatiEnabled) AndAlso
+                targetWindowSignalNoName AndAlso
+                ((now - _lastMobNameRead).TotalMilliseconds >= 180)
             Dim mobName As String
             If shouldReadMobName Then
                 mobName = If(frame IsNot Nothing,
@@ -1975,6 +1990,13 @@ Public Class BotEngine
                 _noTargetBeganAt = now
             End If
             Dim normMobName As String = NormalizeMobName(mobName)
+            Dim dadatiNameIsFresh As Boolean =
+                _lastMobNameDetectedAt <> DateTime.MinValue AndAlso
+                (now - _lastMobNameDetectedAt).TotalMilliseconds <= Math.Max(750, cfg.MobNameScanIntervalMs * 2)
+            Dim evadeDadatiTarget As Boolean =
+                cfg.EvadeDadatiEnabled AndAlso
+                dadatiNameIsFresh AndAlso
+                IsDadatiMobName(normMobName)
             Dim listedMonsterTarget As Boolean = IsDeniedMob(mobName, cfg.DeniedMobs)
             Dim monsterFilterBlockedTarget As Boolean =
                 monsterFilterActive AndAlso
@@ -2063,7 +2085,7 @@ Public Class BotEngine
                 _noTargetBeganAt = DateTime.MinValue
             End If
             Dim combatLockActive As Boolean = UpdateCombatLockState(now, cfg, currentTargetAliveSignal, normMobName)
-            Dim canTrackFirstHitTarget As Boolean = currentTargetAliveSignal AndAlso (Not monsterFilterBlockedTarget) AndAlso (Not missingNameBlockedByFilter) AndAlso (Not avoidHighMaxHpTarget)
+            Dim canTrackFirstHitTarget As Boolean = currentTargetAliveSignal AndAlso (Not monsterFilterBlockedTarget) AndAlso (Not missingNameBlockedByFilter) AndAlso (Not avoidHighMaxHpTarget) AndAlso (Not evadeDadatiTarget)
             Dim currentFirstHitSignature As String = normMobName
             If canTrackFirstHitTarget Then
                 Dim isNewFirstHitTarget As Boolean = (Not _firstHitPending) OrElse ((currentFirstHitSignature <> "") AndAlso (Not _firstHitTargetSignature.Equals(currentFirstHitSignature, StringComparison.OrdinalIgnoreCase)))
@@ -2072,7 +2094,7 @@ Public Class BotEngine
                     _firstHitTargetSignature = currentFirstHitSignature
                     _firstHitWindowUntil = now.AddMilliseconds(FirstHitWindowMs)
                 End If
-            ElseIf Not targetWindowVisible OrElse monsterFilterBlockedTarget OrElse avoidHighMaxHpTarget Then
+            ElseIf Not targetWindowVisible OrElse monsterFilterBlockedTarget OrElse avoidHighMaxHpTarget OrElse evadeDadatiTarget Then
                 _firstHitPending = False
                 _firstHitTargetSignature = ""
                 _firstHitWindowUntil = DateTime.MinValue
@@ -2086,6 +2108,7 @@ Public Class BotEngine
                 (Not preferredTargetMismatch) AndAlso
                 (Not nameConfirmationBlockedByFilter) AndAlso
                 (Not avoidHighMaxHpTarget) AndAlso
+                (Not evadeDadatiTarget) AndAlso
                 (Not blacklistLockActive) AndAlso
                 (Not unreachableLockActive)
             If targetValid Then
@@ -2094,6 +2117,7 @@ Public Class BotEngine
             Dim targetActionBlocked As Boolean =
                 monsterFilterBlockedTarget OrElse
                 avoidHighMaxHpTarget OrElse
+                evadeDadatiTarget OrElse
                 blacklistLockActive OrElse
                 missingNameBlockedByFilter OrElse
                 missingNameBlockedByPreference OrElse
@@ -2141,6 +2165,22 @@ Public Class BotEngine
                 End If
             End If
             Dim forcedRetarget As Boolean = False
+
+            If evadeDadatiTarget AndAlso Not actionSent Then
+                If TryEvadeDadatiTarget(hwnd, cfg, now) Then
+                    _noDamageTargetSignature = ""
+                    _noDamageAttackCount = 0
+                    _firstHitPending = False
+                    _firstHitTargetSignature = ""
+                    _firstHitWindowUntil = DateTime.MinValue
+                    reason = $"Dadati detected ('{mobName}'). Tapped W/S and retargeted."
+                    forcedRetarget = True
+                Else
+                    reason = $"Dadati detected ('{mobName}'). Waiting to repeat W/S evade and retarget."
+                End If
+                ' Never let attacks or the ordinary retarget path run against Dadati.
+                actionSent = True
+            End If
 
             If nameOnlyNonMobTarget AndAlso Not actionSent Then
                 If TrySendRetargetKey(hwnd, cfg, now, "E (non-mob target without HP bar)", forced:=True) Then
@@ -3111,18 +3151,6 @@ Public Class BotEngine
         Public Property AllAlive As Boolean
     End Structure
 
-    Private Structure PartyListBarBandInfo
-        Public Property Top As Integer
-        Public Property Bottom As Integer
-        Public Property MaxPixels As Integer
-
-        Public ReadOnly Property Height As Integer
-            Get
-                Return Math.Max(0, Bottom - Top + 1)
-            End Get
-        End Property
-    End Structure
-
     Private Sub ReadMapCoordinateIfNeeded(hwnd As IntPtr, frame As Bitmap, xRegion As RectRegion, yRegion As RectRegion, cfg As BotConfig, now As DateTime)
         Dim minIntervalMs As Integer = Math.Max(250, If(cfg Is Nothing, MapCoordinateOcrMinIntervalMs, cfg.MapCoordinateScanIntervalMs))
         If _lastMapCoordinateOcrAt <> DateTime.MinValue AndAlso (now - _lastMapCoordinateOcrAt).TotalMilliseconds < minIntervalMs Then
@@ -4056,16 +4084,23 @@ Public Class BotEngine
 
             If cfg IsNot Nothing AndAlso cfg.PixelChangeGateEnabled Then
                 Dim signature As ULong = ComputeVisualSignature(crop)
-                If signature <> 0UL AndAlso signature = _lastPartyListVisualSignature Then
-                    Return
-                End If
                 _lastPartyListVisualSignature = signature
             End If
 
             Dim summary As PartyListSummary = AnalyzePartyListVisuals(crop)
-            _lastPartySize = summary.Size
-            _lastPartyAliveCount = summary.AliveCount
-            _lastPartyAllAlive = summary.AllAlive
+            If summary.Size = _pendingPartySize AndAlso summary.AliveCount = _pendingPartyAliveCount Then
+                _pendingPartyConfirmCount += 1
+            Else
+                _pendingPartySize = summary.Size
+                _pendingPartyAliveCount = summary.AliveCount
+                _pendingPartyConfirmCount = 1
+            End If
+
+            If _pendingPartyConfirmCount >= 2 OrElse (_lastPartySize = 0 AndAlso summary.Size > 0) Then
+                _lastPartySize = summary.Size
+                _lastPartyAliveCount = summary.AliveCount
+                _lastPartyAllAlive = summary.AllAlive
+            End If
         End Using
     End Sub
 
@@ -4073,6 +4108,9 @@ Public Class BotEngine
         _lastPartySize = 0
         _lastPartyAliveCount = 0
         _lastPartyAllAlive = False
+        _pendingPartySize = -1
+        _pendingPartyAliveCount = -1
+        _pendingPartyConfirmCount = 0
         _lastPartyListVisualSignature = 0UL
     End Sub
 
@@ -4086,107 +4124,158 @@ Public Class BotEngine
             Return summary
         End If
 
-        Dim rowRed(crop.Height - 1) As Integer
-        Dim rowBlue(crop.Height - 1) As Integer
+        Dim scanWidth As Integer = Math.Min(crop.Width, Math.Max(40, CInt(Math.Round(crop.Width * 0.96R))))
+        Dim minimumPresenceRun As Integer = Math.Max(6, CInt(Math.Ceiling(scanWidth * 0.04R)))
+        Dim minimumOutlinedNamePixels As Integer = Math.Max(PartyListMinimumNamePixels, CInt(Math.Ceiling(scanWidth * 0.08R)))
+        Dim lastConfidentSlot As Integer = -1
+        Dim aliveBySlot(MaxPartyMembers - 1) As Boolean
 
         Using buffer As New BitmapReadBuffer(crop)
-            For y As Integer = 0 To crop.Height - 1
-                Dim redCount As Integer = 0
-                Dim blueCount As Integer = 0
-                For x As Integer = 0 To crop.Width - 1
-                    Dim r As Integer = 0
-                    Dim g As Integer = 0
-                    Dim b As Integer = 0
-                    buffer.GetRgb(x, y, r, g, b)
-                    If IsPartyHpBarPixelRgb(r, g, b) Then
-                        redCount += 1
-                    ElseIf IsPartyMpBarPixelRgb(r, g, b) Then
-                        blueCount += 1
-                    End If
-                Next
+            For slot As Integer = 0 To MaxPartyMembers - 1
+                Dim slotTop As Integer = CInt(Math.Floor(slot * crop.Height / CDbl(MaxPartyMembers)))
+                Dim slotBottom As Integer = Math.Min(crop.Height - 1, CInt(Math.Floor((slot + 1) * crop.Height / CDbl(MaxPartyMembers))) - 1)
+                If slotBottom < slotTop Then
+                    Continue For
+                End If
 
-                rowRed(y) = redCount
-                rowBlue(y) = blueCount
+                Dim slotHeight As Integer = slotBottom - slotTop + 1
+                Dim nameBottom As Integer = Math.Min(slotBottom, slotTop + Math.Max(6, CInt(Math.Ceiling(slotHeight * 0.42R))))
+                Dim barTop As Integer = Math.Min(slotBottom, slotTop + Math.Max(1, CInt(Math.Floor(slotHeight * 0.25R))))
+                Dim barBottom As Integer = Math.Min(slotBottom, slotTop + Math.Max(3, CInt(Math.Ceiling(slotHeight * 0.7R))))
+
+                Dim hpLength As Integer = FindAnchoredPartyBarLength(buffer, scanWidth, barTop, barBottom, True)
+                Dim mpLength As Integer = FindAnchoredPartyBarLength(buffer, scanWidth, barTop, barBottom, False)
+                Dim outlinedNamePixels As Integer = CountOutlinedPartyNamePixels(buffer, scanWidth, slotTop, nameBottom)
+                Dim hasMemberName As Boolean = outlinedNamePixels >= minimumOutlinedNamePixels
+                Dim hasStrongBar As Boolean = hpLength >= minimumPresenceRun OrElse mpLength >= minimumPresenceRun
+                Dim hasWeakBar As Boolean = hpLength >= 2 OrElse mpLength >= 2
+
+                ' At least one anchored bar is sufficient for a living/low-mana row.
+                ' A name plus even a weak anchored bar retains dead or nearly empty
+                ' rows. Name-only terrain edges can no longer create a trailing member.
+                Dim confidentlyPresent As Boolean = hasStrongBar OrElse (hasMemberName AndAlso hasWeakBar)
+                If confidentlyPresent Then
+                    lastConfidentSlot = slot
+                End If
+                aliveBySlot(slot) = hpLength > 0
             Next
         End Using
 
-        Dim redBands As List(Of PartyListBarBandInfo) = FindPartyBarBands(rowRed, crop.Width)
-        Dim blueBands As List(Of PartyListBarBandInfo) = FindPartyBarBands(rowBlue, crop.Width)
-        summary.AliveCount = Math.Min(MaxPartyMembers, redBands.Count)
-        summary.Size = Math.Min(MaxPartyMembers, Math.Max(redBands.Count, blueBands.Count))
+        ' Party rows never contain gaps: if a later row is confidently present, any
+        ' earlier weak row is a real (possibly dead) member rather than an empty slot.
+        summary.Size = Math.Min(MaxPartyMembers, lastConfidentSlot + 1)
+        For slot As Integer = 0 To summary.Size - 1
+            If aliveBySlot(slot) Then
+                summary.AliveCount += 1
+            End If
+        Next
         summary.AllAlive = summary.Size > 0 AndAlso summary.AliveCount >= summary.Size
         Return summary
     End Function
 
-    Private Shared Function FindPartyBarBands(rowCounts() As Integer, width As Integer) As List(Of PartyListBarBandInfo)
-        Dim bands As New List(Of PartyListBarBandInfo)()
-        If rowCounts Is Nothing OrElse rowCounts.Length = 0 OrElse width <= 0 Then
-            Return bands
+    Private Shared Function FindAnchoredPartyBarLength(buffer As BitmapReadBuffer, width As Integer, top As Integer, bottom As Integer, hpBar As Boolean) As Integer
+        If buffer Is Nothing OrElse width <= 0 OrElse bottom < top Then
+            Return 0
         End If
 
-        Dim minBarRowPixels As Integer = Math.Max(4, CInt(Math.Ceiling(width * 0.02R)))
-        Dim maxBandHeight As Integer = Math.Max(6, CInt(Math.Ceiling(width * 0.04R)))
-        Dim currentTop As Integer = -1
-        Dim currentBottom As Integer = -1
-        Dim currentMax As Integer = 0
-        Dim gapRows As Integer = 0
-
-        For y As Integer = 0 To rowCounts.Length - 1
-            If rowCounts(y) >= minBarRowPixels Then
-                If currentTop < 0 Then
-                    currentTop = y
+        Dim bestLength As Integer = 0
+        Dim anchorLimit As Integer = Math.Min(width - 1, Math.Max(18, CInt(Math.Ceiling(width * 0.18R))))
+        For y As Integer = top To bottom
+            For firstPixel As Integer = 0 To anchorLimit
+                Dim r As Integer = 0
+                Dim g As Integer = 0
+                Dim b As Integer = 0
+                buffer.GetRgb(firstPixel, y, r, g, b)
+                Dim isBarPixel As Boolean = If(hpBar, IsPartyHpBarPixelRgb(r, g, b), IsPartyMpBarPixelRgb(r, g, b))
+                If Not isBarPixel Then
+                    Continue For
                 End If
 
-                currentBottom = y
-                currentMax = Math.Max(currentMax, rowCounts(y))
-                gapRows = 0
-            ElseIf currentTop >= 0 Then
-                gapRows += 1
-                If gapRows > PartyListBarBandGapRows Then
-                    bands.Add(New PartyListBarBandInfo With {
-                        .Top = currentTop,
-                        .Bottom = currentBottom,
-                        .MaxPixels = currentMax
-                    })
-                    currentTop = -1
-                    currentBottom = -1
-                    currentMax = 0
-                    gapRows = 0
-                End If
-            End If
+                Dim lastBarPixel As Integer = firstPixel
+                Dim gap As Integer = 0
+                For x As Integer = firstPixel + 1 To width - 1
+                    r = 0
+                    g = 0
+                    b = 0
+                    buffer.GetRgb(x, y, r, g, b)
+                    isBarPixel = If(hpBar, IsPartyHpBarPixelRgb(r, g, b), IsPartyMpBarPixelRgb(r, g, b))
+                    If isBarPixel Then
+                        lastBarPixel = x
+                        gap = 0
+                    Else
+                        gap += 1
+                        If gap > 2 Then
+                            Exit For
+                        End If
+                    End If
+                Next
+                bestLength = Math.Max(bestLength, lastBarPixel - firstPixel + 1)
+            Next
         Next
-
-        If currentTop >= 0 Then
-            bands.Add(New PartyListBarBandInfo With {
-                .Top = currentTop,
-                .Bottom = currentBottom,
-                .MaxPixels = currentMax
-            })
-        End If
-
-        Return bands.
-            Where(Function(band) band.MaxPixels >= minBarRowPixels AndAlso
-                                 band.Height <= maxBandHeight AndAlso
-                                 band.MaxPixels >= (band.Height * 2)).
-            OrderBy(Function(band) band.Top).
-            Take(MaxPartyMembers).
-            ToList()
+        Return bestLength
     End Function
 
-    Private Shared Function IsPartyHpBarPixel(px As Color) As Boolean
-        Return px.R >= 90 AndAlso px.R >= (px.G + 16) AndAlso px.R >= (px.B + 16)
+    Private Shared Function CountOutlinedPartyNamePixels(buffer As BitmapReadBuffer, width As Integer, top As Integer, bottom As Integer) As Integer
+        If buffer Is Nothing OrElse width <= 2 OrElse bottom <= top Then
+            Return 0
+        End If
+
+        Dim count As Integer = 0
+        For y As Integer = Math.Max(1, top) To Math.Max(1, bottom - 1)
+            For x As Integer = 2 To width - 2
+                Dim r As Integer = 0
+                Dim g As Integer = 0
+                Dim b As Integer = 0
+                buffer.GetRgb(x, y, r, g, b)
+                If Not IsPartyNamePixelRgb(r, g, b) Then
+                    Continue For
+                End If
+
+                Dim hasDarkOutline As Boolean = False
+                For oy As Integer = -1 To 1
+                    For ox As Integer = -1 To 1
+                        If ox = 0 AndAlso oy = 0 Then
+                            Continue For
+                        End If
+                        Dim nr As Integer = 0
+                        Dim ng As Integer = 0
+                        Dim nb As Integer = 0
+                        buffer.GetRgb(x + ox, y + oy, nr, ng, nb)
+                        If ((nr * 30) + (ng * 59) + (nb * 11)) \ 100 <= 65 Then
+                            hasDarkOutline = True
+                            Exit For
+                        End If
+                    Next
+                    If hasDarkOutline Then
+                        Exit For
+                    End If
+                Next
+                If hasDarkOutline Then
+                    count += 1
+                End If
+            Next
+        Next
+        Return count
     End Function
 
     Private Shared Function IsPartyHpBarPixelRgb(r As Integer, g As Integer, b As Integer) As Boolean
-        Return r >= 90 AndAlso r >= (g + 16) AndAlso r >= (b + 16)
-    End Function
-
-    Private Shared Function IsPartyMpBarPixel(px As Color) As Boolean
-        Return px.B >= 90 AndAlso px.B >= (px.R + 12) AndAlso px.B >= (px.G + 8)
+        ' Party HP bars contain both bright scarlet and much darker red scan-line
+        ' shades. Geometry already constrains this test to the anchored HP strip, so
+        ' use chroma dominance instead of rejecting valid dark-red fill by brightness.
+        Dim strongestOtherChannel As Integer = Math.Max(g, b)
+        Return r >= 52 AndAlso
+               (r - strongestOtherChannel) >= 10 AndAlso
+               (r * 100) >= (strongestOtherChannel * 112)
     End Function
 
     Private Shared Function IsPartyMpBarPixelRgb(r As Integer, g As Integer, b As Integer) As Boolean
-        Return b >= 90 AndAlso b >= (r + 12) AndAlso b >= (g + 8)
+        Return b >= 100 AndAlso b >= (r + 22) AndAlso b >= (g + 14)
+    End Function
+
+    Private Shared Function IsPartyNamePixelRgb(r As Integer, g As Integer, b As Integer) As Boolean
+        Dim maximum As Integer = Math.Max(r, Math.Max(g, b))
+        Dim minimum As Integer = Math.Min(r, Math.Min(g, b))
+        Return maximum >= 165 AndAlso (maximum - minimum) <= 45
     End Function
 
     Private Shared Function NormalizeChatOcrText(rawText As String) As String
@@ -7596,6 +7685,14 @@ Public Class BotEngine
         Return cleaned
     End Function
 
+    Private Shared Function IsDadatiMobName(normalizedName As String) As Boolean
+        If String.IsNullOrWhiteSpace(normalizedName) Then
+            Return False
+        End If
+
+        Return Regex.IsMatch(normalizedName, "(^|\s)dadati(\s|$)", RegexOptions.IgnoreCase)
+    End Function
+
     Private Shared Function NormalizeMobNameDisplay(raw As String) As String
         If String.IsNullOrWhiteSpace(raw) Then
             Return ""
@@ -7728,6 +7825,37 @@ Public Class BotEngine
         End If
 
         Return False
+    End Function
+
+    Private Function TryEvadeDadatiTarget(hwnd As IntPtr, cfg As BotConfig, now As DateTime) As Boolean
+        If hwnd = IntPtr.Zero Then
+            Return False
+        End If
+
+        Dim cooldownMs As Integer = Math.Max(DadatiEvadeCooldownMs, GetRetargetCooldownMs(cfg, 1, forced:=True))
+        Dim latestEvadeActionAt As DateTime = _lastDadatiEvadeAt
+        If _lastForcedRetarget > latestEvadeActionAt Then
+            latestEvadeActionAt = _lastForcedRetarget
+        End If
+        If latestEvadeActionAt <> DateTime.MinValue AndAlso (now - latestEvadeActionAt).TotalMilliseconds < cooldownMs Then
+            Return False
+        End If
+
+        If Not SendKey(hwnd, "W", DadatiMovementTapMs) Then
+            Return False
+        End If
+        Thread.Sleep(DadatiMovementGapMs)
+        If Not SendKey(hwnd, "S", DadatiMovementTapMs) Then
+            Return False
+        End If
+        Thread.Sleep(DadatiMovementGapMs)
+
+        If Not TrySendRetargetKey(hwnd, cfg, now, "W/S + E (evade Dadati)", forced:=True) Then
+            Return False
+        End If
+
+        _lastDadatiEvadeAt = DateTime.UtcNow
+        Return True
     End Function
 
     Private Function GetLatestRetargetAt() As DateTime

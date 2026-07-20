@@ -14,6 +14,7 @@ Set-StrictMode -Version Latest
 $root = $PSScriptRoot
 $project = Join-Path $root "ui\KathanaBotControlPanel\KathanaBotControlPanel.vbproj"
 $icon = Join-Path $root "ui\KathanaBotControlPanel\assets\KathanaBot.ico"
+$releaseNotes = Join-Path $root "RELEASE_NOTES.md"
 $publishDir = Join-Path $root "dist\velopack\publish-win-x64"
 $standalonePublishDir = Join-Path $root "dist\velopack\publish-standalone-win-x64"
 $releaseDir = Join-Path $root "dist\velopack\Releases"
@@ -105,6 +106,7 @@ dotnet vpk pack `
     --mainExe "KathanaBotControlPanel.exe" `
     --packTitle "KathanaBot" `
     --packAuthors "KathanaBot" `
+    --releaseNotes $releaseNotes `
     --icon $icon `
     --runtime "win-x64" `
     --channel "win" `

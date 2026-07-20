@@ -5,6 +5,7 @@ KathanaBot is a self-contained VB WinForms application. Both the Velopack-instal
 - No API URL required.
 - No Python backend required.
 - Bot logic runs inside the UI executable.
+- Vision includes an optional Dadati evade: block attacks on the detected Dadati, tap W/S to reposition, and force an E retarget.
 
 ## Build / Rebuild
 
@@ -156,5 +157,6 @@ The default game window is `Kathana - The Reign of Shadow` from process `Kathana
 - Skill cooldown scheduling uses a monotonic per-action timer. Full Combat reports each blocked key with its remaining cooldown instead of leaving all skills stuck after a system-clock adjustment or unrelated use of the same key.
 - The multilingual startup Notice closes automatically after five seconds; its OK button remains available for immediate dismissal.
 - Mob-name OCR compares multiple enlarged, pixel-preserving, high-contrast, and color-isolated samples, then keeps the strongest complete reading stable through brief capture flicker.
+- Party status uses the seven fixed party rows, long HP/MP bar runs, and member-name pixels to count members and distinguish nonzero HP from dead rows without mistaking terrain or buff colors for party bars.
 - If the EXE is already running, rebuild can warn about locked files.
 - Keep EXE builds serialized/versioned. Do not replace an older EXE with a new one using the same filename.
