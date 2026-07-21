@@ -1555,9 +1555,13 @@ Public Class BotEngine
                 Dim liteChatRegion As New RectRegion(0, 0, 1, 1)
                 ResolveVisionRegions(cfg, clientWidth, clientHeight, liteHpRegion, liteMpRegion, liteMobNameRegion, liteMobHpRegion, liteUnreachableTextRegion, litePranaExpRegion, liteRupiahsRegion, litePartyInviteScanRegion, litePartyInviteOkRegion, litePartyListRegion, liteDisconnectMessageRegion, liteMapCoordinateXRegion, liteMapCoordinateYRegion, liteChatRegion)
 
-                Dim hasLiteHpPoint As Boolean = cfg.LiteHpCheckPointX >= 0 AndAlso cfg.LiteHpCheckPointY >= 0
-                Dim hasLiteMpPoint As Boolean = cfg.LiteMpCheckPointX >= 0 AndAlso cfg.LiteMpCheckPointY >= 0
-                Dim needsLiteFrame As Boolean = cfg.PartyAskEnabled OrElse hasLiteHpPoint OrElse hasLiteMpPoint
+                Dim needsLiteHpScan As Boolean = cfg.Actions.Any(
+                    Function(action) action.Enabled AndAlso
+                        (String.Equals(action.Role, "heal", StringComparison.OrdinalIgnoreCase) OrElse
+                         String.Equals(action.Role, "max_health", StringComparison.OrdinalIgnoreCase)))
+                Dim needsLiteMpScan As Boolean = cfg.Actions.Any(
+                    Function(action) action.Enabled AndAlso String.Equals(action.Role, "mana", StringComparison.OrdinalIgnoreCase))
+                Dim needsLiteFrame As Boolean = needsLiteHpScan OrElse needsLiteMpScan
                 Dim liteFrame As Bitmap = Nothing
                 Dim liteScanWarning As String = ""
                 Dim liteFullFrameGlitch As Boolean = False
@@ -1589,20 +1593,20 @@ Public Class BotEngine
 
                 Dim hpScanOk As Boolean = False
                 Dim mpScanOk As Boolean = False
-                Dim liteHpPct As Double = If(hasLiteHpPoint, 0, 100)
-                Dim liteMpPct As Double = If(hasLiteMpPoint, 0, 100)
+                Dim liteHpPct As Double = If(needsLiteHpScan, 0, 100)
+                Dim liteMpPct As Double = If(needsLiteMpScan, 0, 100)
 
-                If hasLiteHpPoint Then
+                If needsLiteHpScan Then
                     liteHpPct = ComputeLiteWholeBarPercent(liteFrame, liteHpRegion, True, cfg, hpScanOk)
                 End If
 
-                If hasLiteMpPoint Then
+                If needsLiteMpScan Then
                     liteMpPct = ComputeLiteWholeBarPercent(liteFrame, liteMpRegion, False, cfg, mpScanOk)
                 End If
 
                 Dim liteAttackHpPct As Double = If(hpScanOk, liteHpPct, 100.0)
                 Dim liteAttackMpPct As Double = If(mpScanOk, liteMpPct, 100.0)
-                Dim liteCaptureGlitch As Boolean = liteFullFrameGlitch OrElse (hasLiteHpPoint AndAlso Not hpScanOk) OrElse (hasLiteMpPoint AndAlso Not mpScanOk)
+                Dim liteCaptureGlitch As Boolean = liteFullFrameGlitch OrElse (needsLiteHpScan AndAlso Not hpScanOk) OrElse (needsLiteMpScan AndAlso Not mpScanOk)
 
                 Dim liteReason As String = ""
                 Dim liteActionSent As Boolean = False
@@ -1615,13 +1619,6 @@ Public Class BotEngine
                     liteActionSent = TryHandleAutoAcceptPrompts(cfg, hwnd, liteFrame, now, litePartyInviteScanRegion, litePartyInviteOkRegion)
                     If liteActionSent Then
                         liteReason = "Auto-accept prompt detected and accepted."
-                    End If
-                End If
-
-                If Not liteGameDisconnected AndAlso Not liteActionSent Then
-                    liteActionSent = TryHandlePartyAsk(cfg, hwnd, now)
-                    If liteActionSent Then
-                        liteReason = "Party ask command sent."
                     End If
                 End If
 
@@ -1658,11 +1655,11 @@ Public Class BotEngine
                 If cfg.PartyAutoAcceptEnabled AndAlso liteFrame Is Nothing Then
                     liteScanWarning = If(liteScanWarning = "", "Unable to capture Lite window for party prompt scan.", liteScanWarning & " Party prompt scan skipped.")
                 End If
-                If hasLiteHpPoint AndAlso Not hpScanOk Then
-                    liteScanWarning = If(liteScanWarning = "", "Unable to read Lite HP AutoPots point.", liteScanWarning & " Unable to read Lite HP AutoPots point.")
+                If needsLiteHpScan AndAlso Not hpScanOk Then
+                    liteScanWarning = If(liteScanWarning = "", "Unable to read the Lite HP bar.", liteScanWarning & " Unable to read the Lite HP bar.")
                 End If
-                If hasLiteMpPoint AndAlso Not mpScanOk Then
-                    liteScanWarning = If(liteScanWarning = "", "Unable to read Lite Mana AutoPots point.", liteScanWarning & " Unable to read Lite Mana AutoPots point.")
+                If needsLiteMpScan AndAlso Not mpScanOk Then
+                    liteScanWarning = If(liteScanWarning = "", "Unable to read the Lite MP bar.", liteScanWarning & " Unable to read the Lite MP bar.")
                 End If
 
                 SetStatus(Sub(s)
@@ -8061,7 +8058,7 @@ Public Class BotEngine
 
         Dim role As String = If(action.Role, "").Trim().ToLowerInvariant()
         If cfg.LiteModeEnabled AndAlso (role = "heal" OrElse role = "max_health" OrElse role = "mana") Then
-            Return ConfirmLitePointSupportActionStillNeeded(cfg, hwnd, action, role, If(role = "mana", mpRegion, hpRegion))
+            Return ConfirmLiteSupportActionStillNeeded(cfg, hwnd, action, role, If(role = "mana", mpRegion, hpRegion))
         End If
 
         Dim targetRegion As RectRegion = If(role = "mana", mpRegion, hpRegion)
@@ -8120,11 +8117,9 @@ Public Class BotEngine
         Return False
     End Function
 
-    Private Function ConfirmLitePointSupportActionStillNeeded(cfg As BotConfig, hwnd As IntPtr, action As ActionRule, role As String, targetRegion As RectRegion) As Boolean
+    Private Function ConfirmLiteSupportActionStillNeeded(cfg As BotConfig, hwnd As IntPtr, action As ActionRule, role As String, targetRegion As RectRegion) As Boolean
         Dim isMana As Boolean = String.Equals(role, "mana", StringComparison.OrdinalIgnoreCase)
-        Dim pointX As Integer = If(isMana, cfg.LiteMpCheckPointX, cfg.LiteHpCheckPointX)
-        Dim pointY As Integer = If(isMana, cfg.LiteMpCheckPointY, cfg.LiteHpCheckPointY)
-        If pointX < 0 OrElse pointY < 0 OrElse targetRegion Is Nothing Then
+        If targetRegion Is Nothing Then
             Return False
         End If
 
@@ -8133,7 +8128,7 @@ Public Class BotEngine
             Dim sample As Double = ComputeLiteWholeBarPercent(frame, targetRegion, Not isMana, cfg, ok)
 
             If Not ok Then
-                RaiseEvent LogLine($"Lite AutoPots: whole-bar confirmation read failed before {action.KeyName} ({action.Role}).")
+                RaiseEvent LogLine($"Lite resource action: whole-bar confirmation failed before {action.KeyName} ({action.Role}).")
                 Return False
             End If
 
@@ -8142,7 +8137,7 @@ Public Class BotEngine
             End If
         End Using
 
-        RaiseEvent LogLine($"Lite AutoPots: skipped {action.KeyName} ({action.Role}) because the whole-bar level is above {Math.Max(1, action.TriggerPercent)}%.")
+        RaiseEvent LogLine($"Lite resource action: skipped {action.KeyName} ({action.Role}) because the whole-bar level is above {Math.Max(1, action.TriggerPercent)}%.")
         Return False
     End Function
 

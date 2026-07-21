@@ -50,6 +50,8 @@ Public Class Form1
     Private Const HighFrequencyLogMinIntervalMs As Integer = 1000
     Private ReadOnly _liteActionEnabledChecks As New Dictionary(Of String, CheckBox)(StringComparer.OrdinalIgnoreCase)
     Private ReadOnly _liteActionCooldownInputs As New Dictionary(Of String, NumericUpDown)(StringComparer.OrdinalIgnoreCase)
+    Private ReadOnly _liteActionRoleInputs As New Dictionary(Of String, ComboBox)(StringComparer.OrdinalIgnoreCase)
+    Private ReadOnly _liteActionThresholdInputs As New Dictionary(Of String, NumericUpDown)(StringComparer.OrdinalIgnoreCase)
     Private _liteSyncInProgress As Boolean = False
     Private chkLiteBasicAttack As CheckBox
     Private nudLiteBasicAttack As NumericUpDown
@@ -2441,15 +2443,15 @@ Public Class Form1
         statusLayout.Controls.Add(lblLiteShortcutHint, 0, 0)
         statusLayout.Controls.Add(lblLiteState, 1, 0)
         statusLayout.Controls.Add(lblLiteSystem, 0, 1)
-        statusLayout.Controls.Add(New Label() With {.Text = "Lite HP/MP bars are for AutoPots only. Attacks stay active.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.FromArgb(90, 90, 90), .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}, 1, 1)
+        statusLayout.Controls.Add(New Label() With {.Text = "Lite HP/MP bars drive resource skills and AutoPots.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.FromArgb(90, 90, 90), .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}, 1, 1)
         statusLayout.Controls.Add(lblLiteHp, 0, 2)
         statusLayout.Controls.Add(lblLiteMp, 1, 2)
         statusLayout.Controls.Add(New Label() With {.Text = "Selected process controls Lite key send.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.FromArgb(90, 90, 90), .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular), .Tag = "lite-scope"}, 0, 3)
         statusGroup.Controls.Add(statusLayout)
 
         Dim lowerArea As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1, .Tag = "lite-scope"}
-        lowerArea.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 66.0F))
-        lowerArea.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 34.0F))
+        lowerArea.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 64.0F))
+        lowerArea.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 36.0F))
 
         Dim skillArea As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2, .Tag = "lite-scope"}
         skillArea.RowStyles.Add(New RowStyle(SizeType.Percent, 50.0F))
@@ -2458,11 +2460,9 @@ Public Class Form1
         skillArea.Controls.Add(BuildLiteSkillGroup("Secondary Skills", LiteSecondarySkillKeys, Color.FromArgb(111, 123, 140)), 0, 1)
         lowerArea.Controls.Add(skillArea, 0, 0)
 
-        Dim sideArea As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2, .Tag = "lite-scope"}
-        sideArea.RowStyles.Add(New RowStyle(SizeType.Percent, 58.0F))
-        sideArea.RowStyles.Add(New RowStyle(SizeType.Percent, 42.0F))
+        Dim sideArea As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 1, .Tag = "lite-scope"}
+        sideArea.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         sideArea.Controls.Add(BuildLiteAutoPotsGroup(), 0, 0)
-        sideArea.Controls.Add(BuildLitePartyGroup(), 0, 1)
         lowerArea.Controls.Add(sideArea, 1, 0)
 
         Dim foot As New Label() With {
@@ -2517,7 +2517,7 @@ Public Class Form1
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 28.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
 
-        chkLiteAutoPots = New CheckBox() With {.Text = "Enable AutoPots", .Dock = DockStyle.Fill, .Checked = False, .Font = New Font("Segoe UI", 8.0F, FontStyle.Bold), .Tag = "lite-scope"}
+        chkLiteAutoPots = New CheckBox() With {.Text = "Enable fixed AutoPots (9/0)", .Dock = DockStyle.Fill, .Checked = False, .Font = New Font("Segoe UI", 8.0F, FontStyle.Bold), .Tag = "lite-scope"}
         AddHandler chkLiteAutoPots.CheckedChanged,
             Sub()
                 UpdateLiteAutoPotUi()
@@ -2570,72 +2570,13 @@ Public Class Form1
             .ForeColor = Color.FromArgb(70, 70, 70),
             .BorderStyle = BorderStyle.FixedSingle,
             .Font = New Font("Segoe UI", 7.5F, FontStyle.Regular),
-            .Text = "EN: First use Show HP/MP Overlay to move and resize Lite's own HP and MP rectangles. These settings are separate from Combat Full. Then click Select HP Level or Select Mana Level and RIGHT click at the horizontal percentage where the potion should trigger. Lite uses key 9 for Heal and key 0 for Mana." & Environment.NewLine & Environment.NewLine &
-                    "ES: Primero usa Show HP/MP Overlay para mover y cambiar el tamano de los rectangulos propios de HP y MP de Lite. Esta configuracion es independiente de Combat Full. Despues selecciona el nivel y haz clic DERECHO en el porcentaje horizontal donde debe activarse la pocion. Lite usa 9 para Heal y 0 para Mana.",
+            .Text = "EN: First use Show HP/MP Overlay to calibrate Lite's own bars. Fixed AutoPots use the selected HP/MP levels with keys 9/0. Skill slots can independently use Role HP or MP plus their own At % threshold; they do not require fixed AutoPots to be enabled." & Environment.NewLine & Environment.NewLine &
+                    "ES: Primero usa Show HP/MP Overlay para calibrar las barras propias de Lite. AutoPots fijos usa los niveles elegidos con 9/0. Cada slot tambien puede usar Role HP o MP con su propio At % y no requiere activar AutoPots fijos.",
             .Tag = "lite-scope"
         }
         layout.Controls.Add(txtLiteAutoPotHelp, 0, 8)
 
         group.Controls.Add(layout)
-        Return group
-    End Function
-
-    Private Function BuildLitePartyGroup() As Control
-        Dim group As New GroupBox() With {.Text = "Party Ask", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(251, 251, 251), .Padding = New Padding(8), .Font = New Font("Segoe UI", 8.0F, FontStyle.Bold), .Tag = "lite-scope"}
-        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 6, .Tag = "lite-scope"}
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 32.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 18.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 26.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 18.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 26.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 32.0F))
-
-        btnLitePartyAutoAccept = New Button() With {
-            .Text = "Auto Accept Party/Ress: OFF",
-            .Dock = DockStyle.Fill,
-            .BackColor = Color.FromArgb(110, 45, 45),
-            .ForeColor = Color.White,
-            .Font = New Font("Segoe UI", 8.0F, FontStyle.Bold),
-            .Tag = "lite-scope"
-        }
-        AddHandler btnLitePartyAutoAccept.Click, AddressOf TogglePartyAutoAcceptClicked
-        layout.Controls.Add(btnLitePartyAutoAccept, 0, 0)
-
-        layout.Controls.Add(New Label() With {.Text = "Ask every (sec)", .Dock = DockStyle.Fill, .ForeColor = Color.FromArgb(70, 70, 70), .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular), .Tag = "lite-scope"}, 0, 1)
-
-        nudLitePartyAskSeconds = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 5D, .Maximum = 600D, .Value = 30D, .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}
-        AddHandler nudLitePartyAskSeconds.ValueChanged,
-            Sub()
-                PushLiveConfig()
-                SavePersistedListState(False)
-            End Sub
-        layout.Controls.Add(nudLitePartyAskSeconds, 0, 2)
-
-        layout.Controls.Add(New Label() With {.Text = "Message text", .Dock = DockStyle.Fill, .ForeColor = Color.FromArgb(70, 70, 70), .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular), .Tag = "lite-scope"}, 0, 3)
-
-        txtLitePartyAskText = New TextBox() With {.Dock = DockStyle.Fill, .Text = DefaultPartyAskCommand, .BackColor = Color.White, .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}
-        AddHandler txtLitePartyAskText.TextChanged, AddressOf PartyAskTextChanged
-        AddHandler txtLitePartyAskText.TextChanged,
-            Sub()
-                PushLiveConfig()
-                SavePersistedListState(False)
-            End Sub
-        layout.Controls.Add(txtLitePartyAskText, 0, 4)
-
-        btnLitePartyAsk = New Button() With {
-            .Text = "Auto Ask Party (add): OFF",
-            .Dock = DockStyle.Fill,
-            .BackColor = Color.FromArgb(110, 45, 45),
-            .ForeColor = Color.White,
-            .Font = New Font("Segoe UI", 8.0F, FontStyle.Bold),
-            .Tag = "lite-scope"
-        }
-        AddHandler btnLitePartyAsk.Click, AddressOf TogglePartyAskClicked
-        layout.Controls.Add(btnLitePartyAsk, 0, 5)
-
-        group.Controls.Add(layout)
-        UpdateLitePromptAutoAcceptButton()
-        UpdateLitePartyAskButton()
         Return group
     End Function
 
@@ -2684,9 +2625,8 @@ Public Class Form1
     End Function
 
     Private Function BuildLiteSkillSlot(keyName As String, accentColor As Color) As Control
-        Dim panel As New Panel() With {.Width = 72, .Height = 74, .BackColor = Color.White, .Margin = New Padding(2), .Tag = "lite-scope"}
-        Dim input As New NumericUpDown() With {.Left = 10, .Top = 6, .Width = 52, .Minimum = 1D, .Maximum = 9999D, .DecimalPlaces = 0, .Increment = 1D, .Value = 1D, .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular), .Tag = "lite-scope"}
-        Dim frame As New Panel() With {.Left = 10, .Top = 34, .Width = 52, .Height = 28, .BackColor = accentColor, .Tag = "lite-scope"}
+        Dim panel As New Panel() With {.Width = 98, .Height = 112, .BackColor = Color.White, .Margin = New Padding(2), .Tag = "lite-scope"}
+        Dim frame As New Panel() With {.Left = 5, .Top = 4, .Width = 88, .Height = 24, .BackColor = accentColor, .Tag = "lite-scope"}
         Dim enabledCheck As New CheckBox() With {
             .Width = 16,
             .Height = 16,
@@ -2697,22 +2637,83 @@ Public Class Form1
             .ForeColor = Color.White,
             .Tag = "lite-scope"
         }
-        Dim keyLabel As New Label() With {.Left = 0, .Top = 12, .Width = 52, .Height = 14, .Text = keyName, .TextAlign = ContentAlignment.MiddleCenter, .ForeColor = Color.White, .Font = New Font("Segoe UI", 6.75F, FontStyle.Bold), .BackColor = Color.Transparent, .Tag = "lite-scope"}
-        panel.Controls.Add(input)
+        Dim keyLabel As New Label() With {.Left = 18, .Top = 3, .Width = 66, .Height = 18, .Text = $"Slot {keyName}", .TextAlign = ContentAlignment.MiddleCenter, .ForeColor = Color.White, .Font = New Font("Segoe UI", 7.25F, FontStyle.Bold), .BackColor = Color.Transparent, .Tag = "lite-scope"}
+        Dim roleInput As New ComboBox() With {.Left = 5, .Top = 32, .Width = 88, .Height = 23, .DropDownStyle = ComboBoxStyle.DropDownList, .Font = New Font("Segoe UI", 7.5F, FontStyle.Regular), .Tag = "lite-scope"}
+        roleInput.Items.AddRange(New Object() {"Attack", "HP", "MP", "Buff"})
+        roleInput.SelectedItem = LiteRoleDisplayName(GetLiteDefaultRole(keyName))
+        Dim thresholdLabel As New Label() With {.Left = 5, .Top = 58, .Width = 28, .Height = 20, .Text = "At %", .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.FromArgb(70, 70, 70), .Font = New Font("Segoe UI", 7.0F, FontStyle.Regular), .Tag = "lite-scope"}
+        Dim thresholdInput As New NumericUpDown() With {.Left = 34, .Top = 57, .Width = 59, .Height = 22, .Minimum = 1D, .Maximum = 100D, .DecimalPlaces = 0, .Increment = 1D, .Value = 50D, .Font = New Font("Segoe UI", 7.5F, FontStyle.Regular), .Tag = "lite-scope"}
+        Dim cooldownLabel As New Label() With {.Left = 5, .Top = 83, .Width = 28, .Height = 20, .Text = "CD s", .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.FromArgb(70, 70, 70), .Font = New Font("Segoe UI", 7.0F, FontStyle.Regular), .Tag = "lite-scope"}
+        Dim cooldownInput As New NumericUpDown() With {.Left = 34, .Top = 82, .Width = 59, .Height = 22, .Minimum = 1D, .Maximum = 9999D, .DecimalPlaces = 0, .Increment = 1D, .Value = 1D, .Font = New Font("Segoe UI", 7.5F, FontStyle.Regular), .Tag = "lite-scope"}
         panel.Controls.Add(frame)
+        panel.Controls.Add(roleInput)
+        panel.Controls.Add(thresholdLabel)
+        panel.Controls.Add(thresholdInput)
+        panel.Controls.Add(cooldownLabel)
+        panel.Controls.Add(cooldownInput)
         frame.Controls.Add(keyLabel)
         frame.Controls.Add(enabledCheck)
 
-        RegisterLiteActionControl(keyName, enabledCheck, input)
+        RegisterLiteActionControl(keyName, enabledCheck, cooldownInput, roleInput, thresholdInput)
         Return panel
     End Function
 
-    Private Sub RegisterLiteActionControl(keyName As String, enabledCheck As CheckBox, input As NumericUpDown)
+    Private Sub RegisterLiteActionControl(keyName As String, enabledCheck As CheckBox, input As NumericUpDown, Optional roleInput As ComboBox = Nothing, Optional thresholdInput As NumericUpDown = Nothing)
         _liteActionEnabledChecks(keyName) = enabledCheck
         _liteActionCooldownInputs(keyName) = input
+        If roleInput IsNot Nothing Then
+            _liteActionRoleInputs(keyName) = roleInput
+            AddHandler roleInput.SelectedIndexChanged,
+                Sub()
+                    UpdateLiteActionThresholdState(keyName)
+                    LiteActionChanged(keyName)
+                End Sub
+        End If
+        If thresholdInput IsNot Nothing Then
+            _liteActionThresholdInputs(keyName) = thresholdInput
+            AddHandler thresholdInput.ValueChanged, Sub() LiteActionChanged(keyName)
+        End If
         AddHandler enabledCheck.CheckedChanged, Sub() LiteActionChanged(keyName)
         AddHandler input.ValueChanged, Sub() LiteActionChanged(keyName)
+        UpdateLiteActionThresholdState(keyName)
     End Sub
+
+    Private Sub UpdateLiteActionThresholdState(keyName As String)
+        If Not _liteActionRoleInputs.ContainsKey(keyName) OrElse Not _liteActionThresholdInputs.ContainsKey(keyName) Then
+            Return
+        End If
+
+        Dim role As String = LiteRoleFromDisplayName(TryCast(_liteActionRoleInputs(keyName).SelectedItem, String))
+        Dim supportRole As Boolean = role = "heal" OrElse role = "mana"
+        _liteActionThresholdInputs(keyName).Enabled = supportRole
+        _liteActionThresholdInputs(keyName).BackColor = If(supportRole, Color.White, Color.FromArgb(225, 225, 225))
+    End Sub
+
+    Private Shared Function LiteRoleFromDisplayName(displayName As String) As String
+        Select Case If(displayName, "").Trim().ToUpperInvariant()
+            Case "HP"
+                Return "heal"
+            Case "MP", "MANA", "TP"
+                Return "mana"
+            Case "BUFF"
+                Return "buff"
+            Case Else
+                Return "attack"
+        End Select
+    End Function
+
+    Private Shared Function LiteRoleDisplayName(role As String) As String
+        Select Case If(role, "").Trim().ToLowerInvariant()
+            Case "heal", "max_health"
+                Return "HP"
+            Case "mana"
+                Return "MP"
+            Case "buff"
+                Return "Buff"
+            Case Else
+                Return "Attack"
+        End Select
+    End Function
 
     Private Sub LiteActionChanged(_keyName As String)
         If _liteSyncInProgress Then
@@ -2742,6 +2743,13 @@ Public Class Form1
             Next
             For Each entry In _liteActionCooldownInputs
                 entry.Value.Value = Math.Max(entry.Value.Minimum, Math.Min(entry.Value.Maximum, 1D))
+            Next
+            For Each entry In _liteActionRoleInputs
+                entry.Value.SelectedItem = LiteRoleDisplayName(GetLiteDefaultRole(entry.Key))
+            Next
+            For Each entry In _liteActionThresholdInputs
+                entry.Value.Value = Math.Max(entry.Value.Minimum, Math.Min(entry.Value.Maximum, 50D))
+                UpdateLiteActionThresholdState(entry.Key)
             Next
             If chkLiteAutoPots IsNot Nothing Then
                 chkLiteAutoPots.Checked = False
@@ -2784,10 +2792,10 @@ Public Class Form1
             actions.Add(New PersistedCombatAction With {
                 .ActionKey = keyName,
                 .Enabled = _liteActionEnabledChecks(keyName).Checked,
-                .Role = GetLiteDefaultRole(keyName),
+                .Role = GetLiteConfiguredRole(keyName),
                 .Priority = 10 + actions.Count,
                 .CooldownSec = Math.Max(1.0, CDbl(_liteActionCooldownInputs(keyName).Value)),
-                .TriggerPercent = 1,
+                .TriggerPercent = GetLiteConfiguredTriggerPercent(keyName),
                 .MinHpPercent = 1,
                 .MinMpPercent = 1
             })
@@ -2820,6 +2828,18 @@ Public Class Form1
                 _liteActionEnabledChecks(keyName).Checked = action.Enabled
                 Dim bounded As Decimal = CDec(Math.Max(1, Math.Round(action.CooldownSec, MidpointRounding.AwayFromZero)))
                 _liteActionCooldownInputs(keyName).Value = Math.Max(_liteActionCooldownInputs(keyName).Minimum, Math.Min(_liteActionCooldownInputs(keyName).Maximum, bounded))
+                If _liteActionRoleInputs.ContainsKey(keyName) Then
+                    _liteActionRoleInputs(keyName).SelectedItem = LiteRoleDisplayName(action.Role)
+                End If
+                If _liteActionThresholdInputs.ContainsKey(keyName) Then
+                    Dim savedThreshold As Integer = action.TriggerPercent
+                    If savedThreshold <= 1 AndAlso Not String.Equals(action.Role, "heal", StringComparison.OrdinalIgnoreCase) AndAlso Not String.Equals(action.Role, "mana", StringComparison.OrdinalIgnoreCase) Then
+                        savedThreshold = 50
+                    End If
+                    Dim threshold As NumericUpDown = _liteActionThresholdInputs(keyName)
+                    threshold.Value = Math.Max(threshold.Minimum, Math.Min(threshold.Maximum, savedThreshold))
+                    UpdateLiteActionThresholdState(keyName)
+                End If
             Next
         Finally
             _liteSyncInProgress = False
@@ -2831,6 +2851,20 @@ Public Class Form1
         keys.AddRange(LitePrimarySkillKeys)
         keys.AddRange(LiteSecondarySkillKeys)
         Return keys
+    End Function
+
+    Private Function GetLiteConfiguredRole(keyName As String) As String
+        If _liteActionRoleInputs.ContainsKey(keyName) Then
+            Return LiteRoleFromDisplayName(TryCast(_liteActionRoleInputs(keyName).SelectedItem, String))
+        End If
+        Return GetLiteDefaultRole(keyName)
+    End Function
+
+    Private Function GetLiteConfiguredTriggerPercent(keyName As String) As Integer
+        If _liteActionThresholdInputs.ContainsKey(keyName) Then
+            Return CInt(Math.Round(_liteActionThresholdInputs(keyName).Value, MidpointRounding.AwayFromZero))
+        End If
+        Return 1
     End Function
 
     Private Sub UpdateLiteAutoPotUi()
@@ -5125,7 +5159,7 @@ Public Class Form1
     Private Shared Function GetCurrentApplicationVersionText() As String
         Dim version As Version = Reflection.Assembly.GetExecutingAssembly().GetName().Version
         If version Is Nothing Then
-            Return "1.0.53"
+            Return "1.0.54"
         End If
         Return $"{version.Major}.{version.Minor}.{Math.Max(0, version.Build)}"
     End Function
@@ -5424,18 +5458,19 @@ Public Class Form1
 
     Private Shared Function BuildBundledUpdateHistoryText() As String
         Return String.Join(Environment.NewLine, New String() {
-            "WHAT CHANGED IN 1.0.53",
-            "- Lite AutoPots now have a dedicated HP/MP calibration overlay inside the Lite AutoPots panel.",
-            "- Lite HP/MP rectangles are saved separately and no longer read Full Vision regions or Full custom color settings.",
-            "- The Lite Status panel and window were enlarged so status lines remain visible.",
-            "- Combat Full detection, overlay, and saved settings are unchanged.",
+            "WHAT CHANGED IN 1.0.54",
+            "- Lite Party Ask controls were removed and Lite party automation is disabled.",
+            "- Every Lite primary and secondary skill slot now supports Attack, HP, MP, or Buff roles.",
+            "- HP/MP skill slots have independent At % triggers and keep their own cooldowns.",
+            "- Fixed key 9/0 AutoPots remain optional and separate from HP/MP skill roles.",
+            "- Combat Full is unchanged.",
             "",
             "RECENT CHANGE HISTORY (LAST 5)",
-            "1. Lite-only HP/MP overlay: Lite bar rectangles and controls are now completely separate from Full user settings.",
-            "2. Lite whole-bar AutoPots: Full combat's HP/MP percentage scanner is reused by Lite without sharing configuration.",
-            "3. Automatic update status: bot starts trigger a check and the tab color reports latest or available.",
-            "4. Dadati evade: avoids the unkillable Dadati target by moving and retargeting instead of attacking forever.",
-            "5. Party status: counts non-full parties more accurately and separates living from dead members."
+            "1. Lite resource skill roles: multiple slots can trigger at separate HP/MP percentages.",
+            "2. Lite-only HP/MP overlay: Lite bar rectangles and controls are separate from Full user settings.",
+            "3. Lite whole-bar AutoPots: Full combat's HP/MP scanner is reused by Lite without sharing configuration.",
+            "4. Automatic update status: bot starts trigger a check and the tab color reports latest or available.",
+            "5. Dadati evade: avoids the unkillable Dadati target by moving and retargeting instead of attacking forever."
         })
     End Function
 
@@ -7680,7 +7715,8 @@ Public Class Form1
                     "- Rename Process and Apply are optional. They only try to rename the selected window title.",
                     "- Save stores the Lite preset. Load restores the saved Lite settings.",
                     "- Basic Attack (E), Mage (R), and Pick (F) each use: checkbox = enabled, number box = seconds between sends.",
-                    "- Primary Skills are keys 1 to 8. Secondary Skills are F1 to F10. Each tile works the same way: checkbox enables the key and the number sets the cooldown in seconds.",
+                    "- Primary Skills are keys 1 to 8 and Secondary Skills are F1 to F10. Each tile has Enabled, Role, At %, and cooldown controls.",
+                    "- Set Role to HP or MP to use that slot as a resource skill. At % is its trigger, so slot 1 can use HP at 70%, slot 2 HP at 30%, and slot 3 MP at 10%.",
                     "- Lite timers now allow 1 to 9999 seconds.",
                     "- Start begins Lite using the selected process and the enabled Lite actions.",
                     "- Stop ends the Lite loop.",
@@ -7691,10 +7727,7 @@ Public Class Form1
                     "- Select HP Level or Select Mana Level starts setup. Right-click horizontally at the desired trigger percentage; the current bar can be full, low, or empty.",
                     "- HP trigger and MP trigger show the saved percentage and coordinates.",
                     "- Lite potion keys are fixed: 9 for Heal and 0 for Mana.",
-                    "- Auto Accept Party/Ress accepts detected party or resurrection prompts automatically.",
-                    "- Ask every (sec) sets the repeat delay for the custom party command.",
-                    "- Message text is the exact command Lite will type.",
-                    "- Auto Ask Party turns that repeating chat command on or off.",
+                    "- The Party Ask section has been removed from Lite.",
                     "- Recommended setup order: select the window, enable only the Lite actions you need, sample HP/MP carefully, then save the preset."
                 })
             Case HelpScopeVision
@@ -7818,7 +7851,8 @@ Public Class Form1
                     "- Rename Process + Apply solo intenta cambiar el titulo de la ventana seleccionada. Es opcional.",
                     "- Save guarda el preset Lite. Load recupera la configuracion Lite guardada.",
                     "- Basic Attack (E), Mage (R) y Pick (F) usan la misma logica: casilla = activado, numero = segundos entre usos.",
-                    "- Primary Skills cubre 1 a 8. Secondary Skills cubre F1 a F10. En cada cuadro, la casilla activa la tecla y el numero define el cooldown en segundos.",
+                    "- Primary Skills cubre 1 a 8 y Secondary Skills F1 a F10. Cada cuadro tiene Enabled, Role, At % y cooldown.",
+                    "- Usa Role HP o MP para convertir ese slot en una accion de recurso. At % define el disparador: slot 1 HP 70%, slot 2 HP 30% y slot 3 MP 10%.",
                     "- Los timers Lite aceptan de 1 a 9999 segundos.",
                     "- Start inicia Lite usando el proceso seleccionado y las acciones Lite activadas.",
                     "- Stop detiene el loop Lite.",
@@ -7829,10 +7863,7 @@ Public Class Form1
                     "- Select HP Level y Select Mana Level inician la configuracion. Haz clic derecho horizontalmente en el porcentaje deseado; la barra puede estar llena, baja o vacia.",
                     "- HP trigger y MP trigger muestran el porcentaje y las coordenadas guardadas.",
                     "- En Lite las teclas de pocion son fijas: 9 para Heal y 0 para Mana.",
-                    "- Auto Accept Party/Ress acepta automaticamente prompts de party o ress detectados por OCR.",
-                    "- Ask every (sec) define el intervalo del comando repetido.",
-                    "- Message text es el texto exacto que Lite escribira.",
-                    "- Auto Ask Party activa o desactiva ese comando repetido."
+                    "- La seccion Party Ask fue eliminada de Lite."
                 })
             Case HelpScopeVision
                 Return String.Join(Environment.NewLine, New String() {
@@ -7952,7 +7983,8 @@ Public Class Form1
                     "- Rename Process + Apply ay optional lang at susubok lang magpalit ng title ng napiling window.",
                     "- Save nagsa-save ng Lite preset. Load nagbabalik ng na-save na Lite settings.",
                     "- Basic Attack (E), Mage (R), at Pick (F) ay pare-pareho ang gamit: checkbox = enabled, number box = seconds sa pagitan ng gamit.",
-                    "- Primary Skills ay 1 hanggang 8. Secondary Skills ay F1 hanggang F10. Sa bawat tile, ang checkbox ang on/off at ang numero ang cooldown in seconds.",
+                    "- Primary Skills ay 1 hanggang 8 at Secondary Skills ay F1 hanggang F10. Bawat tile ay may Enabled, Role, At %, at cooldown.",
+                    "- Piliin ang HP o MP Role para gawing resource skill ang slot. Ang At % ang trigger: puwedeng slot 1 HP 70%, slot 2 HP 30%, at slot 3 MP 10%.",
                     "- Ang Lite timers ay puwedeng 1 hanggang 9999 seconds.",
                     "- Start nagsisimula ng Lite gamit ang selected process at enabled Lite actions.",
                     "- Stop humihinto sa Lite loop.",
@@ -7963,10 +7995,7 @@ Public Class Form1
                     "- Select HP Level at Select Mana Level nagsisimula ng setup. Right-click sa horizontal trigger percentage; puwedeng full, low, o empty ang bar.",
                     "- HP trigger at MP trigger ang nagpapakita ng saved percentage at coordinates.",
                     "- Fixed ang Lite potion keys: 9 para sa Heal at 0 para sa Mana.",
-                    "- Auto Accept Party/Ress awtomatikong tumatanggap ng OCR-detected prompts.",
-                    "- Ask every (sec) ang pagitan ng paulit-ulit na party command.",
-                    "- Message text ang eksaktong ita-type ni Lite.",
-                    "- Auto Ask Party ang on/off ng paulit-ulit na command na iyon."
+                    "- Tinanggal na ang Party Ask section sa Lite."
                 })
             Case HelpScopeVision
                 Return String.Join(Environment.NewLine, New String() {
@@ -10217,10 +10246,9 @@ Public Class Form1
         cfg.HpBar = CloneRectRegion(If(_liteHpBarRegion, BotConfig.DefaultHpBarRect()))
         cfg.MpBar = CloneRectRegion(If(_liteMpBarRegion, BotConfig.DefaultMpBarRect()))
         cfg.BypassHpMpLimits = True
-        cfg.PartyAutoAcceptEnabled = _litePartyAutoAccept
-        cfg.PartyAskEnabled = _litePartyAskEnabled
-        cfg.PartyAskIntervalMs = CInt(Math.Round(CDbl(If(nudLitePartyAskSeconds IsNot Nothing, nudLitePartyAskSeconds.Value, 30D)) * 1000.0))
-        cfg.PartyAskText = GetLitePartyAskCommandText()
+        cfg.PartyAutoAcceptEnabled = False
+        cfg.PartyAskEnabled = False
+        cfg.PartyAskText = DefaultPartyAskCommand
         cfg.NotificationProvider = GetNotificationProviderName()
         cfg.DiscordWebhookUrl = GetDiscordWebhookUrl()
         cfg.DiscordGlobalWebhookUrl = GetDiscordGlobalWebhookUrl()
@@ -10238,10 +10266,10 @@ Public Class Form1
                 .CooldownId = $"lite-action:{action.ActionKey.ToUpperInvariant()}",
                 .KeyName = action.ActionKey,
                 .Enabled = action.Enabled,
-                .Role = GetLiteDefaultRole(action.ActionKey),
+                .Role = action.Role,
                 .Priority = action.Priority,
                 .CooldownMs = CInt(Math.Round(Math.Max(1.0, action.CooldownSec) * 1000.0)),
-                .TriggerPercent = 1,
+                .TriggerPercent = Math.Max(1, Math.Min(100, action.TriggerPercent)),
                 .MinHpPercent = 1,
                 .MinMpPercent = 1
             })
@@ -11456,10 +11484,10 @@ Public Class Form1
                 .MpPointY = _liteAutoPotMpPointY,
                 .MpPointColorEnabled = _liteAutoPotMpColorEnabled,
                 .MpPointColorArgb = _liteAutoPotMpColorArgb,
-                .PromptAutoAcceptEnabled = _litePartyAutoAccept,
-                .AskForPartyEnabled = _litePartyAskEnabled,
-                .AskForPartySeconds = If(nudLitePartyAskSeconds IsNot Nothing, nudLitePartyAskSeconds.Value, 30D),
-                .AskForPartyText = GetLitePartyAskCommandText(),
+                .PromptAutoAcceptEnabled = False,
+                .AskForPartyEnabled = False,
+                .AskForPartySeconds = 30D,
+                .AskForPartyText = DefaultPartyAskCommand,
                 .Actions = GetPersistedLiteActions()
             }
 
@@ -11499,15 +11527,8 @@ Public Class Form1
             If chkLiteAutoPots IsNot Nothing Then
                 chkLiteAutoPots.Checked = source.AutoPotsEnabled
             End If
-            _litePartyAutoAccept = source.PromptAutoAcceptEnabled
-            _litePartyAskEnabled = source.AskForPartyEnabled
-            If nudLitePartyAskSeconds IsNot Nothing Then
-                Dim boundedAskSeconds As Decimal = Math.Max(nudLitePartyAskSeconds.Minimum, Math.Min(nudLitePartyAskSeconds.Maximum, source.AskForPartySeconds))
-                nudLitePartyAskSeconds.Value = boundedAskSeconds
-            End If
-            If txtLitePartyAskText IsNot Nothing Then
-                txtLitePartyAskText.Text = If(String.IsNullOrWhiteSpace(source.AskForPartyText), DefaultPartyAskCommand, source.AskForPartyText.Trim())
-            End If
+            _litePartyAutoAccept = False
+            _litePartyAskEnabled = False
             If source.HpPointEnabled Then
                 _liteAutoPotHpPointX = Math.Max(0, source.HpPointX)
                 _liteAutoPotHpPointY = Math.Max(0, source.HpPointY)
@@ -11544,8 +11565,6 @@ Public Class Form1
             End If
             _pendingLitePointCapture = LitePointCaptureKind.None
             UpdateLiteAutoPotUi()
-            UpdateLitePromptAutoAcceptButton()
-            UpdateLitePartyAskButton()
         Finally
             _liteSyncInProgress = False
         End Try
