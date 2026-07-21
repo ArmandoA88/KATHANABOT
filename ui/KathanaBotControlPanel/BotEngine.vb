@@ -775,6 +775,8 @@ Public Class BotEngine
     Private Const NearZeroManaConfirmRequiredCount As Integer = 6
     Private Const FreshZeroSupportConfirmSamples As Integer = 3
     Private Const FreshZeroSupportConfirmDelayMs As Integer = 35
+    Private Const LiteAutoPotMaxNoProgressSends As Integer = 3
+    Private Const LiteAutoPotRecoveryDeltaPercent As Double = 3.0R
     Private Const RetargetBufferMs As Integer = 300
     Private Const DadatiEvadeCooldownMs As Integer = 1200
     Private Const DadatiMovementTapMs As Integer = 140
@@ -1056,6 +1058,14 @@ Public Class BotEngine
     Private _singleMpZeroConfirmCount As Integer = 0
     Private _hpZeroSupportConfirmCount As Integer = 0
     Private _mpZeroSupportConfirmCount As Integer = 0
+    Private _liteAutoPotHpNoProgressSends As Integer = 0
+    Private _liteAutoPotMpNoProgressSends As Integer = 0
+    Private _liteAutoPotHpBlocked As Boolean = False
+    Private _liteAutoPotMpBlocked As Boolean = False
+    Private _liteAutoPotHpLastSentSample As Double = -1.0R
+    Private _liteAutoPotMpLastSentSample As Double = -1.0R
+    Private _liteAutoPotHpPendingSample As Double = -1.0R
+    Private _liteAutoPotMpPendingSample As Double = -1.0R
     Private _lastRightAltAt As DateTime = DateTime.MinValue
     Private _lootScannerCapturePending As Boolean = False
     Private _lootScannerCaptureRequestedAt As DateTime = DateTime.MinValue
@@ -1340,6 +1350,7 @@ Public Class BotEngine
             _singleMpZeroConfirmCount = 0
             _hpZeroSupportConfirmCount = 0
             _mpZeroSupportConfirmCount = 0
+            ResetLiteAutoPotRuntime()
             _lastRightAltAt = DateTime.MinValue
             _lootScannerCapturePending = False
             _lootScannerCaptureRequestedAt = DateTime.MinValue
@@ -1603,6 +1614,9 @@ Public Class BotEngine
                 If needsLiteMpScan Then
                     liteMpPct = ComputeLiteWholeBarPercent(liteFrame, liteMpRegion, False, cfg, mpScanOk)
                 End If
+
+                ObserveLiteAutoPotBar(cfg, False, liteHpPct, hpScanOk)
+                ObserveLiteAutoPotBar(cfg, True, liteMpPct, mpScanOk)
 
                 Dim liteAttackHpPct As Double = If(hpScanOk, liteHpPct, 100.0)
                 Dim liteAttackMpPct As Double = If(mpScanOk, liteMpPct, 100.0)
@@ -2539,9 +2553,6 @@ Public Class BotEngine
                     Dim matchedRegion As OcrReader.OcrTextRegion = Nothing
                     If TryFindAllowedLootRegionMatch(ocrRegions, allowedNames, lootMatchThresholdPercent, matchedItem, matchedRegion) OrElse
                        TryFindAllowedLootMatch(ocrText, allowedNames, lootMatchThresholdPercent, matchedItem) Then
-                        System.Media.SystemSounds.Exclamation.Play()
-                        Console.Beep(800, 1000)
-                        Console.Beep(800, 1000)
                         RaiseEvent LogLine($"LOOT ALARM: Found {matchedItem} (fuzzy {lootMatchThresholdPercent}%).")
 
                         If cfg.LootNameAutoPickupEnabled Then
@@ -7529,7 +7540,13 @@ Public Class BotEngine
     End Function
 
     Private Shared Function TryFindAllowedLootMatch(rawObservedText As String, allowList As List(Of String), thresholdPercent As Integer, ByRef matchedAllowedName As String) As Boolean
+        Dim bestScore As Double = 0.0
+        Return TryFindBestAllowedLootMatch(rawObservedText, allowList, thresholdPercent, matchedAllowedName, bestScore)
+    End Function
+
+    Private Shared Function TryFindBestAllowedLootMatch(rawObservedText As String, allowList As List(Of String), thresholdPercent As Integer, ByRef matchedAllowedName As String, ByRef bestScore As Double) As Boolean
         matchedAllowedName = ""
+        bestScore = 0.0
         If String.IsNullOrWhiteSpace(rawObservedText) OrElse allowList Is Nothing OrElse allowList.Count = 0 Then
             Return False
         End If
@@ -7540,6 +7557,7 @@ Public Class BotEngine
         End If
 
         Dim threshold As Double = ClampLootMatchThresholdPercent(thresholdPercent) / 100.0
+        Dim bestAllowedName As String = ""
         For Each entry As String In allowList
             Dim originalAllowed As String = If(entry, "").Trim()
             Dim normAllowed As String = NormalizeMobName(originalAllowed)
@@ -7549,13 +7567,17 @@ Public Class BotEngine
 
             For Each candidate As String In candidates
                 Dim score As Double = GetLootMatchScore(candidate, normAllowed)
-                If score >= threshold Then
-                    matchedAllowedName = If(originalAllowed = "", normAllowed, originalAllowed)
-                    Return True
+                If score > bestScore Then
+                    bestScore = score
+                    bestAllowedName = If(originalAllowed = "", normAllowed, originalAllowed)
                 End If
             Next
         Next
 
+        If bestScore >= threshold Then
+            matchedAllowedName = bestAllowedName
+            Return True
+        End If
         Return False
     End Function
 
@@ -7566,19 +7588,30 @@ Public Class BotEngine
             Return False
         End If
 
+        Dim bestScore As Double = 0.0
+        Dim bestName As String = ""
+        Dim bestRegion As OcrReader.OcrTextRegion = Nothing
         For Each region In regions
             If region Is Nothing OrElse region.Bounds = Rectangle.Empty OrElse String.IsNullOrWhiteSpace(region.Text) Then
                 Continue For
             End If
 
             Dim localMatchedName As String = ""
-            If TryFindAllowedLootMatch(region.Text, allowList, thresholdPercent, localMatchedName) Then
-                matchedAllowedName = localMatchedName
-                matchedRegion = region
-                Return True
+            Dim localScore As Double = 0.0
+            TryFindBestAllowedLootMatch(region.Text, allowList, thresholdPercent, localMatchedName, localScore)
+            If localScore > bestScore Then
+                bestScore = localScore
+                bestName = localMatchedName
+                bestRegion = region
             End If
         Next
 
+        Dim threshold As Double = ClampLootMatchThresholdPercent(thresholdPercent) / 100.0
+        If bestRegion IsNot Nothing AndAlso bestScore >= threshold Then
+            matchedAllowedName = bestName
+            matchedRegion = bestRegion
+            Return True
+        End If
         Return False
     End Function
 
@@ -7687,7 +7720,20 @@ Public Class BotEngine
             Return False
         End If
 
-        Return Regex.IsMatch(normalizedName, "(^|\s)dadati(\s|$)", RegexOptions.IgnoreCase)
+        For Each rawToken As String In Regex.Split(normalizedName.ToLowerInvariant(), "[^a-z0-9|]+")
+            If String.IsNullOrWhiteSpace(rawToken) Then
+                Continue For
+            End If
+
+            ' OCR commonly confuses the final lowercase L, uppercase I, digit 1,
+            ' or vertical bar in Dadati. Fold those glyphs before comparing.
+            Dim folded As String = rawToken.Replace("l", "i").Replace("1", "i").Replace("|", "i")
+            If folded.Equals("dadati", StringComparison.Ordinal) Then
+                Return True
+            End If
+        Next
+
+        Return False
     End Function
 
     Private Shared Function NormalizeMobNameDisplay(raw As String) As String
@@ -8022,6 +8068,7 @@ Public Class BotEngine
             End If
 
             MarkActionUsed(action)
+            RecordLiteAutoPotActionSent(cfg, hwnd, action)
             SetLastAction($"{action.KeyName} ({action.Role})")
             sentAny = True
         Next
@@ -8044,6 +8091,7 @@ Public Class BotEngine
             End If
 
             MarkActionUsed(action)
+            RecordLiteAutoPotActionSent(cfg, hwnd, action)
             SetLastAction($"{action.KeyName} ({action.Role})")
             sentAny = True
         Next
@@ -8133,6 +8181,9 @@ Public Class BotEngine
             End If
 
             If sample <= Math.Max(1, action.TriggerPercent) Then
+                If IsLiteFixedAutoPotAction(action) AndAlso Not PrepareLiteAutoPotAction(action, isMana, sample) Then
+                    Return False
+                End If
                 Return True
             End If
         End Using
@@ -8140,6 +8191,128 @@ Public Class BotEngine
         RaiseEvent LogLine($"Lite resource action: skipped {action.KeyName} ({action.Role}) because the whole-bar level is above {Math.Max(1, action.TriggerPercent)}%.")
         Return False
     End Function
+
+    Private Shared Function IsLiteFixedAutoPotAction(action As ActionRule) As Boolean
+        If action Is Nothing Then
+            Return False
+        End If
+        Dim cooldownId As String = If(action.CooldownId, "").Trim()
+        Return cooldownId.Equals("lite-autopot:hp", StringComparison.OrdinalIgnoreCase) OrElse
+               cooldownId.Equals("lite-autopot:mp", StringComparison.OrdinalIgnoreCase)
+    End Function
+
+    Private Function PrepareLiteAutoPotAction(action As ActionRule, isMana As Boolean, sample As Double) As Boolean
+        Dim blocked As Boolean = If(isMana, _liteAutoPotMpBlocked, _liteAutoPotHpBlocked)
+        Dim lastSentSample As Double = If(isMana, _liteAutoPotMpLastSentSample, _liteAutoPotHpLastSentSample)
+        Dim trigger As Double = Math.Max(1.0R, action.TriggerPercent)
+
+        If blocked Then
+            Dim recovered As Boolean =
+                sample >= trigger + LiteAutoPotRecoveryDeltaPercent OrElse
+                (lastSentSample >= 0 AndAlso sample >= lastSentSample + LiteAutoPotRecoveryDeltaPercent)
+            If Not recovered Then
+                Return False
+            End If
+
+            ResetLiteAutoPotResourceRuntime(isMana)
+            RaiseEvent LogLine($"Lite AutoPots: {If(isMana, "MP", "HP")} bar recovered to {sample:0.0}%; automatic pot use re-armed.")
+        End If
+
+        If isMana Then
+            _liteAutoPotMpPendingSample = sample
+        Else
+            _liteAutoPotHpPendingSample = sample
+        End If
+        Return True
+    End Function
+
+    Private Sub RecordLiteAutoPotActionSent(cfg As BotConfig, hwnd As IntPtr, action As ActionRule)
+        If cfg Is Nothing OrElse Not cfg.LiteModeEnabled OrElse Not IsLiteFixedAutoPotAction(action) Then
+            Return
+        End If
+
+        Dim isMana As Boolean = String.Equals(If(action.Role, "").Trim(), "mana", StringComparison.OrdinalIgnoreCase)
+        Dim sample As Double = If(isMana, _liteAutoPotMpPendingSample, _liteAutoPotHpPendingSample)
+        Dim lastSentSample As Double = If(isMana, _liteAutoPotMpLastSentSample, _liteAutoPotHpLastSentSample)
+        Dim noProgressSends As Integer = If(isMana, _liteAutoPotMpNoProgressSends, _liteAutoPotHpNoProgressSends)
+
+        If sample < 0 Then
+            Return
+        End If
+
+        If lastSentSample < 0 OrElse sample >= lastSentSample + LiteAutoPotRecoveryDeltaPercent Then
+            noProgressSends = 1
+        Else
+            noProgressSends += 1
+        End If
+
+        Dim shouldBlock As Boolean = noProgressSends >= LiteAutoPotMaxNoProgressSends
+        If isMana Then
+            _liteAutoPotMpLastSentSample = sample
+            _liteAutoPotMpNoProgressSends = noProgressSends
+            _liteAutoPotMpPendingSample = -1.0R
+            _liteAutoPotMpBlocked = shouldBlock
+        Else
+            _liteAutoPotHpLastSentSample = sample
+            _liteAutoPotHpNoProgressSends = noProgressSends
+            _liteAutoPotHpPendingSample = -1.0R
+            _liteAutoPotHpBlocked = shouldBlock
+        End If
+
+        If shouldBlock Then
+            ClearCachedCaptureMethod(hwnd)
+            RaiseEvent LogLine($"Lite AutoPots: {If(isMana, "MP", "HP")} pot paused after {noProgressSends} sends with no bar recovery ({sample:0.0}%). It will re-arm only after the bar reading rises.")
+        End If
+    End Sub
+
+    Private Sub ObserveLiteAutoPotBar(cfg As BotConfig, isMana As Boolean, sample As Double, scanOk As Boolean)
+        If cfg Is Nothing OrElse Not cfg.LiteModeEnabled OrElse Not scanOk Then
+            Return
+        End If
+
+        Dim cooldownId As String = If(isMana, "lite-autopot:mp", "lite-autopot:hp")
+        Dim action As ActionRule = cfg.Actions.FirstOrDefault(
+            Function(candidate) candidate IsNot Nothing AndAlso
+                candidate.Enabled AndAlso
+                If(candidate.CooldownId, "").Trim().Equals(cooldownId, StringComparison.OrdinalIgnoreCase))
+        If action Is Nothing Then
+            ResetLiteAutoPotResourceRuntime(isMana)
+            Return
+        End If
+
+        Dim blocked As Boolean = If(isMana, _liteAutoPotMpBlocked, _liteAutoPotHpBlocked)
+        Dim lastSentSample As Double = If(isMana, _liteAutoPotMpLastSentSample, _liteAutoPotHpLastSentSample)
+        Dim trigger As Double = Math.Max(1.0R, action.TriggerPercent)
+        Dim clearlyRecovered As Boolean =
+            sample >= trigger + LiteAutoPotRecoveryDeltaPercent OrElse
+            (lastSentSample >= 0 AndAlso sample >= lastSentSample + LiteAutoPotRecoveryDeltaPercent)
+
+        If clearlyRecovered Then
+            ResetLiteAutoPotResourceRuntime(isMana)
+            If blocked Then
+                RaiseEvent LogLine($"Lite AutoPots: {If(isMana, "MP", "HP")} bar recovery detected at {sample:0.0}%; automatic pot use re-armed.")
+            End If
+        End If
+    End Sub
+
+    Private Sub ResetLiteAutoPotResourceRuntime(isMana As Boolean)
+        If isMana Then
+            _liteAutoPotMpNoProgressSends = 0
+            _liteAutoPotMpBlocked = False
+            _liteAutoPotMpLastSentSample = -1.0R
+            _liteAutoPotMpPendingSample = -1.0R
+        Else
+            _liteAutoPotHpNoProgressSends = 0
+            _liteAutoPotHpBlocked = False
+            _liteAutoPotHpLastSentSample = -1.0R
+            _liteAutoPotHpPendingSample = -1.0R
+        End If
+    End Sub
+
+    Private Sub ResetLiteAutoPotRuntime()
+        ResetLiteAutoPotResourceRuntime(False)
+        ResetLiteAutoPotResourceRuntime(True)
+    End Sub
 
     Private Function IsNearZeroSupportConfirmed(role As String, hwnd As IntPtr, targetRegion As RectRegion) As Boolean
         Dim isMana As Boolean = String.Equals(role, "mana", StringComparison.OrdinalIgnoreCase)
@@ -9784,6 +9957,23 @@ Public Class BotEngine
         chatRect = ScaleRegionLeftTop(cfg.ChatRect, sx, sy)
     End Sub
 
+    Public Shared Function ResolveDisconnectOkRegion(cfg As BotConfig, clientWidth As Integer, clientHeight As Integer) As RectRegion
+        Dim effectiveConfig As BotConfig = If(cfg, BotConfig.CreateDefault())
+        Dim source As RectRegion = If(effectiveConfig.DisconnectOkRect, BotConfig.DefaultDisconnectOkRect())
+        If clientWidth <= 0 OrElse clientHeight <= 0 Then
+            Return CloneRegion(source)
+        End If
+
+        If IsDefaultVisionLayout(effectiveConfig) AndAlso
+           Not (clientWidth = BaseClientWidth AndAlso clientHeight = BaseClientHeight) Then
+            Dim sx As Double = clientWidth / CDbl(BaseClientWidth)
+            Dim sy As Double = clientHeight / CDbl(BaseClientHeight)
+            Return ScaleRegionLeftTop(source, sx, sy)
+        End If
+
+        Return CloneRegion(source)
+    End Function
+
     Private Shared Function ResolveMobLifeRegion(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer) As RectRegion
         Dim source As RectRegion = If(cfg Is Nothing OrElse cfg.MobLifeRect Is Nothing, BotConfig.DefaultMobHpRect(), cfg.MobLifeRect)
         If frameWidth <= 0 OrElse frameHeight <= 0 Then
@@ -10082,7 +10272,7 @@ Public Class BotEngine
     Friend Shared Sub keybd_event(bVk As Byte, bScan As Byte, dwFlags As UInteger, dwExtraInfo As UIntPtr)
     End Sub
 
-    Public Shared Function SendKey(hwnd As IntPtr, keyName As String, pressMs As Integer, Optional forceBackgroundPost As Boolean = False) As Boolean
+    Public Shared Function SendKey(hwnd As IntPtr, keyName As String, pressMs As Integer, Optional forceBackgroundPost As Boolean = False, Optional forcePhysicalKeyEvent As Boolean = False) As Boolean
         If hwnd = IntPtr.Zero Then
             Return False
         End If
@@ -10093,6 +10283,7 @@ Public Class BotEngine
         End If
 
         Dim usePhysicalKeyEvent As Boolean =
+            forcePhysicalKeyEvent OrElse
             vk = &HA4 OrElse
             vk = &HA5 OrElse
             vk = &H12 OrElse
@@ -10251,13 +10442,25 @@ Public Class BotEngine
 
         Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
         Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
-        If matchedRegion Is Nothing OrElse matchedRegion.Bounds = Rectangle.Empty Then
+        Dim hasMatchedRegion As Boolean = matchedRegion IsNot Nothing AndAlso matchedRegion.Bounds <> Rectangle.Empty
+        Dim hasFixedFallback As Boolean = cfg.LootNamePickupPointX >= 0 AndAlso cfg.LootNamePickupPointY >= 0
+        If Not hasMatchedRegion AndAlso Not hasFixedFallback Then
             RaiseEvent LogLine($"Loot auto-pick skipped for {matchedItem}: OCR did not return a loot label position.")
             Return False
         End If
 
-        Dim clientX As Integer = lootScanBounds.X + matchedRegion.Bounds.X + (matchedRegion.Bounds.Width \ 2) + cfg.LootNamePickupOffsetX
-        Dim clientY As Integer = lootScanBounds.Y + matchedRegion.Bounds.Bottom + cfg.LootNamePickupOffsetY
+        Dim clientX As Integer
+        Dim clientY As Integer
+        Dim pointSource As String
+        If hasMatchedRegion Then
+            clientX = lootScanBounds.X + matchedRegion.Bounds.X + (matchedRegion.Bounds.Width \ 2) + cfg.LootNamePickupOffsetX
+            clientY = lootScanBounds.Y + matchedRegion.Bounds.Y + (matchedRegion.Bounds.Height \ 2) + cfg.LootNamePickupOffsetY
+            pointSource = "matched label"
+        Else
+            clientX = cfg.LootNamePickupPointX + cfg.LootNamePickupOffsetX
+            clientY = cfg.LootNamePickupPointY + cfg.LootNamePickupOffsetY
+            pointSource = "saved fallback point"
+        End If
         clientX = Math.Max(0, Math.Min(clientWidth - 1, clientX))
         clientY = Math.Max(0, Math.Min(clientHeight - 1, clientY))
 
@@ -10298,7 +10501,7 @@ Public Class BotEngine
             Dim gapMs As Integer = Math.Max(0, cfg.LootNamePickupFPressGapMs)
             Dim sentAny As Boolean = False
             For pressIndex As Integer = 1 To fCount
-                If SendKey(hwnd, "F", FastKeyPressMs) Then
+                If SendKey(hwnd, "F", FastKeyPressMs, forcePhysicalKeyEvent:=True) Then
                     sentAny = True
                 End If
                 If pressIndex < fCount AndAlso gapMs > 0 Then
@@ -10308,7 +10511,7 @@ Public Class BotEngine
 
             If sentAny Then
                 SetLastAction($"Loot auto-pick ({matchedItem})")
-                RaiseEvent LogLine($"Loot auto-pick clicked matched label '{matchedItem}' at client {clientX},{clientY} -> screen {screenPoint.X},{screenPoint.Y}, then pressed F x{fCount}.")
+                RaiseEvent LogLine($"Loot auto-pick clicked {pointSource} '{matchedItem}' at client {clientX},{clientY} -> screen {screenPoint.X},{screenPoint.Y}, then pressed F x{fCount}.")
             Else
                 RaiseEvent LogLine($"Loot auto-pick click completed for {matchedItem}, but F presses were not sent.")
             End If

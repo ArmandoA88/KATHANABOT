@@ -402,6 +402,7 @@ Public Class Form1
     Private _deathNotificationLatched As Boolean = False
     Private _windowMissingNotificationLatched As Boolean = False
     Private _gameDisconnectedNotificationLatched As Boolean = False
+    Private _disconnectRecoveryPending As Boolean = False
     Private _autoRelaunchPending As Boolean = False
     Private _lastAutoRelaunchAttemptUtc As DateTime = DateTime.MinValue
     Private _ctrlShiftWasDown As Boolean = False
@@ -2570,8 +2571,8 @@ Public Class Form1
             .ForeColor = Color.FromArgb(70, 70, 70),
             .BorderStyle = BorderStyle.FixedSingle,
             .Font = New Font("Segoe UI", 7.5F, FontStyle.Regular),
-            .Text = "EN: First use Show HP/MP Overlay to calibrate Lite's own bars. Fixed AutoPots use the selected HP/MP levels with keys 9/0. Skill slots can independently use Role HP or MP plus their own At % threshold; they do not require fixed AutoPots to be enabled." & Environment.NewLine & Environment.NewLine &
-                    "ES: Primero usa Show HP/MP Overlay para calibrar las barras propias de Lite. AutoPots fijos usa los niveles elegidos con 9/0. Cada slot tambien puede usar Role HP o MP con su propio At % y no requiere activar AutoPots fijos.",
+            .Text = "EN: First use Show HP/MP Overlay to calibrate Lite's own bars. Fixed AutoPots use the selected HP/MP levels with keys 9/0. If three pot sends show no bar recovery, that resource pauses until its bar rises, preventing endless use after a bad or stale capture. Skill slots can independently use Role HP or MP plus their own At % threshold." & Environment.NewLine & Environment.NewLine &
+                    "ES: Primero usa Show HP/MP Overlay para calibrar las barras propias de Lite. AutoPots fijos usa los niveles elegidos con 9/0. Si tres usos no muestran recuperacion de la barra, ese recurso se pausa hasta que la barra suba para evitar uso infinito por una captura incorrecta.",
             .Tag = "lite-scope"
         }
         layout.Controls.Add(txtLiteAutoPotHelp, 0, 8)
@@ -3018,7 +3019,7 @@ Public Class Form1
         generalLayout.Controls.Add(nudAvoidHighMaxHpThreshold, 3, 5)
 
         chkEvadeDadati = New CheckBox() With {
-            .Text = "Evade Dadatis (tap W/S, then retarget; game window must be on)",
+            .Text = "Evade Dadati/OCR variants (tap W/S, then retarget; game window must be on)",
             .Dock = DockStyle.Fill,
             .Checked = False
         }
@@ -3476,7 +3477,7 @@ Public Class Form1
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 48.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 68.0F))
 
         chkAutoRelaunchGame = New CheckBox() With {.Text = "Enable when game closes, crashes, or disconnects", .Dock = DockStyle.Fill, .Checked = False}
         layout.Controls.Add(chkAutoRelaunchGame, 0, 0)
@@ -3545,7 +3546,7 @@ Public Class Form1
         layout.SetColumnSpan(clickButtonRow, 2)
 
         Dim note As New Label() With {
-            .Text = "Post-launch clicks use game-window coordinates after each row's delay. Drag rows to change order. Select a row, click Use Cursor, then RIGHT click the desired spot in game. Show Click Overlay displays every enabled location, execution step, path, and delay.",
+            .Text = "On disconnect, the bot reads OK inside Vision's disconnect_ok_rect, left-clicks it, and waits for the old game to close before relaunching. Post-launch clicks use game-window coordinates after each row's delay. Select a row, click Use Cursor, then RIGHT click the desired game spot.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.TopLeft
@@ -3751,7 +3752,7 @@ Public Class Form1
         layout.SetColumnSpan(chkLootNamePickupRestoreCursor, 2)
 
         Dim note As New Label() With {
-            .Text = "The bot now uses the matched loot label position from OCR. It clicks at the label's bottom-center plus your X/Y offsets, then waits and presses F. Use Offset Y to move the click lower than the text if the item is on the ground below the label.",
+            .Text = "The bot uses the best matched loot label from OCR. It clicks at the label center plus your X/Y offsets, then waits and sends F directly to the foreground game. Use Offset Y to move the click below the text if needed.",
             .Dock = DockStyle.Bottom,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.TopLeft,
@@ -5159,7 +5160,7 @@ Public Class Form1
     Private Shared Function GetCurrentApplicationVersionText() As String
         Dim version As Version = Reflection.Assembly.GetExecutingAssembly().GetName().Version
         If version Is Nothing Then
-            Return "1.0.54"
+            Return "1.0.55"
         End If
         Return $"{version.Major}.{version.Minor}.{Math.Max(0, version.Build)}"
     End Function
@@ -5458,19 +5459,21 @@ Public Class Form1
 
     Private Shared Function BuildBundledUpdateHistoryText() As String
         Return String.Join(Environment.NewLine, New String() {
-            "WHAT CHANGED IN 1.0.54",
-            "- Lite Party Ask controls were removed and Lite party automation is disabled.",
-            "- Every Lite primary and secondary skill slot now supports Attack, HP, MP, or Buff roles.",
-            "- HP/MP skill slots have independent At % triggers and keep their own cooldowns.",
-            "- Fixed key 9/0 AutoPots remain optional and separate from HP/MP skill roles.",
-            "- Combat Full is unchanged.",
+            "WHAT CHANGED IN 1.0.55",
+            "- Full Combat Dadati evasion now recognizes OCR variants such as DadatI, Dadatl, and Dadat1.",
+            "- Auto-Loot detections no longer play Windows alert sounds or console beeps.",
+            "- Pickup by matched loot name now chooses the strongest OCR label match.",
+            "- Dynamic pickup clicks use the label center plus offsets and send foreground F inputs.",
+            "- A saved pickup point is used as a fallback when OCR matches text without returning a label rectangle.",
+            "- Disconnect recovery reads OK inside disconnect_ok_rect, left-clicks it, and waits for the old game to close before relaunching.",
+            "- Lite fixed AutoPots now pause after three unchanged HP/MP sends and re-arm only when that bar recovers.",
             "",
             "RECENT CHANGE HISTORY (LAST 5)",
-            "1. Lite resource skill roles: multiple slots can trigger at separate HP/MP percentages.",
-            "2. Lite-only HP/MP overlay: Lite bar rectangles and controls are separate from Full user settings.",
-            "3. Lite whole-bar AutoPots: Full combat's HP/MP scanner is reused by Lite without sharing configuration.",
-            "4. Automatic update status: bot starts trigger a check and the tab color reports latest or available.",
-            "5. Dadati evade: avoids the unkillable Dadati target by moving and retargeting instead of attacking forever."
+            "1. Lite AutoPot anti-spam: HP and MP independently pause when repeated sends show no bar recovery.",
+            "2. OCR-gated disconnect recovery: clicks OK and confirms the old process closed before reopening.",
+            "3. Full loot and Dadati reliability: quieter detection, best-region clicks, and OCR-safe Dadati aliases.",
+            "4. Lite resource skill roles: multiple slots can trigger at separate HP/MP percentages.",
+            "5. Lite-only HP/MP overlay: Lite bar rectangles and controls are separate from Full user settings."
         })
     End Function
 
@@ -9907,8 +9910,7 @@ Public Class Form1
             If Not _gameDisconnectedNotificationLatched Then
                 _gameDisconnectedNotificationLatched = True
                 AppendLog($"Game disconnect detected. Sending alert via {GetNotificationDestinationSummary()}.")
-                TryClickDisconnectOkBeforeRelaunch()
-                ScheduleGameRelaunch("server disconnect")
+                BeginDisconnectOkRecovery()
                 Task.Run(
                     Async Function()
                         Dim sent As Boolean = Await SendPhoneNotificationAsync("KathanaBot Game Disconnected", "The game reported: connection to server has failed. Please try again.", DeathNotificationRetryCount)
@@ -9928,80 +9930,213 @@ Public Class Form1
         End If
     End Sub
 
-    Private Sub TryClickDisconnectOkBeforeRelaunch()
+    Private Sub BeginDisconnectOkRecovery()
+        If _disconnectRecoveryPending Then
+            Return
+        End If
+
         Try
-            Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+            Dim runningEdition As BotEdition = If(GetRunningEdition(), BotEdition.Full)
+            Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(runningEdition)
             If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
-                AppendLog("Disconnect OK skipped: select a Full game process window first.")
+                AppendLog($"Disconnect OK recovery skipped: select a {runningEdition} game process window first.")
                 Return
             End If
 
             Dim cfg As BotConfig = BuildConfig()
-            Dim okRegion As RectRegion = If(cfg.DisconnectOkRect, BotConfig.DefaultDisconnectOkRect())
             Dim clientRect As NativeMethods.RECT
             If Not NativeMethods.GetClientRect(selected.MainWindowHandle, clientRect) Then
-                AppendLog("Disconnect OK skipped: game client rect unavailable.")
+                AppendLog("Disconnect OK recovery skipped: game client rect unavailable.")
                 Return
             End If
 
             Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
             Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
+            Dim okRegion As RectRegion = BotEngine.ResolveDisconnectOkRegion(cfg, clientWidth, clientHeight)
             Dim rect As Rectangle = okRegion.Clamp(clientWidth, clientHeight)
             If rect.Width <= 0 OrElse rect.Height <= 0 Then
-                AppendLog("Disconnect OK skipped: OK rectangle is outside the game client.")
+                AppendLog("Disconnect OK recovery skipped: disconnect_ok_rect is outside the game client.")
                 Return
             End If
+            okRegion = New RectRegion(rect.X, rect.Y, rect.Width, rect.Height)
 
-            Dim clientX As Integer = rect.Left + (rect.Width \ 2)
-            Dim clientY As Integer = rect.Top + (rect.Height \ 2)
-            Dim screenPoint As New NativeMethods.POINT With {.X = clientX, .Y = clientY}
-            If Not NativeMethods.ClientToScreen(selected.MainWindowHandle, screenPoint) Then
-                AppendLog("Disconnect OK skipped: unable to map OK rectangle to screen.")
-                Return
-            End If
+            Dim hwnd As IntPtr = selected.MainWindowHandle
+            Dim processId As Integer = selected.ProcessId
+            _disconnectRecoveryPending = True
+            AppendLog($"Disconnect recovery: reading OK from disconnect_ok_rect at {rect.X},{rect.Y},{rect.Width},{rect.Height}.")
 
-            Dim previousCursor As NativeMethods.POINT
-            Dim hadCursor As Boolean = NativeMethods.GetCursorPos(previousCursor)
-            Dim clicked As Boolean = False
-            Try
-                For attempt As Integer = 1 To 3
-                    NativeMethods.SetForegroundWindow(selected.MainWindowHandle)
-                    Thread.Sleep(180)
-                    If Not NativeMethods.SetCursorPos(screenPoint.X, screenPoint.Y) Then
-                        Continue For
-                    End If
+            Task.Run(
+                Async Function()
+                    Dim processClosed As Boolean = Not IsProcessStillRunning(processId)
+                    Try
+                        Dim clicked As Boolean = False
+                        For attempt As Integer = 1 To 6
+                            If Not IsProcessStillRunning(processId) Then
+                                processClosed = True
+                                Exit For
+                            End If
 
-                    Thread.Sleep(80)
-                    NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTDOWN, CUInt(screenPoint.X), CUInt(screenPoint.Y), 0UI, UIntPtr.Zero)
-                    Thread.Sleep(90)
-                    NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTUP, CUInt(screenPoint.X), CUInt(screenPoint.Y), 0UI, UIntPtr.Zero)
-                    clicked = True
-                    Thread.Sleep(220)
+                            Dim rawOkText As String = ReadDisconnectOkRegionText(hwnd, okRegion)
+                            If IsDisconnectOkButtonText(rawOkText) Then
+                                AppendLogSafe($"Disconnect OK confirmed by OCR as '{NormalizeLogText(rawOkText)}'.")
+                                clicked = TryLeftClickDisconnectOk(hwnd, okRegion)
+                                If clicked Then
+                                    AppendLogSafe("Disconnect OK left click sent; waiting for the game process to close.")
+                                    Exit For
+                                End If
+                            ElseIf attempt = 1 OrElse attempt = 6 Then
+                                AppendLogSafe($"Disconnect OK OCR attempt {attempt}/6 did not confirm OK (read '{NormalizeLogText(rawOkText)}').")
+                            End If
 
-                    If attempt = 1 Then
-                        BotEngine.ClickClientRegionCenter(selected.MainWindowHandle, okRegion, clientWidth, clientHeight)
-                    End If
-                Next
+                            Await Task.Delay(350)
+                        Next
 
-                BotEngine.SendKey(selected.MainWindowHandle, "ENTER", 60, True)
-            Finally
-                If hadCursor Then
-                    NativeMethods.SetCursorPos(previousCursor.X, previousCursor.Y)
-                End If
-            End Try
+                        If clicked Then
+                            Dim closeDeadline As DateTime = DateTime.UtcNow.AddSeconds(20)
+                            Dim nextRetryAt As DateTime = DateTime.UtcNow.AddSeconds(4)
+                            Do While DateTime.UtcNow < closeDeadline
+                                If Not IsProcessStillRunning(processId) Then
+                                    processClosed = True
+                                    Exit Do
+                                End If
 
-            If clicked Then
-                AppendLog($"Disconnect OK physical click sent at game {clientX},{clientY} -> screen {screenPoint.X},{screenPoint.Y}.")
-            Else
-                AppendLog("Disconnect OK click failed.")
-            End If
+                                If DateTime.UtcNow >= nextRetryAt Then
+                                    Dim retryText As String = ReadDisconnectOkRegionText(hwnd, okRegion)
+                                    If IsDisconnectOkButtonText(retryText) Then
+                                        TryLeftClickDisconnectOk(hwnd, okRegion)
+                                        AppendLogSafe("Disconnect OK is still visible; left click retried.")
+                                    End If
+                                    nextRetryAt = DateTime.UtcNow.AddSeconds(4)
+                                End If
+                                Await Task.Delay(250)
+                            Loop
+                        End If
+                    Catch ex As Exception
+                        AppendLogSafe("Disconnect OK recovery failed: " & ex.Message)
+                    End Try
+
+                    processClosed = processClosed OrElse Not IsProcessStillRunning(processId)
+                    CompleteDisconnectOkRecovery(processClosed)
+                End Function)
         Catch ex As Exception
-            AppendLog("Disconnect OK click failed: " & ex.Message)
+            _disconnectRecoveryPending = False
+            AppendLog("Disconnect OK recovery failed: " & ex.Message)
         End Try
+    End Sub
+
+    Private Shared Function ReadDisconnectOkRegionText(hwnd As IntPtr, okRegion As RectRegion) As String
+        Try
+            Using crop As Bitmap = BotEngine.CaptureClientRegion(hwnd, okRegion)
+                If crop Is Nothing OrElse crop.Width <= 1 OrElse crop.Height <= 1 Then
+                    Return ""
+                End If
+
+                Using enlarged As New Bitmap(Math.Max(1, crop.Width * 4), Math.Max(1, crop.Height * 4), Imaging.PixelFormat.Format24bppRgb)
+                    Using graphics As Graphics = Graphics.FromImage(enlarged)
+                        graphics.InterpolationMode = Drawing2D.InterpolationMode.NearestNeighbor
+                        graphics.PixelOffsetMode = Drawing2D.PixelOffsetMode.Half
+                        graphics.DrawImage(crop, New Rectangle(0, 0, enlarged.Width, enlarged.Height))
+                    End Using
+
+                    Dim text As String = If(OcrReader.ReadScreenTextIsolated(enlarged), "").Trim()
+                    If text = "" Then
+                        text = If(OcrReader.ReadName(enlarged), "").Trim()
+                    End If
+                    Return text
+                End Using
+            End Using
+        Catch
+            Return ""
+        End Try
+    End Function
+
+    Private Shared Function IsDisconnectOkButtonText(rawText As String) As Boolean
+        Dim compact As String = Regex.Replace(If(rawText, "").ToUpperInvariant(), "[^A-Z0-9]", "")
+        compact = compact.Replace("0", "O").Replace("Q", "O")
+        Return compact = "OK" OrElse compact = "OX" OrElse (compact.Length <= 6 AndAlso compact.Contains("OK", StringComparison.Ordinal))
+    End Function
+
+    Private Shared Function NormalizeLogText(rawText As String) As String
+        Dim normalized As String = Regex.Replace(If(rawText, "").Trim(), "\s+", " ")
+        If normalized.Length > 40 Then
+            normalized = normalized.Substring(0, 40)
+        End If
+        Return normalized.Replace("'", "")
+    End Function
+
+    Private Shared Function TryLeftClickDisconnectOk(hwnd As IntPtr, okRegion As RectRegion) As Boolean
+        If hwnd = IntPtr.Zero OrElse okRegion Is Nothing Then
+            Return False
+        End If
+
+        Dim clientX As Integer = okRegion.X + (okRegion.W \ 2)
+        Dim clientY As Integer = okRegion.Y + (okRegion.H \ 2)
+        Dim screenPoint As New NativeMethods.POINT With {.X = clientX, .Y = clientY}
+        If Not NativeMethods.ClientToScreen(hwnd, screenPoint) Then
+            Return False
+        End If
+
+        Dim previousCursor As NativeMethods.POINT
+        Dim hadCursor As Boolean = NativeMethods.GetCursorPos(previousCursor)
+        Try
+            NativeMethods.SetForegroundWindow(hwnd)
+            Thread.Sleep(180)
+            If Not NativeMethods.SetCursorPos(screenPoint.X, screenPoint.Y) Then
+                Return False
+            End If
+
+            Thread.Sleep(60)
+            NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTDOWN, CUInt(screenPoint.X), CUInt(screenPoint.Y), 0UI, UIntPtr.Zero)
+            Thread.Sleep(90)
+            NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTUP, CUInt(screenPoint.X), CUInt(screenPoint.Y), 0UI, UIntPtr.Zero)
+            Return True
+        Catch
+            Return False
+        Finally
+            If hadCursor Then
+                NativeMethods.SetCursorPos(previousCursor.X, previousCursor.Y)
+            End If
+        End Try
+    End Function
+
+    Private Shared Function IsProcessStillRunning(processId As Integer) As Boolean
+        If processId <= 0 Then
+            Return False
+        End If
+        Try
+            Using process As Process = Process.GetProcessById(processId)
+                Return Not process.HasExited
+            End Using
+        Catch
+            Return False
+        End Try
+    End Function
+
+    Private Sub CompleteDisconnectOkRecovery(processClosed As Boolean)
+        If IsDisposed OrElse Not IsHandleCreated Then
+            Return
+        End If
+
+        BeginInvoke(New Action(
+            Sub()
+                _disconnectRecoveryPending = False
+                If processClosed Then
+                    AppendLog("Disconnect recovery confirmed that the old game process closed.")
+                    ScheduleGameRelaunch("server disconnect")
+                Else
+                    AppendLog("Disconnect recovery stopped: OK was not confirmed/clicked or the old game process did not close. Relaunch was not started to avoid opening a duplicate game.")
+                End If
+            End Sub))
     End Sub
 
     Private Sub HandleWindowMissingAlarm(status As BotStatus)
         If status Is Nothing Then
+            Return
+        End If
+
+        If _disconnectRecoveryPending Then
+            _windowMissingConfirmCount = 0
+            _windowMissingFirstSeenUtc = DateTime.MinValue
             Return
         End If
 
