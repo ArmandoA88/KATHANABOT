@@ -1593,11 +1593,11 @@ Public Class BotEngine
                 Dim liteMpPct As Double = If(hasLiteMpPoint, 0, 100)
 
                 If hasLiteHpPoint Then
-                    liteHpPct = ComputeClientPotionPointPercent(liteFrame, cfg.LiteHpCheckPointX, cfg.LiteHpCheckPointY, True, cfg, cfg.LiteHpCheckColorEnabled, cfg.LiteHpCheckColorArgb, hpScanOk)
+                    liteHpPct = ComputeLiteWholeBarPercent(liteFrame, liteHpRegion, True, cfg, hpScanOk)
                 End If
 
                 If hasLiteMpPoint Then
-                    liteMpPct = ComputeClientPotionPointPercent(liteFrame, cfg.LiteMpCheckPointX, cfg.LiteMpCheckPointY, False, cfg, cfg.LiteMpCheckColorEnabled, cfg.LiteMpCheckColorArgb, mpScanOk)
+                    liteMpPct = ComputeLiteWholeBarPercent(liteFrame, liteMpRegion, False, cfg, mpScanOk)
                 End If
 
                 Dim liteAttackHpPct As Double = If(hpScanOk, liteHpPct, 100.0)
@@ -1626,7 +1626,7 @@ Public Class BotEngine
                 End If
 
                 If Not liteGameDisconnected AndAlso Not liteActionSent AndAlso (hpScanOk OrElse mpScanOk) Then
-                    liteActionSent = TrySendSupportActions(cfg, hwnd, liteAttackHpPct, liteAttackMpPct)
+                    liteActionSent = TrySendSupportActions(cfg, hwnd, liteAttackHpPct, liteAttackMpPct, liteHpRegion, liteMpRegion)
                 End If
 
                 If Not liteGameDisconnected AndAlso Not liteActionSent Then
@@ -8061,7 +8061,7 @@ Public Class BotEngine
 
         Dim role As String = If(action.Role, "").Trim().ToLowerInvariant()
         If cfg.LiteModeEnabled AndAlso (role = "heal" OrElse role = "max_health" OrElse role = "mana") Then
-            Return ConfirmLitePointSupportActionStillNeeded(cfg, hwnd, action, role)
+            Return ConfirmLitePointSupportActionStillNeeded(cfg, hwnd, action, role, If(role = "mana", mpRegion, hpRegion))
         End If
 
         Dim targetRegion As RectRegion = If(role = "mana", mpRegion, hpRegion)
@@ -8120,28 +8120,20 @@ Public Class BotEngine
         Return False
     End Function
 
-    Private Function ConfirmLitePointSupportActionStillNeeded(cfg As BotConfig, hwnd As IntPtr, action As ActionRule, role As String) As Boolean
+    Private Function ConfirmLitePointSupportActionStillNeeded(cfg As BotConfig, hwnd As IntPtr, action As ActionRule, role As String, targetRegion As RectRegion) As Boolean
         Dim isMana As Boolean = String.Equals(role, "mana", StringComparison.OrdinalIgnoreCase)
         Dim pointX As Integer = If(isMana, cfg.LiteMpCheckPointX, cfg.LiteHpCheckPointX)
         Dim pointY As Integer = If(isMana, cfg.LiteMpCheckPointY, cfg.LiteHpCheckPointY)
-        If pointX < 0 OrElse pointY < 0 Then
+        If pointX < 0 OrElse pointY < 0 OrElse targetRegion Is Nothing Then
             Return False
         End If
 
         Using frame As Bitmap = CaptureClient(hwnd)
             Dim ok As Boolean = False
-            Dim sample As Double = ComputeClientPotionPointPercent(
-                frame,
-                pointX,
-                pointY,
-                Not isMana,
-                cfg,
-                If(isMana, cfg.LiteMpCheckColorEnabled, cfg.LiteHpCheckColorEnabled),
-                If(isMana, cfg.LiteMpCheckColorArgb, cfg.LiteHpCheckColorArgb),
-                ok)
+            Dim sample As Double = ComputeLiteWholeBarPercent(frame, targetRegion, Not isMana, cfg, ok)
 
             If Not ok Then
-                RaiseEvent LogLine($"Lite AutoPots: confirmation read failed before {action.KeyName} ({action.Role}).")
+                RaiseEvent LogLine($"Lite AutoPots: whole-bar confirmation read failed before {action.KeyName} ({action.Role}).")
                 Return False
             End If
 
@@ -8150,7 +8142,7 @@ Public Class BotEngine
             End If
         End Using
 
-        RaiseEvent LogLine($"Lite AutoPots: skipped {action.KeyName} ({action.Role}) because the selected pixel still matches.")
+        RaiseEvent LogLine($"Lite AutoPots: skipped {action.KeyName} ({action.Role}) because the whole-bar level is above {Math.Max(1, action.TriggerPercent)}%.")
         Return False
     End Function
 
@@ -9202,6 +9194,24 @@ Public Class BotEngine
         Finally
             bmp.Dispose()
         End Try
+    End Function
+
+    ' Lite deliberately reuses the same full-bar percentage scanner as Combat Full.
+    ' Keeping this wrapper Lite-specific prevents any change to the Full combat path.
+    Private Shared Function ComputeLiteWholeBarPercent(frame As Bitmap, region As RectRegion, isHp As Boolean, cfg As BotConfig, ByRef success As Boolean) As Double
+        success = False
+        If frame Is Nothing OrElse region Is Nothing Then
+            Return 0
+        End If
+
+        Dim clamped As Rectangle = region.Clamp(frame.Width, frame.Height)
+        If clamped.Width < 2 OrElse clamped.Height < 2 Then
+            Return 0
+        End If
+
+        Dim percent As Double = ComputeBarPercent(frame, region, isHp, cfg)
+        success = True
+        Return percent
     End Function
 
     Private Shared Function ComputeClientPotionPointPercent(frame As Bitmap, clientX As Integer, clientY As Integer, isHp As Boolean, cfg As BotConfig, sampleColorEnabled As Boolean, sampleColorArgb As Integer, ByRef success As Boolean) As Double

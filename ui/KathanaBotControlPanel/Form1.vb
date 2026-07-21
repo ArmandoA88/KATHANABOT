@@ -23,7 +23,7 @@ Public Class Form1
     Private Shared ReadOnly CustomCombatDefaultKeys As String() = {"F11", "F12", "F13"}
     Private Shared ReadOnly DefaultGameWindowTitle As String = "Kathana - The Reign of Shadow"
     Private Const PreferredProcessName As String = "KathanaGame"
-    Private Shared ReadOnly LiteWindowSize As New Size(920, 660)
+    Private Shared ReadOnly LiteWindowSize As New Size(920, 720)
     Private Shared ReadOnly FullWindowSize As New Size(1450, 900)
 
     Private _edition As BotEdition = BotEdition.Full
@@ -72,6 +72,8 @@ Public Class Form1
     Private chkLiteAutoPots As CheckBox
     Private btnLiteSelectHpLevel As Button
     Private btnLiteSelectMpLevel As Button
+    Private btnLiteOverlayToggle As Button
+    Private btnLiteResetBars As Button
     Private btnLiteAutoPotHelp As Button
     Private btnLitePartyAutoAccept As Button
     Private btnLitePartyAsk As Button
@@ -369,6 +371,7 @@ Public Class Form1
     Private _litePartyAskEnabled As Boolean = False
     Private _lootScannerEnabled As Boolean = True
     Private _overlayForm As CalibrationOverlayForm
+    Private _liteOverlayForm As LiteBarCalibrationOverlayForm
     Private _autoRelaunchClickOverlayForm As AutoRelaunchClickOverlayForm
     Private _arrowUnbundleOverlayForm As AutoRelaunchClickOverlayForm
     Private _chatTranslationOverlayForm As ChatTranslationOverlayForm
@@ -424,6 +427,8 @@ Public Class Form1
     Private _liteAutoPotMpPointY As Integer = -1
     Private _liteAutoPotMpColorEnabled As Boolean = False
     Private _liteAutoPotMpColorArgb As Integer = 0
+    Private _liteHpBarRegion As RectRegion = BotConfig.DefaultHpBarRect()
+    Private _liteMpBarRegion As RectRegion = BotConfig.DefaultMpBarRect()
     Private _pendingLitePointCapture As LitePointCaptureKind = LitePointCaptureKind.None
     Private _liteRightMouseWasDown As Boolean = False
     Private _customBarColorsEnabled As Boolean = False
@@ -703,6 +708,8 @@ Public Class Form1
 
     Private Class PersistedLiteState
         Public Property AutoPotsEnabled As Boolean = False
+        Public Property HpBarRect As RectRegion = BotConfig.DefaultHpBarRect()
+        Public Property MpBarRect As RectRegion = BotConfig.DefaultMpBarRect()
         Public Property HpPointEnabled As Boolean = False
         Public Property HpPointX As Integer = -1
         Public Property HpPointY As Integer = -1
@@ -1945,6 +1952,13 @@ Public Class Form1
         End Try
     End Sub
 
+    Private Sub PushLiteLiveConfig()
+        Try
+            _liteEngine.UpdateConfig(BuildLiteConfig())
+        Catch
+        End Try
+    End Sub
+
     Private Sub ApplyBarColorSettingsToConfig(cfg As BotConfig)
         If cfg Is Nothing Then
             Return
@@ -2371,7 +2385,7 @@ Public Class Form1
     Private Function BuildLiteMainPanel() As Control
         Dim panel As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 4, .Tag = "lite-scope"}
         panel.RowStyles.Add(New RowStyle(SizeType.Absolute, 132.0F))
-        panel.RowStyles.Add(New RowStyle(SizeType.Absolute, 86.0F))
+        panel.RowStyles.Add(New RowStyle(SizeType.Absolute, 118.0F))
         panel.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         panel.RowStyles.Add(New RowStyle(SizeType.Absolute, 28.0F))
 
@@ -2427,7 +2441,7 @@ Public Class Form1
         statusLayout.Controls.Add(lblLiteShortcutHint, 0, 0)
         statusLayout.Controls.Add(lblLiteState, 1, 0)
         statusLayout.Controls.Add(lblLiteSystem, 0, 1)
-        statusLayout.Controls.Add(New Label() With {.Text = "Lite HP/MP points are for AutoPots only. Attacks stay active.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.FromArgb(90, 90, 90), .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}, 1, 1)
+        statusLayout.Controls.Add(New Label() With {.Text = "Lite HP/MP bars are for AutoPots only. Attacks stay active.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.FromArgb(90, 90, 90), .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}, 1, 1)
         statusLayout.Controls.Add(lblLiteHp, 0, 2)
         statusLayout.Controls.Add(lblLiteMp, 1, 2)
         statusLayout.Controls.Add(New Label() With {.Text = "Selected process controls Lite key send.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.FromArgb(90, 90, 90), .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular), .Tag = "lite-scope"}, 0, 3)
@@ -2445,8 +2459,8 @@ Public Class Form1
         lowerArea.Controls.Add(skillArea, 0, 0)
 
         Dim sideArea As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2, .Tag = "lite-scope"}
-        sideArea.RowStyles.Add(New RowStyle(SizeType.Percent, 72.0F))
-        sideArea.RowStyles.Add(New RowStyle(SizeType.Percent, 28.0F))
+        sideArea.RowStyles.Add(New RowStyle(SizeType.Percent, 58.0F))
+        sideArea.RowStyles.Add(New RowStyle(SizeType.Percent, 42.0F))
         sideArea.Controls.Add(BuildLiteAutoPotsGroup(), 0, 0)
         sideArea.Controls.Add(BuildLitePartyGroup(), 0, 1)
         lowerArea.Controls.Add(sideArea, 1, 0)
@@ -2492,8 +2506,9 @@ Public Class Form1
 
     Private Function BuildLiteAutoPotsGroup() As Control
         Dim group As New GroupBox() With {.Text = "AutoPots", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(251, 251, 251), .Padding = New Padding(8), .Font = New Font("Segoe UI", 8.0F, FontStyle.Bold), .Tag = "lite-scope"}
-        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 8, .Tag = "lite-scope"}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 9, .Tag = "lite-scope"}
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 24.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 30.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 28.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 28.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 20.0F))
@@ -2506,26 +2521,37 @@ Public Class Form1
         AddHandler chkLiteAutoPots.CheckedChanged,
             Sub()
                 UpdateLiteAutoPotUi()
-                PushLiveConfig()
+                PushLiteLiveConfig()
                 SavePersistedListState(False)
             End Sub
         layout.Controls.Add(chkLiteAutoPots, 0, 0)
 
+        Dim overlayButtons As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1, .Margin = New Padding(0), .Tag = "lite-scope"}
+        overlayButtons.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 64.0F))
+        overlayButtons.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 36.0F))
+        btnLiteOverlayToggle = New Button() With {.Text = "Show HP/MP Overlay", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(70, 70, 70), .ForeColor = Color.White, .Font = New Font("Segoe UI", 7.75F, FontStyle.Bold), .Tag = "lite-scope"}
+        btnLiteResetBars = New Button() With {.Text = "Reset Bars", .Dock = DockStyle.Fill, .BackColor = Color.White, .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular), .Tag = "lite-scope"}
+        AddHandler btnLiteOverlayToggle.Click, AddressOf ToggleLiteOverlayClicked
+        AddHandler btnLiteResetBars.Click, AddressOf ResetLiteBarsClicked
+        overlayButtons.Controls.Add(btnLiteOverlayToggle, 0, 0)
+        overlayButtons.Controls.Add(btnLiteResetBars, 1, 0)
+        layout.Controls.Add(overlayButtons, 0, 1)
+
         btnLiteSelectHpLevel = New Button() With {.Text = "Select HP Level", .Dock = DockStyle.Fill, .BackColor = Color.White, .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}
         AddHandler btnLiteSelectHpLevel.Click, Sub(_s As Object, _e As EventArgs) BeginLitePointCapture(LitePointCaptureKind.Hp)
-        layout.Controls.Add(btnLiteSelectHpLevel, 0, 1)
+        layout.Controls.Add(btnLiteSelectHpLevel, 0, 2)
 
         btnLiteSelectMpLevel = New Button() With {.Text = "Select Mana level", .Dock = DockStyle.Fill, .BackColor = Color.White, .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}
         AddHandler btnLiteSelectMpLevel.Click, Sub(_s As Object, _e As EventArgs) BeginLitePointCapture(LitePointCaptureKind.Mp)
-        layout.Controls.Add(btnLiteSelectMpLevel, 0, 2)
+        layout.Controls.Add(btnLiteSelectMpLevel, 0, 3)
 
         lblLiteHpPoint = New Label() With {.Text = "HP X/Y: not set", .Dock = DockStyle.Fill, .ForeColor = Color.FromArgb(65, 65, 65), .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular), .Tag = "lite-scope"}
-        layout.Controls.Add(lblLiteHpPoint, 0, 3)
+        layout.Controls.Add(lblLiteHpPoint, 0, 4)
 
         lblLiteMpPoint = New Label() With {.Text = "MP X/Y: not set", .Dock = DockStyle.Fill, .ForeColor = Color.FromArgb(65, 65, 65), .Font = New Font("Segoe UI", 7.75F, FontStyle.Regular), .Tag = "lite-scope"}
-        layout.Controls.Add(lblLiteMpPoint, 0, 4)
+        layout.Controls.Add(lblLiteMpPoint, 0, 5)
 
-        layout.Controls.Add(New Label() With {.Text = "Potion keys: 9 = Heal, 0 = Mana (Tantra slot 10).", .Dock = DockStyle.Fill, .ForeColor = Color.FromArgb(160, 82, 82), .Font = New Font("Segoe UI", 7.75F, FontStyle.Bold), .Tag = "lite-scope"}, 0, 5)
+        layout.Controls.Add(New Label() With {.Text = "Potion keys: 9 = Heal, 0 = Mana (Tantra slot 10).", .Dock = DockStyle.Fill, .ForeColor = Color.FromArgb(160, 82, 82), .Font = New Font("Segoe UI", 7.75F, FontStyle.Bold), .Tag = "lite-scope"}, 0, 6)
 
         btnLiteAutoPotHelp = New Button() With {.Text = "Help", .Dock = DockStyle.Left, .Width = 72, .BackColor = Color.White, .Font = New Font("Segoe UI", 8.0F, FontStyle.Regular), .Tag = "lite-scope"}
         AddHandler btnLiteAutoPotHelp.Click,
@@ -2533,7 +2559,7 @@ Public Class Form1
                 txtLiteAutoPotHelp.Visible = Not txtLiteAutoPotHelp.Visible
                 btnLiteAutoPotHelp.Text = If(txtLiteAutoPotHelp.Visible, "Hide Help", "Help")
             End Sub
-        layout.Controls.Add(btnLiteAutoPotHelp, 0, 6)
+        layout.Controls.Add(btnLiteAutoPotHelp, 0, 7)
 
         txtLiteAutoPotHelp = New TextBox() With {
             .Dock = DockStyle.Fill,
@@ -2544,11 +2570,11 @@ Public Class Form1
             .ForeColor = Color.FromArgb(70, 70, 70),
             .BorderStyle = BorderStyle.FixedSingle,
             .Font = New Font("Segoe UI", 7.5F, FontStyle.Regular),
-            .Text = "EN: Click Select HP Level or Select Mana Level. The app redirects to Tantra. Make sure HP and Mana are full before taking the sample so Lite can learn the bar colors to compare later. RIGHT click the exact HP or MP point where you want the potion to trigger. Lite checks whether red is still present on the HP point and whether blue is still present on the MP point. If the color is missing, it uses potion key 9 for Heal or key 0 for Mana (Tantra slot 10)." & Environment.NewLine & Environment.NewLine &
-                    "ES: Haz clic en Select HP Level o Select Mana Level. La app te redirige a Tantra. Asegurate de que el HP y el Mana esten llenos antes de tomar la muestra para que Lite aprenda los colores de la barra y los compare despues. Haz clic DERECHO en el punto exacto del HP o MP donde quieres que se active la pocion. Lite revisa si todavia hay rojo en el punto de HP y si todavia hay azul en el punto de MP. Si el color no esta, usa la tecla 9 para Heal o la tecla 0 para Mana (slot 10 de Tantra).",
+            .Text = "EN: First use Show HP/MP Overlay to move and resize Lite's own HP and MP rectangles. These settings are separate from Combat Full. Then click Select HP Level or Select Mana Level and RIGHT click at the horizontal percentage where the potion should trigger. Lite uses key 9 for Heal and key 0 for Mana." & Environment.NewLine & Environment.NewLine &
+                    "ES: Primero usa Show HP/MP Overlay para mover y cambiar el tamano de los rectangulos propios de HP y MP de Lite. Esta configuracion es independiente de Combat Full. Despues selecciona el nivel y haz clic DERECHO en el porcentaje horizontal donde debe activarse la pocion. Lite usa 9 para Heal y 0 para Mana.",
             .Tag = "lite-scope"
         }
-        layout.Controls.Add(txtLiteAutoPotHelp, 0, 7)
+        layout.Controls.Add(txtLiteAutoPotHelp, 0, 8)
 
         group.Controls.Add(layout)
         Return group
@@ -2736,6 +2762,8 @@ Public Class Form1
             _liteAutoPotMpPointY = -1
             _liteAutoPotMpColorEnabled = False
             _liteAutoPotMpColorArgb = 0
+            _liteHpBarRegion = BotConfig.DefaultHpBarRect()
+            _liteMpBarRegion = BotConfig.DefaultMpBarRect()
             _pendingLitePointCapture = LitePointCaptureKind.None
             UpdateLiteAutoPotUi()
             UpdateLitePromptAutoAcceptButton()
@@ -2807,10 +2835,12 @@ Public Class Form1
 
     Private Sub UpdateLiteAutoPotUi()
         If lblLiteHpPoint IsNot Nothing Then
-            lblLiteHpPoint.Text = If(_liteAutoPotHpPointX >= 0 AndAlso _liteAutoPotHpPointY >= 0, $"HP X/Y: {_liteAutoPotHpPointX}, {_liteAutoPotHpPointY}", "HP X/Y: not set")
+            Dim hpTrigger As Integer = GetLiteAutoPotTriggerPercent(GetLiteAutoPotBarRegion(LitePointCaptureKind.Hp), _liteAutoPotHpPointX)
+            lblLiteHpPoint.Text = If(_liteAutoPotHpPointX >= 0 AndAlso _liteAutoPotHpPointY >= 0, $"HP trigger: {hpTrigger}% (X/Y: {_liteAutoPotHpPointX}, {_liteAutoPotHpPointY})", "HP trigger: not set")
         End If
         If lblLiteMpPoint IsNot Nothing Then
-            lblLiteMpPoint.Text = If(_liteAutoPotMpPointX >= 0 AndAlso _liteAutoPotMpPointY >= 0, $"MP X/Y: {_liteAutoPotMpPointX}, {_liteAutoPotMpPointY}", "MP X/Y: not set")
+            Dim mpTrigger As Integer = GetLiteAutoPotTriggerPercent(GetLiteAutoPotBarRegion(LitePointCaptureKind.Mp), _liteAutoPotMpPointX)
+            lblLiteMpPoint.Text = If(_liteAutoPotMpPointX >= 0 AndAlso _liteAutoPotMpPointY >= 0, $"MP trigger: {mpTrigger}% (X/Y: {_liteAutoPotMpPointX}, {_liteAutoPotMpPointY})", "MP trigger: not set")
         End If
         If btnLiteSelectHpLevel IsNot Nothing Then
             btnLiteSelectHpLevel.Text = If(_pendingLitePointCapture = LitePointCaptureKind.Hp, "RIGHT click HP bar...", "Select HP Level")
@@ -4990,6 +5020,14 @@ Public Class Form1
             btnOverlayToggle.Text = "Show Overlay"
             AppendLog("Overlay hidden while bot is running.")
         End If
+        If edition = BotEdition.Lite AndAlso _liteOverlayForm IsNot Nothing AndAlso Not _liteOverlayForm.IsDisposed Then
+            _liteOverlayForm.Close()
+            _liteOverlayForm = Nothing
+            If btnLiteOverlayToggle IsNot Nothing Then
+                btnLiteOverlayToggle.Text = "Show HP/MP Overlay"
+            End If
+            AppendLog("Lite HP/MP overlay hidden while Lite is running.")
+        End If
 
         If edition = BotEdition.Full Then
             ResetHpZeroAlarmState("Alarm state reset for bot start.")
@@ -5087,7 +5125,7 @@ Public Class Form1
     Private Shared Function GetCurrentApplicationVersionText() As String
         Dim version As Version = Reflection.Assembly.GetExecutingAssembly().GetName().Version
         If version Is Nothing Then
-            Return "1.0.51"
+            Return "1.0.53"
         End If
         Return $"{version.Major}.{version.Minor}.{Math.Max(0, version.Build)}"
     End Function
@@ -5386,17 +5424,18 @@ Public Class Form1
 
     Private Shared Function BuildBundledUpdateHistoryText() As String
         Return String.Join(Environment.NewLine, New String() {
-            "WHAT CHANGED IN 1.0.51",
-            "- Every successful Full or Lite bot start now checks for updates automatically without delaying bot startup.",
-            "- The Update tab turns green when this version is current and yellow when a newer semantic version is available.",
-            "- Auto-update version control identifies this build as 1.0.51 and rejects older or equal standalone releases.",
+            "WHAT CHANGED IN 1.0.53",
+            "- Lite AutoPots now have a dedicated HP/MP calibration overlay inside the Lite AutoPots panel.",
+            "- Lite HP/MP rectangles are saved separately and no longer read Full Vision regions or Full custom color settings.",
+            "- The Lite Status panel and window were enlarged so status lines remain visible.",
+            "- Combat Full detection, overlay, and saved settings are unchanged.",
             "",
             "RECENT CHANGE HISTORY (LAST 5)",
-            "1. Automatic update status: bot starts trigger a check and the tab color reports latest or available.",
-            "2. Dadati evade: avoids the unkillable Dadati target by moving and retargeting instead of attacking forever.",
-            "3. Party status: counts non-full parties more accurately and separates living from dead members.",
-            "4. Mob-name OCR: compares multiple enhanced samples and keeps the strongest complete name through capture flicker.",
-            "5. Combat cooldowns and startup Notice: stable per-skill timing plus automatic Notice closing after five seconds."
+            "1. Lite-only HP/MP overlay: Lite bar rectangles and controls are now completely separate from Full user settings.",
+            "2. Lite whole-bar AutoPots: Full combat's HP/MP percentage scanner is reused by Lite without sharing configuration.",
+            "3. Automatic update status: bot starts trigger a check and the tab color reports latest or available.",
+            "4. Dadati evade: avoids the unkillable Dadati target by moving and retargeting instead of attacking forever.",
+            "5. Party status: counts non-full parties more accurately and separates living from dead members."
         })
     End Function
 
@@ -6783,9 +6822,100 @@ Public Class Form1
         _arrowUnbundleLeftMouseWasDown = False
         UpdateArrowUnbundleUi()
         UpdateLiteAutoPotUi()
-        AppendLog($"Lite AutoPots: switching to Tantra. Make sure HP and Mana are full, then RIGHT click the {(If(kind = LitePointCaptureKind.Hp, "HP", "Mana"))} bar where the potion should be used.")
-        AppendLog("Lite AutoPots: click inside the bar where there are no numbers or letters so Lite can sample the full bar color, then keep the HP window in the same place.")
+        AppendLog($"Lite AutoPots: switching to Tantra. RIGHT click horizontally at the desired {(If(kind = LitePointCaptureKind.Hp, "HP", "Mana"))} potion percentage.")
+        AppendLog("Lite AutoPots: the bar may be full, low, or empty during setup; Lite now reads the complete bar with the Combat Full detector.")
         NativeMethods.SetForegroundWindow(selected.MainWindowHandle)
+    End Sub
+
+    Private Sub ToggleLiteOverlayClicked(sender As Object, e As EventArgs)
+        If _liteOverlayForm IsNot Nothing AndAlso Not _liteOverlayForm.IsDisposed Then
+            _liteOverlayForm.Close()
+            _liteOverlayForm = Nothing
+            If btnLiteOverlayToggle IsNot Nothing Then
+                btnLiteOverlayToggle.Text = "Show HP/MP Overlay"
+            End If
+            AppendLog("Lite AutoPots: HP/MP overlay hidden.")
+            Return
+        End If
+
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Lite)
+        If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
+            AppendLog("Lite AutoPots: select a Lite process window before showing the HP/MP overlay.")
+            Return
+        End If
+
+        _liteOverlayForm = New LiteBarCalibrationOverlayForm(Function() BuildLiteConfig())
+        AddHandler _liteOverlayForm.OverlayRegionChanged, AddressOf LiteOverlayRegionChanged
+        AddHandler _liteOverlayForm.OverlayRegionCommitted, AddressOf LiteOverlayRegionCommitted
+        AddHandler _liteOverlayForm.FormClosed,
+            Sub(_s As Object, _e As FormClosedEventArgs)
+                _liteOverlayForm = Nothing
+                If btnLiteOverlayToggle IsNot Nothing AndAlso Not btnLiteOverlayToggle.IsDisposed Then
+                    btnLiteOverlayToggle.Text = "Show HP/MP Overlay"
+                End If
+            End Sub
+        _liteOverlayForm.Show(Me)
+        btnLiteOverlayToggle.Text = "Hide HP/MP Overlay"
+        AppendLog("Lite AutoPots: independent HP/MP overlay shown. Drag a bar to move it or drag its white square to resize it.")
+    End Sub
+
+    Private Sub LiteOverlayRegionChanged(regionName As String, region As RectRegion)
+        If InvokeRequired Then
+            BeginInvoke(New Action(Of String, RectRegion)(AddressOf LiteOverlayRegionChanged), regionName, region)
+            Return
+        End If
+
+        ApplyLiteBarRegion(regionName, region)
+        PushLiteLiveConfig()
+        UpdateLiteAutoPotUi()
+    End Sub
+
+    Private Sub LiteOverlayRegionCommitted(regionName As String, region As RectRegion)
+        If InvokeRequired Then
+            BeginInvoke(New Action(Of String, RectRegion)(AddressOf LiteOverlayRegionCommitted), regionName, region)
+            Return
+        End If
+
+        ApplyLiteBarRegion(regionName, region)
+        PushLiteLiveConfig()
+        UpdateLiteAutoPotUi()
+        SavePersistedListState(False)
+        AppendLog($"Lite AutoPots: saved independent {If(String.Equals(regionName, "hp_bar", StringComparison.OrdinalIgnoreCase), "HP", "MP")} bar at {region.X}, {region.Y}, {region.W}, {region.H}.")
+    End Sub
+
+    Private Sub ApplyLiteBarRegion(regionName As String, region As RectRegion)
+        If region Is Nothing Then
+            Return
+        End If
+
+        If String.Equals(regionName, "hp_bar", StringComparison.OrdinalIgnoreCase) Then
+            Dim triggerPercent As Integer = GetLiteAutoPotTriggerPercent(_liteHpBarRegion, _liteAutoPotHpPointX)
+            _liteHpBarRegion = CloneRectRegion(region)
+            RepositionLiteTriggerPoint(_liteHpBarRegion, triggerPercent, _liteAutoPotHpPointX, _liteAutoPotHpPointY)
+        ElseIf String.Equals(regionName, "mp_bar", StringComparison.OrdinalIgnoreCase) Then
+            Dim triggerPercent As Integer = GetLiteAutoPotTriggerPercent(_liteMpBarRegion, _liteAutoPotMpPointX)
+            _liteMpBarRegion = CloneRectRegion(region)
+            RepositionLiteTriggerPoint(_liteMpBarRegion, triggerPercent, _liteAutoPotMpPointX, _liteAutoPotMpPointY)
+        End If
+    End Sub
+
+    Private Shared Sub RepositionLiteTriggerPoint(region As RectRegion, triggerPercent As Integer, ByRef pointX As Integer, ByRef pointY As Integer)
+        If region Is Nothing OrElse pointX < 0 OrElse pointY < 0 OrElse triggerPercent <= 0 Then
+            Return
+        End If
+
+        Dim offset As Integer = CInt(Math.Round(region.W * (triggerPercent / 100.0R), MidpointRounding.AwayFromZero))
+        pointX = Math.Max(region.X, Math.Min(region.X + region.W - 1, region.X + offset))
+        pointY = region.Y + Math.Max(0, (region.H - 1) \ 2)
+    End Sub
+
+    Private Sub ResetLiteBarsClicked(sender As Object, e As EventArgs)
+        ApplyLiteBarRegion("hp_bar", BotConfig.DefaultHpBarRect())
+        ApplyLiteBarRegion("mp_bar", BotConfig.DefaultMpBarRect())
+        PushLiteLiveConfig()
+        UpdateLiteAutoPotUi()
+        SavePersistedListState(False)
+        AppendLog("Lite AutoPots: Lite-only HP/MP rectangles reset to defaults. Combat Full settings were not changed.")
     End Sub
 
     Private Sub HandlePendingLitePointCapture()
@@ -6833,29 +6963,24 @@ Public Class Form1
                         Return
                     End If
 
-                    Dim sampledColor As Color
-                    If Not TrySampleLiteAutoPotPointColor(selected.MainWindowHandle, clientPoint.X, clientPoint.Y, sampledColor) Then
-                        AppendLog("Lite AutoPots: unable to sample the selected pixel color. Keep the Tantra window visible and try again.")
-                        _liteRightMouseWasDown = rightDown
-                        Return
-                    End If
-
                     If _pendingLitePointCapture = LitePointCaptureKind.Hp Then
                         _liteAutoPotHpPointX = Math.Max(0, clientPoint.X)
                         _liteAutoPotHpPointY = Math.Max(0, clientPoint.Y)
-                        _liteAutoPotHpColorEnabled = True
-                        _liteAutoPotHpColorArgb = sampledColor.ToArgb()
-                        AppendLog($"Lite AutoPots: HP point saved at {_liteAutoPotHpPointX}, {_liteAutoPotHpPointY}; sampled RGB {sampledColor.R}, {sampledColor.G}, {sampledColor.B}.")
+                        _liteAutoPotHpColorEnabled = False
+                        _liteAutoPotHpColorArgb = 0
+                        Dim triggerPercent As Integer = GetLiteAutoPotTriggerPercent(expectedRegion, _liteAutoPotHpPointX)
+                        AppendLog($"Lite AutoPots: HP potion trigger saved at {triggerPercent}%; the complete HP bar will be scanned.")
                     ElseIf _pendingLitePointCapture = LitePointCaptureKind.Mp Then
                         _liteAutoPotMpPointX = Math.Max(0, clientPoint.X)
                         _liteAutoPotMpPointY = Math.Max(0, clientPoint.Y)
-                        _liteAutoPotMpColorEnabled = True
-                        _liteAutoPotMpColorArgb = sampledColor.ToArgb()
-                        AppendLog($"Lite AutoPots: Mana point saved at {_liteAutoPotMpPointX}, {_liteAutoPotMpPointY}; sampled RGB {sampledColor.R}, {sampledColor.G}, {sampledColor.B}.")
+                        _liteAutoPotMpColorEnabled = False
+                        _liteAutoPotMpColorArgb = 0
+                        Dim triggerPercent As Integer = GetLiteAutoPotTriggerPercent(expectedRegion, _liteAutoPotMpPointX)
+                        AppendLog($"Lite AutoPots: Mana potion trigger saved at {triggerPercent}%; the complete Mana bar will be scanned.")
                     End If
                     _pendingLitePointCapture = LitePointCaptureKind.None
                     UpdateLiteAutoPotUi()
-                    PushLiveConfig()
+                    PushLiteLiveConfig()
                     SavePersistedListState(False)
                 End If
             End If
@@ -6881,9 +7006,9 @@ Public Class Form1
 
     Private Function GetLiteAutoPotBarRegion(kind As LitePointCaptureKind) As RectRegion
         If kind = LitePointCaptureKind.Hp Then
-            Return BuildRectOrFallback("hp_bar", BotConfig.DefaultHpBarRect())
+            Return CloneRectRegion(If(_liteHpBarRegion, BotConfig.DefaultHpBarRect()))
         End If
-        Return BuildRectOrFallback("mp_bar", BotConfig.DefaultMpBarRect())
+        Return CloneRectRegion(If(_liteMpBarRegion, BotConfig.DefaultMpBarRect()))
     End Function
 
     Private Shared Function IsPointInsideRegion(region As RectRegion, pointX As Integer, pointY As Integer) As Boolean
@@ -7550,7 +7675,7 @@ Public Class Form1
                     "KATHANABOT - LITE TAB EXPLANATION (ENGLISH)",
                     "============================================================",
                     "",
-                    "- Lite is the simpler mode intended for slower computers. It uses the selected game window plus HP and MP sample points.",
+                    "- Lite is the simpler mode intended for slower computers. It uses the selected game window plus the configured HP and MP bar rectangles.",
                     "- Update refreshes the process list. Always select the correct Tantra window before starting Lite.",
                     "- Rename Process and Apply are optional. They only try to rename the selected window title.",
                     "- Save stores the Lite preset. Load restores the saved Lite settings.",
@@ -7560,10 +7685,11 @@ Public Class Form1
                     "- Start begins Lite using the selected process and the enabled Lite actions.",
                     "- Stop ends the Lite loop.",
                     "- Status shows whether Lite is ready or running. Lite Active tells you whether Lite is the active engine.",
-                    "- HP% and MP% are read from the Lite sample points, not from the Full OCR rectangles.",
-                    "- Enable AutoPots turns on the Lite HP and MP color check.",
-                    "- Select HP Level or Select Mana Level starts sampling. Take the sample when the bar is full, then right-click the exact point where you want the potion to trigger.",
-                    "- HP X/Y and MP X/Y show the saved trigger points.",
+                    "- HP% and MP% use the same complete-bar percentage detector as Combat Full; Combat Full itself is unchanged.",
+                    "- Enable AutoPots turns on the Lite HP and MP whole-bar checks.",
+                    "- Show HP/MP Overlay edits Lite-only bar rectangles. Drag a rectangle to move it and its white square to resize it; Full settings are not changed.",
+                    "- Select HP Level or Select Mana Level starts setup. Right-click horizontally at the desired trigger percentage; the current bar can be full, low, or empty.",
+                    "- HP trigger and MP trigger show the saved percentage and coordinates.",
                     "- Lite potion keys are fixed: 9 for Heal and 0 for Mana.",
                     "- Auto Accept Party/Ress accepts detected party or resurrection prompts automatically.",
                     "- Ask every (sec) sets the repeat delay for the custom party command.",
@@ -7687,7 +7813,7 @@ Public Class Form1
                     "KATHANABOT - EXPLICACION DE LA PESTANA LITE (ESPANOL)",
                     "============================================================",
                     "",
-                    "- Lite es el modo simple pensado para computadoras mas lentas. Usa la ventana seleccionada y puntos de muestra de HP y MP.",
+                    "- Lite es el modo simple pensado para computadoras mas lentas. Usa la ventana seleccionada y los rectangulos configurados de HP y MP.",
                     "- Update refresca la lista de procesos. Selecciona primero la ventana correcta de Tantra.",
                     "- Rename Process + Apply solo intenta cambiar el titulo de la ventana seleccionada. Es opcional.",
                     "- Save guarda el preset Lite. Load recupera la configuracion Lite guardada.",
@@ -7697,10 +7823,11 @@ Public Class Form1
                     "- Start inicia Lite usando el proceso seleccionado y las acciones Lite activadas.",
                     "- Stop detiene el loop Lite.",
                     "- Status muestra si Lite esta listo o corriendo. Lite Active indica si Lite es el motor activo.",
-                    "- HP% y MP% salen de los puntos de muestra Lite, no de los rectangulos OCR del modo Full.",
-                    "- Enable AutoPots activa el control de color de HP y MP.",
-                    "- Select HP Level y Select Mana Level inician la captura. Toma la muestra con la barra llena y luego haz clic derecho en el punto exacto donde quieres activar la pocion.",
-                    "- HP X/Y y MP X/Y muestran los puntos guardados.",
+                    "- HP% y MP% usan el mismo detector de porcentaje de barra completa que Combat Full; Combat Full no cambia.",
+                    "- Enable AutoPots activa la lectura de las barras completas de HP y MP en Lite.",
+                    "- Show HP/MP Overlay edita rectangulos exclusivos de Lite. Arrastra el rectangulo para moverlo y el cuadro blanco para cambiar su tamano; Full no cambia.",
+                    "- Select HP Level y Select Mana Level inician la configuracion. Haz clic derecho horizontalmente en el porcentaje deseado; la barra puede estar llena, baja o vacia.",
+                    "- HP trigger y MP trigger muestran el porcentaje y las coordenadas guardadas.",
                     "- En Lite las teclas de pocion son fijas: 9 para Heal y 0 para Mana.",
                     "- Auto Accept Party/Ress acepta automaticamente prompts de party o ress detectados por OCR.",
                     "- Ask every (sec) define el intervalo del comando repetido.",
@@ -7820,7 +7947,7 @@ Public Class Form1
                     "KATHANABOT - PALIWANAG NG LITE TAB (FILIPINO)",
                     "============================================================",
                     "",
-                    "- Ang Lite ay mas simpleng mode na para sa mas mababagal na computer. Gumagamit ito ng selected na game window at HP/MP sample points.",
+                    "- Ang Lite ay mas simpleng mode na para sa mas mababagal na computer. Gumagamit ito ng selected game window at configured HP/MP bar rectangles.",
                     "- Update nagre-refresh ng process list. Piliin muna ang tamang Tantra window bago simulan ang Lite.",
                     "- Rename Process + Apply ay optional lang at susubok lang magpalit ng title ng napiling window.",
                     "- Save nagsa-save ng Lite preset. Load nagbabalik ng na-save na Lite settings.",
@@ -7830,10 +7957,11 @@ Public Class Form1
                     "- Start nagsisimula ng Lite gamit ang selected process at enabled Lite actions.",
                     "- Stop humihinto sa Lite loop.",
                     "- Status nagpapakita kung ready o running ang Lite. Lite Active nagsasabi kung Lite ang active engine.",
-                    "- HP% at MP% ay galing sa Lite sample points, hindi sa Full OCR regions.",
-                    "- Enable AutoPots binubuksan ang Lite HP/MP color check.",
-                    "- Select HP Level at Select Mana Level nagsisimula ng capture. Kumuha ng sample kapag puno ang bar, tapos right-click ang eksaktong trigger point.",
-                    "- HP X/Y at MP X/Y ang saved points.",
+                    "- HP% at MP% ay gumagamit ng parehong complete-bar percentage detector ng Combat Full; walang binago sa Combat Full.",
+                    "- Enable AutoPots binubuksan ang Lite HP/MP whole-bar checks.",
+                    "- Show HP/MP Overlay ay nag-e-edit ng Lite-only bar rectangles. I-drag para ilipat at gamitin ang white square para mag-resize; hindi mababago ang Full settings.",
+                    "- Select HP Level at Select Mana Level nagsisimula ng setup. Right-click sa horizontal trigger percentage; puwedeng full, low, o empty ang bar.",
+                    "- HP trigger at MP trigger ang nagpapakita ng saved percentage at coordinates.",
                     "- Fixed ang Lite potion keys: 9 para sa Heal at 0 para sa Mana.",
                     "- Auto Accept Party/Ress awtomatikong tumatanggap ng OCR-detected prompts.",
                     "- Ask every (sec) ang pagitan ng paulit-ulit na party command.",
@@ -10083,12 +10211,11 @@ Public Class Form1
         cfg.LiteMpCheckPointY = _liteAutoPotMpPointY
         cfg.LiteMpCheckColorEnabled = _liteAutoPotMpColorEnabled
         cfg.LiteMpCheckColorArgb = _liteAutoPotMpColorArgb
-        ApplyBarColorSettingsToConfig(cfg)
         cfg.LoopMs = 80
         cfg.RetargetMs = 550
         cfg.ForcedRetargetMs = 550
-        cfg.HpBar = BuildRect("hp_bar")
-        cfg.MpBar = BuildRect("mp_bar")
+        cfg.HpBar = CloneRectRegion(If(_liteHpBarRegion, BotConfig.DefaultHpBarRect()))
+        cfg.MpBar = CloneRectRegion(If(_liteMpBarRegion, BotConfig.DefaultMpBarRect()))
         cfg.BypassHpMpLimits = True
         cfg.PartyAutoAcceptEnabled = _litePartyAutoAccept
         cfg.PartyAskEnabled = _litePartyAskEnabled
@@ -10122,6 +10249,7 @@ Public Class Form1
 
         If chkLiteAutoPots IsNot Nothing AndAlso chkLiteAutoPots.Checked Then
             If _liteAutoPotHpPointX >= 0 AndAlso _liteAutoPotHpPointY >= 0 Then
+                Dim hpTriggerPercent As Integer = GetLiteAutoPotTriggerPercent(GetLiteAutoPotBarRegion(LitePointCaptureKind.Hp), _liteAutoPotHpPointX)
                 cfg.Actions.Add(New ActionRule With {
                     .CooldownId = "lite-autopot:hp",
                     .KeyName = "9",
@@ -10129,13 +10257,14 @@ Public Class Form1
                     .Role = "heal",
                     .Priority = 500,
                     .CooldownMs = 1000,
-                    .TriggerPercent = 1,
+                    .TriggerPercent = hpTriggerPercent,
                     .MinHpPercent = 1,
                     .MinMpPercent = 1
                 })
             End If
 
             If _liteAutoPotMpPointX >= 0 AndAlso _liteAutoPotMpPointY >= 0 Then
+                Dim mpTriggerPercent As Integer = GetLiteAutoPotTriggerPercent(GetLiteAutoPotBarRegion(LitePointCaptureKind.Mp), _liteAutoPotMpPointX)
                 cfg.Actions.Add(New ActionRule With {
                     .CooldownId = "lite-autopot:mp",
                     .KeyName = "0",
@@ -10143,7 +10272,7 @@ Public Class Form1
                     .Role = "mana",
                     .Priority = 510,
                     .CooldownMs = 1000,
-                    .TriggerPercent = 1,
+                    .TriggerPercent = mpTriggerPercent,
                     .MinHpPercent = 1,
                     .MinMpPercent = 1
                 })
@@ -11315,6 +11444,8 @@ Public Class Form1
 
             Dim liteState As New PersistedLiteState With {
                 .AutoPotsEnabled = (chkLiteAutoPots IsNot Nothing AndAlso chkLiteAutoPots.Checked),
+                .HpBarRect = CloneRectRegion(If(_liteHpBarRegion, BotConfig.DefaultHpBarRect())),
+                .MpBarRect = CloneRectRegion(If(_liteMpBarRegion, BotConfig.DefaultMpBarRect())),
                 .HpPointEnabled = (_liteAutoPotHpPointX >= 0 AndAlso _liteAutoPotHpPointY >= 0),
                 .HpPointX = _liteAutoPotHpPointX,
                 .HpPointY = _liteAutoPotHpPointY,
@@ -11363,6 +11494,8 @@ Public Class Form1
 
         _liteSyncInProgress = True
         Try
+            _liteHpBarRegion = CloneRectRegion(If(source.HpBarRect, BotConfig.DefaultHpBarRect()))
+            _liteMpBarRegion = CloneRectRegion(If(source.MpBarRect, BotConfig.DefaultMpBarRect()))
             If chkLiteAutoPots IsNot Nothing Then
                 chkLiteAutoPots.Checked = source.AutoPotsEnabled
             End If
@@ -13414,6 +13547,9 @@ Public Class Form1
         StopHpZeroAlarm()
         If _overlayForm IsNot Nothing AndAlso Not _overlayForm.IsDisposed Then
             _overlayForm.Close()
+        End If
+        If _liteOverlayForm IsNot Nothing AndAlso Not _liteOverlayForm.IsDisposed Then
+            _liteOverlayForm.Close()
         End If
         If _autoRelaunchClickOverlayForm IsNot Nothing AndAlso Not _autoRelaunchClickOverlayForm.IsDisposed Then
             _autoRelaunchClickOverlayForm.Close()

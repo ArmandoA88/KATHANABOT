@@ -1,15 +1,18 @@
-# KathanaBot 1.0.51
+# KathanaBot 1.0.53
 
 ## What changed
 
-- Every successful Full or Lite bot start now checks for updates automatically without delaying bot startup.
-- The Update tab turns green when the installed version is current and yellow when a newer semantic version is available. Checking is blue and failed checks are red.
-- Auto-update version control identifies this build as `1.0.51`; standalone update selection rejects older or equal versions.
+- Lite AutoPots now include a dedicated HP/MP calibration overlay in the same AutoPots panel.
+- Lite HP/MP rectangles are persisted under Lite settings and never read or write the Full Vision rectangles.
+- Lite uses the copied whole-bar detector without inheriting Full custom color settings.
+- Moving or resizing a Lite bar preserves its selected potion-trigger percentage.
+- The Lite Status panel and window are taller so every status line remains visible.
+- Combat Full detection, overlay behavior, and saved settings are unchanged.
 
 ## Recent change history - last 5
 
-1. **Automatic update status:** bot starts trigger a check and the tab color reports latest or available.
-2. **Dadati evade:** avoids the unkillable Dadati target by moving and retargeting instead of attacking forever.
-3. **Party status:** counts non-full parties more accurately and separates living from dead members.
-4. **Mob-name OCR:** compares multiple enhanced samples and keeps the strongest complete name through capture flicker.
-5. **Combat cooldowns and startup Notice:** stable per-skill timing plus automatic Notice closing after five seconds.
+1. **Lite-only HP/MP overlay:** Lite rectangles and calibration controls are completely separate from Full user settings.
+2. **Lite whole-bar AutoPots:** Full combat's HP/MP scanner is reused by Lite without sharing configuration.
+3. **Automatic update status:** bot starts trigger a check and the tab color reports latest or available.
+4. **Dadati evade:** avoids the unkillable Dadati target by moving and retargeting instead of attacking forever.
+5. **Party status:** counts non-full parties more accurately and separates living from dead members.
