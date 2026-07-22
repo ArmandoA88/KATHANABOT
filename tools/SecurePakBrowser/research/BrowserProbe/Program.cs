@@ -2,7 +2,7 @@ using KathanaSecurePakBrowser;
 
 if (args.Length is < 1 or > 2)
 {
-    Console.Error.WriteLine("Usage: BrowserProbe <data.pak> [--all|--rebuild-test]");
+    Console.Error.WriteLine("Usage: BrowserProbe <data.pak> [--all|--rebuild-test|--find=<path-text>|--grep=<term1|term2>|--extract=<archive-path>::<destination-file>]");
     return 2;
 }
 
@@ -23,6 +23,58 @@ if (args.Length == 2 && args[1].StartsWith("--find=", StringComparison.OrdinalIg
             $"stored={entry.StoredSize} flags=0x{entry.Flags:X4} crc={entry.Crc32:X8}");
     }
     return matches.Length > 0 ? 0 : 1;
+}
+
+if (args.Length == 2 && args[1].StartsWith("--grep=", StringComparison.OrdinalIgnoreCase))
+{
+    string[] queries = args[1]["--grep=".Length..]
+        .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    if (queries.Length == 0)
+    {
+        Console.Error.WriteLine("--grep requires one or more terms separated by | characters.");
+        return 2;
+    }
+
+    int scanned = 0;
+    int matched = 0;
+    foreach (SecurePakEntry entry in archive.Entries)
+    {
+        byte[] content = archive.ReadEntry(entry);
+        string[] hits = queries.Where(query => ContainsTextBytes(content, query)).ToArray();
+        scanned++;
+        if (hits.Length == 0) continue;
+
+        matched++;
+        Console.WriteLine($"content-match[{entry.Index}]={entry.Path} size={entry.OriginalSize} terms={string.Join(',', hits)}");
+    }
+
+    Console.WriteLine($"content-search-scanned={scanned} matched={matched}");
+    return matched > 0 ? 0 : 1;
+}
+
+if (args.Length == 2 && args[1].StartsWith("--extract=", StringComparison.OrdinalIgnoreCase))
+{
+    string specification = args[1]["--extract=".Length..];
+    int separator = specification.IndexOf("::", StringComparison.Ordinal);
+    if (separator <= 0 || separator >= specification.Length - 2)
+    {
+        Console.Error.WriteLine("Usage: BrowserProbe <data.pak> --extract=<archive-path>::<destination-file>");
+        return 2;
+    }
+
+    string archivePath = specification[..separator];
+    string destination = specification[(separator + 2)..];
+    SecurePakEntry? entry = archive.Entries.FirstOrDefault(candidate =>
+        candidate.Path.Equals(archivePath, StringComparison.OrdinalIgnoreCase));
+    if (entry is null)
+    {
+        Console.Error.WriteLine($"Archive entry was not found: {archivePath}");
+        return 1;
+    }
+
+    archive.ExtractEntry(entry, destination);
+    Console.WriteLine($"extracted[{entry.Index}]={entry.Path} -> {Path.GetFullPath(destination)} size={entry.OriginalSize}");
+    return 0;
 }
 
 if (args.Length == 2 && args[1].StartsWith("--tcc-test=", StringComparison.OrdinalIgnoreCase))
@@ -201,3 +253,41 @@ foreach (int index in indexes)
     }
 }
 return 0;
+
+static bool ContainsTextBytes(ReadOnlySpan<byte> content, string query)
+{
+    if (string.IsNullOrWhiteSpace(query)) return false;
+
+    byte[] ascii = System.Text.Encoding.ASCII.GetBytes(query);
+    if (ContainsAsciiIgnoreCase(content, ascii)) return true;
+
+    byte[] utf16Le = System.Text.Encoding.Unicode.GetBytes(query);
+    if (ContainsAsciiIgnoreCase(content, utf16Le, unicodeStride: 2)) return true;
+
+    byte[] utf16Be = System.Text.Encoding.BigEndianUnicode.GetBytes(query);
+    return ContainsAsciiIgnoreCase(content, utf16Be, unicodeStride: 2);
+}
+
+static bool ContainsAsciiIgnoreCase(ReadOnlySpan<byte> content, ReadOnlySpan<byte> query, int unicodeStride = 1)
+{
+    if (query.Length == 0 || content.Length < query.Length) return false;
+    for (int offset = 0; offset <= content.Length - query.Length; offset++)
+    {
+        bool equal = true;
+        for (int index = 0; index < query.Length; index++)
+        {
+            byte expected = query[index];
+            byte actual = content[offset + index];
+            if (unicodeStride == 1 || index % unicodeStride == 0)
+            {
+                if (expected is >= (byte)'A' and <= (byte)'Z') expected = (byte)(expected + 32);
+                if (actual is >= (byte)'A' and <= (byte)'Z') actual = (byte)(actual + 32);
+            }
+            if (actual == expected) continue;
+            equal = false;
+            break;
+        }
+        if (equal) return true;
+    }
+    return false;
+}
