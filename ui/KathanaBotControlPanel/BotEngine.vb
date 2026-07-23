@@ -753,6 +753,7 @@ Public Class BotEngine
     Private Const NavigationKnownPoseMaxAgeMs As Integer = 15000
     Private Const NavigationProgressImprovementThreshold As Double = 8.0
     Private Const NavigationRecoveryCooldownMs As Integer = 1500
+    Private Const SessionHistoryMinDurationSeconds As Integer = 30
     Private Const RouteRecordingMinSamplesToSave As Integer = 6
     Private Const RouteRecordingMinSampleIntervalMs As Integer = 250
     Private Const NavigationRotationConfirmationsRequired As Integer = 2
@@ -790,9 +791,25 @@ Public Class BotEngine
     Private Const AttackBurstGapMs As Integer = 4
     Private Const StopKeyRepeatGapMs As Integer = 10
     Private Const ForegroundInputSettleMs As Integer = 15
-    Private Const CombatLockLostTargetConfirmFrames As Integer = 4
-    Private Const TargetSignalGraceMinMs As Integer = 1800
-    Private Const TargetSignalGraceMaxMs As Integer = 5000
+    ' Lowered from 4: fewer consecutive lost-signal frames tolerated before the combat lock
+    ' releases, so the agent stops "fighting" nothing and falls into search/travel much sooner
+    ' after a target genuinely disappears. Still tolerates one dropped OCR frame.
+    Private Const CombatLockLostTargetConfirmFrames As Integer = 2
+    ' Lowered from 1800/5000: shrinks how long target-signal hold keeps the agent "engaged" after
+    ' the last genuine sighting, so it stops fighting nothing and starts traveling much faster.
+    Private Const TargetSignalGraceMinMs As Integer = 600
+    Private Const TargetSignalGraceMaxMs As Integer = 1500
+    ' Hard ceiling on how long combat-lock/target-signal hold can keep the agent "engaged" with
+    ' no genuinely visible target window. Guards against a stuck/false-positive HP-bar or name
+    ' signal latching the agent into Fighting forever with no real mob on screen - past this many
+    ' seconds with no fresh target-window sighting, the lock is force-released so travel/search
+    ' can resume. Kept short so the search -> travel -> fight loop never visibly "sticks".
+    Private Const StuckCombatLockForceReleaseSeconds As Double = 6.0
+    ' The mob-HP-bar-color fallback in HasLivingTargetSignal only counts as a living target when
+    ' the target window was genuinely visible within this many ms - otherwise a persistently
+    ' noisy/miscalibrated HP-bar color read (never backed by a real visible target window) could
+    ' manufacture a "target" forever and permanently block search/travel.
+    Private Const MobHpFallbackMaxStaleMs As Integer = 4000
     Private Const LootScannerIntervalMs As Integer = 10000
     Private Const StartupCombatPriorityMs As Integer = 3000
     Private Const FullFrameRefreshMs As Integer = 500
@@ -848,10 +865,13 @@ Public Class BotEngine
     Private _lastCaptureMethodName As String = "none"
     Private _lastStatusRaisedAt As DateTime = DateTime.MinValue
     Private _lastStatusRaisedSignature As String = ""
+    Private _lastStuckLockReleaseLogAt As DateTime = DateTime.MinValue
     Private Shared ReadOnly _captureMethodSync As New Object()
     Private Shared ReadOnly _captureMethodByWindow As New Dictionary(Of IntPtr, CaptureClientMethod)()
     Private Shared _captureBackendPreference As String = "auto"
     Private Shared ReadOnly NavigationRouteStorageRoot As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel", "navigation_routes")
+    Public Shared ReadOnly SessionHistoryFilePath As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel", "session_history.csv")
+    Private Shared ReadOnly _sessionHistorySync As New Object()
     Private Shared ReadOnly NavigationRouteJsonOptions As New JsonSerializerOptions With {.WriteIndented = True}
     Private Shared ReadOnly _recordedGraphCache As New Dictionary(Of String, List(Of RecordedNavigationGraph))(StringComparer.OrdinalIgnoreCase)
     Private Shared ReadOnly _recordedGraphCacheSync As New Object()
@@ -860,6 +880,11 @@ Public Class BotEngine
     Private _status As New BotStatus()
     Private _cts As CancellationTokenSource
     Private _task As Task
+    ' Bumped on every Start()/Stop(); detached OCR Task.Run scans capture the generation
+    ' at launch and their harvested results are discarded if the generation has since changed,
+    ' so a scan that finishes after Stop()/Start() can never write into a newer/reset session.
+    Private _runGeneration As Long = 0L
+    Private ReadOnly _lastOcrFaultLogAt As New Dictionary(Of String, DateTime)()
     Private _lastNormalRetarget As DateTime = DateTime.MinValue
     Private _lastForcedRetarget As DateTime = DateTime.MinValue
     Private _lastDadatiEvadeAt As DateTime = DateTime.MinValue
@@ -882,8 +907,10 @@ Public Class BotEngine
     Private _cachedMobName As String = ""
     Private _mobNameOcrStartedAt As DateTime = DateTime.MinValue
     Private _mobNameOcrTask As Task(Of String) = Nothing
+    Private _mobNameOcrTaskGeneration As Long = -1L
     Private _lastMobHpTextScan As DateTime = DateTime.MinValue
     Private _mobHpTextOcrTask As Task(Of String) = Nothing
+    Private _mobHpTextOcrTaskGeneration As Long = -1L
     Private _lastMobHpText As String = ""
     Private _lastMobDetectedMaxHp As Integer = -1
     Private _lastHardcodedVisionStatsSentAt As DateTime = DateTime.MinValue
@@ -909,6 +936,7 @@ Public Class BotEngine
     Private _lastPartyInviteScan As DateTime = DateTime.MinValue
     Private _lastPartyInviteAccept As DateTime = DateTime.MinValue
     Private _partyInviteOcrTask As Task(Of String) = Nothing
+    Private _partyInviteOcrTaskGeneration As Long = -1L
     Private _lastPartyInviteCandidate As String = ""
     Private _lastPartyAskAt As DateTime = DateTime.MinValue
     Private _partyAskSuppressedInParty As Boolean = False
@@ -923,6 +951,7 @@ Public Class BotEngine
     Private _pendingPartyConfirmCount As Integer = 0
     Private _lastUnreachableScan As DateTime = DateTime.MinValue
     Private _unreachableOcrTask As Task(Of String) = Nothing
+    Private _unreachableOcrTaskGeneration As Long = -1L
     Private _lastUnreachableCandidate As String = ""
     Private _unreachableConfirmCount As Integer = 0
     Private _unreachableLastMatchAt As DateTime = DateTime.MinValue
@@ -932,6 +961,7 @@ Public Class BotEngine
     Private _unreachableClearCount As Integer = 0
     Private _lastDisconnectScan As DateTime = DateTime.MinValue
     Private _disconnectOcrTask As Task(Of String) = Nothing
+    Private _disconnectOcrTaskGeneration As Long = -1L
     Private _lastDisconnectCandidate As String = ""
     Private _disconnectConfirmCount As Integer = 0
     Private _disconnectLastMatchAt As DateTime = DateTime.MinValue
@@ -946,12 +976,14 @@ Public Class BotEngine
     Private _lastExpPercent As Double = -1
     Private _lastExpOcrAt As DateTime = DateTime.MinValue
     Private _expOcrTask As Task(Of Double) = Nothing
+    Private _expOcrTaskGeneration As Long = -1L
     Private _lastExpRateSampleAt As DateTime = DateTime.MinValue
     Private _lastExpRateSamplePercent As Double = -1
     Private _lastExpPerHour As Double = -1
     Private _lastRupiahsTotal As Long = -1
     Private _lastRupiahsOcrAt As DateTime = DateTime.MinValue
     Private _rupiahsOcrTask As Task(Of Long) = Nothing
+    Private _rupiahsOcrTaskGeneration As Long = -1L
     Private _lastRupiahsRateSampleAt As DateTime = DateTime.MinValue
     Private _lastRupiahsRateSampleTotal As Long = -1
     Private _lastRupiahsPerHour As Double = -1
@@ -1167,6 +1199,7 @@ Public Class BotEngine
             If _task IsNot Nothing AndAlso Not _task.IsCompleted Then
                 Return
             End If
+            _runGeneration += 1L
             _cts = New CancellationTokenSource()
             _status.Running = True
             _status.ErrorMessage = ""
@@ -1360,6 +1393,7 @@ Public Class BotEngine
             _lastActionTick.Clear()
             _lastStatusRaisedAt = DateTime.MinValue
             _lastStatusRaisedSignature = ""
+            _lastStuckLockReleaseLogAt = DateTime.MinValue
             SyncLock _perfSync
                 _adaptivePerformanceActive = False
                 _adaptiveSlowLoopCount = 0
@@ -1383,6 +1417,10 @@ Public Class BotEngine
             If _cts IsNot Nothing Then
                 _cts.Cancel()
             End If
+            ' Bump immediately so any OCR scan that finishes during (or after) shutdown is
+            ' recognized as belonging to a stopped session and its result is discarded on harvest,
+            ' even if the field-level reset below hasn't run yet.
+            _runGeneration += 1L
             localTask = _task
         End SyncLock
 
@@ -1393,7 +1431,27 @@ Public Class BotEngine
             End Try
         End If
 
+        Dim sessionStartedAtUtc As DateTime
+        Dim sessionExpPercent As Double
+        Dim sessionExpPerHour As Double
+        Dim sessionRupiahsTotal As Long
+        Dim sessionRupiahsPerHour As Double
+        Dim sessionEngineRestartCount As Integer
+        Dim sessionRepairTriggerCount As Integer
+        Dim sessionUnreachableEvents As Integer
+        Dim sessionCharacterName As String
+
         SyncLock _sync
+            sessionStartedAtUtc = _status.RunStartedAtUtc
+            sessionExpPercent = _lastExpPercent
+            sessionExpPerHour = _lastExpPerHour
+            sessionRupiahsTotal = _lastRupiahsTotal
+            sessionRupiahsPerHour = _lastRupiahsPerHour
+            sessionEngineRestartCount = _engineRestartCount
+            sessionRepairTriggerCount = _repairTriggerCount
+            sessionUnreachableEvents = _agentUnreachableEvents
+            sessionCharacterName = _lastCharacterName
+
             _status.Running = False
             _status.RunStartedAtUtc = DateTime.MinValue
             _lootScannerCapturePending = False
@@ -1403,11 +1461,84 @@ Public Class BotEngine
             _pendingLootPickupVerifyAt = DateTime.MinValue
             _lastArrowUnbundleAt = DateTime.MinValue
             _arrowUnbundleNextIndex = 0
+            ' Drop references to any still-in-flight detached OCR tasks so a late completion
+            ' cannot be mistaken for a fresh scan by a subsequent Start() (see generation guards
+            ' in the OCR harvest functions above).
+            _mobNameOcrTask = Nothing
+            _mobHpTextOcrTask = Nothing
+            _partyInviteOcrTask = Nothing
+            _unreachableOcrTask = Nothing
+            _disconnectOcrTask = Nothing
+            _expOcrTask = Nothing
+            _rupiahsOcrTask = Nothing
         End SyncLock
         ReleaseLootScannerAltKey()
         ClearLatestLoopFrame()
+
+        If sessionStartedAtUtc <> DateTime.MinValue Then
+            Dim sessionEndedAtUtc As DateTime = DateTime.UtcNow
+            If (sessionEndedAtUtc - sessionStartedAtUtc).TotalSeconds >= SessionHistoryMinDurationSeconds Then
+                AppendSessionHistoryRecord(sessionStartedAtUtc, sessionEndedAtUtc, sessionExpPercent, sessionExpPerHour,
+                    sessionRupiahsTotal, sessionRupiahsPerHour, sessionEngineRestartCount, sessionRepairTriggerCount,
+                    sessionUnreachableEvents, sessionCharacterName)
+            End If
+        End If
+
         RaiseEvent LogLine("Bot loop stopped.")
     End Sub
+
+    ''' <summary>
+    ''' Appends one row to a persistent CSV of past runs (%AppData%\KathanaBotControlPanel\session_history.csv)
+    ''' so farming efficiency across sessions/spots can be compared after the fact. Best-effort: a write
+    ''' failure is logged but never blocks Stop().
+    ''' </summary>
+    Private Sub AppendSessionHistoryRecord(startedAtUtc As DateTime, endedAtUtc As DateTime, expPercentAtStop As Double,
+                                            expPerHour As Double, rupiahsTotal As Long, rupiahsPerHour As Double,
+                                            engineRestartCount As Integer, repairTriggerCount As Integer,
+                                            unreachableEvents As Integer, characterName As String)
+        Try
+            SyncLock _sessionHistorySync
+                Dim directoryPath As String = Path.GetDirectoryName(SessionHistoryFilePath)
+                If Not Directory.Exists(directoryPath) Then
+                    Directory.CreateDirectory(directoryPath)
+                End If
+
+                Dim isNewFile As Boolean = Not File.Exists(SessionHistoryFilePath)
+                Dim durationMinutes As Double = Math.Max(0, (endedAtUtc - startedAtUtc).TotalMinutes)
+
+                Using writer As New StreamWriter(SessionHistoryFilePath, append:=True, encoding:=Encoding.UTF8)
+                    If isNewFile Then
+                        writer.WriteLine("StartedAtUtc,EndedAtUtc,DurationMinutes,CharacterName,ExpPercentAtStop,ExpPerHour,RupiahsTotal,RupiahsPerHour,EngineRestartCount,RepairTriggerCount,UnreachableEvents")
+                    End If
+
+                    Dim fields As String() = {
+                        startedAtUtc.ToString("o"),
+                        endedAtUtc.ToString("o"),
+                        durationMinutes.ToString("0.0", Globalization.CultureInfo.InvariantCulture),
+                        EscapeCsvField(characterName),
+                        expPercentAtStop.ToString("0.0", Globalization.CultureInfo.InvariantCulture),
+                        expPerHour.ToString("0.00", Globalization.CultureInfo.InvariantCulture),
+                        rupiahsTotal.ToString(Globalization.CultureInfo.InvariantCulture),
+                        rupiahsPerHour.ToString("0.00", Globalization.CultureInfo.InvariantCulture),
+                        engineRestartCount.ToString(Globalization.CultureInfo.InvariantCulture),
+                        repairTriggerCount.ToString(Globalization.CultureInfo.InvariantCulture),
+                        unreachableEvents.ToString(Globalization.CultureInfo.InvariantCulture)
+                    }
+                    writer.WriteLine(String.Join(",", fields))
+                End Using
+            End SyncLock
+        Catch ex As Exception
+            RaiseEvent LogLine("Unable to write session history record: " & ex.Message)
+        End Try
+    End Sub
+
+    Private Shared Function EscapeCsvField(value As String) As String
+        Dim text As String = If(value, "")
+        If text.IndexOfAny({","c, """"c, ControlChars.Lf, ControlChars.Cr}) >= 0 Then
+            Return """" & text.Replace("""", """""") & """"
+        End If
+        Return text
+    End Function
 
     Public Function CaptureSnapshot() As Bitmap
         Dim cfg As BotConfig
@@ -2078,6 +2209,19 @@ Public Class BotEngine
             Dim missingNameBlockedByFilter As Boolean = monsterFilterActive AndAlso targetWindowVisible AndAlso normMobName = ""
             Dim nameConfirmationBlockedByFilter As Boolean = monsterFilterActive AndAlso targetWindowVisible AndAlso (Not missingNameBlockedByFilter) AndAlso (Not monsterFilterBlockedTarget) AndAlso (Not nameConfirmedForAttack)
             Dim targetHasHpSignal As Boolean = HasLivingTargetSignal(targetWindowVisible, mobHpPct, cfg)
+            If (Not targetWindowVisible) AndAlso targetHasHpSignal Then
+                ' Only trust the mob-HP-bar-color fallback (used to keep the lock through the last
+                ' sliver of a kill) if the target window was genuinely visible recently. Otherwise a
+                ' persistently noisy/miscalibrated color read can manufacture a target forever with
+                ' the window never actually shown, which used to latch the agent into Fighting with
+                ' no real mob on screen and permanently block search/travel.
+                Dim windowRecentlySeen As Boolean =
+                    _lastTargetWindowSeen <> DateTime.MinValue AndAlso
+                    (now - _lastTargetWindowSeen).TotalMilliseconds <= MobHpFallbackMaxStaleMs
+                If Not windowRecentlySeen Then
+                    targetHasHpSignal = False
+                End If
+            End If
             Dim nameOnlyNonMobTarget As Boolean = normMobName <> "" AndAlso (Not targetHasHpSignal) AndAlso mobMaxHp <= 0
             If nameOnlyNonMobTarget Then
                 ClearCombatLock()
@@ -2096,6 +2240,33 @@ Public Class BotEngine
                 _noTargetBeganAt = DateTime.MinValue
             End If
             Dim combatLockActive As Boolean = UpdateCombatLockState(now, cfg, currentTargetAliveSignal, normMobName)
+
+            ' Safety net: combat lock / target-signal hold can keep the agent "engaged" for a
+            ' bounded grace window after a target genuinely disappears, but a stuck or falsely
+            ' positive HP-bar/name read can otherwise latch it forever with no real mob on
+            ' screen, silently blocking travel. Once the target window hasn't genuinely been
+            ' seen for a long time, force-release the lock/hold so search/travel can resume.
+            If Not targetWindowVisible AndAlso (combatLockActive OrElse IsRecentTargetSignalHoldActive(now, cfg)) Then
+                Dim neverSeenTargetWindow As Boolean = (_lastTargetWindowSeen = DateTime.MinValue)
+                Dim sinceLastRealTargetSeconds As Double =
+                    If(neverSeenTargetWindow, 0.0, (now - _lastTargetWindowSeen).TotalSeconds)
+                If neverSeenTargetWindow OrElse sinceLastRealTargetSeconds >= StuckCombatLockForceReleaseSeconds Then
+                    ClearCombatLock()
+                    combatLockActive = False
+                    _lastTargetValidAt = DateTime.MinValue
+                    _lastLivingTargetSignalAt = DateTime.MinValue
+                    ' Rate-limited: without this, a source that keeps refreshing _lastAttackAction
+                    ' (which also feeds IsRecentTargetSignalHoldActive) could re-enter this branch
+                    ' and log every single loop tick.
+                    If _lastStuckLockReleaseLogAt = DateTime.MinValue OrElse (now - _lastStuckLockReleaseLogAt).TotalSeconds >= 15 Then
+                        _lastStuckLockReleaseLogAt = now
+                        Dim sinceDescription As String =
+                            If(neverSeenTargetWindow, "no target window has been seen yet", $"no target window seen for {sinceLastRealTargetSeconds:0}s")
+                        RaiseEvent LogLine($"{sinceDescription} - releasing combat lock so the agent can search/travel.")
+                    End If
+                End If
+            End If
+
             Dim canTrackFirstHitTarget As Boolean = currentTargetAliveSignal AndAlso (Not monsterFilterBlockedTarget) AndAlso (Not missingNameBlockedByFilter) AndAlso (Not avoidHighMaxHpTarget) AndAlso (Not evadeDadatiTarget)
             Dim currentFirstHitSignature As String = normMobName
             If canTrackFirstHitTarget Then
@@ -2296,7 +2467,13 @@ Public Class BotEngine
                         MarkActionUsed(attackAction)
                         sentKeys.Add(attackAction.KeyName)
                         _lastAttackAction = DateTime.UtcNow
-                        BeginCombatLock(targetSignature, DateTime.UtcNow)
+                        ' Only (re-)establish the lock when this attack was justified by a genuine
+                        ' target-alive signal, not merely by an already-stale hold/lock that let
+                        ' effectiveTargetValid through - otherwise every permitted attack would
+                        ' refresh the very lock that permitted it, sustaining it forever.
+                        If targetValid Then
+                            BeginCombatLock(targetSignature, DateTime.UtcNow)
+                        End If
                         _firstHitPending = False
                         _firstHitWindowUntil = DateTime.MinValue
                         RecordAttackWithoutDamage(targetSignature)
@@ -2918,10 +3095,9 @@ Public Class BotEngine
             Return False
         End If
 
-        If cfg.LevelingStopHpEnabled AndAlso hpPct <= Math.Max(1, cfg.LevelingStopHpPercent) Then
-            guardrailReason = $"HP reached leveling stop threshold ({hpPct:0.0}% <= {cfg.LevelingStopHpPercent}%)."
-            Return True
-        End If
+        ' Intentionally does not stop on low/zero HP: the HP-bar read can be a false positive
+        ' (OCR/pixel misread), and a false stop is worse than continuing - Auto-Pot/heal keys and
+        ' the HP=0 alarm/notification already handle the real-HP-loss case without halting the agent.
 
         If cfg.LevelingStopMpEnabled AndAlso mpPct <= Math.Max(1, cfg.LevelingStopMpPercent) Then
             guardrailReason = $"MP reached leveling stop threshold ({mpPct:0.0}% <= {cfg.LevelingStopMpPercent}%)."
@@ -6068,23 +6244,44 @@ Public Class BotEngine
         Return New Rectangle(minX, minY, Math.Max(1, maxX - minX + 1), Math.Max(1, maxY - minY + 1))
     End Function
 
+    ''' <summary>
+    ''' Rate-limited fault log for background OCR scans so a repeatedly-faulting scan is visible
+    ''' in the log (rather than silently going stale) without flooding it on every loop tick.
+    ''' </summary>
+    Private Sub LogOcrFault(channel As String, ex As Exception)
+        Dim now As DateTime = DateTime.UtcNow
+        Dim lastAt As DateTime
+        If _lastOcrFaultLogAt.TryGetValue(channel, lastAt) AndAlso (now - lastAt).TotalSeconds < 30 Then
+            Return
+        End If
+        _lastOcrFaultLogAt(channel) = now
+        RaiseEvent LogLine($"{channel} OCR read failed: {ex.Message}")
+    End Sub
+
     Private Function ReadMobNameIfNeeded(frame As Bitmap, region As RectRegion, now As DateTime, Optional forceRefresh As Boolean = False, Optional minIntervalMs As Integer = 650) As String
         If frame Is Nothing Then
             Return ""
         End If
 
         If _mobNameOcrTask IsNot Nothing AndAlso _mobNameOcrTask.IsCompleted Then
+            Dim taskGeneration As Long = _mobNameOcrTaskGeneration
+            Dim isCurrent As Boolean = taskGeneration = _runGeneration
             Try
                 Dim candidate As String = NormalizeMobNameDisplay(If(_mobNameOcrTask.Result, "").Trim())
-                If Not String.IsNullOrWhiteSpace(candidate) Then
-                    _cachedMobName = candidate
-                    _lastMobNameDetectedAt = now
-                ElseIf _lastMobNameDetectedAt = DateTime.MinValue OrElse
-                       (now - _lastMobNameDetectedAt).TotalMilliseconds > MobNameOcrRetentionMs Then
-                    _cachedMobName = ""
+                If isCurrent Then
+                    If Not String.IsNullOrWhiteSpace(candidate) Then
+                        _cachedMobName = candidate
+                        _lastMobNameDetectedAt = now
+                    ElseIf _lastMobNameDetectedAt = DateTime.MinValue OrElse
+                           (now - _lastMobNameDetectedAt).TotalMilliseconds > MobNameOcrRetentionMs Then
+                        _cachedMobName = ""
+                    End If
+                    _lastMobNameRead = now
                 End If
-                _lastMobNameRead = now
-            Catch
+            Catch ex As Exception
+                If isCurrent Then
+                    LogOcrFault("Mob name", ex)
+                End If
             End Try
             _mobNameOcrTask = Nothing
         End If
@@ -6110,6 +6307,7 @@ Public Class BotEngine
             End Using
 
             _mobNameOcrStartedAt = now
+            _mobNameOcrTaskGeneration = _runGeneration
             _mobNameOcrTask = Task.Run(
                 Function()
                     Try
@@ -6151,12 +6349,20 @@ Public Class BotEngine
 
     Private Function UpdateMobMaxHpTracking(cfg As BotConfig, frame As Bitmap, region As RectRegion, targetWindowVisible As Boolean, mobHpPercent As Double, now As DateTime) As Integer
         If _mobHpTextOcrTask IsNot Nothing AndAlso _mobHpTextOcrTask.IsCompleted Then
+            Dim taskGeneration As Long = _mobHpTextOcrTaskGeneration
+            Dim isCurrent As Boolean = taskGeneration = _runGeneration
             Try
-                _lastMobHpText = NormalizeMobHpText(If(_mobHpTextOcrTask.Result, "").Trim())
-                _lastMobDetectedMaxHp = ParseMobMaxHpFromText(_lastMobHpText)
-            Catch
-                _lastMobHpText = ""
-                _lastMobDetectedMaxHp = -1
+                Dim text As String = NormalizeMobHpText(If(_mobHpTextOcrTask.Result, "").Trim())
+                If isCurrent Then
+                    _lastMobHpText = text
+                    _lastMobDetectedMaxHp = ParseMobMaxHpFromText(_lastMobHpText)
+                End If
+            Catch ex As Exception
+                If isCurrent Then
+                    _lastMobHpText = ""
+                    _lastMobDetectedMaxHp = -1
+                    LogOcrFault("Mob HP text", ex)
+                End If
             End Try
             _mobHpTextOcrTask = Nothing
         End If
@@ -6204,6 +6410,7 @@ Public Class BotEngine
             exactCrop = Nothing
             paddedCrop = Nothing
             _lastMobHpTextScan = now
+            _mobHpTextOcrTaskGeneration = _runGeneration
             _mobHpTextOcrTask = Task.Run(
                 Function()
                     Using workerExactCrop
@@ -6400,12 +6607,17 @@ Public Class BotEngine
 
     Private Function GetCachedPranaExpPercent() As Double
         If _expOcrTask IsNot Nothing AndAlso _expOcrTask.IsCompleted Then
+            Dim taskGeneration As Long = _expOcrTaskGeneration
+            Dim isCurrent As Boolean = taskGeneration = _runGeneration
             Try
                 Dim parsed As Double = _expOcrTask.Result
-                If parsed >= 0 AndAlso parsed <= 100 Then
+                If isCurrent AndAlso parsed >= 0 AndAlso parsed <= 100 Then
                     _lastExpPercent = parsed
                 End If
-            Catch
+            Catch ex As Exception
+                If isCurrent Then
+                    LogOcrFault("EXP percent", ex)
+                End If
             End Try
             _expOcrTask = Nothing
         End If
@@ -6442,6 +6654,7 @@ Public Class BotEngine
 
         Try
             _lastExpOcrAt = now
+            _expOcrTaskGeneration = _runGeneration
             _expOcrTask = Task.Run(
                 Function()
                     Try
@@ -6530,12 +6743,17 @@ Public Class BotEngine
 
     Private Function GetCachedRupiahsTotal() As Long
         If _rupiahsOcrTask IsNot Nothing AndAlso _rupiahsOcrTask.IsCompleted Then
+            Dim taskGeneration As Long = _rupiahsOcrTaskGeneration
+            Dim isCurrent As Boolean = taskGeneration = _runGeneration
             Try
                 Dim parsed As Long = _rupiahsOcrTask.Result
-                If parsed >= 0 Then
+                If isCurrent AndAlso parsed >= 0 Then
                     _lastRupiahsTotal = parsed
                 End If
-            Catch
+            Catch ex As Exception
+                If isCurrent Then
+                    LogOcrFault("Rupiahs total", ex)
+                End If
             End Try
             _rupiahsOcrTask = Nothing
         End If
@@ -6562,6 +6780,7 @@ Public Class BotEngine
 
         Try
             _lastRupiahsOcrAt = now
+            _rupiahsOcrTaskGeneration = _runGeneration
             _rupiahsOcrTask = Task.Run(
                 Function()
                     Try
@@ -6633,10 +6852,18 @@ Public Class BotEngine
         End If
 
         If _partyInviteOcrTask IsNot Nothing AndAlso _partyInviteOcrTask.IsCompleted Then
+            Dim taskGeneration As Long = _partyInviteOcrTaskGeneration
+            Dim isCurrent As Boolean = taskGeneration = _runGeneration
             Try
-                _lastPartyInviteCandidate = If(_partyInviteOcrTask.Result, "").Trim()
-            Catch
-                _lastPartyInviteCandidate = ""
+                Dim text As String = If(_partyInviteOcrTask.Result, "").Trim()
+                If isCurrent Then
+                    _lastPartyInviteCandidate = text
+                End If
+            Catch ex As Exception
+                If isCurrent Then
+                    _lastPartyInviteCandidate = ""
+                    LogOcrFault("Party invite", ex)
+                End If
             End Try
             _partyInviteOcrTask = Nothing
         End If
@@ -6693,6 +6920,7 @@ Public Class BotEngine
             End If
 
             _lastPartyInviteScan = now
+            _partyInviteOcrTaskGeneration = _runGeneration
             _partyInviteOcrTask = Task.Run(
                 Function()
                     Try
@@ -6838,13 +7066,23 @@ Public Class BotEngine
         End If
 
         If _disconnectOcrTask IsNot Nothing AndAlso _disconnectOcrTask.IsCompleted Then
+            Dim taskGeneration As Long = _disconnectOcrTaskGeneration
+            Dim isCurrent As Boolean = taskGeneration = _runGeneration
             Try
-                _lastDisconnectCandidate = If(_disconnectOcrTask.Result, "").Trim()
-            Catch
-                _lastDisconnectCandidate = ""
+                Dim text As String = If(_disconnectOcrTask.Result, "").Trim()
+                If isCurrent Then
+                    _lastDisconnectCandidate = text
+                End If
+            Catch ex As Exception
+                If isCurrent Then
+                    _lastDisconnectCandidate = ""
+                    LogOcrFault("Disconnect message", ex)
+                End If
             End Try
             _disconnectOcrTask = Nothing
-            ProcessDisconnectOcrResult(_lastDisconnectCandidate, now)
+            If isCurrent Then
+                ProcessDisconnectOcrResult(_lastDisconnectCandidate, now)
+            End If
         End If
 
         If _disconnectOcrTask IsNot Nothing Then
@@ -6867,6 +7105,7 @@ Public Class BotEngine
             End Using
 
             _lastDisconnectScan = now
+            _disconnectOcrTaskGeneration = _runGeneration
             _disconnectOcrTask = Task.Run(
                 Function()
                     Try
@@ -6974,67 +7213,79 @@ Public Class BotEngine
         End If
 
         If _unreachableOcrTask IsNot Nothing AndAlso _unreachableOcrTask.IsCompleted Then
+            Dim taskGeneration As Long = _unreachableOcrTaskGeneration
+            Dim isCurrent As Boolean = taskGeneration = _runGeneration
+            Dim harvestFailed As Boolean = False
             Try
-                _lastUnreachableCandidate = If(_unreachableOcrTask.Result, "").Trim()
-            Catch
-                _lastUnreachableCandidate = ""
+                Dim text As String = If(_unreachableOcrTask.Result, "").Trim()
+                If isCurrent Then
+                    _lastUnreachableCandidate = text
+                End If
+            Catch ex As Exception
+                harvestFailed = True
+                If isCurrent Then
+                    _lastUnreachableCandidate = ""
+                    LogOcrFault("Unreachable/repair prompt", ex)
+                End If
             End Try
             _unreachableOcrTask = Nothing
 
-            Dim matched As Boolean = IsUnreachablePrompt(_lastUnreachableCandidate)
-            Dim repairMatched As Boolean = IsRepairPrompt(_lastUnreachableCandidate)
-            If matched Then
-                _unreachableClearCount = 0
-                If Not _unreachableLatched Then
-                    If _unreachableLastMatchAt = DateTime.MinValue OrElse (now - _unreachableLastMatchAt).TotalMilliseconds > UnreachableConfirmWindowMs Then
-                        _unreachableConfirmCount = 1
+            If isCurrent AndAlso Not harvestFailed Then
+                Dim matched As Boolean = IsUnreachablePrompt(_lastUnreachableCandidate)
+                Dim repairMatched As Boolean = IsRepairPrompt(_lastUnreachableCandidate)
+                If matched Then
+                    _unreachableClearCount = 0
+                    If Not _unreachableLatched Then
+                        If _unreachableLastMatchAt = DateTime.MinValue OrElse (now - _unreachableLastMatchAt).TotalMilliseconds > UnreachableConfirmWindowMs Then
+                            _unreachableConfirmCount = 1
+                        Else
+                            _unreachableConfirmCount += 1
+                        End If
+                        _unreachableLastMatchAt = now
                     Else
-                        _unreachableConfirmCount += 1
+                        ' Stale unreachable text can stay on screen; ignore retriggers until OCR sees it clear.
+                        _unreachableConfirmCount = 0
                     End If
-                    _unreachableLastMatchAt = now
                 Else
-                    ' Stale unreachable text can stay on screen; ignore retriggers until OCR sees it clear.
                     _unreachableConfirmCount = 0
-                End If
-            Else
-                _unreachableConfirmCount = 0
-                _unreachableLastMatchAt = DateTime.MinValue
-                If _unreachableLatched Then
-                    _unreachableClearCount += 1
-                    If _unreachableClearCount >= UnreachableClearRequiredCount Then
-                        _unreachableLatched = False
-                        _unreachableClearCount = 0
+                    _unreachableLastMatchAt = DateTime.MinValue
+                    If _unreachableLatched Then
+                        _unreachableClearCount += 1
+                        If _unreachableClearCount >= UnreachableClearRequiredCount Then
+                            _unreachableLatched = False
+                            _unreachableClearCount = 0
+                        End If
                     End If
                 End If
-            End If
 
-            If repairMatched Then
-                _repairClearCount = 0
-                If Not _repairLatched Then
-                    _repairMatchTimes.Enqueue(now)
+                If repairMatched Then
+                    _repairClearCount = 0
+                    If Not _repairLatched Then
+                        _repairMatchTimes.Enqueue(now)
+                        PruneRepairMatchTimes(now)
+                        _repairConfirmCount = _repairMatchTimes.Count
+                        _repairLastMatchAt = now
+                    Else
+                        _repairConfirmCount = 0
+                    End If
+                Else
                     PruneRepairMatchTimes(now)
                     _repairConfirmCount = _repairMatchTimes.Count
-                    _repairLastMatchAt = now
-                Else
-                    _repairConfirmCount = 0
-                End If
-            Else
-                PruneRepairMatchTimes(now)
-                _repairConfirmCount = _repairMatchTimes.Count
-                If _repairConfirmCount = 0 Then
-                    _repairLastMatchAt = DateTime.MinValue
-                End If
-                If _repairLatched Then
-                    _repairClearCount += 1
-                    If _repairClearCount >= UnreachableClearRequiredCount Then
-                        _repairLatched = False
-                        _repairClearCount = 0
+                    If _repairConfirmCount = 0 Then
+                        _repairLastMatchAt = DateTime.MinValue
+                    End If
+                    If _repairLatched Then
+                        _repairClearCount += 1
+                        If _repairClearCount >= UnreachableClearRequiredCount Then
+                            _repairLatched = False
+                            _repairClearCount = 0
+                        End If
                     End If
                 End If
-            End If
 
-            If Not matched AndAlso Not repairMatched Then
-                _lastUnreachableCandidate = ""
+                If Not matched AndAlso Not repairMatched Then
+                    _lastUnreachableCandidate = ""
+                End If
             End If
         End If
 
@@ -7097,6 +7348,7 @@ Public Class BotEngine
             End Using
 
             _lastUnreachableScan = now
+            _unreachableOcrTaskGeneration = _runGeneration
             _unreachableOcrTask = Task.Run(
                 Function()
                     Try
@@ -7792,11 +8044,13 @@ Public Class BotEngine
             Return True
         End If
 
-        Dim minHoldMs As Integer = Math.Max(900, Math.Max(1, If(cfg?.RetargetMs, 550)) * 2)
-        If _lastAttackAction <> DateTime.MinValue AndAlso (now - _lastAttackAction).TotalMilliseconds < minHoldMs Then
-            Return True
-        End If
-
+        ' No _lastAttackAction-based grace branch here by design: combatLockActive gates whether
+        ' the next attack is allowed to fire, and _lastAttackAction is refreshed by firing an
+        ' attack. A branch here that held the lock open based on recent-attack-recency created a
+        ' self-sustaining loop (attack -> hold open -> next attack allowed -> attack refreshes the
+        ' same recency -> forever), regardless of whether a real target still existed. The
+        ' frame-count debounce below already tolerates a brief single missed OCR read without
+        ' being re-extendable by the attacks it permits.
         _combatLockLostSignalCount += 1
         If _combatLockLostSignalCount < CombatLockLostTargetConfirmFrames Then
             Return True
@@ -7808,12 +8062,17 @@ Public Class BotEngine
 
     Private Function IsRecentTargetSignalHoldActive(now As DateTime, cfg As BotConfig) As Boolean
         Dim graceMs As Integer = GetTargetSignalGraceMs(cfg)
-        Dim shortAttackGraceMs As Integer = Math.Max(900, Math.Min(graceMs, Math.Max(1, If(cfg?.RetargetMs, 550)) * 2))
+        ' Deliberately does NOT consider _lastAttackAction recency here. This value feeds
+        ' effectiveTargetValid, which gates whether a NEW attack is allowed to fire - and
+        ' _lastAttackAction is itself refreshed by firing an attack. Including it here created a
+        ' self-sustaining loop: one attack (even a false-positive one) kept the hold "active",
+        ' which permitted the next attack, which refreshed _lastAttackAction again, forever -
+        ' regardless of whether a real target ever existed. That is what let the agent latch into
+        ' "Fighting" and attack nothing indefinitely, with travel permanently blocked as a result.
         Return IsRecentUtc(_lastTargetValidAt, now, graceMs) OrElse
             IsRecentUtc(_lastLivingTargetSignalAt, now, graceMs) OrElse
             IsRecentUtc(_lastTargetWindowSeen, now, graceMs) OrElse
-            (_combatLockActive AndAlso IsRecentUtc(_combatLockLastSeenAt, now, graceMs)) OrElse
-            IsRecentUtc(_lastAttackAction, now, shortAttackGraceMs)
+            (_combatLockActive AndAlso IsRecentUtc(_combatLockLastSeenAt, now, graceMs))
     End Function
 
     Private Shared Function GetTargetSignalGraceMs(cfg As BotConfig) As Integer

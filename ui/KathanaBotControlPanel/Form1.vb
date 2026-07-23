@@ -309,6 +309,8 @@ Public Class Form1
     Private lblKeySummaryInfo As Label
     Private txtDiagnostics As TextBox
     Private pnlHealthBanner As Panel
+    Private btnProfiles As Button
+    Private _activeProfileName As String = ""
     Private chkAdaptivePerformance As CheckBox
     Private chkPixelChangeGate As CheckBox
     Private nudAdaptiveSlowMinMs As NumericUpDown
@@ -319,6 +321,7 @@ Public Class Form1
     Private cboCaptureBackend As ComboBox
     Private btnRunBenchmark As Button
     Private btnExportDiagnostics As Button
+    Private btnOpenSessionHistory As Button
     Private nudFullFrameScanMs As NumericUpDown
     Private nudLootScannerSeconds As NumericUpDown
     Private nudMapScanMs As NumericUpDown
@@ -469,6 +472,7 @@ Public Class Form1
     Private Shared ReadOnly NtfyClient As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(7)}
     Private Shared ReadOnly PersistDirectoryPath As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel")
     Private Shared ReadOnly PersistFilePath As String = Path.Combine(PersistDirectoryPath, "user_lists.json")
+    Private Shared ReadOnly ProfilesDirectoryPath As String = Path.Combine(PersistDirectoryPath, "profiles")
     Private Shared ReadOnly RollingScreenshotDirectoryPath As String = Path.Combine(PersistDirectoryPath, "screenshots")
     Private Shared ReadOnly DefaultPeriodicScreenshotDirectoryPath As String = ResolveDefaultPeriodicScreenshotDirectory()
     Private ReadOnly _baseBackColors As New Dictionary(Of Control, Color)()
@@ -2892,6 +2896,149 @@ Public Class Form1
         AppendLog("Preset loaded from disk.")
     End Sub
 
+    ''' <summary>
+    ''' Named profiles are full snapshots of the single settings file (Full + Lite), saved under
+    ''' %AppData%\KathanaBotControlPanel\profiles\&lt;name&gt;.json so a user can switch between
+    ''' different keybind/monster/loot setups (e.g. per character or per farm spot) instead of
+    ''' only ever having the one active settings file. Exposed as one button in the Combat Full
+    ''' action column (same style as the other toggle/help buttons there) with a popup menu.
+    ''' </summary>
+    Private Sub UpdateProfilesButtonAppearance()
+        If btnProfiles Is Nothing Then
+            Return
+        End If
+
+        btnProfiles.Text = If(String.IsNullOrEmpty(_activeProfileName), "Profiles", "Profile: " & _activeProfileName)
+    End Sub
+
+    Private Sub ProfilesButtonClicked(sender As Object, e As EventArgs)
+        Dim menu As New ContextMenuStrip()
+
+        Dim saveItem As New ToolStripMenuItem("Save Current As New Profile...")
+        AddHandler saveItem.Click, AddressOf SaveCurrentAsNewProfileClicked
+        menu.Items.Add(saveItem)
+        menu.Items.Add(New ToolStripSeparator())
+
+        Dim profileNames As String() = GetSavedProfileNames()
+        If profileNames.Length = 0 Then
+            menu.Items.Add(New ToolStripMenuItem("(no saved profiles)") With {.Enabled = False})
+        Else
+            For Each profileName As String In profileNames
+                Dim capturedName As String = profileName
+                Dim profileItem As New ToolStripMenuItem(capturedName)
+                Dim loadItem As New ToolStripMenuItem("Load")
+                AddHandler loadItem.Click, Sub(s As Object, ev As EventArgs) LoadProfileByName(capturedName)
+                Dim deleteItem As New ToolStripMenuItem("Delete")
+                AddHandler deleteItem.Click, Sub(s As Object, ev As EventArgs) DeleteProfileByName(capturedName)
+                profileItem.DropDownItems.Add(loadItem)
+                profileItem.DropDownItems.Add(deleteItem)
+                menu.Items.Add(profileItem)
+            Next
+        End If
+
+        menu.Show(btnProfiles, New System.Drawing.Point(0, btnProfiles.Height))
+    End Sub
+
+    Private Function GetSavedProfileNames() As String()
+        Try
+            Directory.CreateDirectory(ProfilesDirectoryPath)
+            Return Directory.GetFiles(ProfilesDirectoryPath, "*.json").
+                Select(Function(p) Path.GetFileNameWithoutExtension(p)).
+                OrderBy(Function(n) n, StringComparer.OrdinalIgnoreCase).
+                ToArray()
+        Catch
+            Return Array.Empty(Of String)()
+        End Try
+    End Function
+
+    Private Shared Function SanitizeProfileName(name As String) As String
+        Dim trimmed As String = If(name, "").Trim()
+        Dim invalidChars As Char() = Path.GetInvalidFileNameChars()
+        Dim builder As New StringBuilder()
+        For Each ch As Char In trimmed
+            builder.Append(If(invalidChars.Contains(ch), "_"c, ch))
+        Next
+        Return builder.ToString()
+    End Function
+
+    Private Sub SaveCurrentAsNewProfileClicked(sender As Object, e As EventArgs)
+        Dim enteredName As String = Microsoft.VisualBasic.Interaction.InputBox(
+            "Save the current Full + Lite settings as a named profile:", "Save Profile", "")
+        Dim profileName As String = SanitizeProfileName(enteredName)
+        If String.IsNullOrWhiteSpace(profileName) Then
+            Return
+        End If
+
+        Try
+            SavePersistedListState(True)
+            Directory.CreateDirectory(ProfilesDirectoryPath)
+            Dim destinationPath As String = Path.Combine(ProfilesDirectoryPath, profileName & ".json")
+            File.Copy(PersistFilePath, destinationPath, overwrite:=True)
+            _activeProfileName = profileName
+            UpdateProfilesButtonAppearance()
+            AppendLog($"Profile ""{profileName}"" saved.")
+        Catch ex As Exception
+            Dim message As String = $"Unable to save profile ""{profileName}"": {ex.Message}"
+            AppendLog(message)
+            MessageBox.Show(Me, message, "Save Profile", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        End Try
+    End Sub
+
+    Private Sub LoadProfileByName(profileName As String)
+        Dim sourcePath As String = Path.Combine(ProfilesDirectoryPath, profileName & ".json")
+        If Not File.Exists(sourcePath) Then
+            MessageBox.Show(Me, $"Profile ""{profileName}"" no longer exists on disk.", "Load Profile", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            Return
+        End If
+
+        Try
+            ' Same atomic temp-file-then-replace approach as SavePersistedListState, so a failed
+            ' load can never leave the live settings file half-written.
+            Dim tempFilePath As String = PersistFilePath & ".tmp"
+            Dim backupFilePath As String = PersistFilePath & ".bak"
+            File.Copy(sourcePath, tempFilePath, overwrite:=True)
+            If File.Exists(PersistFilePath) Then
+                File.Replace(tempFilePath, PersistFilePath, backupFilePath, ignoreMetadataErrors:=True)
+            Else
+                File.Move(tempFilePath, PersistFilePath)
+            End If
+
+            LoadPersistedListState()
+            PushLiveConfig()
+            _activeProfileName = profileName
+            UpdateProfilesButtonAppearance()
+            AppendLog($"Profile ""{profileName}"" loaded.")
+        Catch ex As Exception
+            Dim message As String = $"Unable to load profile ""{profileName}"": {ex.Message}"
+            AppendLog(message)
+            MessageBox.Show(Me, message, "Load Profile", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        End Try
+    End Sub
+
+    Private Sub DeleteProfileByName(profileName As String)
+        Dim confirm As DialogResult = MessageBox.Show(Me, $"Delete the saved profile ""{profileName}""? This cannot be undone.",
+            "Delete Profile", MessageBoxButtons.YesNo, MessageBoxIcon.Warning)
+        If confirm <> DialogResult.Yes Then
+            Return
+        End If
+
+        Try
+            Dim targetPath As String = Path.Combine(ProfilesDirectoryPath, profileName & ".json")
+            If File.Exists(targetPath) Then
+                File.Delete(targetPath)
+            End If
+            If String.Equals(_activeProfileName, profileName, StringComparison.OrdinalIgnoreCase) Then
+                _activeProfileName = ""
+                UpdateProfilesButtonAppearance()
+            End If
+            AppendLog($"Profile ""{profileName}"" deleted.")
+        Catch ex As Exception
+            Dim message As String = $"Unable to delete profile ""{profileName}"": {ex.Message}"
+            AppendLog(message)
+            MessageBox.Show(Me, message, "Delete Profile", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        End Try
+    End Sub
+
     Private Function BuildCombatTab() As TabPage
         Dim tab As New TabPage("Combat Full") With {.BackColor = Color.FromArgb(20, 20, 20)}
         Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 1, .Padding = New Padding(8)}
@@ -3879,6 +4026,10 @@ Public Class Form1
         btnExportDiagnostics = New Button() With {.Text = "Export Diagnostics", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(65, 85, 105), .ForeColor = Color.White}
         controls.Controls.Add(btnExportDiagnostics, 2, 2)
         controls.SetColumnSpan(btnExportDiagnostics, 2)
+        btnOpenSessionHistory = New Button() With {.Text = "Open Session History", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(65, 85, 105), .ForeColor = Color.White}
+        AddHandler btnOpenSessionHistory.Click, AddressOf OpenSessionHistoryClicked
+        controls.Controls.Add(btnOpenSessionHistory, 4, 2)
+        controls.SetColumnSpan(btnOpenSessionHistory, 2)
 
         Dim scanTimerPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .AutoScroll = True, .Margin = New Padding(0)}
         nudFullFrameScanMs = AddScanTimerInput(scanTimerPanel, "Full ms", 100, 5000, 50, 500D)
@@ -4019,6 +4170,37 @@ Public Class Form1
         Return editor
     End Function
 
+    ''' <summary>
+    ''' Builds one numbered section GroupBox for the Leveling tab: a short plain-language
+    ''' description row followed by rowCount rows the caller fills in. Used so the many
+    ''' leveling/navigation options read as a handful of labeled steps instead of one long
+    ''' flat list of unrelated fields.
+    ''' </summary>
+    Private Function BuildLevelingSectionGroup(title As String, helpText As String, rowCount As Integer, ByRef layout As TableLayoutPanel) As GroupBox
+        Dim group As New GroupBox() With {
+            .Text = title, .Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            .Padding = New Padding(6), .Margin = New Padding(0, 0, 0, 8)
+        }
+
+        Dim totalRows As Integer = rowCount + 1
+        layout = New TableLayoutPanel() With {.Dock = DockStyle.Top, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 2, .RowCount = totalRows}
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 180.0F))
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        For i As Integer = 0 To totalRows - 1
+            layout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+        Next
+        group.Controls.Add(layout)
+
+        Dim helpLabel As New Label() With {
+            .Text = helpText, .Dock = DockStyle.Fill, .ForeColor = Color.FromArgb(150, 190, 230), .AutoSize = True,
+            .Margin = New Padding(2, 2, 2, 6), .Font = New Font("Segoe UI", 8.0F, FontStyle.Italic), .MaximumSize = New Size(560, 0)
+        }
+        layout.Controls.Add(helpLabel, 0, 0)
+        layout.SetColumnSpan(helpLabel, 2)
+
+        Return group
+    End Function
+
     Private Function BuildLevelingTab() As TabPage
         Dim tab As New TabPage("Leveling") With {.BackColor = Color.FromArgb(20, 20, 20)}
         Dim scrollPanel As New Panel() With {.Dock = DockStyle.Fill, .Padding = New Padding(4), .AutoScroll = True}
@@ -4035,76 +4217,135 @@ Public Class Form1
         scrollPanel.Controls.Add(root)
         tab.Controls.Add(scrollPanel)
 
-        ' ── LEFT: Leveling Agent Settings ──
+        ' ── LEFT: Leveling Agent Settings, grouped into sections instead of one long flat list ──
         Dim settingsGroup As New GroupBox() With {.Text = "Leveling Agent", .Dock = DockStyle.Fill, .Padding = New Padding(4)}
         Dim settingsScroll As New Panel() With {.Dock = DockStyle.Fill, .AutoScroll = True}
-        Dim settingsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Top, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 2, .RowCount = 27}
-        settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 180.0F))
-        settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
-        For i As Integer = 0 To 26
-            settingsLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
-        Next
-        settingsScroll.Controls.Add(settingsLayout)
         settingsGroup.Controls.Add(settingsScroll)
 
+        Dim sections As New TableLayoutPanel() With {.Dock = DockStyle.Top, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 1, .RowCount = 4}
+        sections.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        For i As Integer = 0 To 3
+            sections.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+        Next
+        settingsScroll.Controls.Add(sections)
+
+        ' 1. Getting started - the only two things required to turn the agent on.
+        Dim setupLayout As TableLayoutPanel = Nothing
+        Dim setupGroup As GroupBox = BuildLevelingSectionGroup(
+            "1. Getting Started", "Turn the agent on and (optionally) limit it to specific monster names.", 2, setupLayout)
         chkLevelingAgent = New CheckBox() With {.Text = "Enable leveling agent", .Dock = DockStyle.Fill, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(chkLevelingAgent, 0, 0)
-        settingsLayout.SetColumnSpan(chkLevelingAgent, 2)
+        setupLayout.Controls.Add(chkLevelingAgent, 0, 1)
+        setupLayout.SetColumnSpan(chkLevelingAgent, 2)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Preferred Mobs", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 1)
-        txtLevelingPreferredMobs = New TextBox() With {.Dock = DockStyle.Fill, .PlaceholderText = "mob1, mob2, mob3", .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(txtLevelingPreferredMobs, 1, 1)
+        setupLayout.Controls.Add(New Label() With {.Text = "Only Attack These Mobs", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 2)
+        txtLevelingPreferredMobs = New TextBox() With {.Dock = DockStyle.Fill, .PlaceholderText = "Leave blank to attack anything: mob1, mob2, mob3", .Margin = New Padding(2)}
+        setupLayout.Controls.Add(txtLevelingPreferredMobs, 1, 2)
+        sections.Controls.Add(setupGroup, 0, 0)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Stop HP %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 2)
-        Dim stopHpPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(2)}
-        chkLevelingStopHp = New CheckBox() With {.Text = "On", .AutoSize = True, .Checked = True, .Margin = New Padding(0, 4, 8, 0)}
-        nudLevelingStopHp = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1, .Maximum = 100, .Value = 20, .Width = 90, .Margin = New Padding(2)}
-        stopHpPanel.Controls.Add(chkLevelingStopHp)
-        stopHpPanel.Controls.Add(nudLevelingStopHp)
-        settingsLayout.Controls.Add(stopHpPanel, 1, 2)
+        ' 2. Safety stops - guardrails that pause the agent instead of letting a problem run forever.
+        ' HP is intentionally NOT a stop condition: an HP-bar read of 0 can be a false positive
+        ' (OCR/pixel misread), and stopping on a false positive is worse than not stopping at all.
+        ' Auto-Pot/heal keys and the HP=0 alarm/notification already cover the real-HP-loss case.
+        Dim safetyLayout As TableLayoutPanel = Nothing
+        Dim safetyGroup As GroupBox = BuildLevelingSectionGroup(
+            "2. Safety Stops", "These pause the bot automatically instead of letting a bad situation run forever. The agent never stops on low/zero HP, since that reading can be a false positive - use Auto-Pot for healing and the HP=0 alarm for real emergencies.", 4, safetyLayout)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Stop MP %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 3)
+        safetyLayout.Controls.Add(New Label() With {.Text = "Stop MP %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 1)
         Dim stopMpPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(2)}
         chkLevelingStopMp = New CheckBox() With {.Text = "On", .AutoSize = True, .Checked = True, .Margin = New Padding(0, 4, 8, 0)}
         nudLevelingStopMp = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1, .Maximum = 100, .Value = 10, .Width = 90, .Margin = New Padding(2)}
         stopMpPanel.Controls.Add(chkLevelingStopMp)
         stopMpPanel.Controls.Add(nudLevelingStopMp)
-        settingsLayout.Controls.Add(stopMpPanel, 1, 3)
+        safetyLayout.Controls.Add(stopMpPanel, 1, 1)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Max No Target (sec)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 4)
+        safetyLayout.Controls.Add(New Label() With {.Text = "Give Up If No Target For (sec)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 2)
         Dim maxNoTargetPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(2)}
         chkLevelingMaxNoTarget = New CheckBox() With {.Text = "On", .AutoSize = True, .Checked = True, .Margin = New Padding(0, 4, 8, 0)}
         nudLevelingMaxNoTargetSeconds = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 5, .Maximum = 600, .Value = 45, .Width = 90, .Margin = New Padding(2)}
         maxNoTargetPanel.Controls.Add(chkLevelingMaxNoTarget)
         maxNoTargetPanel.Controls.Add(nudLevelingMaxNoTargetSeconds)
-        settingsLayout.Controls.Add(maxNoTargetPanel, 1, 4)
+        safetyLayout.Controls.Add(maxNoTargetPanel, 1, 2)
+
+        chkLevelingStopOnLowExp = New CheckBox() With {.Text = "Stop when EXP/hr below threshold", .Dock = DockStyle.Fill, .Margin = New Padding(2)}
+        safetyLayout.Controls.Add(chkLevelingStopOnLowExp, 0, 3)
+        safetyLayout.SetColumnSpan(chkLevelingStopOnLowExp, 2)
+        Dim lowExpPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .Margin = New Padding(2)}
+        lowExpPanel.Controls.Add(New Label() With {.Text = "Min EXP/hr %", .AutoSize = True, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(0, 6, 2, 0)})
+        nudLevelingMinExpPerHour = New NumericUpDown() With {.Minimum = 0.01D, .Maximum = 100D, .DecimalPlaces = 2, .Increment = 0.05D, .Value = DefaultLevelingMinExpPerHour, .Width = 90, .Margin = New Padding(2)}
+        lowExpPanel.Controls.Add(nudLevelingMinExpPerHour)
+        chkLevelingStopOnRepeatedUnreachable = New CheckBox() With {.Text = "Stop after repeated unreachable", .AutoSize = True, .Margin = New Padding(8, 4, 0, 0)}
+        lowExpPanel.Controls.Add(chkLevelingStopOnRepeatedUnreachable)
+        nudLevelingUnreachableLimit = New NumericUpDown() With {.Minimum = 1, .Maximum = 20, .Value = 4, .Width = 55, .Margin = New Padding(4, 0, 0, 0)}
+        lowExpPanel.Controls.Add(nudLevelingUnreachableLimit)
+        safetyLayout.Controls.Add(lowExpPanel, 0, 4)
+        safetyLayout.SetColumnSpan(lowExpPanel, 2)
+        sections.Controls.Add(safetyGroup, 0, 1)
+
+        ' 3. Map & travel - lets the agent walk between grind spots using a route recorded below.
+        Dim travelLayout As TableLayoutPanel = Nothing
+        Dim travelGroup As GroupBox = BuildLevelingSectionGroup(
+            "3. Map & Travel", "Lets the agent walk to a grind spot and back using a route you record once in section 4 below. If no mob is found, the agent travels the route until one appears.", 12, travelLayout)
 
         chkNavigationEnabled = New CheckBox() With {.Text = "Enable map localization", .Dock = DockStyle.Fill, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(chkNavigationEnabled, 0, 5)
-        settingsLayout.SetColumnSpan(chkNavigationEnabled, 2)
+        travelLayout.Controls.Add(chkNavigationEnabled, 0, 1)
+        travelLayout.SetColumnSpan(chkNavigationEnabled, 2)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Map Open Key", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 6)
+        travelLayout.Controls.Add(New Label() With {.Text = "Map Open Key", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 2)
         txtMapOpenKey = New TextBox() With {.Dock = DockStyle.Left, .Width = 90, .Text = DefaultMapOpenKey, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(txtMapOpenKey, 1, 6)
+        travelLayout.Controls.Add(txtMapOpenKey, 1, 2)
 
         chkTravelPreview = New CheckBox() With {.Text = "Enable travel preview", .Dock = DockStyle.Fill, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(chkTravelPreview, 0, 7)
-        settingsLayout.SetColumnSpan(chkTravelPreview, 2)
+        travelLayout.Controls.Add(chkTravelPreview, 0, 3)
+        travelLayout.SetColumnSpan(chkTravelPreview, 2)
 
         chkTravelExecute = New CheckBox() With {.Text = "Enable travel execution (guarded)", .Dock = DockStyle.Fill, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(chkTravelExecute, 0, 8)
-        settingsLayout.SetColumnSpan(chkTravelExecute, 2)
+        travelLayout.Controls.Add(chkTravelExecute, 0, 4)
+        travelLayout.SetColumnSpan(chkTravelExecute, 2)
 
-        ' ── Route Recording: Start / Stop buttons ──
-        Dim recordInstructionsLabel As New Label() With {
-            .Text = "COORDINATES: X/Y boxes each read 3 digits. Breadcrumbs add live route nodes when localization confidence is at least Min Confidence %. Lower it to record more but expect more OCR mistakes. Node Spacing is the minimum coordinate distance between saved nodes; lower = more nodes. Map Marker is derived from confident X/Y, so unavailable means no trusted coordinate yet.",
-            .Dock = DockStyle.Fill, .ForeColor = Color.FromArgb(255, 200, 120), .AutoSize = True, .Margin = New Padding(2, 4, 2, 4),
-            .Font = New Font("Segoe UI", 8.0F, FontStyle.Italic)
-        }
-        settingsLayout.Controls.Add(recordInstructionsLabel, 0, 9)
-        settingsLayout.SetColumnSpan(recordInstructionsLabel, 2)
+        chkNavigationRepathOnStuck = New CheckBox() With {.Text = "Repath when travel stalls", .Dock = DockStyle.Fill, .Checked = True, .Margin = New Padding(2)}
+        travelLayout.Controls.Add(chkNavigationRepathOnStuck, 0, 5)
+        travelLayout.SetColumnSpan(chkNavigationRepathOnStuck, 2)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Route Recording", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Font = New Font("Segoe UI", 9.0F, FontStyle.Bold), .ForeColor = Color.Plum, .Margin = New Padding(2)}, 0, 10)
+        travelLayout.Controls.Add(New Label() With {.Text = "Start Traveling From", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 6)
+        cboNavigationStartNode = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList, .Enabled = False, .Margin = New Padding(2)}
+        travelLayout.Controls.Add(cboNavigationStartNode, 1, 6)
+
+        travelLayout.Controls.Add(New Label() With {.Text = "Travel Destination", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 7)
+        cboNavigationTargetNode = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList, .Margin = New Padding(2)}
+        travelLayout.Controls.Add(cboNavigationTargetNode, 1, 7)
+
+        chkNavigationReturnToStart = New CheckBox() With {.Text = "Return to route start after destination", .Dock = DockStyle.Fill, .Checked = False, .Margin = New Padding(2)}
+        travelLayout.Controls.Add(chkNavigationReturnToStart, 0, 8)
+        travelLayout.SetColumnSpan(chkNavigationReturnToStart, 2)
+
+        Dim advancedTravelHeader As New Label() With {.Text = "Advanced travel tuning (defaults are usually fine)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Font = New Font("Segoe UI", 8.5F, FontStyle.Bold), .ForeColor = Color.Plum, .Margin = New Padding(2, 8, 2, 2)}
+        travelLayout.Controls.Add(advancedTravelHeader, 0, 9)
+        travelLayout.SetColumnSpan(advancedTravelHeader, 2)
+
+        travelLayout.Controls.Add(New Label() With {.Text = "Waypoint Radius", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 10)
+        nudNavigationWaypointRadius = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0, .Maximum = 250, .Value = 36, .Width = 90, .Margin = New Padding(2)}
+        travelLayout.Controls.Add(nudNavigationWaypointRadius, 1, 10)
+
+        travelLayout.Controls.Add(New Label() With {.Text = "Move Burst (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 11)
+        nudNavigationMoveBurstMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 10, .Maximum = 1500, .Increment = 25, .Value = 350, .Width = 90, .Margin = New Padding(2)}
+        travelLayout.Controls.Add(nudNavigationMoveBurstMs, 1, 11)
+
+        Dim resampleStallPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .Margin = New Padding(2)}
+        resampleStallPanel.Controls.Add(New Label() With {.Text = "Re-sample (ms)", .AutoSize = True, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(0, 6, 2, 0)})
+        nudNavigationResampleMs = New NumericUpDown() With {.Minimum = 50, .Maximum = 10000, .Increment = 50, .Value = 1800, .Width = 90, .Margin = New Padding(2)}
+        resampleStallPanel.Controls.Add(nudNavigationResampleMs)
+        resampleStallPanel.Controls.Add(New Label() With {.Text = "Stall Timeout (ms)", .AutoSize = True, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(8, 6, 2, 0)})
+        nudNavigationStallTimeoutMs = New NumericUpDown() With {.Minimum = 1500, .Maximum = 30000, .Increment = 250, .Value = 6500, .Width = 90, .Margin = New Padding(2)}
+        resampleStallPanel.Controls.Add(nudNavigationStallTimeoutMs)
+        travelLayout.Controls.Add(resampleStallPanel, 0, 12)
+        travelLayout.SetColumnSpan(resampleStallPanel, 2)
+        sections.Controls.Add(travelGroup, 0, 2)
+
+        ' 4. Route recording - optional; only needed once per farm spot to teach the agent a route.
+        Dim recordLayout As TableLayoutPanel = Nothing
+        Dim recordGroup As GroupBox = BuildLevelingSectionGroup(
+            "4. Record a Route (Optional)", "Walk the route once in-game while recording, then save it. X/Y boxes each read 3 digits. Lower Min Confidence to record more points (but expect more OCR mistakes). Node Spacing is the minimum distance between saved points - lower means more nodes.", 5, recordLayout)
+
         Dim recordBtnPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(2)}
         btnStartRouteRecording = New Button() With {.Text = ChrW(&H23FA) & " Start Recording", .AutoSize = True, .BackColor = Color.FromArgb(30, 140, 60), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat, .Font = New Font("Segoe UI", 8.5F, FontStyle.Bold), .Margin = New Padding(0, 0, 4, 0)}
         btnStopRouteRecording = New Button() With {.Text = ChrW(&H23F9) & " Stop Recording", .AutoSize = True, .BackColor = Color.FromArgb(180, 40, 40), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat, .Font = New Font("Segoe UI", 8.5F, FontStyle.Bold), .Enabled = False}
@@ -4122,29 +4363,31 @@ Public Class Form1
         recordBtnPanel.Controls.Add(btnDeleteManualBreadcrumb)
         btnClearManualBreadcrumbs = New Button() With {.Text = "Clear Table", .AutoSize = True, .Margin = New Padding(0, 0, 4, 0)}
         recordBtnPanel.Controls.Add(btnClearManualBreadcrumbs)
-        settingsLayout.Controls.Add(recordBtnPanel, 1, 10)
+        recordLayout.Controls.Add(recordBtnPanel, 0, 1)
+        recordLayout.SetColumnSpan(recordBtnPanel, 2)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Sample Interval (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 11)
-        nudRouteRecordingIntervalMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 10, .Maximum = 5000, .Increment = 10, .Value = 100, .Width = 90, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(nudRouteRecordingIntervalMs, 1, 11)
+        Dim recordTuningPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .Margin = New Padding(2)}
+        recordTuningPanel.Controls.Add(New Label() With {.Text = "Sample Interval (ms)", .AutoSize = True, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(0, 6, 2, 0)})
+        nudRouteRecordingIntervalMs = New NumericUpDown() With {.Minimum = 10, .Maximum = 5000, .Increment = 10, .Value = 100, .Width = 90, .Margin = New Padding(2)}
+        recordTuningPanel.Controls.Add(nudRouteRecordingIntervalMs)
+        recordTuningPanel.Controls.Add(New Label() With {.Text = "Min Confidence %", .AutoSize = True, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(8, 6, 2, 0)})
+        nudRouteRecordingMinConfidence = New NumericUpDown() With {.Minimum = 0, .Maximum = 100, .Value = 90, .Width = 90, .Margin = New Padding(2)}
+        recordTuningPanel.Controls.Add(nudRouteRecordingMinConfidence)
+        recordTuningPanel.Controls.Add(New Label() With {.Text = "Node Spacing", .AutoSize = True, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(8, 6, 2, 0)})
+        nudRouteRecordingNodeSpacing = New NumericUpDown() With {.Minimum = 1, .Maximum = 100, .Value = 2, .Width = 90, .Margin = New Padding(2)}
+        recordTuningPanel.Controls.Add(nudRouteRecordingNodeSpacing)
+        recordLayout.Controls.Add(recordTuningPanel, 0, 2)
+        recordLayout.SetColumnSpan(recordTuningPanel, 2)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Min Confidence %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 12)
-        nudRouteRecordingMinConfidence = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0, .Maximum = 100, .Value = 90, .Width = 90, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(nudRouteRecordingMinConfidence, 1, 12)
-
-        settingsLayout.Controls.Add(New Label() With {.Text = "Node Spacing", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 13)
-        nudRouteRecordingNodeSpacing = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1, .Maximum = 100, .Value = 2, .Width = 90, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(nudRouteRecordingNodeSpacing, 1, 13)
-
-        settingsLayout.Controls.Add(New Label() With {.Text = "Route Name", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 14)
+        recordLayout.Controls.Add(New Label() With {.Text = "Route Name", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 3)
         Dim recordingPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .Margin = New Padding(2)}
         txtRouteRecordingName = New TextBox() With {.Width = 160, .Text = "jina_route"}
         recordingPanel.Controls.Add(txtRouteRecordingName)
         btnSaveRouteRecording = New Button() With {.Text = "Save Route", .AutoSize = True}
         recordingPanel.Controls.Add(btnSaveRouteRecording)
-        settingsLayout.Controls.Add(recordingPanel, 1, 14)
+        recordLayout.Controls.Add(recordingPanel, 1, 3)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Recorded Routes", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 15)
+        recordLayout.Controls.Add(New Label() With {.Text = "Recorded Routes", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 4)
         Dim recordedRoutePanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .Margin = New Padding(2)}
         cboRecordedRoute = New ComboBox() With {.Width = 200, .DropDownStyle = ComboBoxStyle.DropDownList}
         recordedRoutePanel.Controls.Add(cboRecordedRoute)
@@ -4152,60 +4395,16 @@ Public Class Form1
         recordedRoutePanel.Controls.Add(btnDeleteRecordedRoute)
         btnReplayRoute = New Button() With {.Text = "Replay", .AutoSize = True, .BackColor = Color.FromArgb(30, 100, 180), .ForeColor = Color.White}
         recordedRoutePanel.Controls.Add(btnReplayRoute)
-        settingsLayout.Controls.Add(recordedRoutePanel, 1, 15)
+        recordLayout.Controls.Add(recordedRoutePanel, 1, 4)
 
-        settingsLayout.Controls.Add(New Label() With {.Text = "Route Nodes", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 16)
+        recordLayout.Controls.Add(New Label() With {.Text = "Route Nodes", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 5)
         Dim recordedNodePanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .Margin = New Padding(2)}
         cboRecordedRouteNode = New ComboBox() With {.Width = 200, .DropDownStyle = ComboBoxStyle.DropDownList}
         recordedNodePanel.Controls.Add(cboRecordedRouteNode)
         btnDeleteRecordedRouteNode = New Button() With {.Text = "Delete Node", .AutoSize = True}
         recordedNodePanel.Controls.Add(btnDeleteRecordedRouteNode)
-        settingsLayout.Controls.Add(recordedNodePanel, 1, 16)
-
-        settingsLayout.Controls.Add(New Label() With {.Text = "Waypoint Radius", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 17)
-        nudNavigationWaypointRadius = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0, .Maximum = 250, .Value = 36, .Width = 90, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(nudNavigationWaypointRadius, 1, 17)
-
-        settingsLayout.Controls.Add(New Label() With {.Text = "Move Burst (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 18)
-        nudNavigationMoveBurstMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 10, .Maximum = 1500, .Increment = 25, .Value = 350, .Width = 90, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(nudNavigationMoveBurstMs, 1, 18)
-
-        settingsLayout.Controls.Add(New Label() With {.Text = "Re-sample (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 19)
-        nudNavigationResampleMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 50, .Maximum = 10000, .Increment = 50, .Value = 1800, .Width = 90, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(nudNavigationResampleMs, 1, 19)
-
-        settingsLayout.Controls.Add(New Label() With {.Text = "Stall Timeout (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 20)
-        nudNavigationStallTimeoutMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1500, .Maximum = 30000, .Increment = 250, .Value = 6500, .Width = 90, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(nudNavigationStallTimeoutMs, 1, 20)
-
-        chkNavigationRepathOnStuck = New CheckBox() With {.Text = "Repath when travel stalls", .Dock = DockStyle.Fill, .Checked = True, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(chkNavigationRepathOnStuck, 0, 21)
-        settingsLayout.SetColumnSpan(chkNavigationRepathOnStuck, 2)
-
-        settingsLayout.Controls.Add(New Label() With {.Text = "Route Start", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 22)
-        cboNavigationStartNode = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList, .Enabled = False, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(cboNavigationStartNode, 1, 22)
-
-        settingsLayout.Controls.Add(New Label() With {.Text = "Travel Route", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 23)
-        cboNavigationTargetNode = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(cboNavigationTargetNode, 1, 23)
-
-        chkLevelingStopOnLowExp = New CheckBox() With {.Text = "Stop when EXP/hr below threshold", .Dock = DockStyle.Fill, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(chkLevelingStopOnLowExp, 0, 24)
-        settingsLayout.SetColumnSpan(chkLevelingStopOnLowExp, 2)
-        settingsLayout.Controls.Add(New Label() With {.Text = "Min EXP/hr %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 25)
-        nudLevelingMinExpPerHour = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0.01D, .Maximum = 100D, .DecimalPlaces = 2, .Increment = 0.05D, .Value = DefaultLevelingMinExpPerHour, .Width = 90, .Margin = New Padding(2)}
-        Dim lowExpPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .Margin = New Padding(2)}
-        lowExpPanel.Controls.Add(nudLevelingMinExpPerHour)
-        chkLevelingStopOnRepeatedUnreachable = New CheckBox() With {.Text = "Stop after repeated unreachable", .AutoSize = True, .Margin = New Padding(8, 4, 0, 0)}
-        lowExpPanel.Controls.Add(chkLevelingStopOnRepeatedUnreachable)
-        nudLevelingUnreachableLimit = New NumericUpDown() With {.Minimum = 1, .Maximum = 20, .Value = 4, .Width = 55, .Margin = New Padding(4, 0, 0, 0)}
-        lowExpPanel.Controls.Add(nudLevelingUnreachableLimit)
-        settingsLayout.Controls.Add(lowExpPanel, 1, 25)
-
-        chkNavigationReturnToStart = New CheckBox() With {.Text = "Return to route start after destination", .Dock = DockStyle.Fill, .Checked = False, .Margin = New Padding(2)}
-        settingsLayout.Controls.Add(chkNavigationReturnToStart, 0, 26)
-        settingsLayout.SetColumnSpan(chkNavigationReturnToStart, 2)
+        recordLayout.Controls.Add(recordedNodePanel, 1, 5)
+        sections.Controls.Add(recordGroup, 0, 3)
 
         root.Controls.Add(settingsGroup, 0, 0)
 
@@ -4517,7 +4716,7 @@ Public Class Form1
             .AutoSize = True,
             .AutoSizeMode = AutoSizeMode.GrowAndShrink,
             .ColumnCount = 1,
-            .RowCount = 22,
+            .RowCount = 23,
             .GrowStyle = TableLayoutPanelGrowStyle.FixedSize,
             .Margin = New Padding(0),
             .Padding = New Padding(4)
@@ -4605,6 +4804,16 @@ Public Class Form1
             .ForeColor = Color.White,
             .AccessibleDescription = HelpScopeCombat
         }
+        btnProfiles = New Button() With {
+            .Text = "Profiles",
+            .Dock = DockStyle.Fill,
+            .MinimumSize = New Size(0, 38),
+            .Margin = New Padding(3, 3, 3, 3),
+            .BackColor = Color.FromArgb(70, 70, 70),
+            .ForeColor = Color.White,
+            .UseVisualStyleBackColor = False
+        }
+        UpdateProfilesButtonAppearance()
         AddHandler btnAttack.Click, AddressOf StartClicked
         AddHandler btnSaveSettings.Click, AddressOf SaveClicked
         AddHandler btnStopBot.Click, AddressOf StopClicked
@@ -4615,6 +4824,7 @@ Public Class Form1
         AddHandler btnPartyAsk.Click, AddressOf TogglePartyAskClicked
         AddHandler txtPartyAskText.TextChanged, AddressOf PartyAskTextChanged
         AddHandler btnHelp.Click, AddressOf HelpClicked
+        AddHandler btnProfiles.Click, AddressOf ProfilesButtonClicked
         Dim hpMpLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .ColumnCount = 2, .RowCount = 1, .Margin = New Padding(0)}
         hpMpLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
         hpMpLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
@@ -4625,7 +4835,7 @@ Public Class Form1
             lblFullEdition, lblRunState, lblShortcutHint, lblState, lblSystem, hpMpLayout,
             lblMobName, lblExpRate, lblRupiahsRate, btnAttack, btnSaveSettings, btnStopBot,
             btnBypassLimits, btnBypassStuck, btnRetargetNow, btnPartyAutoAccept,
-            lblPartyAskEvery, nudPartyAskSeconds, lblPartyAskText, txtPartyAskText, btnPartyAsk, btnHelp
+            lblPartyAskEvery, nudPartyAskSeconds, lblPartyAskText, txtPartyAskText, btnPartyAsk, btnProfiles, btnHelp
         }
         For rowIndex As Integer = 0 To controls.Length - 1
             content.Controls.Add(controls(rowIndex), 0, rowIndex)
@@ -5840,6 +6050,19 @@ Public Class Form1
             ConfigurePeriodicScreenshotTimer()
             SavePersistedListState(False)
         End Using
+    End Sub
+
+    Private Sub OpenSessionHistoryClicked(sender As Object, e As EventArgs)
+        Try
+            Dim directoryPath As String = Path.GetDirectoryName(BotEngine.SessionHistoryFilePath)
+            Directory.CreateDirectory(directoryPath)
+            Dim targetPath As String = If(File.Exists(BotEngine.SessionHistoryFilePath), BotEngine.SessionHistoryFilePath, directoryPath)
+            Process.Start(New ProcessStartInfo(targetPath) With {.UseShellExecute = True})
+        Catch ex As Exception
+            Dim message As String = "Unable to open the session history file: " & ex.Message
+            AppendLog(message)
+            MessageBox.Show(Me, message, "Open Session History", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        End Try
     End Sub
 
     Private Sub OpenPeriodicScreenshotDirectoryClicked(sender As Object, e As EventArgs)
@@ -11269,13 +11492,45 @@ Public Class Form1
         Return fallback
     End Function
 
+    ''' <summary>
+    ''' Reads the persisted settings JSON, falling back to the ".bak" copy written by
+    ''' SavePersistedListState's atomic-replace if the primary file is missing, empty,
+    ''' or fails to parse (e.g. truncated by a crash or an antivirus lock mid-write).
+    ''' </summary>
+    Private Function ReadPersistedStateRawWithFallback() As String
+        If File.Exists(PersistFilePath) Then
+            Try
+                Dim raw As String = File.ReadAllText(PersistFilePath, Encoding.UTF8)
+                If Not String.IsNullOrWhiteSpace(raw) Then
+                    Using doc As JsonDocument = JsonDocument.Parse(raw)
+                    End Using
+                    Return raw
+                End If
+            Catch
+                ' Primary file is missing/empty/corrupt; fall through to the backup below.
+            End Try
+        End If
+
+        Dim backupFilePath As String = PersistFilePath & ".bak"
+        If File.Exists(backupFilePath) Then
+            Try
+                Dim rawBackup As String = File.ReadAllText(backupFilePath, Encoding.UTF8)
+                If Not String.IsNullOrWhiteSpace(rawBackup) Then
+                    Using doc As JsonDocument = JsonDocument.Parse(rawBackup)
+                    End Using
+                    AppendLog("Saved settings file was missing or unreadable; restored from the last good backup copy.")
+                    Return rawBackup
+                End If
+            Catch
+            End Try
+        End If
+
+        Return ""
+    End Function
+
     Private Sub LoadPersistedListState()
         Try
-            If Not File.Exists(PersistFilePath) Then
-                Return
-            End If
-
-            Dim raw As String = File.ReadAllText(PersistFilePath, Encoding.UTF8)
+            Dim raw As String = ReadPersistedStateRawWithFallback()
             If String.IsNullOrWhiteSpace(raw) Then
                 Return
             End If
@@ -11643,7 +11898,18 @@ Public Class Form1
             }
 
             Dim json As String = JsonSerializer.Serialize(appState, New JsonSerializerOptions With {.WriteIndented = True})
-            File.WriteAllText(PersistFilePath, json, Encoding.UTF8)
+
+            ' Write to a temp file first, then atomically swap it into place (keeping a .bak of the
+            ' previous good save) so a crash or antivirus lock mid-write can't truncate/corrupt the
+            ' live settings file. See ReadPersistedStateRawWithFallback for the load-side recovery.
+            Dim tempFilePath As String = PersistFilePath & ".tmp"
+            Dim backupFilePath As String = PersistFilePath & ".bak"
+            File.WriteAllText(tempFilePath, json, Encoding.UTF8)
+            If File.Exists(PersistFilePath) Then
+                File.Replace(tempFilePath, PersistFilePath, backupFilePath, ignoreMetadataErrors:=True)
+            Else
+                File.Move(tempFilePath, PersistFilePath)
+            End If
         Catch ex As Exception
             If logFailure Then
                 AppendLog("Unable to save list state: " & ex.Message)
