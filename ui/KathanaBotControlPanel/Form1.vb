@@ -35,6 +35,10 @@ Public Class Form1
     Private ReadOnly _rollingScreenshotTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _periodicScreenshotTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _discordShotTimer As New System.Windows.Forms.Timer()
+    Private ReadOnly _persistDebounceTimer As New System.Windows.Forms.Timer()
+    Private ReadOnly _persistFileLock As New Object()
+    Private _pendingPersistState As PersistedAppState = Nothing
+    Private Const PersistDebounceIntervalMs As Integer = 400
     Private ReadOnly _logQueueSync As New Object()
     Private ReadOnly _logThrottleSync As New Object()
     Private ReadOnly _logQueue As New Queue(Of String)()
@@ -811,6 +815,9 @@ Public Class Form1
         _rollingScreenshotTimer.Interval = RollingScreenshotIntervalMs
         AddHandler _rollingScreenshotTimer.Tick, AddressOf RollingScreenshotTimerTick
         _rollingScreenshotTimer.Start()
+
+        _persistDebounceTimer.Interval = PersistDebounceIntervalMs
+        AddHandler _persistDebounceTimer.Tick, AddressOf PersistDebounceTimerTick
 
         ConfigurePeriodicScreenshotTimer()
 
@@ -1942,13 +1949,14 @@ Public Class Form1
     End Sub
 
     Private Sub PushLiveConfig()
-        If dgvCombat IsNot Nothing AndAlso dgvCombat.IsCurrentCellInEditMode Then
-            Return
-        End If
-        If dgvRegions IsNot Nothing AndAlso dgvRegions.IsCurrentCellInEditMode Then
-            Return
-        End If
-
+        ' NOTE: this used to bail out entirely whenever dgvCombat/dgvRegions reported
+        ' IsCurrentCellInEditMode. Checkbox/combo columns commit their edit (CommitEdit) without
+        ' immediately ending it, so that flag can still read True for a moment right as the
+        ' CellValueChanged from that very commit fires this handler - meaning a fast sequence of
+        ' checkbox toggles (e.g. disabling several combat skills back-to-back) would silently drop
+        ' every push after the first. Reading Row.Cells(...).Value below only ever sees the last
+        ' *committed* value regardless of edit-mode state, so there's nothing unsafe about building
+        ' and pushing config unconditionally here.
         Try
             _fullEngine.UpdateConfig(BuildFullConfig())
         Catch
@@ -11799,11 +11807,9 @@ Public Class Form1
     End Sub
 
     Private Sub SavePersistedListState(Optional logFailure As Boolean = False, Optional includeFullConfig As Boolean = True)
+        Dim appState As PersistedAppState = Nothing
         Try
             CommitPendingGridEdits()
-            If Not Directory.Exists(PersistDirectoryPath) Then
-                Directory.CreateDirectory(PersistDirectoryPath)
-            End If
 
             Dim fullState As New PersistedListState With {
                 .MonsterFilterEnabled = (chkMonsterFilter IsNot Nothing AndAlso chkMonsterFilter.Checked),
@@ -11881,7 +11887,7 @@ Public Class Form1
                 .Actions = GetPersistedLiteActions()
             }
 
-            Dim appState As New PersistedAppState With {
+            appState = New PersistedAppState With {
                 .WindowTitle = GetSelectedWindowTitleForFallback(If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full)),
                 .PeriodicScreenshotsEnabled = (chkPeriodicScreenshots IsNot Nothing AndAlso chkPeriodicScreenshots.Checked),
                 .PeriodicScreenshotIntervalMinutes = If(nudPeriodicScreenshotMinutes IsNot Nothing, nudPeriodicScreenshotMinutes.Value, 15D),
@@ -11896,20 +11902,63 @@ Public Class Form1
                 .Full = fullState,
                 .Lite = liteState
             }
-
-            Dim json As String = JsonSerializer.Serialize(appState, New JsonSerializerOptions With {.WriteIndented = True})
-
-            ' Write to a temp file first, then atomically swap it into place (keeping a .bak of the
-            ' previous good save) so a crash or antivirus lock mid-write can't truncate/corrupt the
-            ' live settings file. See ReadPersistedStateRawWithFallback for the load-side recovery.
-            Dim tempFilePath As String = PersistFilePath & ".tmp"
-            Dim backupFilePath As String = PersistFilePath & ".bak"
-            File.WriteAllText(tempFilePath, json, Encoding.UTF8)
-            If File.Exists(PersistFilePath) Then
-                File.Replace(tempFilePath, PersistFilePath, backupFilePath, ignoreMetadataErrors:=True)
-            Else
-                File.Move(tempFilePath, PersistFilePath)
+        Catch ex As Exception
+            If logFailure Then
+                AppendLog("Unable to save list state: " & ex.Message)
             End If
+            Return
+        End Try
+
+        If logFailure Then
+            ' Explicit, infrequent user actions (Save Settings, Save Profile) want the file on disk
+            ' the moment this call returns, so write synchronously right here.
+            _persistDebounceTimer.Stop()
+            _pendingPersistState = Nothing
+            WritePersistedStateToDisk(appState, logFailure)
+        Else
+            ' This path runs on nearly every keystroke/click across the whole settings UI. Serializing
+            ' the entire app state and writing it to disk synchronously here used to block the UI thread
+            ' on every single edit, which is what made changes look "stuck" while the disk write ran.
+            ' The live bot config push (PushLiveConfig/UpdateConfig) already happened separately and
+            ' instantly - this is only the disk persistence, so it's safe to debounce and move off the
+            ' UI thread: rapid edits coalesce into one background write shortly after things go quiet.
+            _pendingPersistState = appState
+            _persistDebounceTimer.Stop()
+            _persistDebounceTimer.Start()
+        End If
+    End Sub
+
+    Private Sub PersistDebounceTimerTick(sender As Object, e As EventArgs)
+        _persistDebounceTimer.Stop()
+        Dim stateToWrite As PersistedAppState = _pendingPersistState
+        _pendingPersistState = Nothing
+        If stateToWrite Is Nothing Then
+            Return
+        End If
+        Task.Run(Sub() WritePersistedStateToDisk(stateToWrite, False))
+    End Sub
+
+    Private Sub WritePersistedStateToDisk(appState As PersistedAppState, logFailure As Boolean)
+        Try
+            SyncLock _persistFileLock
+                If Not Directory.Exists(PersistDirectoryPath) Then
+                    Directory.CreateDirectory(PersistDirectoryPath)
+                End If
+
+                Dim json As String = JsonSerializer.Serialize(appState, New JsonSerializerOptions With {.WriteIndented = True})
+
+                ' Write to a temp file first, then atomically swap it into place (keeping a .bak of the
+                ' previous good save) so a crash or antivirus lock mid-write can't truncate/corrupt the
+                ' live settings file. See ReadPersistedStateRawWithFallback for the load-side recovery.
+                Dim tempFilePath As String = PersistFilePath & ".tmp"
+                Dim backupFilePath As String = PersistFilePath & ".bak"
+                File.WriteAllText(tempFilePath, json, Encoding.UTF8)
+                If File.Exists(PersistFilePath) Then
+                    File.Replace(tempFilePath, PersistFilePath, backupFilePath, ignoreMetadataErrors:=True)
+                Else
+                    File.Move(tempFilePath, PersistFilePath)
+                End If
+            End SyncLock
         Catch ex As Exception
             If logFailure Then
                 AppendLog("Unable to save list state: " & ex.Message)
@@ -13962,8 +14011,9 @@ Public Class Form1
         _rollingScreenshotTimer.Stop()
         _periodicScreenshotTimer.Stop()
         _discordShotTimer.Stop()
+        _persistDebounceTimer.Stop()
         FlushPendingLogLines()
-        SavePersistedListState(False)
+        SavePersistedListState(True)
         StopHpZeroAlarm()
         If _overlayForm IsNot Nothing AndAlso Not _overlayForm.IsDisposed Then
             _overlayForm.Close()

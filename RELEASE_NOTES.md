@@ -1,20 +1,15 @@
-# KathanaBot 1.0.65
+# KathanaBot 1.0.67
 
 ## What changed
 
-- The Leveling Agent now leaves `Fighting` much faster after a real target disappears. Lost-target confirmation is two frames, the normal grace window is 0.6-1.5 seconds, and a six-second hard ceiling releases any stale combat lock so search/travel can resume.
-- Fixed the self-sustaining combat-lock loop: attacks can no longer keep their own target permission alive after the target is gone, and noisy mob-HP color is trusted only after a recently visible target window.
-- Background OCR work is now session-safe. Results that finish after Stop/Start are discarded, OCR failures are logged without flooding, and stale unreachable text must clear before it can retrigger recovery.
-- Added named Full + Lite settings profiles. Use `Profiles` in Combat Full to save, load, and delete configurations for different characters or farming spots.
-- Added persistent session history for runs lasting at least 30 seconds, including duration, EXP/rate, rupiahs/rate, restarts, repairs, and unreachable events. Open it from Diagnostics with `Open Session History`.
-- Settings saves now use an atomic temporary-file swap and retain a backup; startup falls back to that backup when the primary settings file is missing, empty, or corrupt.
-- Reorganized the Leveling tab into Getting Started, Safety Stops, Map & Travel, and Route Recording sections with clearer descriptions.
-- Low/zero HP no longer stops the Leveling Agent because a bad pixel reading could cause a false shutdown; AutoPots, heal actions, and the HP=0 alarm remain active.
+- Settings no longer feel "stuck" while the bot is running. Every control change still applies to the running bot instantly, but the disk save behind it now happens on a background thread and coalesces rapid edits into one write instead of freezing the UI on every keystroke/click.
+- Fixed a bug where toggling several Combat Skill checkboxes (or Calibration Region cells) back-to-back only applied the first change to the running bot - the rest looked toggled in the grid but the bot kept using the old values until something else nudged a refresh. Every toggle now reaches the running bot immediately, no matter how fast you click.
+- Rebuilt the standalone EXE and published this release through the in-app updater channel.
 
 ## Recent change history - last 5
 
-1. **Target-loss recovery:** combat lock now clears quickly and cannot be extended by the attacks it permits.
-2. **OCR session safety:** late results cannot leak across bot restarts; repeated OCR faults are visible but rate-limited.
-3. **Named profiles and safer settings:** switch complete configurations and recover automatically from a damaged primary settings file.
-4. **Session history:** compare farming runs using the new CSV history and Diagnostics shortcut.
-5. **Clearer Leveling workflow:** grouped setup/travel controls, safer target evidence, and no false stop from a single bad HP reading.
+1. **No more dropped rapid grid edits:** quick back-to-back checkbox toggles in Combat Skills/Calibration Regions all reach the running bot now, not just the first one.
+2. **Non-blocking settings persistence:** the full settings save moved off the UI thread and is debounced, so editing anything no longer freezes the window while it writes to disk.
+3. **Live config push unchanged and instant:** the fix only touched disk persistence timing - pushing your changes into the running bot was already immediate and still is.
+4. **Explicit saves stay synchronous:** Save Settings, Save Profile, and app close still write to disk immediately so nothing is lost.
+5. **Fresh standalone build:** rebuilt and versioned for this release.
