@@ -607,6 +607,14 @@ Friend Module NativeMethods
     End Function
 
     <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function AttachThreadInput(idAttach As UInteger, idAttachTo As UInteger, fAttach As Boolean) As Boolean
+    End Function
+
+    <DllImport("kernel32.dll")>
+    Friend Function GetCurrentThreadId() As UInteger
+    End Function
+
+    <DllImport("user32.dll", SetLastError:=True)>
     Friend Function ShowWindow(hWnd As IntPtr, nCmdShow As Integer) As Boolean
     End Function
 
@@ -6599,13 +6607,14 @@ Public Class BotEngine
         Dim pt As LootScanPoint = points(_arrowUnbundleNextIndex)
         Dim clickX As Integer = Math.Max(0, Math.Min(Math.Max(0, clientWidth - 1), pt.X))
         Dim clickY As Integer = Math.Max(0, Math.Min(Math.Max(0, clientHeight - 1), pt.Y))
-        If DoubleRightClickVerifiedAtClientPoint(hwnd, clickX, clickY) Then
+        Dim clickDiagnostic As String = ""
+        If DoubleRightClickVerifiedAtClientPoint(hwnd, clickX, clickY, clickDiagnostic) Then
             _lastArrowUnbundleAt = now
             _arrowUnbundleNextIndex = (_arrowUnbundleNextIndex + 1) Mod points.Count
             SetLastAction($"Double right-click arrow unbundle ({clickX},{clickY})")
             RaiseEvent LogLine($"Arrow unbundle double right-click sent at {clickX},{clickY}.")
         Else
-            RaiseEvent LogLine($"Arrow unbundle skipped at {clickX},{clickY}: cursor could not be verified exactly on target.")
+            RaiseEvent LogLine($"Arrow unbundle skipped at {clickX},{clickY}: {clickDiagnostic}.")
         End If
     End Sub
 
@@ -10664,23 +10673,27 @@ Public Class BotEngine
     End Function
 
     ''' <summary>
-    ''' Double right-clicks a client-space point using a real, verified cursor move instead of
-    ''' posted window messages. Some games resolve a click's target from the real cursor position
-    ''' (GetCursorPos) rather than the coordinates carried in the click message itself, so a
-    ''' message-only click can land wherever the user's actual mouse happens to be hovering instead
-    ''' of the intended inventory slot. This moves the real cursor to the target, re-reads the
-    ''' cursor position to confirm it landed exactly there, and only then sends the click - if the
-    ''' cursor isn't exactly on target (SetCursorPos failed, or something else moved it in between),
-    ''' no click is sent at all. The whole sequence is kept short and the cursor is restored
-    ''' immediately after, so it reads as a quick, unnoticeable blip rather than a visible jump.
+    ''' Double right-clicks a client-space point. Combines three fixes that each solved a different
+    ''' failure mode: (1) the real cursor is moved to the target and verified before clicking, because
+    ''' some games resolve a click's position from GetCursorPos rather than the coordinates carried in
+    ''' the click message, so a message-only click could land wherever the user's real mouse happened
+    ''' to be hovering; (2) the click itself is posted directly to this window's handle rather than
+    ''' sent as a real system-wide click, so it can't land on or steal focus from some other window
+    ''' that happens to be on top of the game at that screen point; (3) if the game isn't already the
+    ''' active window, it's briefly forced to the foreground (since many games only process clicks
+    ''' while active) and whatever had focus before is restored immediately after, so this reads as a
+    ''' brief flicker rather than a lasting interruption to whatever the user was doing.
     ''' </summary>
-    Public Shared Function DoubleRightClickVerifiedAtClientPoint(hwnd As IntPtr, x As Integer, y As Integer, Optional restoreCursor As Boolean = True, Optional pressHoldMs As Integer = 15, Optional clickGapMs As Integer = 60) As Boolean
+    Public Shared Function DoubleRightClickVerifiedAtClientPoint(hwnd As IntPtr, x As Integer, y As Integer, ByRef diagnostic As String, Optional restoreCursor As Boolean = True, Optional pressHoldMs As Integer = 15, Optional clickGapMs As Integer = 60) As Boolean
+        diagnostic = ""
         If hwnd = IntPtr.Zero Then
+            diagnostic = "invalid window handle"
             Return False
         End If
 
         Dim screenPoint As NativeMethods.POINT
         If Not TryMapClientPointToScreen(hwnd, x, y, screenPoint) Then
+            diagnostic = "failed to map the client point to a screen point"
             Return False
         End If
 
@@ -10692,33 +10705,83 @@ Public Class BotEngine
             hadCursor = False
         End Try
 
+        ' Many games only process clicks (DirectInput/raw input) while their window is the active
+        ' one, so a click sent while the game isn't focused can silently do nothing - even one
+        ' delivered straight to its handle via PostMessage. To make this work regardless of what the
+        ' user is doing elsewhere, briefly force the game to the foreground just long enough to send
+        ' the click, then hand focus straight back to whatever had it. AttachThreadInput is needed
+        ' first because a plain SetForegroundWindow call from a background process is normally denied
+        ' by Windows' focus-stealing prevention (that's the "orange taskbar" glitch from an earlier
+        ' fix - it flashes the taskbar instead of switching). This keeps the interruption to a brief
+        ' flicker rather than a lasting focus steal, and it only happens when the game isn't already
+        ' the active window.
+        Dim previousForegroundWindow As IntPtr = NativeMethods.GetForegroundWindow()
+        Dim gameAlreadyActive As Boolean = (previousForegroundWindow = hwnd)
+        Dim attachedThreadInput As Boolean = False
+        Dim currentThreadId As UInteger = 0
+        Dim foregroundThreadId As UInteger = 0
+
+        If Not gameAlreadyActive AndAlso previousForegroundWindow <> IntPtr.Zero Then
+            Try
+                Dim unusedProcessId As UInteger = 0
+                foregroundThreadId = NativeMethods.GetWindowThreadProcessId(previousForegroundWindow, unusedProcessId)
+                currentThreadId = NativeMethods.GetCurrentThreadId()
+                If foregroundThreadId <> 0 AndAlso foregroundThreadId <> currentThreadId Then
+                    attachedThreadInput = NativeMethods.AttachThreadInput(currentThreadId, foregroundThreadId, True)
+                End If
+                NativeMethods.SetForegroundWindow(hwnd)
+            Catch
+            End Try
+        End If
+
         Try
-            ' Deliberately not calling SetForegroundWindow here: Windows' focus-stealing prevention
-            ' denies foreground requests from a background process and flashes the target's taskbar
-            ' button orange instead of switching focus - which is exactly the "orange taskbar" glitch
-            ' this was causing every time arrow unbundle fired. A real mouse_event click is delivered
-            ' by hit-testing (whichever window is topmost at that screen point), not by keyboard
-            ' focus, so the game doesn't need to be foregrounded for the click to land correctly.
+            ' Verification is a single, immediate readback right after SetCursorPos with generous
+            ' tolerance - no sleep-and-retry loop. An earlier version retried with a short sleep in
+            ' between, but that sleep only widens the window for the user's own real mouse movement
+            ' (or any other transient cursor activity) to shift the position before the readback,
+            ' which was rejecting perfectly good attempts and silently disabling arrow unbundle
+            ' entirely. SetCursorPos's own success/failure is the primary signal; this readback only
+            ' guards against something actively fighting the cursor (e.g. a game confining it to a
+            ' different region), which shows up as a large, persistent offset - not a few pixels.
+            Const cursorPositionTolerancePixels As Integer = 8
             If Not NativeMethods.SetCursorPos(screenPoint.X, screenPoint.Y) Then
+                diagnostic = $"SetCursorPos failed (target screen {screenPoint.X},{screenPoint.Y})"
                 Return False
             End If
 
             Dim confirmedPos As NativeMethods.POINT
-            If Not NativeMethods.GetCursorPos(confirmedPos) OrElse confirmedPos.X <> screenPoint.X OrElse confirmedPos.Y <> screenPoint.Y Then
+            If Not NativeMethods.GetCursorPos(confirmedPos) Then
+                diagnostic = "GetCursorPos failed after SetCursorPos"
                 Return False
             End If
 
+            If Math.Abs(confirmedPos.X - screenPoint.X) > cursorPositionTolerancePixels OrElse
+               Math.Abs(confirmedPos.Y - screenPoint.Y) > cursorPositionTolerancePixels Then
+                diagnostic = $"target screen {screenPoint.X},{screenPoint.Y} but cursor read back at {confirmedPos.X},{confirmedPos.Y}"
+                Return False
+            End If
+
+            ' The click itself is posted straight to this window (PostMessage), not sent as a real
+            ' system-wide mouse_event. A real click is delivered by hit-testing whichever window is
+            ' topmost at that screen point and changes OS focus/foreground to it - which is exactly
+            ' what was stealing focus from whatever the user was typing in when this fired. Posting
+            ' directly to hwnd bypasses z-order and focus entirely: it can't land on, or shift focus
+            ' to, some other window that happens to be on top at that point. The real cursor move
+            ' above still happens first so the game sees the correct position if it reads GetCursorPos
+            ' rather than trusting the message's own coordinates.
+            Dim lParam As Integer = (x And &HFFFF) Or ((y And &HFFFF) << 16)
             For clickIndex As Integer = 0 To 1
-                NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_RIGHTDOWN, CUInt(screenPoint.X), CUInt(screenPoint.Y), 0UI, UIntPtr.Zero)
+                NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_RBUTTONDOWN), New IntPtr(NativeMethods.MK_RBUTTON), New IntPtr(lParam))
                 Thread.Sleep(Math.Max(1, pressHoldMs))
-                NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_RIGHTUP, CUInt(screenPoint.X), CUInt(screenPoint.Y), 0UI, UIntPtr.Zero)
+                NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_RBUTTONUP), IntPtr.Zero, New IntPtr(lParam))
                 If clickIndex = 0 AndAlso clickGapMs > 0 Then
                     Thread.Sleep(clickGapMs)
                 End If
             Next
 
             Return True
-        Catch
+        Catch ex As Exception
+            diagnostic = $"exception ({ex.GetType().Name}): {ex.Message}"
             Return False
         Finally
             If restoreCursor AndAlso hadCursor Then
@@ -10726,6 +10789,19 @@ Public Class BotEngine
                     NativeMethods.SetCursorPos(previousCursor.X, previousCursor.Y)
                 Catch
                 End Try
+            End If
+
+            If Not gameAlreadyActive AndAlso previousForegroundWindow <> IntPtr.Zero Then
+                Try
+                    NativeMethods.SetForegroundWindow(previousForegroundWindow)
+                Catch
+                End Try
+                If attachedThreadInput Then
+                    Try
+                        NativeMethods.AttachThreadInput(currentThreadId, foregroundThreadId, False)
+                    Catch
+                    End Try
+                End If
             End If
         End Try
     End Function
@@ -10789,9 +10865,12 @@ Public Class BotEngine
             End If
 
             Thread.Sleep(10)
-            NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTDOWN, CUInt(screenPoint.X), CUInt(screenPoint.Y), 0UI, UIntPtr.Zero)
+            ' dx/dy are only meaningful to mouse_event with MOUSEEVENTF_MOVE, which isn't set here,
+            ' so pass 0 instead of the screen point - CUInt(...) on a negative coordinate (a window on
+            ' a monitor left of/above the primary display) throws an OverflowException otherwise.
+            NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTDOWN, 0UI, 0UI, 0UI, UIntPtr.Zero)
             Thread.Sleep(Math.Max(0, cfg.LootNamePickupMouseHoldMs))
-            NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTUP, CUInt(screenPoint.X), CUInt(screenPoint.Y), 0UI, UIntPtr.Zero)
+            NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTUP, 0UI, 0UI, 0UI, UIntPtr.Zero)
 
             Dim waitBeforeFMs As Integer = Math.Max(0, cfg.LootNamePickupClickDelayMs)
             If waitBeforeFMs > 0 Then

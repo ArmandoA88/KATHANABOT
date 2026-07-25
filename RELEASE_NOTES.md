@@ -1,16 +1,17 @@
-# KathanaBot 1.0.74
+# KathanaBot 1.0.80
 
 ## What changed
 
-- Added an on-demand phone status button. Set a private ntfy topic in the new "ntfy Channel (On-Demand Request)" field, publish to it from your phone (e.g. a free iOS Shortcut or Android HTTP-shortcut app), and the bot replies to your existing Stats destination within ~20 seconds with character name, on/off, HP%/MP%, EXP%+rate, Rupiahs+rate, and the mob currently being attacked. Nothing is sent unless you trigger it.
-- Fixed the on-demand request being missed on the very first press after setting up the topic - it now compares each message's own timestamp instead of blindly ignoring everything seen on the first check.
-- Fixed repeated notification loops when the Stats destination and the On-Demand Request topic are the same (or otherwise echo back to each other): the bot now ignores any message titled "KathanaBot ..." when checking for a button press, since that's always its own reply, never a real request.
-- Added backoff for ntfy.sh's free-tier rate limit: on-demand polling slowed to every 20 seconds, and if a 429 (too many requests) is still hit, polling pauses for 5 minutes and resumes automatically instead of retrying immediately and re-triggering the same error.
+- Fixed arrow unbundle clicks stealing focus from whatever window the user had active. The double right-click is now posted directly to the game's window handle instead of sent as a real, system-wide click, so it can't land on or take focus from some other window sitting on top of the game at that screen point.
+- Fixed arrow unbundle silently doing nothing when the game window wasn't already the active/foreground window (many games only process clicks while active). The bot now briefly forces the game to the foreground just long enough to send the click, then restores whatever had focus before - using AttachThreadInput to get around Windows' normal focus-stealing prevention for background processes.
+- Fixed arrow unbundle being over-eager about rejecting valid attempts: cursor-position verification now allows an 8px tolerance instead of requiring an exact pixel match, since minor cursor drift shouldn't cancel an otherwise-good click.
+- Fixed a crash (OverflowException) in the loot name pickup click when the game window sits on a monitor to the left of or above the primary display, which produces negative screen coordinates that couldn't be converted to the unsigned values `mouse_event` expects.
+- Arrow unbundle's skip log message now reports the specific reason (bad window handle, failed screen mapping, cursor readback mismatch, etc.) instead of a single generic "cursor could not be verified" message, making it easier to tell why a click was skipped.
 
 ## Recent change history - last 5
 
-1. **On-demand phone status button:** press a button on your phone, get an instant character/HP/MP/EXP/Rupiahs/target report - no periodic polling, only when you ask.
-2. **First-press reliability fix:** the very first message on a freshly configured request topic is no longer silently dropped as "baseline."
-3. **Self-reply loop fix:** using the same topic for requests and stats replies can no longer cause the bot to keep re-triggering itself.
-4. **Rate-limit friendly:** polling cadence and automatic backoff keep the feature working within ntfy.sh's free-tier limits instead of erroring out.
-5. **Fresh standalone build:** rebuilt and versioned for this release.
+1. **Arrow unbundle no longer steals focus:** clicks are posted directly to the game window instead of firing as real system-wide clicks.
+2. **Arrow unbundle works while the game isn't active:** the game is briefly foregrounded for the click and focus is restored immediately after.
+3. **Less trigger-happy verification:** an 8px cursor tolerance stops good clicks from being wrongly skipped.
+4. **Loot pickup crash fix:** negative screen coordinates (multi-monitor setups) no longer crash the click.
+5. **Better diagnostics:** arrow unbundle skip messages now say exactly what failed.
