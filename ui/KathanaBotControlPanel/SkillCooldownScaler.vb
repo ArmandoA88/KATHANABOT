@@ -58,6 +58,9 @@ Friend NotInheritable Class SkillCooldownScaler
     Private _currentMultiplier As Single = 1.0F
     Private _nextVerificationTick As Long
     Private _disposed As Boolean
+    Private _consecutiveAttachFailures As Integer = 0
+    Private _nextAttachAttemptTick As Long = 0L
+    Private _lastAttachFailureMessage As String = ""
 
     Public Function TrySetMultiplier(gameWindow As IntPtr, multiplier As Single, ByRef errorMessage As String) As Boolean
         errorMessage = ""
@@ -78,17 +81,25 @@ Friend NotInheritable Class SkillCooldownScaler
                 If Math.Abs(multiplier - 1.0F) < 0.001F OrElse pid = 0UI Then
                     DetachInternal()
                     _currentMultiplier = 1.0F
+                    _consecutiveAttachFailures = 0
+                    _nextAttachAttemptTick = 0L
                     Return True
                 End If
 
                 If _processHandle = IntPtr.Zero OrElse _processId <> pid Then
                     DetachInternal()
-                    AttachInternal(pid, multiplier)
+                    If Not TryAttach(pid, multiplier, errorMessage) Then
+                        _currentMultiplier = 1.0F
+                        Return False
+                    End If
                 ElseIf Math.Abs(multiplier - _currentMultiplier) >= 0.001F Then
                     WriteSingle(_processHandle, _remoteAllocation, multiplier)
                 ElseIf Environment.TickCount64 >= _nextVerificationTick AndAlso Not InstalledPatchesAreHealthy() Then
                     DetachInternal()
-                    AttachInternal(pid, multiplier)
+                    If Not TryAttach(pid, multiplier, errorMessage) Then
+                        _currentMultiplier = 1.0F
+                        Return False
+                    End If
                 End If
 
                 _currentMultiplier = multiplier
@@ -100,6 +111,36 @@ Friend NotInheritable Class SkillCooldownScaler
                 Return False
             End Try
         End SyncLock
+    End Function
+
+    ' If the patch sites stop validating (e.g. the game rewrites that code region during play),
+    ' retrying on every 120ms UI tick would suspend every thread in the game three times a second
+    ' forever - visible as constant input lag/stutter, including on movement, for the rest of the
+    ' session. Back off exponentially between attach attempts instead so a permanent mismatch just
+    ' quietly stays off rather than repeatedly freezing the whole process trying to recover.
+    Private Function TryAttach(pid As UInteger, multiplier As Single, ByRef errorMessage As String) As Boolean
+        errorMessage = ""
+        Dim nowTick As Long = Environment.TickCount64
+        If nowTick < _nextAttachAttemptTick Then
+            Dim waitSeconds As Double = (_nextAttachAttemptTick - nowTick) / 1000.0
+            errorMessage = $"{_lastAttachFailureMessage} Retrying in {waitSeconds:0.0}s (attempt #{_consecutiveAttachFailures + 1})."
+            Return False
+        End If
+
+        Try
+            AttachInternal(pid, multiplier)
+            _consecutiveAttachFailures = 0
+            _nextAttachAttemptTick = 0L
+            Return True
+        Catch ex As Exception
+            DetachInternal()
+            _consecutiveAttachFailures += 1
+            Dim backoffMs As Long = Math.Min(30000L, 1000L * CLng(Math.Pow(2, Math.Min(5, _consecutiveAttachFailures - 1))))
+            _nextAttachAttemptTick = Environment.TickCount64 + backoffMs
+            _lastAttachFailureMessage = DescribeFailure(ex)
+            errorMessage = $"{_lastAttachFailureMessage} Retrying in {backoffMs / 1000.0:0.0}s (attempt #{_consecutiveAttachFailures})."
+            Return False
+        End Try
     End Function
 
     Private Sub AttachInternal(pid As UInteger, multiplier As Single)
@@ -174,19 +215,16 @@ Friend NotInheritable Class SkillCooldownScaler
                 Dim initialPatch As Byte() = BuildAbsoluteJump(initialCodeAddress, InitialCooldownPatchLength)
                 Dim adjustedPatch As Byte() = BuildAbsoluteJump(adjustedCodeAddress, AdjustedCooldownPatchLength)
                 Dim autoBuffPatch As Byte() = BuildAbsoluteJump(autoBuffCodeAddress, AutoBuffDeadlinePatchLength)
-                WriteProtectedCode(processHandle, pid, initialAddress, initialPatch)
-                Try
-                    WriteProtectedCode(processHandle, pid, adjustedAddress, adjustedPatch)
-                    Try
-                        WriteProtectedCode(processHandle, pid, autoBuffAddress, autoBuffPatch)
-                    Catch
-                        WriteProtectedCode(processHandle, pid, adjustedAddress, adjustedOriginal)
-                        Throw
-                    End Try
-                Catch
-                    WriteProtectedCode(processHandle, pid, initialAddress, initialOriginal)
-                    Throw
-                End Try
+
+                ' All three sites are patched under one suspend-all-threads/resume cycle instead of
+                ' three back-to-back cycles, so attaching (and every retry after a failed health
+                ' check) freezes the game a third as often.
+                Dim patchSites As (Address As IntPtr, NewBytes As Byte(), OriginalBytes As Byte())() = {
+                    (initialAddress, initialPatch, initialOriginal),
+                    (adjustedAddress, adjustedPatch, adjustedOriginal),
+                    (autoBuffAddress, autoBuffPatch, autoBuffOriginal)
+                }
+                WriteProtectedCodeMulti(processHandle, pid, patchSites)
 
                 _processHandle = processHandle
                 _processId = pid
@@ -222,14 +260,25 @@ Friend NotInheritable Class SkillCooldownScaler
         End If
 
         Try
+            Dim restoreSites As New List(Of (Address As IntPtr, Bytes As Byte()))()
             If _autoBuffPatchAddress <> IntPtr.Zero AndAlso _autoBuffOriginalBytes IsNot Nothing Then
-                WriteProtectedCode(_processHandle, _processId, _autoBuffPatchAddress, _autoBuffOriginalBytes)
+                restoreSites.Add((_autoBuffPatchAddress, _autoBuffOriginalBytes))
             End If
             If _adjustedPatchAddress <> IntPtr.Zero AndAlso _adjustedOriginalBytes IsNot Nothing Then
-                WriteProtectedCode(_processHandle, _processId, _adjustedPatchAddress, _adjustedOriginalBytes)
+                restoreSites.Add((_adjustedPatchAddress, _adjustedOriginalBytes))
             End If
             If _initialPatchAddress <> IntPtr.Zero AndAlso _initialOriginalBytes IsNot Nothing Then
-                WriteProtectedCode(_processHandle, _processId, _initialPatchAddress, _initialOriginalBytes)
+                restoreSites.Add((_initialPatchAddress, _initialOriginalBytes))
+            End If
+            If restoreSites.Count > 0 Then
+                Dim suspended As List(Of IntPtr) = SuspendProcessThreads(_processId)
+                Try
+                    For Each site In restoreSites
+                        WriteProtectedSiteLocked(_processHandle, site.Address, site.Bytes)
+                    Next
+                Finally
+                    ResumeProcessThreads(suspended)
+                End Try
             End If
             If _remoteAllocation <> IntPtr.Zero Then
                 Threading.Thread.Sleep(10)
@@ -318,7 +367,9 @@ Friend NotInheritable Class SkillCooldownScaler
         End If
         For index As Integer = 0 To expected.Length - 1
             If actual(index) <> expected(index) Then
-                Throw New InvalidOperationException($"The selected game does not match the verified {description} code signature.")
+                Throw New InvalidOperationException(
+                    $"The selected game does not match the verified {description} code signature " &
+                    $"(expected {Convert.ToHexString(expected)}, found {Convert.ToHexString(actual)}).")
             End If
         Next
     End Sub
@@ -415,22 +466,39 @@ Friend NotInheritable Class SkillCooldownScaler
         code.AddRange(BitConverter.GetBytes(address.ToInt64()))
     End Sub
 
-    Private Shared Sub WriteProtectedCode(processHandle As IntPtr, pid As UInteger, address As IntPtr, bytes As Byte())
+    Private Shared Sub WriteProtectedCodeMulti(processHandle As IntPtr, pid As UInteger, sites As (Address As IntPtr, NewBytes As Byte(), OriginalBytes As Byte())())
         Dim suspended As List(Of IntPtr) = SuspendProcessThreads(pid)
+        Dim appliedCount As Integer = 0
         Try
-            Dim oldProtection As UInteger = 0UI
-            If Not VirtualProtectEx(processHandle, address, New UIntPtr(CUInt(bytes.Length)), PAGE_EXECUTE_READWRITE, oldProtection) Then
-                Throw New Win32Exception(Marshal.GetLastWin32Error(), "Unable to unlock the skill cooldown code page.")
-            End If
-            Try
-                WriteBytes(processHandle, address, bytes)
-                FlushInstructionCache(processHandle, address, New UIntPtr(CUInt(bytes.Length)))
-            Finally
-                Dim ignored As UInteger = 0UI
-                VirtualProtectEx(processHandle, address, New UIntPtr(CUInt(bytes.Length)), oldProtection, ignored)
-            End Try
+            For index As Integer = 0 To sites.Length - 1
+                WriteProtectedSiteLocked(processHandle, sites(index).Address, sites(index).NewBytes)
+                appliedCount += 1
+            Next
+        Catch
+            For rollbackIndex As Integer = appliedCount - 1 To 0 Step -1
+                Try
+                    WriteProtectedSiteLocked(processHandle, sites(rollbackIndex).Address, sites(rollbackIndex).OriginalBytes)
+                Catch
+                    ' Best-effort rollback; the process may already be in a bad state.
+                End Try
+            Next
+            Throw
         Finally
             ResumeProcessThreads(suspended)
+        End Try
+    End Sub
+
+    Private Shared Sub WriteProtectedSiteLocked(processHandle As IntPtr, address As IntPtr, bytes As Byte())
+        Dim oldProtection As UInteger = 0UI
+        If Not VirtualProtectEx(processHandle, address, New UIntPtr(CUInt(bytes.Length)), PAGE_EXECUTE_READWRITE, oldProtection) Then
+            Throw New Win32Exception(Marshal.GetLastWin32Error(), "Unable to unlock the skill cooldown code page.")
+        End If
+        Try
+            WriteBytes(processHandle, address, bytes)
+            FlushInstructionCache(processHandle, address, New UIntPtr(CUInt(bytes.Length)))
+        Finally
+            Dim ignored As UInteger = 0UI
+            VirtualProtectEx(processHandle, address, New UIntPtr(CUInt(bytes.Length)), oldProtection, ignored)
         End Try
     End Sub
 
