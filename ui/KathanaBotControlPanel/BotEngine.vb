@@ -580,6 +580,8 @@ Friend Module NativeMethods
     Friend Const MK_RBUTTON As Integer = &H2
     Friend Const MOUSEEVENTF_LEFTDOWN As UInteger = &H2UI
     Friend Const MOUSEEVENTF_LEFTUP As UInteger = &H4UI
+    Friend Const MOUSEEVENTF_RIGHTDOWN As UInteger = &H8UI
+    Friend Const MOUSEEVENTF_RIGHTUP As UInteger = &H10UI
     Friend Const SW_RESTORE As Integer = 9
 
     <StructLayout(LayoutKind.Sequential)>
@@ -6597,11 +6599,13 @@ Public Class BotEngine
         Dim pt As LootScanPoint = points(_arrowUnbundleNextIndex)
         Dim clickX As Integer = Math.Max(0, Math.Min(Math.Max(0, clientWidth - 1), pt.X))
         Dim clickY As Integer = Math.Max(0, Math.Min(Math.Max(0, clientHeight - 1), pt.Y))
-        If DoubleRightClickClientPoint(hwnd, clickX, clickY, 10, 35, 90) Then
+        If DoubleRightClickVerifiedAtClientPoint(hwnd, clickX, clickY) Then
             _lastArrowUnbundleAt = now
             _arrowUnbundleNextIndex = (_arrowUnbundleNextIndex + 1) Mod points.Count
             SetLastAction($"Double right-click arrow unbundle ({clickX},{clickY})")
             RaiseEvent LogLine($"Arrow unbundle double right-click sent at {clickX},{clickY}.")
+        Else
+            RaiseEvent LogLine($"Arrow unbundle skipped at {clickX},{clickY}: cursor could not be verified exactly on target.")
         End If
     End Sub
 
@@ -10659,25 +10663,56 @@ Public Class BotEngine
         End Try
     End Function
 
-    Public Shared Function DoubleRightClickClientPoint(hwnd As IntPtr, x As Integer, y As Integer, Optional moveDelayMs As Integer = 10, Optional downUpDelayMs As Integer = 35, Optional clickGapMs As Integer = 90) As Boolean
+    ''' <summary>
+    ''' Double right-clicks a client-space point using a real, verified cursor move instead of
+    ''' posted window messages. Some games resolve a click's target from the real cursor position
+    ''' (GetCursorPos) rather than the coordinates carried in the click message itself, so a
+    ''' message-only click can land wherever the user's actual mouse happens to be hovering instead
+    ''' of the intended inventory slot. This moves the real cursor to the target, re-reads the
+    ''' cursor position to confirm it landed exactly there, and only then sends the click - if the
+    ''' cursor isn't exactly on target (SetCursorPos failed, or something else moved it in between),
+    ''' no click is sent at all. The whole sequence is kept short and the cursor is restored
+    ''' immediately after, so it reads as a quick, unnoticeable blip rather than a visible jump.
+    ''' </summary>
+    Public Shared Function DoubleRightClickVerifiedAtClientPoint(hwnd As IntPtr, x As Integer, y As Integer, Optional restoreCursor As Boolean = True, Optional pressHoldMs As Integer = 15, Optional clickGapMs As Integer = 60) As Boolean
         If hwnd = IntPtr.Zero Then
             Return False
         End If
 
-        Dim lParam As Integer = (x And &HFFFF) Or ((y And &HFFFF) << 16)
+        Dim screenPoint As NativeMethods.POINT
+        If Not TryMapClientPointToScreen(hwnd, x, y, screenPoint) Then
+            Return False
+        End If
+
+        Dim hadCursor As Boolean = False
+        Dim previousCursor As NativeMethods.POINT
         Try
-            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_MOUSEMOVE), IntPtr.Zero, New IntPtr(lParam))
-            If moveDelayMs > 0 Then
-                Thread.Sleep(moveDelayMs)
+            hadCursor = NativeMethods.GetCursorPos(previousCursor)
+        Catch
+            hadCursor = False
+        End Try
+
+        Try
+            ' Deliberately not calling SetForegroundWindow here: Windows' focus-stealing prevention
+            ' denies foreground requests from a background process and flashes the target's taskbar
+            ' button orange instead of switching focus - which is exactly the "orange taskbar" glitch
+            ' this was causing every time arrow unbundle fired. A real mouse_event click is delivered
+            ' by hit-testing (whichever window is topmost at that screen point), not by keyboard
+            ' focus, so the game doesn't need to be foregrounded for the click to land correctly.
+            If Not NativeMethods.SetCursorPos(screenPoint.X, screenPoint.Y) Then
+                Return False
             End If
 
-            For i As Integer = 0 To 1
-                NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_RBUTTONDOWN), New IntPtr(NativeMethods.MK_RBUTTON), New IntPtr(lParam))
-                If downUpDelayMs > 0 Then
-                    Thread.Sleep(downUpDelayMs)
-                End If
-                NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_RBUTTONUP), IntPtr.Zero, New IntPtr(lParam))
-                If i = 0 AndAlso clickGapMs > 0 Then
+            Dim confirmedPos As NativeMethods.POINT
+            If Not NativeMethods.GetCursorPos(confirmedPos) OrElse confirmedPos.X <> screenPoint.X OrElse confirmedPos.Y <> screenPoint.Y Then
+                Return False
+            End If
+
+            For clickIndex As Integer = 0 To 1
+                NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_RIGHTDOWN, CUInt(screenPoint.X), CUInt(screenPoint.Y), 0UI, UIntPtr.Zero)
+                Thread.Sleep(Math.Max(1, pressHoldMs))
+                NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_RIGHTUP, CUInt(screenPoint.X), CUInt(screenPoint.Y), 0UI, UIntPtr.Zero)
+                If clickIndex = 0 AndAlso clickGapMs > 0 Then
                     Thread.Sleep(clickGapMs)
                 End If
             Next
@@ -10685,6 +10720,13 @@ Public Class BotEngine
             Return True
         Catch
             Return False
+        Finally
+            If restoreCursor AndAlso hadCursor Then
+                Try
+                    NativeMethods.SetCursorPos(previousCursor.X, previousCursor.Y)
+                Catch
+                End Try
+            End If
         End Try
     End Function
 

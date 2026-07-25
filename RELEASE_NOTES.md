@@ -1,15 +1,15 @@
-# KathanaBot 1.0.67
+# KathanaBot 1.0.69
 
 ## What changed
 
-- Settings no longer feel "stuck" while the bot is running. Every control change still applies to the running bot instantly, but the disk save behind it now happens on a background thread and coalesces rapid edits into one write instead of freezing the UI on every keystroke/click.
-- Fixed a bug where toggling several Combat Skill checkboxes (or Calibration Region cells) back-to-back only applied the first change to the running bot - the rest looked toggled in the grid but the bot kept using the old values until something else nudged a refresh. Every toggle now reaches the running bot immediately, no matter how fast you click.
+- Fixed Arrow Unbundle right-clicking wherever your real mouse happened to be hovering instead of the configured inventory slot. The old click was sent as a posted window message, but the game reads the actual system cursor position to decide where a click landed - so the intended slot got clicked correctly, but so did whatever you were hovering over in the meantime. The click now moves the real cursor to the exact target point, re-checks that it landed exactly there, and only clicks if it's confirmed on target; otherwise it skips the click entirely.
+- Fixed the game's taskbar button flashing orange every time Arrow Unbundle fired. That was a side effect of the click briefly trying to force the game window to the foreground; Windows blocks that from a background process and flashes the taskbar instead of switching focus. The click no longer requests foreground focus - a real mouse click lands on whichever window is under the cursor regardless of focus, so this wasn't needed.
 - Rebuilt the standalone EXE and published this release through the in-app updater channel.
 
 ## Recent change history - last 5
 
-1. **No more dropped rapid grid edits:** quick back-to-back checkbox toggles in Combat Skills/Calibration Regions all reach the running bot now, not just the first one.
-2. **Non-blocking settings persistence:** the full settings save moved off the UI thread and is debounced, so editing anything no longer freezes the window while it writes to disk.
-3. **Live config push unchanged and instant:** the fix only touched disk persistence timing - pushing your changes into the running bot was already immediate and still is.
-4. **Explicit saves stay synchronous:** Save Settings, Save Profile, and app close still write to disk immediately so nothing is lost.
+1. **Arrow Unbundle clicks land on target:** the right-click now only fires after verifying the real cursor is exactly on the configured point, instead of trusting a background message that some games resolve against wherever the mouse actually is.
+2. **No more orange taskbar flash:** Arrow Unbundle no longer asks Windows to foreground the game window, removing the denied-focus-request flash that fired on every cycle.
+3. **Scoped fix:** only Arrow Unbundle's click path changed - Loot Auto-Pick's click behavior is untouched.
+4. **Still safe by default:** if the cursor can't be verified exactly on the target point, no click is sent at all rather than risking a misplaced one.
 5. **Fresh standalone build:** rebuilt and versioned for this release.
