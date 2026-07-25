@@ -1,15 +1,16 @@
-# KathanaBot 1.0.69
+# KathanaBot 1.0.74
 
 ## What changed
 
-- Fixed Arrow Unbundle right-clicking wherever your real mouse happened to be hovering instead of the configured inventory slot. The old click was sent as a posted window message, but the game reads the actual system cursor position to decide where a click landed - so the intended slot got clicked correctly, but so did whatever you were hovering over in the meantime. The click now moves the real cursor to the exact target point, re-checks that it landed exactly there, and only clicks if it's confirmed on target; otherwise it skips the click entirely.
-- Fixed the game's taskbar button flashing orange every time Arrow Unbundle fired. That was a side effect of the click briefly trying to force the game window to the foreground; Windows blocks that from a background process and flashes the taskbar instead of switching focus. The click no longer requests foreground focus - a real mouse click lands on whichever window is under the cursor regardless of focus, so this wasn't needed.
-- Rebuilt the standalone EXE and published this release through the in-app updater channel.
+- Added an on-demand phone status button. Set a private ntfy topic in the new "ntfy Channel (On-Demand Request)" field, publish to it from your phone (e.g. a free iOS Shortcut or Android HTTP-shortcut app), and the bot replies to your existing Stats destination within ~20 seconds with character name, on/off, HP%/MP%, EXP%+rate, Rupiahs+rate, and the mob currently being attacked. Nothing is sent unless you trigger it.
+- Fixed the on-demand request being missed on the very first press after setting up the topic - it now compares each message's own timestamp instead of blindly ignoring everything seen on the first check.
+- Fixed repeated notification loops when the Stats destination and the On-Demand Request topic are the same (or otherwise echo back to each other): the bot now ignores any message titled "KathanaBot ..." when checking for a button press, since that's always its own reply, never a real request.
+- Added backoff for ntfy.sh's free-tier rate limit: on-demand polling slowed to every 20 seconds, and if a 429 (too many requests) is still hit, polling pauses for 5 minutes and resumes automatically instead of retrying immediately and re-triggering the same error.
 
 ## Recent change history - last 5
 
-1. **Arrow Unbundle clicks land on target:** the right-click now only fires after verifying the real cursor is exactly on the configured point, instead of trusting a background message that some games resolve against wherever the mouse actually is.
-2. **No more orange taskbar flash:** Arrow Unbundle no longer asks Windows to foreground the game window, removing the denied-focus-request flash that fired on every cycle.
-3. **Scoped fix:** only Arrow Unbundle's click path changed - Loot Auto-Pick's click behavior is untouched.
-4. **Still safe by default:** if the cursor can't be verified exactly on the target point, no click is sent at all rather than risking a misplaced one.
+1. **On-demand phone status button:** press a button on your phone, get an instant character/HP/MP/EXP/Rupiahs/target report - no periodic polling, only when you ask.
+2. **First-press reliability fix:** the very first message on a freshly configured request topic is no longer silently dropped as "baseline."
+3. **Self-reply loop fix:** using the same topic for requests and stats replies can no longer cause the bot to keep re-triggering itself.
+4. **Rate-limit friendly:** polling cadence and automatic backoff keep the feature working within ntfy.sh's free-tier limits instead of erroring out.
 5. **Fresh standalone build:** rebuilt and versioned for this release.

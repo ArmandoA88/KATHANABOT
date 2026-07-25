@@ -35,6 +35,7 @@ Public Class Form1
     Private ReadOnly _rollingScreenshotTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _periodicScreenshotTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _discordShotTimer As New System.Windows.Forms.Timer()
+    Private ReadOnly _ntfyStatusRequestTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _persistDebounceTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _persistFileLock As New Object()
     Private _pendingPersistState As PersistedAppState = Nothing
@@ -297,6 +298,8 @@ Public Class Form1
     Private lblNtfyItemTopic As Label
     Private txtStatsNtfyTopic As TextBox
     Private lblNtfyStatsTopic As Label
+    Private txtNtfyStatusRequestTopic As TextBox
+    Private lblNtfyStatusRequestTopic As Label
     Private chkAutoRelaunchGame As CheckBox
     Private txtAutoRelaunchExePath As TextBox
     Private btnBrowseAutoRelaunchExe As Button
@@ -473,6 +476,8 @@ Public Class Form1
     Private Const RollingScreenshotIntervalMs As Integer = 30000
     Private Const RollingScreenshotRetainCount As Integer = 10
     Private Const DiscordShotPollIntervalMs As Integer = 5000
+    Private Const NtfyStatusRequestPollIntervalMs As Integer = 20000
+    Private Const NtfyStatusRequestBackoffMinutesOnRateLimit As Integer = 5
     Private Shared ReadOnly NtfyClient As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(7)}
     Private Shared ReadOnly PersistDirectoryPath As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel")
     Private Shared ReadOnly PersistFilePath As String = Path.Combine(PersistDirectoryPath, "user_lists.json")
@@ -508,6 +513,12 @@ Public Class Form1
     Private _discordShotInitialized As Boolean = False
     Private _lastDiscordShotMessageId As String = ""
     Private _lastDiscordShotErrorLogUtc As DateTime = DateTime.MinValue
+    Private _ntfyStatusRequestPollInProgress As Boolean = False
+    Private _ntfyStatusRequestInitialized As Boolean = False
+    Private _lastNtfyStatusRequestId As String = ""
+    Private _ntfyStatusRequestListenStartUnixSeconds As Long = 0
+    Private _ntfyStatusRequestBackoffUntilUtc As DateTime = DateTime.MinValue
+    Private _lastNtfyStatusRequestErrorLogUtc As DateTime = DateTime.MinValue
     Private _logFilterCombatEnabled As Boolean = True
     Private _logFilterLootEnabled As Boolean = True
     Private _logFilterOcrVisionEnabled As Boolean = True
@@ -695,6 +706,7 @@ Public Class Form1
         Public Property NtfyTopic As String = ""
         Public Property StatsNtfyTopic As String = ""
         Public Property StatsNtfyIntervalMinutes As Decimal = 30D
+        Public Property StatusRequestNtfyTopic As String = ""
         Public Property AutoRelaunchGameEnabled As Boolean = False
         Public Property AutoRelaunchGameExePath As String = ""
         Public Property AutoRelaunchDelaySeconds As Decimal = 5D
@@ -825,6 +837,10 @@ Public Class Form1
         AddHandler _discordShotTimer.Tick, AddressOf DiscordShotTimerTick
         _discordShotTimer.Start()
 
+        _ntfyStatusRequestTimer.Interval = NtfyStatusRequestPollIntervalMs
+        AddHandler _ntfyStatusRequestTimer.Tick, AddressOf NtfyStatusRequestTimerTick
+        _ntfyStatusRequestTimer.Start()
+
         UpdateEditionUiState(False)
         PushLiveConfig()
     End Sub
@@ -899,6 +915,9 @@ Public Class Form1
         If nudStatsNtfyIntervalMinutes IsNot Nothing Then
             AddHandler nudStatsNtfyIntervalMinutes.ValueChanged, AddressOf LiveConfigChanged
             AddHandler nudStatsNtfyIntervalMinutes.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If txtNtfyStatusRequestTopic IsNot Nothing Then
+            AddHandler txtNtfyStatusRequestTopic.TextChanged, AddressOf PersistListSettingsChanged
         End If
         If chkAutoRelaunchGame IsNot Nothing Then
             AddHandler chkAutoRelaunchGame.CheckedChanged, AddressOf PersistListSettingsChanged
@@ -3496,11 +3515,11 @@ Public Class Form1
         UpdateBarColorUi()
 
         Dim notifyGroup As New GroupBox() With {.Text = "Notifications + Loot Matching", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
-        Dim notifyLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 13}
+        Dim notifyLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 14}
         tblNotificationSettings = notifyLayout
         notifyLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 180.0F))
         notifyLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
-        For i As Integer = 0 To 10
+        For i As Integer = 0 To 11
             notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
         Next
         notifyLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
@@ -3556,19 +3575,25 @@ Public Class Form1
         nudStatsNtfyIntervalMinutes = New NumericUpDown() With {.Minimum = 1D, .Maximum = 1440D, .DecimalPlaces = 0, .Value = 30D, .Dock = DockStyle.Left, .Width = 100}
         notifyLayout.Controls.Add(nudStatsNtfyIntervalMinutes, 1, 9)
 
-        notifyLayout.Controls.Add(New Label() With {.Text = "Loot Matching", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 10)
-        notifyLayout.Controls.Add(New Label() With {.Text = "Moved to Auto-Loot tab", .Dock = DockStyle.Fill, .ForeColor = Color.LightSteelBlue, .TextAlign = ContentAlignment.MiddleLeft}, 1, 10)
+        lblNtfyStatusRequestTopic = New Label() With {.Text = "ntfy Channel (On-Demand Request)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        notifyLayout.Controls.Add(lblNtfyStatusRequestTopic, 0, 10)
+        txtNtfyStatusRequestTopic = New TextBox() With {.Dock = DockStyle.Fill, .Text = ""}
+        notifyLayout.Controls.Add(txtNtfyStatusRequestTopic, 1, 10)
+
+        notifyLayout.Controls.Add(New Label() With {.Text = "Loot Matching", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 11)
+        notifyLayout.Controls.Add(New Label() With {.Text = "Moved to Auto-Loot tab", .Dock = DockStyle.Fill, .ForeColor = Color.LightSteelBlue, .TextAlign = ContentAlignment.MiddleLeft}, 1, 11)
 
         Dim note As New Label() With {
             .Text = "Use provider 'discord' with one webhook per alert stream (global, items, stats), or provider 'ntfy' with the topic fields below." & Environment.NewLine &
                     "Use role 'max_health' in Combat Skills if you want the max-health potion threshold controlled here. HP alarm only triggers at HP=0." & Environment.NewLine &
                     "Stats alerts send Prana/EXP %, EXP/hr, Rupiahs total, and Rupiahs/hr on the interval you choose while the bot is running." & Environment.NewLine &
-                    "Type shot in the Discord data channel to upload the latest rolling screenshot to the Stats webhook channel.",
+                    "Type shot in the Discord data channel to upload the latest rolling screenshot to the Stats webhook channel." & Environment.NewLine &
+                    "On-Demand Request: pick any private ntfy topic name and publish (POST) to https://ntfy.sh/<topic> from your phone (e.g. an iOS Shortcut or an Android HTTP-shortcut app) to get a status push within ~20s - character, on/off, HP%/MP%, EXP%+rate, Rupiahs+rate, and the mob being attacked - sent to your Stats destination above. Nothing is sent unless you trigger it. Checked every 20s to stay under ntfy.sh's free request limit; if that limit is still hit, checking pauses for a few minutes and resumes automatically.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.TopLeft
         }
-        notifyLayout.Controls.Add(note, 0, 11)
+        notifyLayout.Controls.Add(note, 0, 12)
         notifyLayout.SetColumnSpan(note, 2)
 
         Dim notifyFoot As New Label() With {
@@ -3577,7 +3602,7 @@ Public Class Form1
             .ForeColor = Color.Gray,
             .TextAlign = ContentAlignment.MiddleLeft
         }
-        notifyLayout.Controls.Add(notifyFoot, 0, 12)
+        notifyLayout.Controls.Add(notifyFoot, 0, 13)
         notifyLayout.SetColumnSpan(notifyFoot, 2)
         notifyGroup.Controls.Add(notifyLayout)
 
@@ -6346,6 +6371,17 @@ Public Class Form1
             Return If(value.GetString(), "")
         End If
         Return ""
+    End Function
+
+    Private Shared Function GetJsonUnixSeconds(element As JsonElement, propertyName As String) As Long
+        Dim value As JsonElement
+        If element.ValueKind = JsonValueKind.Object AndAlso element.TryGetProperty(propertyName, value) AndAlso value.ValueKind = JsonValueKind.Number Then
+            Dim parsed As Long = 0
+            If value.TryGetInt64(parsed) Then
+                Return parsed
+            End If
+        End If
+        Return 0
     End Function
 
     Private Shared Function IsDiscordShotCommand(message As JsonElement) As Boolean
@@ -11749,6 +11785,9 @@ Public Class Form1
                 Dim boundedStatsInterval As Decimal = Math.Max(nudStatsNtfyIntervalMinutes.Minimum, Math.Min(nudStatsNtfyIntervalMinutes.Maximum, state.StatsNtfyIntervalMinutes))
                 nudStatsNtfyIntervalMinutes.Value = boundedStatsInterval
             End If
+            If txtNtfyStatusRequestTopic IsNot Nothing Then
+                txtNtfyStatusRequestTopic.Text = If(state.StatusRequestNtfyTopic, "").Trim()
+            End If
             If chkAutoRelaunchGame IsNot Nothing Then
                 chkAutoRelaunchGame.Checked = state.AutoRelaunchGameEnabled
             End If
@@ -11852,6 +11891,7 @@ Public Class Form1
                 .ItemNtfyTopic = If(txtItemNtfyTopic IsNot Nothing, txtItemNtfyTopic.Text.Trim(), ""),
                 .StatsNtfyTopic = If(txtStatsNtfyTopic IsNot Nothing, txtStatsNtfyTopic.Text.Trim(), ""),
                 .StatsNtfyIntervalMinutes = If(nudStatsNtfyIntervalMinutes IsNot Nothing, nudStatsNtfyIntervalMinutes.Value, 30D),
+                .StatusRequestNtfyTopic = If(txtNtfyStatusRequestTopic IsNot Nothing, txtNtfyStatusRequestTopic.Text.Trim(), ""),
                 .AutoRelaunchGameEnabled = (chkAutoRelaunchGame IsNot Nothing AndAlso chkAutoRelaunchGame.Checked),
                 .AutoRelaunchGameExePath = If(txtAutoRelaunchExePath IsNot Nothing, txtAutoRelaunchExePath.Text.Trim(), ""),
                 .AutoRelaunchDelaySeconds = If(nudAutoRelaunchDelaySeconds IsNot Nothing, nudAutoRelaunchDelaySeconds.Value, 5D),
@@ -13511,6 +13551,18 @@ Public Class Form1
         Return raw.Replace(" ", "").Trim("/"c)
     End Function
 
+    Private Function GetNtfyStatusRequestTopicName() As String
+        Dim raw As String = ""
+        If txtNtfyStatusRequestTopic IsNot Nothing Then
+            raw = txtNtfyStatusRequestTopic.Text.Trim()
+        End If
+        If raw = "" Then
+            Return ""
+        End If
+
+        Return raw.Replace(" ", "").Trim("/"c)
+    End Function
+
     Private Function FormatExpRateForNotification(status As BotStatus) As String
         If status Is Nothing OrElse status.ExpPerHour < 0 Then
             Return "Calculating (1m)"
@@ -13584,6 +13636,201 @@ Public Class Form1
                     AppendLogSafe($"{intervalMinutes}-minute stats alert failed via {destinationSummary}.")
                 End If
             End Function)
+    End Sub
+
+    Private Function GetActiveStatusForOnDemand(ByRef isRunning As Boolean, ByRef editionLabel As String) As BotStatus
+        If _fullEngine.IsRunning() Then
+            isRunning = True
+            editionLabel = "Full"
+            Return _fullStatus
+        End If
+        If _liteEngine.IsRunning() Then
+            isRunning = True
+            editionLabel = "Lite"
+            Return _liteStatus
+        End If
+
+        isRunning = False
+        editionLabel = ""
+        Return If(_fullStatus, _liteStatus)
+    End Function
+
+    Private Function BuildOnDemandStatusBody() As String
+        Dim isRunning As Boolean = False
+        Dim editionLabel As String = ""
+        Dim status As BotStatus = GetActiveStatusForOnDemand(isRunning, editionLabel)
+        Dim statusText As String = If(isRunning, $"On ({editionLabel})", "Off")
+        Dim characterName As String = If(status IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(status.CharacterName), status.CharacterName, "n/a")
+
+        If Not isRunning OrElse status Is Nothing Then
+            Return $"Character: {characterName}{Environment.NewLine}Status: {statusText}"
+        End If
+
+        Dim attacking As String = If(status.TargetValid AndAlso Not String.IsNullOrWhiteSpace(status.MobName), status.MobName, "None")
+        Dim body As String =
+            $"Character: {characterName}{Environment.NewLine}" &
+            $"Status: {statusText}{Environment.NewLine}" &
+            $"HP: {status.HpPercent:0.0}% | MP: {status.MpPercent:0.0}%{Environment.NewLine}" &
+            $"Prana/EXP: {status.ExpPercent:0.00}% | Rate: {FormatExpRateForNotification(status)}{Environment.NewLine}" &
+            $"Rupiahs: {If(status.RupiahsTotal >= 0, status.RupiahsTotal.ToString("N0"), "n/a")} | Rate: {FormatRupiahsRateForNotification(status)}{Environment.NewLine}" &
+            $"Attacking: {attacking}"
+        Return body
+    End Function
+
+    ''' <summary>
+    ''' Fires once whenever a new message shows up on the on-demand ntfy request topic (i.e. the
+    ''' phone-side button was pressed). Runs on the UI thread (invoked from the background poller),
+    ''' so it's safe to read controls here.
+    ''' </summary>
+    Private Sub HandleOnDemandStatusRequest()
+        Dim provider As String = GetNotificationProviderName()
+        Dim topic As String = GetStatsNtfyTopicName()
+        If provider = NotificationProviderNtfy AndAlso topic = "" Then
+            AppendLogSafe("On-demand status request received, but no Stats destination (ntfy topic or Discord webhook) is configured.")
+            Return
+        End If
+
+        Dim body As String = BuildOnDemandStatusBody()
+        Dim destinationSummary As String = GetStatsNotificationDestinationSummary()
+        Dim discordStatsWebhookUrl As String = GetDiscordStatsWebhookUrl()
+        AppendLogSafe("On-demand status request received.")
+        Task.Run(
+            Async Function()
+                Dim sent As Boolean = Await SendPhoneNotificationToTopicAsync("KathanaBot Status", body, topic, 1, "default", "gamepad,mag", discordStatsWebhookUrl, "Discord stats webhook")
+                If sent Then
+                    AppendLogSafe($"On-demand status sent via {destinationSummary}.")
+                Else
+                    AppendLogSafe($"On-demand status request failed via {destinationSummary}.")
+                End If
+            End Function)
+    End Sub
+
+    Private Sub NtfyStatusRequestTimerTick(sender As Object, e As EventArgs)
+        If _ntfyStatusRequestPollInProgress Then
+            Return
+        End If
+
+        Dim topic As String = GetNtfyStatusRequestTopicName()
+        If topic = "" Then
+            _ntfyStatusRequestInitialized = False
+            _lastNtfyStatusRequestId = ""
+            _ntfyStatusRequestListenStartUnixSeconds = 0
+            _ntfyStatusRequestBackoffUntilUtc = DateTime.MinValue
+            Return
+        End If
+
+        If DateTime.UtcNow < _ntfyStatusRequestBackoffUntilUtc Then
+            Return
+        End If
+
+        If _ntfyStatusRequestListenStartUnixSeconds = 0 Then
+            ' A few seconds of slack absorbs clock skew against ntfy.sh and covers a button press
+            ' that lands in the same instant polling starts, so the very first press after setting
+            ' this up isn't missed (see PollNtfyStatusRequestAsync).
+            _ntfyStatusRequestListenStartUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 5
+        End If
+
+        _ntfyStatusRequestPollInProgress = True
+        Dim listenStartUnixSeconds As Long = _ntfyStatusRequestListenStartUnixSeconds
+        Task.Run(
+            Async Function()
+                Dim triggered As Boolean = False
+                Try
+                    triggered = Await PollNtfyStatusRequestAsync(topic, listenStartUnixSeconds)
+                Catch ex As Exception
+                    LogNtfyStatusRequestIssue("On-demand status poll failed: " & ex.Message)
+                Finally
+                    _ntfyStatusRequestPollInProgress = False
+                End Try
+
+                If triggered Then
+                    AppendLogSafe("On-demand status request detected on the ntfy topic; handing off to the UI thread.")
+                    Try
+                        BeginInvoke(New Action(AddressOf HandleOnDemandStatusRequest))
+                    Catch ex As Exception
+                        AppendLogSafe("On-demand status request detected, but handing off to the UI thread failed: " & ex.Message)
+                    End Try
+                End If
+            End Function)
+    End Sub
+
+    ''' <summary>
+    ''' Polls the on-demand request topic for anything published since the last check. A message
+    ''' only triggers a status push if its own "time" (from ntfy) is at or after the moment this
+    ''' feature started listening - that way stale messages left over from before the bot started
+    ''' (or before this topic was configured) are ignored, but a button press that happens to land on
+    ''' the very first poll still triggers correctly instead of silently being treated as a baseline.
+    ''' </summary>
+    Private Async Function PollNtfyStatusRequestAsync(topic As String, listenStartUnixSeconds As Long) As Task(Of Boolean)
+        Dim sinceParam As String = If(_ntfyStatusRequestInitialized AndAlso _lastNtfyStatusRequestId <> "", _lastNtfyStatusRequestId, "all")
+        Dim requestUrl As String = $"https://ntfy.sh/{Uri.EscapeDataString(topic)}/json?poll=1&since={Uri.EscapeDataString(sinceParam)}"
+
+        Using request As New HttpRequestMessage(HttpMethod.Get, requestUrl)
+            Dim response As HttpResponseMessage = Await NtfyClient.SendAsync(request)
+            If Not response.IsSuccessStatusCode Then
+                If CInt(response.StatusCode) = 429 Then
+                    _ntfyStatusRequestBackoffUntilUtc = DateTime.UtcNow.AddMinutes(NtfyStatusRequestBackoffMinutesOnRateLimit)
+                    LogNtfyStatusRequestIssue($"On-demand status polling paused for {NtfyStatusRequestBackoffMinutesOnRateLimit} minutes: ntfy.sh's free-tier request limit (429) was reached. Polling less often to stay under it.")
+                Else
+                    LogNtfyStatusRequestIssue($"On-demand status poll failed ({CInt(response.StatusCode)}). Check the request topic name.")
+                End If
+                Return False
+            End If
+
+            Dim rawText As String = Await response.Content.ReadAsStringAsync()
+            Dim newestId As String = ""
+            Dim foundNewMessage As Boolean = False
+
+            For Each line As String In rawText.Split(ControlChars.Lf)
+                Dim trimmedLine As String = line.Trim()
+                If trimmedLine = "" Then
+                    Continue For
+                End If
+
+                Try
+                    Using doc As JsonDocument = JsonDocument.Parse(trimmedLine)
+                        Dim messageId As String = GetJsonString(doc.RootElement, "id")
+                        If messageId = "" Then
+                            Continue For
+                        End If
+                        newestId = messageId
+
+                        ' If the Stats destination and this request topic are the same (or a
+                        ' Discord/other integration echoes bot messages back here), the bot's own
+                        ' outgoing status pushes would otherwise look like new button presses and
+                        ' create an infinite reply loop. Every message this bot sends is titled
+                        ' "KathanaBot ..." (Status, Xm Stats, etc.), so skip anything with that title
+                        ' instead of treating it as a trigger.
+                        Dim messageTitle As String = GetJsonString(doc.RootElement, "title")
+                        Dim isOwnMessage As Boolean = messageTitle.StartsWith("KathanaBot", StringComparison.OrdinalIgnoreCase)
+
+                        Dim messageUnixSeconds As Long = GetJsonUnixSeconds(doc.RootElement, "time")
+                        If Not isOwnMessage AndAlso messageUnixSeconds >= listenStartUnixSeconds Then
+                            foundNewMessage = True
+                        End If
+                    End Using
+                Catch
+                    ' Ignore malformed/partial lines - the next poll will pick up anything missed.
+                End Try
+            Next
+
+            If newestId <> "" Then
+                _lastNtfyStatusRequestId = newestId
+            End If
+            _ntfyStatusRequestInitialized = True
+
+            Return foundNewMessage
+        End Using
+    End Function
+
+    Private Sub LogNtfyStatusRequestIssue(message As String)
+        Dim now As DateTime = DateTime.UtcNow
+        If _lastNtfyStatusRequestErrorLogUtc <> DateTime.MinValue AndAlso (now - _lastNtfyStatusRequestErrorLogUtc).TotalMinutes < 2 Then
+            Return
+        End If
+
+        _lastNtfyStatusRequestErrorLogUtc = now
+        AppendLogSafe(message)
     End Sub
 
     Private Async Function SendPhoneNotificationToTopicAsync(title As String, body As String, topic As String, Optional maxAttempts As Integer = 1, Optional priority As String = "urgent", Optional tags As String = "warning,gamepad", Optional discordWebhookUrl As String = Nothing, Optional discordDestinationLabel As String = "Discord webhook") As Task(Of Boolean)
@@ -14011,6 +14258,7 @@ Public Class Form1
         _rollingScreenshotTimer.Stop()
         _periodicScreenshotTimer.Stop()
         _discordShotTimer.Stop()
+        _ntfyStatusRequestTimer.Stop()
         _persistDebounceTimer.Stop()
         FlushPendingLogLines()
         SavePersistedListState(True)
