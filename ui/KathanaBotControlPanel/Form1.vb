@@ -274,7 +274,7 @@ Public Class Form1
     Private btnAttack As Button
     Private btnSaveSettings As Button
     Private btnStopBot As Button
-    Private btnBypassLimits As Button
+    Private btnFullSupport As Button
     Private btnBypassStuck As Button
     Private btnRetargetNow As Button
     Private btnPartyAutoAccept As Button
@@ -375,7 +375,7 @@ Public Class Form1
     Private _lastNoAttackReason As String = ""
     Private _lastAgentState As String = ""
     Private _lastRouteRecordingSavedPath As String = ""
-    Private _bypassHpMpLimits As Boolean = False
+    Private _fullSupportModeEnabled As Boolean = False
     Private _bypassStuckTarget As Boolean = True
     Private _partyAutoAccept As Boolean = True
     Private _partyAskEnabled As Boolean = False
@@ -4798,7 +4798,7 @@ Public Class Form1
         btnAttack = CreateResponsiveCenterButton("Attack", Color.FromArgb(40, 180, 80), 42)
         btnSaveSettings = CreateResponsiveCenterButton("Save Settings", Color.FromArgb(55, 55, 55))
         btnStopBot = CreateResponsiveCenterButton("Stop Bot", Color.FromArgb(20, 130, 210))
-        btnBypassLimits = CreateResponsiveCenterButton("Ignore Skill Min HP/MP: OFF", Color.FromArgb(110, 45, 45))
+        btnFullSupport = CreateResponsiveCenterButton("FS (Full Support): OFF", Color.FromArgb(110, 45, 45))
         btnBypassStuck = New Button() With {
             .Text = If(_bypassStuckTarget, "Auto Retarget If Stuck: ON", "Auto Retarget If Stuck: OFF"),
             .Dock = DockStyle.Fill,
@@ -4850,7 +4850,7 @@ Public Class Form1
         AddHandler btnAttack.Click, AddressOf StartClicked
         AddHandler btnSaveSettings.Click, AddressOf SaveClicked
         AddHandler btnStopBot.Click, AddressOf StopClicked
-        AddHandler btnBypassLimits.Click, AddressOf ToggleBypassLimitsClicked
+        AddHandler btnFullSupport.Click, AddressOf ToggleFullSupportClicked
         AddHandler btnBypassStuck.Click, AddressOf ToggleStuckTargetBypassClicked
         AddHandler btnRetargetNow.Click, AddressOf ManualRetargetClicked
         AddHandler btnPartyAutoAccept.Click, AddressOf TogglePartyAutoAcceptClicked
@@ -4867,7 +4867,7 @@ Public Class Form1
         Dim controls As Control() = {
             lblFullEdition, lblRunState, lblShortcutHint, lblState, lblSystem, hpMpLayout,
             lblMobName, lblExpRate, lblRupiahsRate, btnAttack, btnSaveSettings, btnStopBot,
-            btnBypassLimits, btnBypassStuck, btnRetargetNow, btnPartyAutoAccept,
+            btnFullSupport, btnBypassStuck, btnRetargetNow, btnPartyAutoAccept,
             lblPartyAskEvery, nudPartyAskSeconds, lblPartyAskText, txtPartyAskText, btnPartyAsk, btnProfiles, btnHelp
         }
         For rowIndex As Integer = 0 To controls.Length - 1
@@ -7348,12 +7348,24 @@ Public Class Form1
         Return Math.Min(99, Math.Max(1, pct))
     End Function
 
-    Private Sub ToggleBypassLimitsClicked(sender As Object, e As EventArgs)
-        _bypassHpMpLimits = Not _bypassHpMpLimits
-        btnBypassLimits.Text = If(_bypassHpMpLimits, "Ignore Skill Min HP/MP: ON", "Ignore Skill Min HP/MP: OFF")
-        btnBypassLimits.BackColor = If(_bypassHpMpLimits, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+    Private Sub ToggleFullSupportClicked(sender As Object, e As EventArgs)
+        _fullSupportModeEnabled = Not _fullSupportModeEnabled
+        ApplyFullSupportModeAppearance()
         PushLiveConfig()
-        AppendLog(If(_bypassHpMpLimits, "Ignoring skill minimum HP/MP checks enabled.", "Ignoring skill minimum HP/MP checks disabled."))
+        AppendLog(If(_fullSupportModeEnabled,
+                     "Full Support (FS) enabled: retargeting is fully disabled - the character will never press E or select a new target.",
+                     "Full Support (FS) disabled: normal retargeting behavior restored."))
+    End Sub
+
+    Private Sub ApplyFullSupportModeAppearance()
+        btnFullSupport.Text = If(_fullSupportModeEnabled, "FS (Full Support): ON", "FS (Full Support): OFF")
+        btnFullSupport.BackColor = If(_fullSupportModeEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+        If btnBypassStuck IsNot Nothing Then
+            btnBypassStuck.Enabled = Not _fullSupportModeEnabled
+        End If
+        If btnRetargetNow IsNot Nothing Then
+            btnRetargetNow.Enabled = Not _fullSupportModeEnabled
+        End If
     End Sub
 
     Private Sub ToggleStuckTargetBypassClicked(sender As Object, e As EventArgs)
@@ -7636,8 +7648,8 @@ Public Class Form1
             "- Attack: starts engine.",
             "- Save Settings: pushes live config and persists list settings.",
             "- Stop Bot: sends hard stop macro then stops engine.",
-            "- Ignore Skill Min HP/MP: bypasses min HP/MP row checks.",
-            "- Auto Retarget If Stuck: allows stuck-target bypass logic.",
+            "- FS (Full Support): a support-only role that never presses E - normal retargeting, forced retargeting, manual Retarget Now, and Dadati evade are all disabled, so the character never selects or changes a target.",
+            "- Auto Retarget If Stuck: allows stuck-target bypass logic. Disabled while FS is on.",
             "- Retarget Now (E): manual retarget key.",
             "- Auto Accept Party/Ress: toggle OCR prompt auto accept.",
             "- Ask Party Every (sec) + Auto Ask Party Text + Auto Ask Party: periodic custom command.",
@@ -7768,8 +7780,8 @@ Public Class Form1
             "",
             "5) PANEL CENTRAL",
             "- Attack, Save Settings, Stop Bot.",
-            "- Ignore Skill Min HP/MP: ignora minimos de filas de skills.",
-            "- Auto Retarget If Stuck: recuperacion por objetivo atascado.",
+            "- FS (Full Support): rol de soporte puro que nunca presiona E - retarget normal, forzado, manual (Retarget Now) y la evasion de Dadati quedan deshabilitados; el personaje nunca selecciona ni cambia de objetivo.",
+            "- Auto Retarget If Stuck: recuperacion por objetivo atascado. Deshabilitado mientras FS esta activo.",
             "- Retarget Now (E): retarget manual.",
             "- Auto Accept Party/Ress: aceptar prompts por OCR.",
             "- Ask Party Every (sec) + Auto Ask Party Text + Auto Ask Party: comando periodico personalizable.",
@@ -7890,8 +7902,8 @@ Public Class Form1
             "",
             "5) CENTER CONTROL PANEL",
             "- Attack, Save Settings, Stop Bot.",
-            "- Ignore Skill Min HP/MP: i-bypass ang minimum requirements ng skills.",
-            "- Auto Retarget If Stuck: auto recover kapag stuck ang target.",
+            "- FS (Full Support): support-only role na hindi kailanman pumipindot ng E - naka-disable ang normal retarget, forced retarget, manual Retarget Now, at Dadati evade, kaya hindi kailanman mag-target o magpalit ng target ang character.",
+            "- Auto Retarget If Stuck: auto recover kapag stuck ang target. Naka-disable habang naka-on ang FS.",
             "- Retarget Now (E): manual retarget.",
             "- Auto Accept Party/Ress: auto accept prompts gamit OCR.",
             "- Ask Party Every (sec) + Auto Ask Party Text + Auto Ask Party: periodic custom command.",
@@ -8099,7 +8111,7 @@ Public Class Form1
                     "- repair only works when unreachable_text_rect is calibrated to detect the 'is about to break' warning.",
                     "- Monster Filter can run as blacklist or whitelist. Blacklist skips listed names; whitelist only attacks listed names. Name Check 2 reads requires two separate OCR reads before attacking; 1 read attacks after the first matching OCR name.",
                     "- Add lets you insert names, including comma-separated names typed in the box. Remove deletes the selected names.",
-                    "- In the center panel, Attack starts Full mode, Save Settings stores the live config, Stop Bot sends the hard-stop flow, Ignore Skill Min HP/MP bypasses row minimums, Auto Retarget If Stuck enables stuck-target recovery, and Retarget Now (E) forces a manual retarget.",
+                    "- In the center panel, Attack starts Full mode, Save Settings stores the live config, Stop Bot sends the hard-stop flow, FS (Full Support) disables all retargeting for a pure support character, Auto Retarget If Stuck enables stuck-target recovery, and Retarget Now (E) forces a manual retarget (both of the latter are disabled while FS is on).",
                     "- Auto Accept Party/Ress toggles OCR-based prompt acceptance.",
                     "- Ask Party Every (sec), Auto Ask Party Text, and Auto Ask Party control the repeating party command.",
                     "- The live labels show run state, status, HP, MP, current mob, EXP rate, and rupiahs rate.",
@@ -8232,7 +8244,7 @@ Public Class Form1
                     "- repair depende de que unreachable_text_rect detecte bien el warning de equipo.",
                     "- Monster Filter puede ser blacklist o whitelist. Blacklist evita nombres listados; whitelist solo ataca nombres listados. Name Check 2 reads requiere dos lecturas OCR separadas antes de atacar; 1 read ataca con la primera coincidencia.",
                     "- Add agrega nombres, incluso varios separados por coma. Remove elimina los seleccionados.",
-                    "- En el panel central, Attack inicia Full, Save Settings guarda la configuracion en vivo, Stop Bot ejecuta hard-stop, Ignore Skill Min HP/MP ignora minimos de fila, Auto Retarget If Stuck activa recuperacion por objetivo atascado y Retarget Now (E) envia retarget manual.",
+                    "- En el panel central, Attack inicia Full, Save Settings guarda la configuracion en vivo, Stop Bot ejecuta hard-stop, FS (Full Support) desactiva todo el retarget para un personaje de soporte puro, Auto Retarget If Stuck activa recuperacion por objetivo atascado y Retarget Now (E) envia retarget manual (estos dos ultimos quedan deshabilitados mientras FS esta activo).",
                     "- Auto Accept Party/Ress maneja prompts detectados por OCR.",
                     "- Ask Party Every (sec), Auto Ask Party Text y Auto Ask Party controlan el comando repetido de party.",
                     "- En Log, Real-time muestra eventos, Clear Log limpia solo el texto visible, Key Summary guarda conteo de teclas y Reset Key Summary limpia ese historial.",
@@ -8364,7 +8376,7 @@ Public Class Form1
                     "- repair ay nakadepende sa tamang calibration ng unreachable_text_rect warning text.",
                     "- Monster Filter puwedeng blacklist o whitelist. Blacklist iiwas sa listed names; whitelist listed names lang ang aatakihin. Name Check 2 reads kailangan ng dalawang OCR reads bago umatake; 1 read unang match pa lang puwede na.",
                     "- Add puwedeng magdagdag ng isa o maraming comma-separated names. Remove mag-aalis ng selected names.",
-                    "- Sa center panel, Attack nagsisimula ng Full mode, Save Settings nagsa-save ng live config, Stop Bot naghihinto sa hard-stop flow, Ignore Skill Min HP/MP nagba-bypass sa row minimums, Auto Retarget If Stuck nag-o-on ng stuck-target recovery, at Retarget Now (E) ay manual retarget.",
+                    "- Sa center panel, Attack nagsisimula ng Full mode, Save Settings nagsa-save ng live config, Stop Bot naghihinto sa hard-stop flow, FS (Full Support) nagda-disable ng lahat ng retarget para sa pure support character, Auto Retarget If Stuck nag-o-on ng stuck-target recovery, at Retarget Now (E) ay manual retarget (parehong naka-disable habang naka-on ang FS).",
                     "- Auto Accept Party/Ress ay para sa OCR-based prompt acceptance.",
                     "- Ask Party Every (sec), Auto Ask Party Text, at Auto Ask Party ay para sa paulit-ulit na party command.",
                     "- Sa Log panel, Real-time ang live events, Clear Log ang visible text lang ang nililinis, Key Summary ang rolling key counts, at Reset Key Summary ang naglilinis ng history.",
@@ -8608,7 +8620,7 @@ Public Class Form1
         End If
         txtDiagnostics.Text =
             $"Running: {st.Running}{Environment.NewLine}" &
-            $"BypassHpMpLimits: {_bypassHpMpLimits}{Environment.NewLine}" &
+            $"FullSupportModeEnabled: {_fullSupportModeEnabled}{Environment.NewLine}" &
             $"BypassStuckTarget: {_bypassStuckTarget}{Environment.NewLine}" &
             $"PromptAutoAccept (Party/Ress): {_partyAutoAccept}{Environment.NewLine}" &
             $"AutoAskPartyEnabled: {_partyAskEnabled}{Environment.NewLine}" &
@@ -10647,7 +10659,6 @@ Public Class Form1
         cfg.ForcedRetargetMs = 550
         cfg.HpBar = CloneRectRegion(If(_liteHpBarRegion, BotConfig.DefaultHpBarRect()))
         cfg.MpBar = CloneRectRegion(If(_liteMpBarRegion, BotConfig.DefaultMpBarRect()))
-        cfg.BypassHpMpLimits = True
         cfg.PartyAutoAcceptEnabled = False
         cfg.PartyAskEnabled = False
         cfg.PartyAskText = DefaultPartyAskCommand
@@ -10731,7 +10742,7 @@ Public Class Form1
         cfg.AvoidHighMaxHpEnabled = (chkAvoidHighMaxHpTargets IsNot Nothing AndAlso chkAvoidHighMaxHpTargets.Checked)
         cfg.AvoidHighMaxHpThreshold = CInt(If(nudAvoidHighMaxHpThreshold IsNot Nothing, nudAvoidHighMaxHpThreshold.Value, 2000D))
         cfg.EvadeDadatiEnabled = (chkEvadeDadati IsNot Nothing AndAlso chkEvadeDadati.Checked)
-        cfg.BypassHpMpLimits = _bypassHpMpLimits
+        cfg.FullSupportModeEnabled = _fullSupportModeEnabled
         cfg.BypassStuckTarget = _bypassStuckTarget
         cfg.PartyAutoAcceptEnabled = _partyAutoAccept
         cfg.PartyAskEnabled = _partyAskEnabled
@@ -12089,10 +12100,9 @@ Public Class Form1
             chkEvadeDadati.Checked = cfg.EvadeDadatiEnabled
         End If
 
-        _bypassHpMpLimits = cfg.BypassHpMpLimits
-        If btnBypassLimits IsNot Nothing Then
-            btnBypassLimits.Text = If(_bypassHpMpLimits, "Ignore Skill Min HP/MP: ON", "Ignore Skill Min HP/MP: OFF")
-            btnBypassLimits.BackColor = If(_bypassHpMpLimits, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+        _fullSupportModeEnabled = cfg.FullSupportModeEnabled
+        If btnFullSupport IsNot Nothing Then
+            ApplyFullSupportModeAppearance()
         End If
 
         _bypassStuckTarget = cfg.BypassStuckTarget

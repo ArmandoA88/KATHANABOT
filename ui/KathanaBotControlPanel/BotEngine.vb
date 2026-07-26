@@ -259,7 +259,9 @@ Public Class BotConfig
     Public Property ChatRect As RectRegion = New RectRegion(18, 548, 430, 144)
     Public Property LootScanRect As RectRegion = New RectRegion(220, 80, 584, 430)
     Public Property LootScanPoints As List(Of LootScanPoint) = CreateDefaultLootScanPoints()
-    Public Property BypassHpMpLimits As Boolean = False
+    ' Full Support: a character that only heals/buffs and never fights, so it must never select or
+    ' change targets - all retargeting (normal, forced, manual, and Dadati evade) is suppressed.
+    Public Property FullSupportModeEnabled As Boolean = False
     Public Property BypassStuckTarget As Boolean = True
     Public Property StuckTargetMs As Integer = 2200
     Public Property StuckTargetNoProgressRetargetMs As Integer = 6000
@@ -8117,7 +8119,7 @@ Public Class BotEngine
     End Function
 
     Private Function TrySendRetargetKey(hwnd As IntPtr, cfg As BotConfig, now As DateTime, actionText As String, Optional forced As Boolean = False) As Boolean
-        If hwnd = IntPtr.Zero Then
+        If hwnd = IntPtr.Zero OrElse (cfg IsNot Nothing AndAlso cfg.FullSupportModeEnabled) Then
             Return False
         End If
 
@@ -8143,7 +8145,7 @@ Public Class BotEngine
     End Function
 
     Private Function TryEvadeDadatiTarget(hwnd As IntPtr, cfg As BotConfig, now As DateTime) As Boolean
-        If hwnd = IntPtr.Zero Then
+        If hwnd = IntPtr.Zero OrElse (cfg IsNot Nothing AndAlso cfg.FullSupportModeEnabled) Then
             Return False
         End If
 
@@ -8774,6 +8776,10 @@ Public Class BotEngine
             cfg = _config
         End SyncLock
 
+        If cfg IsNot Nothing AndAlso cfg.FullSupportModeEnabled Then
+            Return False
+        End If
+
         Dim hwnd As IntPtr = ResolveGameWindow(cfg)
         If hwnd = IntPtr.Zero Then
             Dim title As String = If(windowTitle, "").Trim()
@@ -8833,7 +8839,7 @@ Public Class BotEngine
                 Continue For
             End If
 
-            If (Not cfg.BypassHpMpLimits) AndAlso (hpPercent < action.MinHpPercent OrElse mpPercent < action.MinMpPercent) Then
+            If (Not cfg.LiteModeEnabled) AndAlso (hpPercent < action.MinHpPercent OrElse mpPercent < action.MinMpPercent) Then
                 statBlocked = True
                 Continue For
             End If
@@ -8845,7 +8851,10 @@ Public Class BotEngine
                 Continue For
             End If
 
-            If targetValid OrElse allowBlindAttack Then
+            ' Full Support never acquires a target (retargeting is fully disabled), so every role -
+            ' including attack/buff - must fire on its own cooldown/HP-MP gating alone instead of
+            ' waiting on a target that will never arrive.
+            If targetValid OrElse allowBlindAttack OrElse cfg.FullSupportModeEnabled Then
                 If Not usedKeys.Add(action.KeyName) Then
                     Continue For
                 End If
@@ -8864,13 +8873,13 @@ Public Class BotEngine
 
         If Not hasAttackKey Then
             reason = "No enabled attack/buff/high_max_hp keys."
-        ElseIf Not targetValid AndAlso Not allowBlindAttack Then
+        ElseIf Not targetValid AndAlso Not allowBlindAttack AndAlso Not cfg.FullSupportModeEnabled Then
             reason = "No target detected."
         ElseIf offensiveBuffBlocked Then
             reason = "Buff keys paused because monster blacklist blocked the selected target."
         ElseIf highMaxHpRoleWaitingForLifeRead Then
             reason = "High Max HP keys waiting for mob_life_rect Max HP OCR."
-        ElseIf statBlocked AndAlso (Not cfg.BypassHpMpLimits) Then
+        ElseIf statBlocked Then
             reason = "HP/MP limits blocked all attack keys."
         ElseIf cooldownBlocked Then
             reason = $"Attack cooldowns remaining: {String.Join(", ", cooldownDetails)}."

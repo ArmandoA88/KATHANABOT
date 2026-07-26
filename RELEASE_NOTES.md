@@ -1,17 +1,15 @@
-# KathanaBot 1.0.80
+# KathanaBot 1.0.81
 
 ## What changed
 
-- Fixed arrow unbundle clicks stealing focus from whatever window the user had active. The double right-click is now posted directly to the game's window handle instead of sent as a real, system-wide click, so it can't land on or take focus from some other window sitting on top of the game at that screen point.
-- Fixed arrow unbundle silently doing nothing when the game window wasn't already the active/foreground window (many games only process clicks while active). The bot now briefly forces the game to the foreground just long enough to send the click, then restores whatever had focus before - using AttachThreadInput to get around Windows' normal focus-stealing prevention for background processes.
-- Fixed arrow unbundle being over-eager about rejecting valid attempts: cursor-position verification now allows an 8px tolerance instead of requiring an exact pixel match, since minor cursor drift shouldn't cancel an otherwise-good click.
-- Fixed a crash (OverflowException) in the loot name pickup click when the game window sits on a monitor to the left of or above the primary display, which produces negative screen coordinates that couldn't be converted to the unsigned values `mouse_event` expects.
-- Arrow unbundle's skip log message now reports the specific reason (bad window handle, failed screen mapping, cursor readback mismatch, etc.) instead of a single generic "cursor could not be verified" message, making it easier to tell why a click was skipped.
+- Added an **FS (Full Support)** role to the Combat Full tab, replacing the old "Ignore Skill Min HP/MP" button. FS is a support-only mode: it never presses E, so the character never selects or changes a target - normal retargeting, forced retargeting (stuck-target recovery, avoid-high-HP, non-mob-target, unreachable-target), the manual "Retarget Now (E)" button, and the Dadati evade maneuver are all fully disabled while FS is on. "Auto Retarget If Stuck" and "Retarget Now (E)" are grayed out in the UI while FS is active, since neither can do anything.
+- Fixed FS initially blocking every action (including buffs and attacks) because they were gated on having a valid target, which FS never acquires. All action roles now fire purely on their own cooldown/HP-MP thresholds while FS is active, regardless of targeting.
+- The Lite bot's own longstanding behavior of ignoring per-row Min HP/MP thresholds is preserved unchanged; that bypass was only ever meant for Lite, and removing the Full-tab toggle no longer affects it.
 
 ## Recent change history - last 5
 
-1. **Arrow unbundle no longer steals focus:** clicks are posted directly to the game window instead of firing as real system-wide clicks.
-2. **Arrow unbundle works while the game isn't active:** the game is briefly foregrounded for the click and focus is restored immediately after.
-3. **Less trigger-happy verification:** an 8px cursor tolerance stops good clicks from being wrongly skipped.
-4. **Loot pickup crash fix:** negative screen coordinates (multi-monitor setups) no longer crash the click.
-5. **Better diagnostics:** arrow unbundle skip messages now say exactly what failed.
+1. **FS (Full Support) role:** a dedicated support-only mode that never targets or retargets, for characters that only heal/buff.
+2. **All roles work without a target:** buffs, attacks, and other roles no longer wait on a target that FS will never acquire.
+3. **Retarget controls auto-disable:** "Auto Retarget If Stuck" and "Retarget Now (E)" gray out while FS is on.
+4. **Lite bot unaffected:** Lite's always-on Min HP/MP bypass keeps working exactly as before.
+5. **Fresh standalone build:** rebuilt and versioned for this release.
