@@ -159,6 +159,7 @@ Public Class Form1
     Private btnClearResurrectOkPoint As Button
     Private lblResurrectOkPoint As Label
     Private chkResurrectOverlay As CheckBox
+    Private btnDeathMessagePause As Button
 
     Private NotInheritable Class ChatLanguageOption
         Public Property Label As String
@@ -441,6 +442,7 @@ Public Class Form1
     Private _resurrectOkPointY As Integer = -1
     Private _resurrectOverlayEnabled As Boolean = False
     Private _resurrectOverlayForm As AutoRelaunchClickOverlayForm
+    Private _deathMessagePauseEnabled As Boolean = False
     Private _isPickingAutoRelaunchClick As Boolean = False
     Private _autoRelaunchRightMouseWasDown As Boolean = False
     Private _pendingAutoRelaunchClickRowIndex As Integer = -1
@@ -717,6 +719,7 @@ Public Class Form1
         Public Property ResurrectOkPointX As Integer = -1
         Public Property ResurrectOkPointY As Integer = -1
         Public Property ResurrectOverlayEnabled As Boolean = False
+        Public Property DeathMessagePauseEnabled As Boolean = False
         Public Property PromptAutoAcceptEnabled As Boolean = True
         Public Property AskForPartyEnabled As Boolean = False
         Public Property AskForPartySeconds As Decimal = 30D
@@ -3843,8 +3846,9 @@ Public Class Form1
 
     Private Function BuildAutoResurrectGroup() As GroupBox
         Dim group As New GroupBox() With {.Text = "Auto Resurrect", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
-        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 4}
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
 
@@ -3872,17 +3876,29 @@ Public Class Form1
         okPointRow.Controls.Add(chkResurrectOverlay)
         layout.Controls.Add(okPointRow, 0, 1)
 
+        btnDeathMessagePause = New Button() With {
+            .Text = "Pause Combat On Death: OFF",
+            .Dock = DockStyle.Fill,
+            .MinimumSize = New Size(0, 30),
+            .BackColor = Color.FromArgb(110, 45, 45),
+            .ForeColor = Color.White
+        }
+        AddHandler btnDeathMessagePause.Click, AddressOf ToggleDeathMessagePauseClicked
+        layout.Controls.Add(btnDeathMessagePause, 0, 2)
+
         Dim note As New Label() With {
-            .Text = "Detects a resurrection/revive confirmation dialog (e.g. 'Do you wish to resurrect?') anywhere in the calibrated resurrect_scan_rect region (Vision tab region list) and clicks OK at the point set here. Fully separate from Auto Accept Party/Ress, since this dialog can appear at a different screen position.",
+            .Text = "Detects a resurrection/revive confirmation dialog (e.g. 'Do you wish to resurrect?') anywhere in the calibrated resurrect_scan_rect region (Vision tab region list) and clicks OK at the point set here. Fully separate from Auto Accept Party/Ress, since this dialog can appear at a different screen position." & Environment.NewLine & Environment.NewLine &
+                    "Pause Combat On Death watches for the death message ('If you click OK, you will respawn at the last saved location.') in the calibrated death_message_rect region. Once confirmed by 3 consecutive reads, every combat-skill row (attack/buff/heal/mana/etc.) is paused - Auto Resurrect above keeps working during the pause - and combat resumes automatically once HP is back to full.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.TopLeft
         }
-        layout.Controls.Add(note, 0, 2)
+        layout.Controls.Add(note, 0, 3)
 
         group.Controls.Add(layout)
         UpdateResurrectAutoAcceptUi()
         UpdateResurrectOkPointUi()
+        UpdateDeathMessagePauseUi()
         Return group
     End Function
 
@@ -5189,6 +5205,7 @@ Public Class Form1
         dgvRegions.Rows.Add(True, "party_invite_scan_rect", "349", "318", "328", "124")
         dgvRegions.Rows.Add(True, "party_invite_ok_rect", "463", "410", "59", "21")
         dgvRegions.Rows.Add(True, "resurrect_scan_rect", "349", "318", "328", "124")
+        dgvRegions.Rows.Add(True, "death_message_rect", "349", "318", "328", "124")
         dgvRegions.Rows.Add(True, "party_list_rect", "0", "24", "168", "244")
         Dim defaultDisconnect As RectRegion = BotConfig.DefaultDisconnectMessageRect()
         dgvRegions.Rows.Add(True, "disconnect_message_rect", defaultDisconnect.X.ToString(), defaultDisconnect.Y.ToString(), defaultDisconnect.W.ToString(), defaultDisconnect.H.ToString())
@@ -7100,6 +7117,24 @@ Public Class Form1
         End If
         btnResurrectAutoAccept.Text = If(_resurrectAutoAcceptEnabled, "Auto Resurrect: ON", "Auto Resurrect: OFF")
         btnResurrectAutoAccept.BackColor = If(_resurrectAutoAcceptEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+    End Sub
+
+    Private Sub ToggleDeathMessagePauseClicked(sender As Object, e As EventArgs)
+        _deathMessagePauseEnabled = Not _deathMessagePauseEnabled
+        UpdateDeathMessagePauseUi()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        AppendLog(If(_deathMessagePauseEnabled,
+                     "Pause Combat On Death enabled: combat skills will pause after the death message is confirmed, and resume at full life.",
+                     "Pause Combat On Death disabled."))
+    End Sub
+
+    Private Sub UpdateDeathMessagePauseUi()
+        If btnDeathMessagePause Is Nothing Then
+            Return
+        End If
+        btnDeathMessagePause.Text = If(_deathMessagePauseEnabled, "Pause Combat On Death: ON", "Pause Combat On Death: OFF")
+        btnDeathMessagePause.BackColor = If(_deathMessagePauseEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
     End Sub
 
     Private Sub PickResurrectOkPointClicked(sender As Object, e As EventArgs)
@@ -11278,6 +11313,7 @@ Public Class Form1
         cfg.PartyInviteScanRect = BuildRect("party_invite_scan_rect")
         cfg.PartyInviteOkRect = BuildRect("party_invite_ok_rect")
         cfg.ResurrectDialogScanRect = BuildRect("resurrect_scan_rect")
+        cfg.DeathMessageScanRect = BuildRect("death_message_rect")
         cfg.PartyListRect = BuildRect("party_list_rect")
         cfg.DisconnectMessageRect = BuildRectOrFallback("disconnect_message_rect", BotConfig.DefaultDisconnectMessageRect())
         cfg.DisconnectOkRect = BuildRectOrFallback("disconnect_ok_rect", BotConfig.DefaultDisconnectOkRect())
@@ -11314,6 +11350,7 @@ Public Class Form1
         cfg.ResurrectAutoAcceptEnabled = _resurrectAutoAcceptEnabled
         cfg.ResurrectDialogOkPointX = _resurrectOkPointX
         cfg.ResurrectDialogOkPointY = _resurrectOkPointY
+        cfg.DeathMessagePauseEnabled = _deathMessagePauseEnabled
 
         cfg.DeniedMobs.Clear()
         cfg.LootAllowedNames.Clear()
@@ -12206,6 +12243,8 @@ Public Class Form1
             UpdateResurrectAutoAcceptUi()
             UpdateResurrectOkPointUi()
             SetResurrectOverlayVisible(_resurrectOverlayEnabled)
+            _deathMessagePauseEnabled = state.DeathMessagePauseEnabled
+            UpdateDeathMessagePauseUi()
             _partyAutoAccept = state.PromptAutoAcceptEnabled
             UpdatePromptAutoAcceptButton()
             _partyAskEnabled = state.AskForPartyEnabled
@@ -12360,6 +12399,7 @@ Public Class Form1
                 .ResurrectOkPointX = _resurrectOkPointX,
                 .ResurrectOkPointY = _resurrectOkPointY,
                 .ResurrectOverlayEnabled = _resurrectOverlayEnabled,
+                .DeathMessagePauseEnabled = _deathMessagePauseEnabled,
                 .PromptAutoAcceptEnabled = _partyAutoAccept,
                 .AskForPartyEnabled = _partyAskEnabled,
                 .AskForPartySeconds = If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D),
@@ -12807,6 +12847,8 @@ Public Class Form1
         _isPickingResurrectOkPoint = False
         UpdateResurrectAutoAcceptUi()
         UpdateResurrectOkPointUi()
+        _deathMessagePauseEnabled = cfg.DeathMessagePauseEnabled
+        UpdateDeathMessagePauseUi()
 
         UpsertRegionRow("hp_bar", cfg.HpBar)
         UpsertRegionRow("mp_bar", cfg.MpBar)
@@ -12819,6 +12861,7 @@ Public Class Form1
         UpsertRegionRow("party_invite_scan_rect", cfg.PartyInviteScanRect)
         UpsertRegionRow("party_invite_ok_rect", cfg.PartyInviteOkRect)
         UpsertRegionRow("resurrect_scan_rect", If(cfg.ResurrectDialogScanRect, New RectRegion(349, 318, 328, 124)))
+        UpsertRegionRow("death_message_rect", If(cfg.DeathMessageScanRect, New RectRegion(349, 318, 328, 124)))
         UpsertRegionRow("party_list_rect", cfg.PartyListRect)
         UpsertRegionRow("disconnect_message_rect", If(cfg.DisconnectMessageRect, BotConfig.DefaultDisconnectMessageRect()))
         UpsertRegionRow("disconnect_ok_rect", If(cfg.DisconnectOkRect, BotConfig.DefaultDisconnectOkRect()))

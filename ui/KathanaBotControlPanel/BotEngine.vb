@@ -256,6 +256,11 @@ Public Class BotConfig
     Public Property ResurrectDialogScanRect As RectRegion = New RectRegion(349, 318, 328, 124)
     Public Property ResurrectDialogOkPointX As Integer = -1
     Public Property ResurrectDialogOkPointY As Integer = -1
+    ' Death message: "If you click 'OK', you will respawn at the last saved location." Confirmed
+    ' after 3 consecutive OCR reads, this pauses every combat-skill row (attack/buff/heal/mana/etc.)
+    ' until HP is back to near-full - Auto Resurrect and everything else keep running during the pause.
+    Public Property DeathMessagePauseEnabled As Boolean = False
+    Public Property DeathMessageScanRect As RectRegion = New RectRegion(349, 318, 328, 124)
     Public Property PartyListRect As RectRegion = New RectRegion(0, 24, 168, 244)
     Public Property DisconnectMessageRect As RectRegion = DefaultDisconnectMessageRect()
     Public Property DisconnectOkRect As RectRegion = DefaultDisconnectOkRect()
@@ -790,6 +795,9 @@ Public Class BotEngine
     Private Const DisconnectOcrMinIntervalMs As Integer = 1000
     Private Const DisconnectConfirmWindowMs As Integer = 5000
     Private Const DisconnectConfirmRequiredCount As Integer = 2
+    Private Const DeathMessageConfirmWindowMs As Integer = 6000
+    Private Const DeathMessageConfirmRequiredCount As Integer = 3
+    Private Const DeathFullLifeThresholdPercent As Double = 98.0
     Private Const UnreachableConfirmWindowMs As Integer = 900
     Private Const UnreachableConfirmRequiredCount As Integer = 2
     Private Const RepairConfirmRequiredCount As Integer = 5
@@ -994,6 +1002,14 @@ Public Class BotEngine
     Private _disconnectLastMatchAt As DateTime = DateTime.MinValue
     Private _disconnectLatched As Boolean = False
     Private _disconnectClearCount As Integer = 0
+    Private _lastDeathMessageScan As DateTime = DateTime.MinValue
+    Private _deathMessageOcrTask As Task(Of String) = Nothing
+    Private _deathMessageOcrTaskGeneration As Long = -1L
+    Private _lastDeathMessageCandidate As String = ""
+    Private _lastDeathMessageVisualSignature As ULong = 0UL
+    Private _deathMessageConfirmCount As Integer = 0
+    Private _lastDeathMessageMatchAt As DateTime = DateTime.MinValue
+    Private _combatPausedForDeath As Boolean = False
     Private _repairConfirmCount As Integer = 0
     Private _repairLastMatchAt As DateTime = DateTime.MinValue
     Private ReadOnly _repairMatchTimes As New Queue(Of DateTime)()
@@ -1316,6 +1332,13 @@ Public Class BotEngine
             _disconnectLastMatchAt = DateTime.MinValue
             _disconnectLatched = False
             _disconnectClearCount = 0
+            _lastDeathMessageScan = DateTime.MinValue
+            _deathMessageOcrTask = Nothing
+            _lastDeathMessageCandidate = ""
+            _lastDeathMessageVisualSignature = 0UL
+            _deathMessageConfirmCount = 0
+            _lastDeathMessageMatchAt = DateTime.MinValue
+            _combatPausedForDeath = False
             _repairConfirmCount = 0
             _repairLastMatchAt = DateTime.MinValue
             _repairMatchTimes.Clear()
@@ -1506,6 +1529,7 @@ Public Class BotEngine
             _mobHpTextOcrTask = Nothing
             _partyInviteOcrTask = Nothing
             _resurrectOcrTask = Nothing
+            _deathMessageOcrTask = Nothing
             _unreachableOcrTask = Nothing
             _disconnectOcrTask = Nothing
             _expOcrTask = Nothing
@@ -1812,11 +1836,16 @@ Public Class BotEngine
                     End If
                 End If
 
-                If Not liteGameDisconnected AndAlso Not liteActionSent AndAlso (hpScanOk OrElse mpScanOk) Then
+                Dim liteDeathPaused As Boolean = TryHandleDeathMessage(cfg, hwnd, liteFrame, now, liteAttackHpPct)
+                If liteDeathPaused AndAlso String.IsNullOrWhiteSpace(liteReason) Then
+                    liteReason = "Character down: combat skills paused until full life. Auto Resurrect still active."
+                End If
+
+                If Not liteGameDisconnected AndAlso Not liteActionSent AndAlso Not liteDeathPaused AndAlso (hpScanOk OrElse mpScanOk) Then
                     liteActionSent = TrySendSupportActions(cfg, hwnd, liteAttackHpPct, liteAttackMpPct, liteHpRegion, liteMpRegion)
                 End If
 
-                If Not liteGameDisconnected AndAlso Not liteActionSent Then
+                If Not liteGameDisconnected AndAlso Not liteActionSent AndAlso Not liteDeathPaused Then
                     Dim liteBurst As List(Of ActionRule) = ChooseAttackBurstActions(cfg, liteAttackHpPct, liteAttackMpPct, True, True, False, False, liteReason)
                     If liteBurst.Count > 0 Then
                         Dim sentKeys As New List(Of String)()
@@ -2370,7 +2399,8 @@ Public Class BotEngine
                 Exit While
             End If
 
-            Dim reason As String = ""
+            Dim deathPaused As Boolean = TryHandleDeathMessage(cfg, hwnd, frame, now, hpPct)
+            Dim reason As String = If(deathPaused, "Character down: combat skills paused until full life. Auto Resurrect still active.", "")
             Dim actionSent As Boolean = TryHandleAutoAcceptPrompts(cfg, hwnd, frame, now, partyInviteScanRegion, partyInviteOkRegion)
             If actionSent Then
                 reason = "Auto-accept prompt detected and accepted."
@@ -2453,7 +2483,7 @@ Public Class BotEngine
             End If
 
             If Not forcedRetarget AndAlso Not actionSent Then
-                Dim supportSent As Boolean = TrySendSupportActions(cfg, hwnd, hpPct, mpPct, hpRegion, mpRegion)
+                Dim supportSent As Boolean = (Not deathPaused) AndAlso TrySendSupportActions(cfg, hwnd, hpPct, mpPct, hpRegion, mpRegion)
                 If supportSent Then
                     actionSent = True
                     reason = ""
@@ -2502,7 +2532,7 @@ Public Class BotEngine
                     monsterFilterActive AndAlso
                     (Not monsterFilterWhitelistMode) AndAlso
                     (monsterFilterBlockedTarget OrElse blacklistLockActive)
-                Dim attackBurst As List(Of ActionRule) = ChooseAttackBurstActions(cfg, hpPct, mpPct, effectiveTargetValid, allowBlindAttack, highMaxHpAttackActive, suppressOffensiveBuffsForBlacklist, reason)
+                Dim attackBurst As List(Of ActionRule) = If(deathPaused, New List(Of ActionRule)(), ChooseAttackBurstActions(cfg, hpPct, mpPct, effectiveTargetValid, allowBlindAttack, highMaxHpAttackActive, suppressOffensiveBuffsForBlacklist, reason))
                 If attackBurst.Count > 0 Then
                     Dim sentKeys As New List(Of String)()
                     Dim targetSignature As String = If(normMobName <> "", normMobName, If(mobName <> "", mobName, $"{mobHpPct:0.0}"))
@@ -7200,6 +7230,165 @@ Public Class BotEngine
         End Try
 
         Return False
+    End Function
+
+    ''' <summary>
+    ''' Detects the death message ("If you click 'OK', you will respawn at the last saved
+    ''' location.") and, once confirmed by 3 consecutive OCR reads (a single stray misread should
+    ''' not pause combat), pauses every combat-skill row (attack/buff/heal/mana/max_health/special)
+    ''' until HP is back to near-full. This function never clicks anything - Auto Resurrect and every
+    ''' other system keep running normally during the pause; only the Actions list is suppressed by
+    ''' the caller checking this function's return value.
+    ''' </summary>
+    Private Function TryHandleDeathMessage(cfg As BotConfig, hwnd As IntPtr, frame As Bitmap, now As DateTime, hpPct As Double) As Boolean
+        If cfg Is Nothing OrElse Not cfg.DeathMessagePauseEnabled Then
+            _combatPausedForDeath = False
+            _deathMessageConfirmCount = 0
+            _lastDeathMessageCandidate = ""
+            Return False
+        End If
+
+        If _combatPausedForDeath Then
+            If hpPct >= DeathFullLifeThresholdPercent Then
+                _combatPausedForDeath = False
+                _deathMessageConfirmCount = 0
+                _lastDeathMessageMatchAt = DateTime.MinValue
+                RaiseEvent LogLine("Full life detected. Resuming combat skills.")
+                Return False
+            End If
+            Return True
+        End If
+
+        If hwnd = IntPtr.Zero OrElse frame Is Nothing Then
+            Return False
+        End If
+
+        If _deathMessageOcrTask IsNot Nothing AndAlso _deathMessageOcrTask.IsCompleted Then
+            Dim taskGeneration As Long = _deathMessageOcrTaskGeneration
+            Dim isCurrent As Boolean = taskGeneration = _runGeneration
+            Try
+                Dim text As String = If(_deathMessageOcrTask.Result, "").Trim()
+                If isCurrent Then
+                    _lastDeathMessageCandidate = text
+                End If
+            Catch ex As Exception
+                If isCurrent Then
+                    _lastDeathMessageCandidate = ""
+                    LogOcrFault("Death message", ex)
+                End If
+            End Try
+            _deathMessageOcrTask = Nothing
+            If isCurrent Then
+                ProcessDeathMessageOcrResult(_lastDeathMessageCandidate, now)
+            End If
+        End If
+
+        If _combatPausedForDeath Then
+            Return True
+        End If
+
+        If _deathMessageOcrTask IsNot Nothing Then
+            Return False
+        End If
+
+        Const scanIntervalMs As Integer = 700
+        If _lastDeathMessageScan <> DateTime.MinValue AndAlso (now - _lastDeathMessageScan).TotalMilliseconds < scanIntervalMs Then
+            Return False
+        End If
+
+        Dim region As RectRegion = If(cfg.DeathMessageScanRect, New RectRegion(349, 318, 328, 124))
+        Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
+        If rect.Width <= 1 OrElse rect.Height <= 1 Then
+            Return False
+        End If
+
+        Dim crop As New Bitmap(rect.Width, rect.Height, PixelFormat.Format24bppRgb)
+        Try
+            Using g As Graphics = Graphics.FromImage(crop)
+                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
+            End Using
+
+            If cfg.PixelChangeGateEnabled Then
+                Dim signature As ULong = ComputeVisualSignature(crop)
+                If signature <> 0UL AndAlso signature = _lastDeathMessageVisualSignature Then
+                    crop.Dispose()
+                    Return False
+                End If
+                _lastDeathMessageVisualSignature = signature
+            End If
+
+            _lastDeathMessageScan = now
+            _deathMessageOcrTaskGeneration = _runGeneration
+            _deathMessageOcrTask = Task.Run(
+                Function()
+                    Try
+                        Using enlarged As Bitmap = EnlargeBitmap(crop, 3)
+                            Dim text As String = If(OcrReader.ReadScreenTextIsolated(enlarged), "").Trim()
+                            If text = "" Then
+                                text = If(OcrReader.ReadName(enlarged), "").Trim()
+                            End If
+                            Return text
+                        End Using
+                    Catch
+                        Return ""
+                    Finally
+                        crop.Dispose()
+                    End Try
+                End Function)
+        Catch
+            crop.Dispose()
+        End Try
+
+        Return False
+    End Function
+
+    Private Sub ProcessDeathMessageOcrResult(rawText As String, now As DateTime)
+        Dim matched As Boolean = IsDeathMessagePrompt(rawText)
+        If matched Then
+            If _lastDeathMessageMatchAt = DateTime.MinValue OrElse (now - _lastDeathMessageMatchAt).TotalMilliseconds > DeathMessageConfirmWindowMs Then
+                _deathMessageConfirmCount = 1
+            Else
+                _deathMessageConfirmCount += 1
+            End If
+            _lastDeathMessageMatchAt = now
+
+            If Not _combatPausedForDeath AndAlso _deathMessageConfirmCount >= DeathMessageConfirmRequiredCount Then
+                _combatPausedForDeath = True
+                _deathMessageConfirmCount = 0
+                RaiseEvent LogLine("Death message confirmed (3 consecutive reads). Combat skills paused until full life - Auto Resurrect keeps working.")
+            End If
+            Return
+        End If
+
+        _deathMessageConfirmCount = 0
+        _lastDeathMessageMatchAt = DateTime.MinValue
+        _lastDeathMessageCandidate = ""
+    End Sub
+
+    Private Shared Function IsDeathMessagePrompt(rawText As String) As Boolean
+        If String.IsNullOrWhiteSpace(rawText) Then
+            Return False
+        End If
+
+        Dim norm As String = NormalizeForLooseTextMatch(rawText)
+        If norm = "" Then
+            Return False
+        End If
+
+        Dim compact As String = norm.Replace(" ", "")
+        If compact.Contains("respawnatthelastsavedlocation", StringComparison.OrdinalIgnoreCase) OrElse
+           compact.Contains("respawnatthelastsaved", StringComparison.OrdinalIgnoreCase) Then
+            Return True
+        End If
+
+        If AreTextsClose(norm, "if you click ok you will respawn at the last saved location") Then
+            Return True
+        End If
+
+        Dim hasClickOk As Boolean = norm.Contains("click", StringComparison.OrdinalIgnoreCase) AndAlso norm.Contains("ok", StringComparison.OrdinalIgnoreCase)
+        Dim hasRespawn As Boolean = norm.Contains("respawn", StringComparison.OrdinalIgnoreCase)
+        Dim hasSavedLocation As Boolean = norm.Contains("saved location", StringComparison.OrdinalIgnoreCase) OrElse norm.Contains("last saved", StringComparison.OrdinalIgnoreCase)
+        Return hasRespawn AndAlso (hasSavedLocation OrElse hasClickOk)
     End Function
 
     Private Function TryHandlePartyAsk(cfg As BotConfig, hwnd As IntPtr, now As DateTime) As Boolean
