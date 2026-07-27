@@ -249,6 +249,13 @@ Public Class BotConfig
     Public Property RupiahsRect As RectRegion = New RectRegion(560, 745, 110, 21)
     Public Property PartyInviteScanRect As RectRegion = New RectRegion(349, 318, 328, 124)
     Public Property PartyInviteOkRect As RectRegion = New RectRegion(463, 410, 59, 21)
+    ' Auto Resurrect: a dedicated scan region + OK click point, fully separate from the party/ress
+    ' auto-accept above, because the resurrection confirmation dialog appears at a different screen
+    ' position than party invites in this game and a single shared region can't cover both.
+    Public Property ResurrectAutoAcceptEnabled As Boolean = False
+    Public Property ResurrectDialogScanRect As RectRegion = New RectRegion(349, 318, 328, 124)
+    Public Property ResurrectDialogOkPointX As Integer = -1
+    Public Property ResurrectDialogOkPointY As Integer = -1
     Public Property PartyListRect As RectRegion = New RectRegion(0, 24, 168, 244)
     Public Property DisconnectMessageRect As RectRegion = DefaultDisconnectMessageRect()
     Public Property DisconnectOkRect As RectRegion = DefaultDisconnectOkRect()
@@ -288,10 +295,12 @@ Public Class BotConfig
     Public Property ArrowUnbundleEnabled As Boolean = False
     Public Property ArrowUnbundleIntervalMs As Integer = 60000
     Public Property ArrowUnbundlePoints As List(Of LootScanPoint) = New List(Of LootScanPoint)()
-    ' Right-clicking a slot that already holds loose (already-unbundled) arrows instead of a bundle
-    ' opens a "enter the number of items to move" quantity prompt, which blocks combat input until
-    ' dismissed. This region is scanned so that prompt can be detected and closed automatically.
-    Public Property ArrowMoveQuantityDialogRect As RectRegion = New RectRegion(320, 300, 380, 90)
+    ' A calibrated crop of a bundle's slot icon (PNG, Base64). When set, a configured arrow-unbundle
+    ' point is only clicked if its current slot still looks like a bundle - this prevents ever opening
+    ' the move-quantity dialog in the first place, instead of reacting to it after the fact. Empty
+    ' means uncalibrated: every point is clicked unconditionally, matching the original behavior.
+    Public Property ArrowBundleIconBase64 As String = ""
+    Public Property ArrowBundleIconTolerance As Integer = 45
     Public Property LootAllowedNames As List(Of String) = New List(Of String)()
     Public Property LootNameMatchThresholdPercent As Integer = 80
     Public Property PartyAutoAcceptEnabled As Boolean = True
@@ -940,12 +949,8 @@ Public Class BotEngine
     Private _pendingLootPickupVerifyAt As DateTime = DateTime.MinValue
     Private _lastArrowUnbundleAt As DateTime = DateTime.MinValue
     Private _arrowUnbundleNextIndex As Integer = 0
-    Private _lastArrowMoveDialogScan As DateTime = DateTime.MinValue
-    Private _lastArrowMoveDialogDismissAt As DateTime = DateTime.MinValue
-    Private _arrowMoveDialogOcrTask As Task(Of String) = Nothing
-    Private _arrowMoveDialogOcrTaskGeneration As Long = -1L
-    Private _lastArrowMoveDialogCandidate As String = ""
-    Private _lastArrowMoveDialogVisualSignature As ULong = 0UL
+    Private _cachedArrowBundleIconBase64 As String = ""
+    Private _cachedArrowBundleIcon As Bitmap = Nothing
     Private _firstHitPending As Boolean = False
     Private _firstHitTargetSignature As String = ""
     Private _firstHitWindowUntil As DateTime = DateTime.MinValue
@@ -1028,6 +1033,12 @@ Public Class BotEngine
     Private _lastChatVisualSignature As ULong = 0UL
     Private _lastPartyListVisualSignature As ULong = 0UL
     Private _lastPartyInviteVisualSignature As ULong = 0UL
+    Private _lastResurrectScan As DateTime = DateTime.MinValue
+    Private _lastResurrectAccept As DateTime = DateTime.MinValue
+    Private _resurrectOcrTask As Task(Of String) = Nothing
+    Private _resurrectOcrTaskGeneration As Long = -1L
+    Private _lastResurrectCandidate As String = ""
+    Private _lastResurrectVisualSignature As ULong = 0UL
     Private _lastLootScannerVisualSignature As ULong = 0UL
     Private _lastMapMarkerScanAt As DateTime = DateTime.MinValue
     Private _lastMapMarkerDetected As Boolean = False
@@ -1260,11 +1271,6 @@ Public Class BotEngine
             _pendingLootPickupVerifyAt = DateTime.MinValue
             _lastArrowUnbundleAt = DateTime.MinValue
             _arrowUnbundleNextIndex = 0
-            _lastArrowMoveDialogScan = DateTime.MinValue
-            _lastArrowMoveDialogDismissAt = DateTime.MinValue
-            _arrowMoveDialogOcrTask = Nothing
-            _lastArrowMoveDialogCandidate = ""
-            _lastArrowMoveDialogVisualSignature = 0UL
             _firstHitPending = False
             _firstHitTargetSignature = ""
             _firstHitWindowUntil = DateTime.MinValue
@@ -1278,6 +1284,11 @@ Public Class BotEngine
             _lastPartyInviteAccept = DateTime.MinValue
             _partyInviteOcrTask = Nothing
             _lastPartyInviteCandidate = ""
+            _lastResurrectScan = DateTime.MinValue
+            _lastResurrectAccept = DateTime.MinValue
+            _resurrectOcrTask = Nothing
+            _lastResurrectCandidate = ""
+            _lastResurrectVisualSignature = 0UL
             _lastPartyAskAt = DateTime.MinValue
             _partyAskSuppressedInParty = False
             _partyAskWasEnabled = False
@@ -1494,11 +1505,11 @@ Public Class BotEngine
             _mobNameOcrTask = Nothing
             _mobHpTextOcrTask = Nothing
             _partyInviteOcrTask = Nothing
+            _resurrectOcrTask = Nothing
             _unreachableOcrTask = Nothing
             _disconnectOcrTask = Nothing
             _expOcrTask = Nothing
             _rupiahsOcrTask = Nothing
-            _arrowMoveDialogOcrTask = Nothing
         End SyncLock
         ReleaseLootScannerAltKey()
         ClearLatestLoopFrame()
@@ -1792,6 +1803,12 @@ Public Class BotEngine
                     liteActionSent = TryHandleAutoAcceptPrompts(cfg, hwnd, liteFrame, now, litePartyInviteScanRegion, litePartyInviteOkRegion)
                     If liteActionSent Then
                         liteReason = "Auto-accept prompt detected and accepted."
+                    End If
+                    If Not liteActionSent Then
+                        liteActionSent = TryHandleResurrectPrompt(cfg, hwnd, liteFrame, now)
+                        If liteActionSent Then
+                            liteReason = "Resurrection prompt detected and accepted."
+                        End If
                     End If
                 End If
 
@@ -2354,14 +2371,14 @@ Public Class BotEngine
             End If
 
             Dim reason As String = ""
-            Dim actionSent As Boolean = TryHandleArrowMoveQuantityPrompt(cfg, hwnd, now)
+            Dim actionSent As Boolean = TryHandleAutoAcceptPrompts(cfg, hwnd, frame, now, partyInviteScanRegion, partyInviteOkRegion)
             If actionSent Then
-                reason = "Arrow move-quantity dialog detected and dismissed."
+                reason = "Auto-accept prompt detected and accepted."
             End If
             If Not actionSent Then
-                actionSent = TryHandleAutoAcceptPrompts(cfg, hwnd, frame, now, partyInviteScanRegion, partyInviteOkRegion)
+                actionSent = TryHandleResurrectPrompt(cfg, hwnd, frame, now)
                 If actionSent Then
-                    reason = "Auto-accept prompt detected and accepted."
+                    reason = "Resurrection prompt detected and accepted."
                 End If
             End If
             If Not actionSent Then
@@ -6631,6 +6648,22 @@ Public Class BotEngine
         Dim pt As LootScanPoint = points(_arrowUnbundleNextIndex)
         Dim clickX As Integer = Math.Max(0, Math.Min(Math.Max(0, clientWidth - 1), pt.X))
         Dim clickY As Integer = Math.Max(0, Math.Min(Math.Max(0, clientHeight - 1), pt.Y))
+
+        ' If a bundle-icon reference has been calibrated, only click a point whose current slot still
+        ' looks like a bundle - this avoids ever opening the move-quantity dialog in the first place,
+        ' instead of reacting to it afterward. Uncalibrated (no reference set) keeps the original
+        ' unconditional behavior so existing setups are unaffected.
+        Dim referenceIcon As Bitmap = GetArrowBundleReferenceIcon(cfg)
+        If referenceIcon IsNot Nothing Then
+            Dim matchReason As String = ""
+            If Not IsArrowSlotLikelyBundle(hwnd, clickX, clickY, referenceIcon, Math.Max(1, cfg.ArrowBundleIconTolerance), matchReason) Then
+                _lastArrowUnbundleAt = now
+                _arrowUnbundleNextIndex = (_arrowUnbundleNextIndex + 1) Mod points.Count
+                RaiseEvent LogLine($"Arrow unbundle skipped ({clickX},{clickY}): {matchReason}.")
+                Return
+            End If
+        End If
+
         Dim clickDiagnostic As String = ""
         If DoubleRightClickVerifiedAtClientPoint(hwnd, clickX, clickY, clickDiagnostic) Then
             _lastArrowUnbundleAt = now
@@ -6642,118 +6675,98 @@ Public Class BotEngine
         End If
     End Sub
 
-    ' Right-clicking a bundle unbundles it silently, but right-clicking a slot that already holds
-    ' loose arrows opens a "enter the number of items to move" quantity prompt instead. That prompt
-    ' is a blocking, in-game modal - combat and further input stall until it is closed - and there is
-    ' no way to know in advance whether a given slot holds a bundle or loose arrows, so this scans for
-    ' the prompt every loop and dismisses it with Escape the moment it appears.
-    Private Function TryHandleArrowMoveQuantityPrompt(cfg As BotConfig, hwnd As IntPtr, now As DateTime) As Boolean
-        If cfg Is Nothing OrElse hwnd = IntPtr.Zero OrElse Not cfg.ArrowUnbundleEnabled Then
-            _lastArrowMoveDialogCandidate = ""
-            Return False
-        End If
-
-        If _lastArrowMoveDialogDismissAt <> DateTime.MinValue AndAlso (now - _lastArrowMoveDialogDismissAt).TotalMilliseconds < 1500 Then
-            Return False
-        End If
-
-        If _arrowMoveDialogOcrTask IsNot Nothing AndAlso _arrowMoveDialogOcrTask.IsCompleted Then
-            Dim taskGeneration As Long = _arrowMoveDialogOcrTaskGeneration
-            Dim isCurrent As Boolean = taskGeneration = _runGeneration
-            Try
-                Dim text As String = If(_arrowMoveDialogOcrTask.Result, "").Trim()
-                If isCurrent Then
-                    _lastArrowMoveDialogCandidate = text
-                End If
-            Catch ex As Exception
-                If isCurrent Then
-                    _lastArrowMoveDialogCandidate = ""
-                    LogOcrFault("Arrow move-quantity dialog", ex)
-                End If
-            End Try
-            _arrowMoveDialogOcrTask = Nothing
-        End If
-
-        If IsArrowMoveQuantityPrompt(_lastArrowMoveDialogCandidate) Then
-            _lastArrowMoveDialogCandidate = ""
-            If SendKey(hwnd, "ESC", FastKeyPressMs) Then
-                _lastArrowMoveDialogDismissAt = now
-                SetLastAction("ESC (dismissed arrow move-quantity dialog)")
-                RaiseEvent LogLine("Arrow unbundle: a slot held loose arrows instead of a bundle, opening a move-quantity dialog. Dismissed it with Escape.")
-                Return True
+    ' Decodes and caches the calibrated bundle-icon reference (Base64 PNG) so it isn't re-decoded every
+    ' loop tick; the cache is keyed by the Base64 string itself and rebuilt whenever it changes. The
+    ' decoded image is normalized to Format24bppRgb so it matches capture crops for pixel comparison.
+    Private Function GetArrowBundleReferenceIcon(cfg As BotConfig) As Bitmap
+        Dim base64 As String = If(cfg.ArrowBundleIconBase64, "").Trim()
+        If base64 = "" Then
+            If _cachedArrowBundleIcon IsNot Nothing Then
+                _cachedArrowBundleIcon.Dispose()
+                _cachedArrowBundleIcon = Nothing
             End If
+            _cachedArrowBundleIconBase64 = ""
+            Return Nothing
         End If
 
-        If _arrowMoveDialogOcrTask IsNot Nothing Then
-            Return False
+        If _cachedArrowBundleIcon IsNot Nothing AndAlso String.Equals(base64, _cachedArrowBundleIconBase64, StringComparison.Ordinal) Then
+            Return _cachedArrowBundleIcon
         End If
 
-        Const scanIntervalMs As Integer = 300
-        If _lastArrowMoveDialogScan <> DateTime.MinValue AndAlso (now - _lastArrowMoveDialogScan).TotalMilliseconds < scanIntervalMs Then
-            Return False
-        End If
-
-        Dim region As RectRegion = If(cfg.ArrowMoveQuantityDialogRect, New RectRegion(320, 300, 380, 90))
-        Dim crop As Bitmap = CaptureClientRegion(hwnd, region)
-        If crop Is Nothing Then
-            Return False
-        End If
-
-        If cfg.PixelChangeGateEnabled Then
-            Dim signature As ULong = ComputeVisualSignature(crop)
-            If signature <> 0UL AndAlso signature = _lastArrowMoveDialogVisualSignature Then
-                crop.Dispose()
-                Return False
-            End If
-            _lastArrowMoveDialogVisualSignature = signature
-        End If
-
-        _lastArrowMoveDialogScan = now
-        _arrowMoveDialogOcrTaskGeneration = _runGeneration
-        _arrowMoveDialogOcrTask = Task.Run(
-            Function()
-                Try
-                    Using enlarged As Bitmap = EnlargeBitmap(crop, 3)
-                        Dim text As String = If(OcrReader.ReadScreenTextIsolated(enlarged), "").Trim()
-                        If text = "" Then
-                            text = If(OcrReader.ReadName(enlarged), "").Trim()
-                        End If
-                        Return text
+        Try
+            Dim bytes As Byte() = Convert.FromBase64String(base64)
+            Using ms As New MemoryStream(bytes)
+                Using decoded As New Bitmap(ms)
+                    Dim normalized As New Bitmap(decoded.Width, decoded.Height, PixelFormat.Format24bppRgb)
+                    Using g As Graphics = Graphics.FromImage(normalized)
+                        g.DrawImage(decoded, New Rectangle(0, 0, decoded.Width, decoded.Height))
                     End Using
-                Catch
-                    Return ""
-                Finally
-                    crop.Dispose()
-                End Try
-            End Function)
-
-        Return False
+                    If _cachedArrowBundleIcon IsNot Nothing Then
+                        _cachedArrowBundleIcon.Dispose()
+                    End If
+                    _cachedArrowBundleIcon = normalized
+                    _cachedArrowBundleIconBase64 = base64
+                End Using
+            End Using
+            Return _cachedArrowBundleIcon
+        Catch
+            If _cachedArrowBundleIcon IsNot Nothing Then
+                _cachedArrowBundleIcon.Dispose()
+            End If
+            _cachedArrowBundleIcon = Nothing
+            _cachedArrowBundleIconBase64 = ""
+            Return Nothing
+        End Try
     End Function
 
-    Private Shared Function IsArrowMoveQuantityPrompt(rawText As String) As Boolean
-        If String.IsNullOrWhiteSpace(rawText) Then
-            Return False
+    ' Average per-pixel absolute channel difference (0-255 scale per channel), not an exact match -
+    ' minor rendering differences (a hover highlight, a stack-count digit drawn over a corner of the
+    ' icon) shift this a little without changing which reference icon it is closest to. Uses the same
+    ' LockBits-backed BitmapReadBuffer as the rest of the engine's pixel scanning instead of the very
+    ' slow per-pixel GetPixel/SetPixel APIs.
+    Private Shared Function ComputeAverageColorDifference(a As Bitmap, b As Bitmap) As Double
+        If a Is Nothing OrElse b Is Nothing OrElse a.Width <> b.Width OrElse a.Height <> b.Height Then
+            Return Double.MaxValue
         End If
 
-        Dim norm As String = NormalizeForLooseTextMatch(rawText)
-        If norm = "" Then
-            Return False
-        End If
+        Try
+            Using bufferA As New BitmapReadBuffer(a), bufferB As New BitmapReadBuffer(b)
+                Dim totalDiff As Long = 0
+                For y As Integer = 0 To a.Height - 1
+                    For x As Integer = 0 To a.Width - 1
+                        Dim ra As Integer, ga As Integer, ba As Integer
+                        Dim rb As Integer, gb As Integer, bb As Integer
+                        bufferA.GetRgb(x, y, ra, ga, ba)
+                        bufferB.GetRgb(x, y, rb, gb, bb)
+                        totalDiff += Math.Abs(ra - rb) + Math.Abs(ga - gb) + Math.Abs(ba - bb)
+                    Next
+                Next
+                Return totalDiff / (a.Width * a.Height * 3.0)
+            End Using
+        Catch
+            Return Double.MaxValue
+        End Try
+    End Function
 
-        Dim compact As String = norm.Replace(" ", "")
-        If compact.Contains("numberofitemstomove", StringComparison.OrdinalIgnoreCase) OrElse
-           compact.Contains("enterthenumberofitems", StringComparison.OrdinalIgnoreCase) Then
+    Private Function IsArrowSlotLikelyBundle(hwnd As IntPtr, clientX As Integer, clientY As Integer, referenceIcon As Bitmap, tolerance As Integer, ByRef reason As String) As Boolean
+        reason = ""
+        Dim halfWidth As Integer = referenceIcon.Width \ 2
+        Dim halfHeight As Integer = referenceIcon.Height \ 2
+        Dim region As New RectRegion(clientX - halfWidth, clientY - halfHeight, referenceIcon.Width, referenceIcon.Height)
+        Using crop As Bitmap = CaptureClientRegion(hwnd, region)
+            If crop Is Nothing OrElse crop.Width <> referenceIcon.Width OrElse crop.Height <> referenceIcon.Height Then
+                reason = "unable to capture the slot icon for comparison"
+                Return False
+            End If
+
+            Dim difference As Double = ComputeAverageColorDifference(crop, referenceIcon)
+            If difference > tolerance Then
+                reason = $"slot icon does not match the calibrated bundle icon (difference {difference:0.0} > tolerance {tolerance})"
+                Return False
+            End If
+
             Return True
-        End If
-
-        If AreTextsClose(norm, "please enter the number of items to move") Then
-            Return True
-        End If
-
-        Dim hasNumber As Boolean = norm.Contains("number", StringComparison.OrdinalIgnoreCase)
-        Dim hasItems As Boolean = norm.Contains("item", StringComparison.OrdinalIgnoreCase)
-        Dim hasMove As Boolean = norm.Contains("move", StringComparison.OrdinalIgnoreCase)
-        Return hasNumber AndAlso hasItems AndAlso hasMove
+        End Using
     End Function
 
     Private Function GetCachedPranaExpPercent() As Double
@@ -7073,6 +7086,106 @@ Public Class BotEngine
             _lastPartyInviteScan = now
             _partyInviteOcrTaskGeneration = _runGeneration
             _partyInviteOcrTask = Task.Run(
+                Function()
+                    Try
+                        Return OcrReader.ReadName(crop)
+                    Catch
+                        Return ""
+                    Finally
+                        crop.Dispose()
+                    End Try
+                End Function)
+        Catch
+            crop.Dispose()
+        End Try
+
+        Return False
+    End Function
+
+    ' A dedicated resurrection-prompt detector, independent of TryHandleAutoAcceptPrompts above,
+    ' because this dialog appears at a different screen position than party invites - one shared
+    ' scan/click region pair cannot cover both. Reuses the existing IsRessPrompt text matcher.
+    Private Function TryHandleResurrectPrompt(cfg As BotConfig, hwnd As IntPtr, frame As Bitmap, now As DateTime) As Boolean
+        If cfg Is Nothing OrElse Not cfg.ResurrectAutoAcceptEnabled Then
+            _lastResurrectCandidate = ""
+            Return False
+        End If
+        If hwnd = IntPtr.Zero OrElse frame Is Nothing Then
+            Return False
+        End If
+        If _lastResurrectAccept <> DateTime.MinValue AndAlso (now - _lastResurrectAccept).TotalMilliseconds < 2000 Then
+            Return False
+        End If
+
+        If _resurrectOcrTask IsNot Nothing AndAlso _resurrectOcrTask.IsCompleted Then
+            Dim taskGeneration As Long = _resurrectOcrTaskGeneration
+            Dim isCurrent As Boolean = taskGeneration = _runGeneration
+            Try
+                Dim text As String = If(_resurrectOcrTask.Result, "").Trim()
+                If isCurrent Then
+                    _lastResurrectCandidate = text
+                End If
+            Catch ex As Exception
+                If isCurrent Then
+                    _lastResurrectCandidate = ""
+                    LogOcrFault("Resurrect prompt", ex)
+                End If
+            End Try
+            _resurrectOcrTask = Nothing
+        End If
+
+        If IsRessPrompt(_lastResurrectCandidate) Then
+            _lastResurrectCandidate = ""
+            Dim okX As Integer = cfg.ResurrectDialogOkPointX
+            Dim okY As Integer = cfg.ResurrectDialogOkPointY
+            If okX >= 0 AndAlso okY >= 0 Then
+                Dim clickDiagnostic As String = ""
+                If LeftClickVerifiedAtClientPoint(hwnd, okX, okY, clickDiagnostic) Then
+                    _lastResurrectAccept = now
+                    SetLastAction($"Click OK ({okX},{okY}) - resurrection prompt accepted")
+                    RaiseEvent LogLine("Resurrection prompt detected and auto-accepted.")
+                    Return True
+                Else
+                    RaiseEvent LogLine($"Resurrection prompt detected but the OK click failed: {clickDiagnostic}.")
+                End If
+            Else
+                RaiseEvent LogLine("Resurrection prompt detected, but no OK point is calibrated - set one in the Auto-Pot tab.")
+            End If
+        End If
+
+        If _resurrectOcrTask IsNot Nothing Then
+            Return False
+        End If
+
+        Const scanIntervalMs As Integer = 900
+        If _lastResurrectScan <> DateTime.MinValue AndAlso (now - _lastResurrectScan).TotalMilliseconds < scanIntervalMs Then
+            Return False
+        End If
+
+        Dim region As RectRegion = If(cfg.ResurrectDialogScanRect, New RectRegion(349, 318, 328, 124))
+        Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
+        If rect.Width <= 1 OrElse rect.Height <= 1 Then
+            Return False
+        End If
+
+        Dim crop As New Bitmap(rect.Width, rect.Height, PixelFormat.Format24bppRgb)
+        Try
+            Using g As Graphics = Graphics.FromImage(crop)
+                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
+            End Using
+
+            If cfg.PixelChangeGateEnabled Then
+                Dim signature As ULong = ComputeVisualSignature(crop)
+                If signature <> 0UL AndAlso signature = _lastResurrectVisualSignature Then
+                    crop.Dispose()
+                    Return False
+                End If
+                _lastResurrectVisualSignature = signature
+            End If
+
+            _lastResurrectScan = now
+            _resurrectOcrTaskGeneration = _runGeneration
+            _resurrectOcrTask = Task.Run(
                 Function()
                     Try
                         Return OcrReader.ReadName(crop)
@@ -10817,103 +10930,130 @@ Public Class BotEngine
         End Try
     End Function
 
+    Private Class VerifiedClickState
+        Public Property ScreenPoint As NativeMethods.POINT
+        Public Property HadCursor As Boolean
+        Public Property PreviousCursor As NativeMethods.POINT
+        Public Property PreviousForegroundWindow As IntPtr
+        Public Property GameAlreadyActive As Boolean
+        Public Property AttachedThreadInput As Boolean
+        Public Property CurrentThreadId As UInteger
+        Public Property ForegroundThreadId As UInteger
+    End Class
+
     ''' <summary>
-    ''' Double right-clicks a client-space point. Combines three fixes that each solved a different
-    ''' failure mode: (1) the real cursor is moved to the target and verified before clicking, because
-    ''' some games resolve a click's position from GetCursorPos rather than the coordinates carried in
-    ''' the click message, so a message-only click could land wherever the user's real mouse happened
-    ''' to be hovering; (2) the click itself is posted directly to this window's handle rather than
-    ''' sent as a real system-wide click, so it can't land on or steal focus from some other window
-    ''' that happens to be on top of the game at that screen point; (3) if the game isn't already the
-    ''' active window, it's briefly forced to the foreground (since many games only process clicks
-    ''' while active) and whatever had focus before is restored immediately after, so this reads as a
-    ''' brief flicker rather than a lasting interruption to whatever the user was doing.
+    ''' Shared setup for every verified click: maps the client point to a screen point, moves the real
+    ''' cursor there and confirms it landed (because some games resolve a click's position from
+    ''' GetCursorPos rather than the coordinates carried in the click message, so a message-only click
+    ''' could land wherever the user's real mouse happened to be hovering - including a different
+    ''' monitor entirely), and briefly foregrounds the game if it isn't already active (since many
+    ''' games only process clicks while active, and a plain SetForegroundWindow from a background
+    ''' process is normally denied by Windows' focus-stealing prevention - AttachThreadInput works
+    ''' around that). Both failures are returned via diagnostic; call EndVerifiedClick in a Finally
+    ''' block regardless of the return value so the cursor and foreground window get restored.
     ''' </summary>
-    Public Shared Function DoubleRightClickVerifiedAtClientPoint(hwnd As IntPtr, x As Integer, y As Integer, ByRef diagnostic As String, Optional restoreCursor As Boolean = True, Optional pressHoldMs As Integer = 15, Optional clickGapMs As Integer = 60) As Boolean
+    Private Shared Function TryBeginVerifiedClick(hwnd As IntPtr, x As Integer, y As Integer, state As VerifiedClickState, ByRef diagnostic As String) As Boolean
         diagnostic = ""
         If hwnd = IntPtr.Zero Then
             diagnostic = "invalid window handle"
             Return False
         End If
 
-        Dim screenPoint As NativeMethods.POINT
-        If Not TryMapClientPointToScreen(hwnd, x, y, screenPoint) Then
+        If Not TryMapClientPointToScreen(hwnd, x, y, state.ScreenPoint) Then
             diagnostic = "failed to map the client point to a screen point"
             Return False
         End If
 
-        Dim hadCursor As Boolean = False
-        Dim previousCursor As NativeMethods.POINT
         Try
-            hadCursor = NativeMethods.GetCursorPos(previousCursor)
+            state.HadCursor = NativeMethods.GetCursorPos(state.PreviousCursor)
         Catch
-            hadCursor = False
+            state.HadCursor = False
         End Try
 
-        ' Many games only process clicks (DirectInput/raw input) while their window is the active
-        ' one, so a click sent while the game isn't focused can silently do nothing - even one
-        ' delivered straight to its handle via PostMessage. To make this work regardless of what the
-        ' user is doing elsewhere, briefly force the game to the foreground just long enough to send
-        ' the click, then hand focus straight back to whatever had it. AttachThreadInput is needed
-        ' first because a plain SetForegroundWindow call from a background process is normally denied
-        ' by Windows' focus-stealing prevention (that's the "orange taskbar" glitch from an earlier
-        ' fix - it flashes the taskbar instead of switching). This keeps the interruption to a brief
-        ' flicker rather than a lasting focus steal, and it only happens when the game isn't already
-        ' the active window.
-        Dim previousForegroundWindow As IntPtr = NativeMethods.GetForegroundWindow()
-        Dim gameAlreadyActive As Boolean = (previousForegroundWindow = hwnd)
-        Dim attachedThreadInput As Boolean = False
-        Dim currentThreadId As UInteger = 0
-        Dim foregroundThreadId As UInteger = 0
+        state.PreviousForegroundWindow = NativeMethods.GetForegroundWindow()
+        state.GameAlreadyActive = (state.PreviousForegroundWindow = hwnd)
 
-        If Not gameAlreadyActive AndAlso previousForegroundWindow <> IntPtr.Zero Then
+        If Not state.GameAlreadyActive AndAlso state.PreviousForegroundWindow <> IntPtr.Zero Then
             Try
                 Dim unusedProcessId As UInteger = 0
-                foregroundThreadId = NativeMethods.GetWindowThreadProcessId(previousForegroundWindow, unusedProcessId)
-                currentThreadId = NativeMethods.GetCurrentThreadId()
-                If foregroundThreadId <> 0 AndAlso foregroundThreadId <> currentThreadId Then
-                    attachedThreadInput = NativeMethods.AttachThreadInput(currentThreadId, foregroundThreadId, True)
+                state.ForegroundThreadId = NativeMethods.GetWindowThreadProcessId(state.PreviousForegroundWindow, unusedProcessId)
+                state.CurrentThreadId = NativeMethods.GetCurrentThreadId()
+                If state.ForegroundThreadId <> 0 AndAlso state.ForegroundThreadId <> state.CurrentThreadId Then
+                    state.AttachedThreadInput = NativeMethods.AttachThreadInput(state.CurrentThreadId, state.ForegroundThreadId, True)
                 End If
                 NativeMethods.SetForegroundWindow(hwnd)
             Catch
             End Try
         End If
 
+        ' Verification is a single, immediate readback right after SetCursorPos with generous
+        ' tolerance - no sleep-and-retry loop. An earlier version retried with a short sleep in
+        ' between, but that sleep only widens the window for the user's own real mouse movement
+        ' (or any other transient cursor activity) to shift the position before the readback,
+        ' which was rejecting perfectly good attempts and silently disabling arrow unbundle
+        ' entirely. SetCursorPos's own success/failure is the primary signal; this readback only
+        ' guards against something actively fighting the cursor (e.g. a game confining it to a
+        ' different region), which shows up as a large, persistent offset - not a few pixels.
+        Const cursorPositionTolerancePixels As Integer = 8
+        If Not NativeMethods.SetCursorPos(state.ScreenPoint.X, state.ScreenPoint.Y) Then
+            diagnostic = $"SetCursorPos failed (target screen {state.ScreenPoint.X},{state.ScreenPoint.Y})"
+            Return False
+        End If
+
+        Dim confirmedPos As NativeMethods.POINT
+        If Not NativeMethods.GetCursorPos(confirmedPos) Then
+            diagnostic = "GetCursorPos failed after SetCursorPos"
+            Return False
+        End If
+
+        If Math.Abs(confirmedPos.X - state.ScreenPoint.X) > cursorPositionTolerancePixels OrElse
+           Math.Abs(confirmedPos.Y - state.ScreenPoint.Y) > cursorPositionTolerancePixels Then
+            diagnostic = $"target screen {state.ScreenPoint.X},{state.ScreenPoint.Y} but cursor read back at {confirmedPos.X},{confirmedPos.Y}"
+            Return False
+        End If
+
+        Return True
+    End Function
+
+    Private Shared Sub EndVerifiedClick(hwnd As IntPtr, state As VerifiedClickState, restoreCursor As Boolean)
+        If restoreCursor AndAlso state.HadCursor Then
+            Try
+                NativeMethods.SetCursorPos(state.PreviousCursor.X, state.PreviousCursor.Y)
+            Catch
+            End Try
+        End If
+
+        If Not state.GameAlreadyActive AndAlso state.PreviousForegroundWindow <> IntPtr.Zero Then
+            Try
+                NativeMethods.SetForegroundWindow(state.PreviousForegroundWindow)
+            Catch
+            End Try
+            If state.AttachedThreadInput Then
+                Try
+                    NativeMethods.AttachThreadInput(state.CurrentThreadId, state.ForegroundThreadId, False)
+                Catch
+                End Try
+            End If
+        End If
+    End Sub
+
+    ''' <summary>
+    ''' Double right-clicks a client-space point using the shared verified-click setup (real cursor
+    ''' move + confirm, brief foreground if needed). The click itself is still posted directly to this
+    ''' window's handle rather than sent as a real system-wide click, so it can't land on or steal
+    ''' focus from some other window that happens to be on top of the game at that screen point.
+    ''' </summary>
+    Public Shared Function DoubleRightClickVerifiedAtClientPoint(hwnd As IntPtr, x As Integer, y As Integer, ByRef diagnostic As String, Optional restoreCursor As Boolean = True, Optional pressHoldMs As Integer = 15, Optional clickGapMs As Integer = 60) As Boolean
+        Dim state As New VerifiedClickState()
+        diagnostic = ""
+        If Not TryBeginVerifiedClick(hwnd, x, y, state, diagnostic) Then
+            EndVerifiedClick(hwnd, state, restoreCursor)
+            Return False
+        End If
+
         Try
-            ' Verification is a single, immediate readback right after SetCursorPos with generous
-            ' tolerance - no sleep-and-retry loop. An earlier version retried with a short sleep in
-            ' between, but that sleep only widens the window for the user's own real mouse movement
-            ' (or any other transient cursor activity) to shift the position before the readback,
-            ' which was rejecting perfectly good attempts and silently disabling arrow unbundle
-            ' entirely. SetCursorPos's own success/failure is the primary signal; this readback only
-            ' guards against something actively fighting the cursor (e.g. a game confining it to a
-            ' different region), which shows up as a large, persistent offset - not a few pixels.
-            Const cursorPositionTolerancePixels As Integer = 8
-            If Not NativeMethods.SetCursorPos(screenPoint.X, screenPoint.Y) Then
-                diagnostic = $"SetCursorPos failed (target screen {screenPoint.X},{screenPoint.Y})"
-                Return False
-            End If
-
-            Dim confirmedPos As NativeMethods.POINT
-            If Not NativeMethods.GetCursorPos(confirmedPos) Then
-                diagnostic = "GetCursorPos failed after SetCursorPos"
-                Return False
-            End If
-
-            If Math.Abs(confirmedPos.X - screenPoint.X) > cursorPositionTolerancePixels OrElse
-               Math.Abs(confirmedPos.Y - screenPoint.Y) > cursorPositionTolerancePixels Then
-                diagnostic = $"target screen {screenPoint.X},{screenPoint.Y} but cursor read back at {confirmedPos.X},{confirmedPos.Y}"
-                Return False
-            End If
-
-            ' The click itself is posted straight to this window (PostMessage), not sent as a real
-            ' system-wide mouse_event. A real click is delivered by hit-testing whichever window is
-            ' topmost at that screen point and changes OS focus/foreground to it - which is exactly
-            ' what was stealing focus from whatever the user was typing in when this fired. Posting
-            ' directly to hwnd bypasses z-order and focus entirely: it can't land on, or shift focus
-            ' to, some other window that happens to be on top at that point. The real cursor move
-            ' above still happens first so the game sees the correct position if it reads GetCursorPos
-            ' rather than trusting the message's own coordinates.
+            ' The real cursor move above still happens first so the game sees the correct position if
+            ' it reads GetCursorPos rather than trusting the message's own coordinates.
             Dim lParam As Integer = (x And &HFFFF) Or ((y And &HFFFF) << 16)
             For clickIndex As Integer = 0 To 1
                 NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_RBUTTONDOWN), New IntPtr(NativeMethods.MK_RBUTTON), New IntPtr(lParam))
@@ -10929,25 +11069,36 @@ Public Class BotEngine
             diagnostic = $"exception ({ex.GetType().Name}): {ex.Message}"
             Return False
         Finally
-            If restoreCursor AndAlso hadCursor Then
-                Try
-                    NativeMethods.SetCursorPos(previousCursor.X, previousCursor.Y)
-                Catch
-                End Try
-            End If
+            EndVerifiedClick(hwnd, state, restoreCursor)
+        End Try
+    End Function
 
-            If Not gameAlreadyActive AndAlso previousForegroundWindow <> IntPtr.Zero Then
-                Try
-                    NativeMethods.SetForegroundWindow(previousForegroundWindow)
-                Catch
-                End Try
-                If attachedThreadInput Then
-                    Try
-                        NativeMethods.AttachThreadInput(currentThreadId, foregroundThreadId, False)
-                    Catch
-                    End Try
-                End If
-            End If
+    ''' <summary>
+    ''' Single left-clicks a client-space point using the same verified-click setup as
+    ''' DoubleRightClickVerifiedAtClientPoint (real cursor move + confirm, brief foreground if needed).
+    ''' Without this, a click posted purely via message coordinates could land wherever the user's real
+    ''' mouse happened to be - including a different monitor entirely - whenever the game isn't the
+    ''' foreground window.
+    ''' </summary>
+    Public Shared Function LeftClickVerifiedAtClientPoint(hwnd As IntPtr, x As Integer, y As Integer, ByRef diagnostic As String, Optional restoreCursor As Boolean = True, Optional pressHoldMs As Integer = 25) As Boolean
+        Dim state As New VerifiedClickState()
+        diagnostic = ""
+        If Not TryBeginVerifiedClick(hwnd, x, y, state, diagnostic) Then
+            EndVerifiedClick(hwnd, state, restoreCursor)
+            Return False
+        End If
+
+        Try
+            Dim lParam As Integer = (x And &HFFFF) Or ((y And &HFFFF) << 16)
+            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_LBUTTONDOWN), New IntPtr(NativeMethods.MK_LBUTTON), New IntPtr(lParam))
+            Thread.Sleep(Math.Max(1, pressHoldMs))
+            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_LBUTTONUP), IntPtr.Zero, New IntPtr(lParam))
+            Return True
+        Catch ex As Exception
+            diagnostic = $"exception ({ex.GetType().Name}): {ex.Message}"
+            Return False
+        Finally
+            EndVerifiedClick(hwnd, state, restoreCursor)
         End Try
     End Function
 

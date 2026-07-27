@@ -8,6 +8,7 @@ Friend Class AutoRelaunchOverlayStep
     Public Property DelaySeconds As Decimal
     Public Property TimingLabel As String = ""
     Public Property Description As String = ""
+    Public Property MarkerColor As Color = Color.FromArgb(235, 20, 125, 205)
 End Class
 
 Friend Class AutoRelaunchClickOverlayForm
@@ -86,7 +87,8 @@ Friend Class AutoRelaunchClickOverlayForm
                 .Y = stepInfo.Y,
                 .DelaySeconds = stepInfo.DelaySeconds,
                 .TimingLabel = If(stepInfo.TimingLabel, ""),
-                .Description = If(stepInfo.Description, "")
+                .Description = If(stepInfo.Description, ""),
+                .MarkerColor = stepInfo.MarkerColor
             }).
             ToList()
 
@@ -113,7 +115,6 @@ Friend Class AutoRelaunchClickOverlayForm
 
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias
         Using pathPen As New Pen(Color.FromArgb(220, 80, 210, 255), 3.0F),
-              markerBrush As New SolidBrush(Color.FromArgb(235, 20, 125, 205)),
               markerPen As New Pen(Color.White, 2.0F),
               panelBrush As New SolidBrush(Color.FromArgb(210, 10, 10, 10)),
               textBrush As New SolidBrush(Color.White),
@@ -130,7 +131,9 @@ Friend Class AutoRelaunchClickOverlayForm
 
             For Each stepInfo As AutoRelaunchOverlayStep In _steps
                 Dim markerRect As New Rectangle(stepInfo.X - 15, stepInfo.Y - 15, 30, 30)
-                e.Graphics.FillEllipse(markerBrush, markerRect)
+                Using markerBrush As New SolidBrush(stepInfo.MarkerColor)
+                    e.Graphics.FillEllipse(markerBrush, markerRect)
+                End Using
                 e.Graphics.DrawEllipse(markerPen, markerRect)
 
                 Dim numberText As String = stepInfo.StepNumber.ToString()

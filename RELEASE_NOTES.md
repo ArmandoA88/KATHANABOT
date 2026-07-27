@@ -1,14 +1,16 @@
-# KathanaBot 1.0.82
+# KathanaBot 1.0.83
 
 ## What changed
 
-- Fixed Arrow Unbundle getting stuck when a configured slot holds loose (already-unbundled) arrows instead of a bundle. Right-clicking a bundle silently unbundles it, but right-clicking loose arrows opens the game's "enter the number of items to move" quantity prompt instead - a blocking dialog that stalled combat until closed, with no way to predict in advance which a given slot holds. The bot now scans for that prompt every loop, ahead of everything else, and closes it immediately with Escape the moment it appears (Escape only - never a click near the quantity field or OK/Cancel, to avoid any risk of actually moving real arrows).
-- Requires calibrating a new region: `arrow_move_dialog_rect` in the Vision tab's region list, sized around where "Please enter the number of items to move" appears on your screen. A placeholder default is set, but it must be calibrated per game window/resolution the same as every other detection region.
+- Added a **Bundle Icon** calibration to Arrow Unbundle: capture a crop of what a bundle's slot icon actually looks like, and a configured point is only double-right-clicked when its current slot still matches - this prevents the "enter the number of items to move" prompt from ever opening in the first place, instead of reacting to it afterward. A Tolerance value controls how strict the match is.
+- Removed the older reactive move-quantity-dialog handling (the `arrow_move_dialog_rect` scan region, its OCR detector, the Cancel Point picker, and the Escape-key fallback) now that Bundle Icon matching handles this at the source. Fewer moving parts, no risk of an Escape press closing the whole inventory.
+- Added **Auto Resurrect**: a dedicated resurrection/revive confirmation dialog detector (Auto-Pot tab), fully independent from Auto Accept Party/Ress since this dialog can appear at a different screen position. Calibrate the `resurrect_scan_rect` region (Vision tab) and an OK click point (live-click picker, with its own red click overlay), then turn it on. The OK click uses the same verified-click approach as Arrow Unbundle (real cursor move + confirm + brief foreground if needed) so it lands correctly even when the game isn't focused or the cursor is on another monitor.
+- Reworked the Auto-Pot tab layout: Unstuck/Retarget and Auto Resurrect now sit side by side instead of stacked, freeing up vertical space so the Notifications + Loot Matching panel isn't cut off. Removed the "Apply To Heal/Mana/Max-HP Rows", "Test Alarm + Notify", and "Test Notification" buttons.
 
 ## Recent change history - last 5
 
-1. **Arrow unbundle move-quantity dialog fix:** loose arrows in a bundle slot no longer stall combat behind a blocking prompt.
-2. **New calibration region:** `arrow_move_dialog_rect` detects the prompt so it can be auto-dismissed.
-3. **Safe dismissal:** the prompt is closed with Escape only, never a click, so no arrows can be accidentally moved.
-4. **FS (Full Support) role:** a dedicated support-only mode that never targets or retargets, for characters that only heal/buff.
-5. **All roles work without a target:** buffs, attacks, and other roles no longer wait on a target that FS will never acquire.
+1. **Bundle Icon matching:** Arrow Unbundle only clicks a slot that still looks like a bundle, avoiding the move-quantity prompt entirely.
+2. **Auto Resurrect:** a separate, calibrated auto-accept for resurrection dialogs, with a reliable verified click.
+3. **Simplified arrow-unbundle dialog handling:** removed the now-unnecessary scan region, OCR detector, Cancel Point, and Escape fallback.
+4. **Auto-Pot layout cleanup:** more room for Notifications + Loot Matching; removed three manual test/apply buttons.
+5. **FS (Full Support) role:** a dedicated support-only mode that never targets or retargets, for characters that only heal/buff.

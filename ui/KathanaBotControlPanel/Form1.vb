@@ -149,6 +149,16 @@ Public Class Form1
     Private btnClearArrowUnbundlePoints As Button
     Private chkArrowUnbundleOverlay As CheckBox
     Private lblArrowUnbundlePoints As Label
+    Private btnPickArrowBundleIcon As Button
+    Private btnClearArrowBundleIcon As Button
+    Private lblArrowBundleIcon As Label
+    Private picArrowBundleIcon As PictureBox
+    Private nudArrowBundleIconTolerance As NumericUpDown
+    Private btnResurrectAutoAccept As Button
+    Private btnPickResurrectOkPoint As Button
+    Private btnClearResurrectOkPoint As Button
+    Private lblResurrectOkPoint As Label
+    Private chkResurrectOverlay As CheckBox
 
     Private NotInheritable Class ChatLanguageOption
         Public Property Label As String
@@ -420,6 +430,17 @@ Public Class Form1
     Private _isPickingLootNamePickupPoint As Boolean = False
     Private _isPickingArrowUnbundlePoint As Boolean = False
     Private _arrowUnbundleLeftMouseWasDown As Boolean = False
+    Private Const ArrowBundleIconCaptureSize As Integer = 36
+    Private _isPickingArrowBundleIcon As Boolean = False
+    Private _arrowBundleIconLeftMouseWasDown As Boolean = False
+    Private _arrowBundleIconBase64 As String = ""
+    Private _resurrectAutoAcceptEnabled As Boolean = False
+    Private _isPickingResurrectOkPoint As Boolean = False
+    Private _resurrectOkPointLeftMouseWasDown As Boolean = False
+    Private _resurrectOkPointX As Integer = -1
+    Private _resurrectOkPointY As Integer = -1
+    Private _resurrectOverlayEnabled As Boolean = False
+    Private _resurrectOverlayForm As AutoRelaunchClickOverlayForm
     Private _isPickingAutoRelaunchClick As Boolean = False
     Private _autoRelaunchRightMouseWasDown As Boolean = False
     Private _pendingAutoRelaunchClickRowIndex As Integer = -1
@@ -690,6 +711,12 @@ Public Class Form1
         Public Property ArrowUnbundleSeconds As Decimal = 60D
         Public Property ArrowUnbundleOverlayEnabled As Boolean = False
         Public Property ArrowUnbundlePoints As List(Of LootScanPoint) = New List(Of LootScanPoint)()
+        Public Property ArrowBundleIconBase64 As String = ""
+        Public Property ArrowBundleIconTolerance As Decimal = 45D
+        Public Property ResurrectAutoAcceptEnabled As Boolean = False
+        Public Property ResurrectOkPointX As Integer = -1
+        Public Property ResurrectOkPointY As Integer = -1
+        Public Property ResurrectOverlayEnabled As Boolean = False
         Public Property PromptAutoAcceptEnabled As Boolean = True
         Public Property AskForPartyEnabled As Boolean = False
         Public Property AskForPartySeconds As Decimal = 30D
@@ -801,6 +828,7 @@ Public Class Form1
         RefreshUpdateInstallMode()
         SetAutoRelaunchClickOverlayVisible(chkAutoRelaunchClickOverlay IsNot Nothing AndAlso chkAutoRelaunchClickOverlay.Checked)
         SetArrowUnbundleOverlayVisible(chkArrowUnbundleOverlay IsNot Nothing AndAlso chkArrowUnbundleOverlay.Checked)
+        SetResurrectOverlayVisible(chkResurrectOverlay IsNot Nothing AndAlso chkResurrectOverlay.Checked)
         ApplyDarkTheme(Me)
         UpdateBarColorUi()
         CaptureThemeSnapshot(Me)
@@ -1261,7 +1289,11 @@ Public Class Form1
         AddHandler dgvRegions.CellEndEdit, AddressOf PersistListSettingsChanged
         AddHandler dgvRegions.CurrentCellDirtyStateChanged,
             Sub(_s As Object, _e As EventArgs)
-                If dgvRegions.IsCurrentCellDirty Then
+                ' Only the checkbox column needs to commit on every keystroke/toggle (a checkbox has
+                ' no separate "typing" state to interrupt). Applying this to the X/Y/W/H text columns
+                ' too was forcing a CommitEdit after the very first character typed, which ended the
+                ' in-place edit box and made it look like only one character could ever be typed.
+                If dgvRegions.IsCurrentCellDirty AndAlso TypeOf dgvRegions.CurrentCell Is DataGridViewCheckBoxCell Then
                     dgvRegions.CommitEdit(DataGridViewDataErrorContexts.Commit)
                 End If
             End Sub
@@ -1530,9 +1562,13 @@ Public Class Form1
         _isPickingLootRejectPoint = False
         _isPickingLootNamePickupPoint = False
         _isPickingArrowUnbundlePoint = False
+        _isPickingArrowBundleIcon = False
+        _isPickingResurrectOkPoint = False
         UpdateLootRejectPointUi()
         UpdateLootNamePickupPointUi()
         UpdateArrowUnbundleUi()
+        UpdateArrowBundleIconUi()
+        UpdateResurrectOkPointUi()
         UpdateBarColorUi()
         FocusVisionSnapshotForPick(If(kind = BarColorPickKind.Hp, "HP bar color", "MP bar color"))
     End Sub
@@ -3432,15 +3468,14 @@ Public Class Form1
     Private Function BuildAutoPotTab() As TabPage
         Dim tab As New TabPage("Auto-Pot") With {.BackColor = Color.FromArgb(20, 20, 20)}
         Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2, .Padding = New Padding(10)}
-        root.RowStyles.Add(New RowStyle(SizeType.Percent, 62.0F))
-        root.RowStyles.Add(New RowStyle(SizeType.Percent, 38.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Percent, 68.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Percent, 32.0F))
 
         Dim settingsGroup As New GroupBox() With {.Text = "Auto-Pot Controls", .Dock = DockStyle.Fill, .Padding = New Padding(12)}
-        Dim settingsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 2}
+        Dim settingsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1}
         settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 48.0F))
         settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 52.0F))
         settingsLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
-        settingsLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 48.0F))
 
         Dim thresholdsGroup As New GroupBox() With {.Text = "Thresholds", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
         Dim thresholdsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 8}
@@ -3609,27 +3644,16 @@ Public Class Form1
         settingsLayout.Controls.Add(thresholdsGroup, 0, 0)
         settingsLayout.Controls.Add(notifyGroup, 1, 0)
 
-        Dim buttonRow As New FlowLayoutPanel() With {
-            .Dock = DockStyle.Fill,
-            .FlowDirection = FlowDirection.LeftToRight,
-            .WrapContents = False,
-            .Padding = New Padding(0, 4, 0, 0)
-        }
-        Dim btnApply As New Button() With {.Text = "Apply To Heal/Mana/Max-HP Rows", .Width = 220, .Height = 30, .BackColor = Color.FromArgb(42, 120, 80), .ForeColor = Color.White}
-        AddHandler btnApply.Click, Sub(_s As Object, _e As EventArgs) ApplyQuickAutoPotThresholds()
-        Dim btnTestAlarm As New Button() With {.Text = "Test Alarm + Notify", .Width = 150, .Height = 30, .BackColor = Color.FromArgb(155, 90, 25), .ForeColor = Color.White}
-        AddHandler btnTestAlarm.Click, AddressOf TestAlarmClicked
-        Dim btnTestPhone As New Button() With {.Text = "Test Notification", .Width = 130, .Height = 30, .BackColor = Color.FromArgb(55, 110, 170), .ForeColor = Color.White}
-        AddHandler btnTestPhone.Click, AddressOf TestPhoneAlertClicked
-        buttonRow.Controls.Add(btnApply)
-        buttonRow.Controls.Add(btnTestAlarm)
-        buttonRow.Controls.Add(btnTestPhone)
-        settingsLayout.Controls.Add(buttonRow, 0, 1)
-        settingsLayout.SetColumnSpan(buttonRow, 2)
-
         settingsGroup.Controls.Add(settingsLayout)
         root.Controls.Add(settingsGroup, 0, 0)
-        root.Controls.Add(BuildAutoPotUnstuckGroup(), 0, 1)
+
+        Dim bottomRow As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1}
+        bottomRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
+        bottomRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
+        bottomRow.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        bottomRow.Controls.Add(BuildAutoPotUnstuckGroup(), 0, 0)
+        bottomRow.Controls.Add(BuildAutoResurrectGroup(), 1, 0)
+        root.Controls.Add(bottomRow, 0, 1)
         UpdateNotificationProviderUi()
         tab.Controls.Add(root)
         AddTabExplanationButton(tab, HelpScopeAutoPot)
@@ -3817,6 +3841,51 @@ Public Class Form1
         Return group
     End Function
 
+    Private Function BuildAutoResurrectGroup() As GroupBox
+        Dim group As New GroupBox() With {.Text = "Auto Resurrect", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3}
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+
+        btnResurrectAutoAccept = New Button() With {
+            .Text = "Auto Resurrect: OFF",
+            .Dock = DockStyle.Fill,
+            .MinimumSize = New Size(0, 34),
+            .BackColor = Color.FromArgb(110, 45, 45),
+            .ForeColor = Color.White
+        }
+        AddHandler btnResurrectAutoAccept.Click, AddressOf ToggleResurrectAutoAcceptClicked
+        layout.Controls.Add(btnResurrectAutoAccept, 0, 0)
+
+        Dim okPointRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(0)}
+        lblResurrectOkPoint = New Label() With {.Text = "OK Point: (not set)", .AutoSize = True, .Height = 30, .Padding = New Padding(0, 6, 10, 0), .ForeColor = Color.LightSalmon}
+        btnPickResurrectOkPoint = New Button() With {.Text = "Set OK Point", .Width = 106, .Height = 30, .BackColor = Color.FromArgb(45, 95, 140), .ForeColor = Color.White}
+        AddHandler btnPickResurrectOkPoint.Click, AddressOf PickResurrectOkPointClicked
+        btnClearResurrectOkPoint = New Button() With {.Text = "Clear", .Width = 74, .Height = 30, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
+        AddHandler btnClearResurrectOkPoint.Click, AddressOf ClearResurrectOkPointClicked
+        chkResurrectOverlay = New CheckBox() With {.Text = "Show Click Overlay", .AutoSize = True, .Height = 30, .Padding = New Padding(8, 3, 0, 0), .ForeColor = Color.LightSkyBlue}
+        AddHandler chkResurrectOverlay.CheckedChanged, AddressOf ResurrectOverlayChanged
+        okPointRow.Controls.Add(lblResurrectOkPoint)
+        okPointRow.Controls.Add(btnPickResurrectOkPoint)
+        okPointRow.Controls.Add(btnClearResurrectOkPoint)
+        okPointRow.Controls.Add(chkResurrectOverlay)
+        layout.Controls.Add(okPointRow, 0, 1)
+
+        Dim note As New Label() With {
+            .Text = "Detects a resurrection/revive confirmation dialog (e.g. 'Do you wish to resurrect?') anywhere in the calibrated resurrect_scan_rect region (Vision tab region list) and clicks OK at the point set here. Fully separate from Auto Accept Party/Ress, since this dialog can appear at a different screen position.",
+            .Dock = DockStyle.Fill,
+            .ForeColor = Color.LightSteelBlue,
+            .TextAlign = ContentAlignment.TopLeft
+        }
+        layout.Controls.Add(note, 0, 2)
+
+        group.Controls.Add(layout)
+        UpdateResurrectAutoAcceptUi()
+        UpdateResurrectOkPointUi()
+        Return group
+    End Function
+
     Private Function BuildAutoLootTab() As TabPage
         Dim tab As New TabPage("Auto-Loot") With {.BackColor = Color.FromArgb(20, 20, 20)}
         Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1, .Padding = New Padding(10)}
@@ -3947,10 +4016,11 @@ Public Class Form1
 
     Private Function BuildArrowUnbundleGroup() As GroupBox
         Dim group As New GroupBox() With {.Text = "Arrow Unbundle Double Right-Click", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
-        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 6}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 7}
         layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 170.0F))
         layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 44.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
@@ -3961,12 +4031,32 @@ Public Class Form1
         layout.Controls.Add(chkArrowUnbundleEnabled, 0, 0)
         layout.SetColumnSpan(chkArrowUnbundleEnabled, 2)
 
-        layout.Controls.Add(New Label() With {.Text = "Every Seconds", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
+        Dim bundleIconRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .AutoSize = True, .Margin = New Padding(0)}
+        picArrowBundleIcon = New PictureBox() With {.Width = 36, .Height = 36, .BorderStyle = BorderStyle.FixedSingle, .BackColor = Color.FromArgb(30, 30, 30), .SizeMode = PictureBoxSizeMode.Zoom, .Margin = New Padding(0, 2, 8, 2)}
+        lblArrowBundleIcon = New Label() With {.Text = "Bundle Icon: not set (clicks unconditionally)", .AutoSize = True, .Height = 30, .Padding = New Padding(0, 6, 10, 0), .ForeColor = Color.LightGreen}
+        btnPickArrowBundleIcon = New Button() With {.Text = "Set Bundle Icon", .Width = 116, .Height = 30, .BackColor = Color.FromArgb(45, 95, 140), .ForeColor = Color.White}
+        AddHandler btnPickArrowBundleIcon.Click, AddressOf PickArrowBundleIconClicked
+        btnClearArrowBundleIcon = New Button() With {.Text = "Clear", .Width = 74, .Height = 30, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
+        AddHandler btnClearArrowBundleIcon.Click, AddressOf ClearArrowBundleIconClicked
+        Dim toleranceLabel As New Label() With {.Text = "Tolerance", .AutoSize = True, .Height = 30, .Padding = New Padding(10, 6, 4, 0), .ForeColor = Color.White}
+        nudArrowBundleIconTolerance = New NumericUpDown() With {.Minimum = 5D, .Maximum = 120D, .Value = 45D, .Width = 64, .Height = 28, .Margin = New Padding(3, 5, 3, 3)}
+        AddHandler nudArrowBundleIconTolerance.ValueChanged, AddressOf LiveConfigChanged
+        AddHandler nudArrowBundleIconTolerance.ValueChanged, AddressOf PersistListSettingsChanged
+        bundleIconRow.Controls.Add(picArrowBundleIcon)
+        bundleIconRow.Controls.Add(lblArrowBundleIcon)
+        bundleIconRow.Controls.Add(btnPickArrowBundleIcon)
+        bundleIconRow.Controls.Add(btnClearArrowBundleIcon)
+        bundleIconRow.Controls.Add(toleranceLabel)
+        bundleIconRow.Controls.Add(nudArrowBundleIconTolerance)
+        layout.Controls.Add(bundleIconRow, 0, 1)
+        layout.SetColumnSpan(bundleIconRow, 2)
+
+        layout.Controls.Add(New Label() With {.Text = "Every Seconds", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
         nudArrowUnbundleSeconds = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1D, .Maximum = 9999D, .Value = 60D, .Width = 120}
-        layout.Controls.Add(nudArrowUnbundleSeconds, 1, 1)
+        layout.Controls.Add(nudArrowUnbundleSeconds, 1, 2)
 
         lblArrowUnbundlePoints = New Label() With {.Text = "Arrow Points: 0", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
-        layout.Controls.Add(lblArrowUnbundlePoints, 0, 2)
+        layout.Controls.Add(lblArrowUnbundlePoints, 0, 3)
         layout.SetColumnSpan(lblArrowUnbundlePoints, 2)
 
         lstArrowUnbundlePoints = New ListBox() With {.Dock = DockStyle.Fill, .IntegralHeight = False}
@@ -3976,16 +4066,16 @@ Public Class Form1
                     UpdateArrowUnbundleUi()
                 End If
             End Sub
-        layout.Controls.Add(lstArrowUnbundlePoints, 0, 3)
+        layout.Controls.Add(lstArrowUnbundlePoints, 0, 4)
         layout.SetColumnSpan(lstArrowUnbundlePoints, 2)
 
         Dim note As New Label() With {
-            .Text = "For arrows: the bot double right-clicks these inventory spots on the interval to unbundle arrow stacks. Multiple points are used in order. Show Click Overlay displays the numbered path, coordinates, and interval over the game.",
+            .Text = "For arrows: the bot double right-clicks these inventory spots on the interval to unbundle arrow stacks. Multiple points are used in order. Set Bundle Icon calibrates what a bundle looks like; if a slot's current icon doesn't match, that point is skipped instead of clicked.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.TopLeft
         }
-        layout.Controls.Add(note, 0, 4)
+        layout.Controls.Add(note, 0, 5)
         layout.SetColumnSpan(note, 2)
 
         Dim buttons As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(0)}
@@ -4000,11 +4090,12 @@ Public Class Form1
         buttons.Controls.Add(btnRemoveArrowUnbundlePoint)
         buttons.Controls.Add(btnClearArrowUnbundlePoints)
         buttons.Controls.Add(chkArrowUnbundleOverlay)
-        layout.Controls.Add(buttons, 0, 5)
+        layout.Controls.Add(buttons, 0, 6)
         layout.SetColumnSpan(buttons, 2)
 
         group.Controls.Add(layout)
         UpdateArrowUnbundleUi()
+        UpdateArrowBundleIconUi()
         Return group
     End Function
 
@@ -5097,6 +5188,7 @@ Public Class Form1
         dgvRegions.Rows.Add(True, "rupiahs_rect", "560", "745", "110", "21")
         dgvRegions.Rows.Add(True, "party_invite_scan_rect", "349", "318", "328", "124")
         dgvRegions.Rows.Add(True, "party_invite_ok_rect", "463", "410", "59", "21")
+        dgvRegions.Rows.Add(True, "resurrect_scan_rect", "349", "318", "328", "124")
         dgvRegions.Rows.Add(True, "party_list_rect", "0", "24", "168", "244")
         Dim defaultDisconnect As RectRegion = BotConfig.DefaultDisconnectMessageRect()
         dgvRegions.Rows.Add(True, "disconnect_message_rect", defaultDisconnect.X.ToString(), defaultDisconnect.Y.ToString(), defaultDisconnect.W.ToString(), defaultDisconnect.H.ToString())
@@ -5193,6 +5285,18 @@ Public Class Form1
         _isPickingLootNamePickupPoint = False
         _isPickingArrowUnbundlePoint = False
         _arrowUnbundlePoints.Clear()
+        _isPickingArrowBundleIcon = False
+        _arrowBundleIconBase64 = ""
+        _isPickingResurrectOkPoint = False
+        _resurrectOkPointX = -1
+        _resurrectOkPointY = -1
+        _resurrectAutoAcceptEnabled = False
+        _resurrectOverlayEnabled = False
+        If chkResurrectOverlay IsNot Nothing Then
+            chkResurrectOverlay.Checked = False
+        End If
+        UpdateResurrectAutoAcceptUi()
+        UpdateResurrectOkPointUi()
         nudAutoPotHp.Value = 1D
         nudAutoPotMp.Value = 1D
         nudAlarmVolume.Value = 1D
@@ -6492,8 +6596,12 @@ Public Class Form1
         _isPickingLootRejectPoint = True
         _isPickingLootNamePickupPoint = False
         _isPickingArrowUnbundlePoint = False
+        _isPickingArrowBundleIcon = False
+        _isPickingResurrectOkPoint = False
         UpdateLootNamePickupPointUi()
         UpdateArrowUnbundleUi()
+        UpdateArrowBundleIconUi()
+        UpdateResurrectOkPointUi()
         UpdateLootRejectPointUi()
         FocusVisionSnapshotForPick("Loot reject")
     End Sub
@@ -6512,8 +6620,12 @@ Public Class Form1
         _isPickingLootNamePickupPoint = True
         _isPickingLootRejectPoint = False
         _isPickingArrowUnbundlePoint = False
+        _isPickingArrowBundleIcon = False
+        _isPickingResurrectOkPoint = False
         UpdateLootRejectPointUi()
         UpdateArrowUnbundleUi()
+        UpdateArrowBundleIconUi()
+        UpdateResurrectOkPointUi()
         UpdateLootNamePickupPointUi()
         FocusVisionSnapshotForPick("Loot pickup-point")
     End Sub
@@ -6539,9 +6651,13 @@ Public Class Form1
         _arrowUnbundleLeftMouseWasDown = False
         _isPickingLootRejectPoint = False
         _isPickingLootNamePickupPoint = False
+        _isPickingArrowBundleIcon = False
+        _isPickingResurrectOkPoint = False
         UpdateLootRejectPointUi()
         UpdateLootNamePickupPointUi()
         UpdateArrowUnbundleUi()
+        UpdateArrowBundleIconUi()
+        UpdateResurrectOkPointUi()
         AppendLog("Arrow unbundle: click the inventory arrow stack spot directly inside the selected game window.")
         NativeMethods.SetForegroundWindow(selected.MainWindowHandle)
     End Sub
@@ -6627,6 +6743,152 @@ Public Class Form1
         End Try
     End Sub
 
+
+    Private Sub PickArrowBundleIconClicked(sender As Object, e As EventArgs)
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+        If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
+            AppendLog("Arrow unbundle: select a Full game process window first.")
+            Return
+        End If
+
+        _isPickingArrowBundleIcon = True
+        _arrowBundleIconLeftMouseWasDown = False
+        _isPickingArrowUnbundlePoint = False
+        _isPickingLootRejectPoint = False
+        _isPickingLootNamePickupPoint = False
+        _isPickingResurrectOkPoint = False
+        UpdateLootRejectPointUi()
+        UpdateLootNamePickupPointUi()
+        UpdateArrowUnbundleUi()
+        UpdateArrowBundleIconUi()
+        UpdateResurrectOkPointUi()
+        AppendLog("Arrow unbundle: click the center of a slot that currently holds a bundle (not loose arrows) inside the selected game window.")
+        NativeMethods.SetForegroundWindow(selected.MainWindowHandle)
+    End Sub
+
+    Private Sub ClearArrowBundleIconClicked(sender As Object, e As EventArgs)
+        _isPickingArrowBundleIcon = False
+        _arrowBundleIconLeftMouseWasDown = False
+        _arrowBundleIconBase64 = ""
+        UpdateArrowBundleIconUi()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        AppendLog("Arrow unbundle bundle-icon reference cleared; every configured point will be clicked unconditionally again.")
+    End Sub
+
+    Private Sub HandlePendingArrowBundleIconCapture()
+        Try
+            If Not _isPickingArrowBundleIcon Then
+                Return
+            End If
+
+            Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+            If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
+                Return
+            End If
+
+            Dim leftDown As Boolean = (GetAsyncKeyState(CInt(Keys.LButton)) And &H8000S) <> 0
+            If leftDown AndAlso Not _arrowBundleIconLeftMouseWasDown Then
+                Dim screenPoint As NativeMethods.POINT
+                If NativeMethods.GetCursorPos(screenPoint) Then
+                    Dim hoveredWindow As IntPtr = NativeMethods.WindowFromPoint(screenPoint)
+                    Dim hoveredRoot As IntPtr = If(hoveredWindow <> IntPtr.Zero, NativeMethods.GetAncestor(hoveredWindow, NativeMethods.GA_ROOT), IntPtr.Zero)
+                    If hoveredRoot <> selected.MainWindowHandle Then
+                        _arrowBundleIconLeftMouseWasDown = leftDown
+                        Return
+                    End If
+
+                    Dim clientPoint As NativeMethods.POINT = screenPoint
+                    If NativeMethods.ScreenToClient(selected.MainWindowHandle, clientPoint) Then
+                        Dim clientRect As NativeMethods.RECT
+                        If Not NativeMethods.GetClientRect(selected.MainWindowHandle, clientRect) Then
+                            _arrowBundleIconLeftMouseWasDown = leftDown
+                            Return
+                        End If
+
+                        Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
+                        Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
+                        If clientPoint.X < 0 OrElse clientPoint.Y < 0 OrElse clientPoint.X >= clientWidth OrElse clientPoint.Y >= clientHeight Then
+                            AppendLog("Arrow unbundle: click must be inside the selected game window.")
+                            _arrowBundleIconLeftMouseWasDown = leftDown
+                            Return
+                        End If
+
+                        Dim half As Integer = ArrowBundleIconCaptureSize \ 2
+                        Dim region As New RectRegion(clientPoint.X - half, clientPoint.Y - half, ArrowBundleIconCaptureSize, ArrowBundleIconCaptureSize)
+                        Dim capturedBase64 As String = ""
+                        Using crop As Bitmap = BotEngine.CaptureClientRegion(selected.MainWindowHandle, region)
+                            If crop Is Nothing OrElse crop.Width <> ArrowBundleIconCaptureSize OrElse crop.Height <> ArrowBundleIconCaptureSize Then
+                                AppendLog("Arrow unbundle: bundle icon capture failed - click further from the game window's edge.")
+                                _isPickingArrowBundleIcon = False
+                                _arrowBundleIconLeftMouseWasDown = leftDown
+                                UpdateArrowBundleIconUi()
+                                Return
+                            End If
+
+                            Using ms As New MemoryStream()
+                                crop.Save(ms, Imaging.ImageFormat.Png)
+                                capturedBase64 = Convert.ToBase64String(ms.ToArray())
+                            End Using
+                        End Using
+
+                        _arrowBundleIconBase64 = capturedBase64
+                        _isPickingArrowBundleIcon = False
+                        _arrowBundleIconLeftMouseWasDown = leftDown
+                        UpdateArrowBundleIconUi()
+                        PushLiveConfig()
+                        SavePersistedListState(False)
+                        AppendLog($"Arrow unbundle bundle-icon reference captured at x={clientPoint.X}, y={clientPoint.Y}.")
+                    End If
+                End If
+            End If
+
+            _arrowBundleIconLeftMouseWasDown = leftDown
+        Catch ex As Exception
+            _isPickingArrowBundleIcon = False
+            _arrowBundleIconLeftMouseWasDown = False
+            UpdateArrowBundleIconUi()
+            AppendLog("Arrow unbundle bundle-icon capture failed: " & ex.Message)
+        End Try
+    End Sub
+
+    Private Sub UpdateArrowBundleIconUi()
+        Dim calibrated As Boolean = Not String.IsNullOrWhiteSpace(_arrowBundleIconBase64)
+
+        If lblArrowBundleIcon IsNot Nothing Then
+            lblArrowBundleIcon.Text = If(calibrated, "Bundle Icon: calibrated", "Bundle Icon: not set (clicks unconditionally)")
+        End If
+
+        If picArrowBundleIcon IsNot Nothing Then
+            Dim previousImage As Image = picArrowBundleIcon.Image
+            picArrowBundleIcon.Image = Nothing
+            If previousImage IsNot Nothing Then
+                previousImage.Dispose()
+            End If
+            If calibrated Then
+                Try
+                    Dim bytes As Byte() = Convert.FromBase64String(_arrowBundleIconBase64)
+                    Using ms As New MemoryStream(bytes)
+                        Using decoded As New Bitmap(ms)
+                            picArrowBundleIcon.Image = New Bitmap(decoded)
+                        End Using
+                    End Using
+                Catch
+                    picArrowBundleIcon.Image = Nothing
+                End Try
+            End If
+        End If
+
+        If btnPickArrowBundleIcon IsNot Nothing Then
+            btnPickArrowBundleIcon.Text = If(_isPickingArrowBundleIcon, "Click Game...", "Set Bundle Icon")
+            btnPickArrowBundleIcon.BackColor = If(_isPickingArrowBundleIcon, Color.FromArgb(175, 110, 30), Color.FromArgb(45, 95, 140))
+        End If
+
+        If btnClearArrowBundleIcon IsNot Nothing Then
+            btnClearArrowBundleIcon.Enabled = calibrated
+        End If
+    End Sub
+
     Private Sub SnapshotMouseClick(sender As Object, e As MouseEventArgs)
         If Not IsSnapshotPickActive() Then
             Return
@@ -6671,6 +6933,22 @@ Public Class Form1
             _arrowUnbundleLeftMouseWasDown = False
             UpdateArrowUnbundleUi()
             AppendLog("Arrow unbundle point pick canceled from snapshot; use Add Point, then click directly inside the game window.")
+            Return
+        End If
+
+        If _isPickingArrowBundleIcon Then
+            _isPickingArrowBundleIcon = False
+            _arrowBundleIconLeftMouseWasDown = False
+            UpdateArrowBundleIconUi()
+            AppendLog("Arrow unbundle bundle-icon pick canceled from snapshot; use Set Bundle Icon, then click directly inside the game window.")
+            Return
+        End If
+
+        If _isPickingResurrectOkPoint Then
+            _isPickingResurrectOkPoint = False
+            _resurrectOkPointLeftMouseWasDown = False
+            UpdateResurrectOkPointUi()
+            AppendLog("Auto Resurrect OK point pick canceled from snapshot; use Set OK Point, then click directly inside the game window.")
             Return
         End If
 
@@ -6805,6 +7083,177 @@ Public Class Form1
                 .Description = "double right-click"
             })
         Next
+        Return overlaySteps
+    End Function
+
+    Private Sub ToggleResurrectAutoAcceptClicked(sender As Object, e As EventArgs)
+        _resurrectAutoAcceptEnabled = Not _resurrectAutoAcceptEnabled
+        UpdateResurrectAutoAcceptUi()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        AppendLog(If(_resurrectAutoAcceptEnabled, "Auto Resurrect enabled.", "Auto Resurrect disabled."))
+    End Sub
+
+    Private Sub UpdateResurrectAutoAcceptUi()
+        If btnResurrectAutoAccept Is Nothing Then
+            Return
+        End If
+        btnResurrectAutoAccept.Text = If(_resurrectAutoAcceptEnabled, "Auto Resurrect: ON", "Auto Resurrect: OFF")
+        btnResurrectAutoAccept.BackColor = If(_resurrectAutoAcceptEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+    End Sub
+
+    Private Sub PickResurrectOkPointClicked(sender As Object, e As EventArgs)
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+        If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
+            AppendLog("Auto Resurrect: select a Full game process window first.")
+            Return
+        End If
+
+        _isPickingResurrectOkPoint = True
+        _resurrectOkPointLeftMouseWasDown = False
+        _isPickingArrowUnbundlePoint = False
+        _isPickingArrowBundleIcon = False
+        _isPickingLootRejectPoint = False
+        _isPickingLootNamePickupPoint = False
+        UpdateLootRejectPointUi()
+        UpdateLootNamePickupPointUi()
+        UpdateArrowUnbundleUi()
+        UpdateArrowBundleIconUi()
+        UpdateResurrectOkPointUi()
+        AppendLog("Auto Resurrect: click the dialog's OK button directly inside the selected game window (trigger the dialog first if you can).")
+        NativeMethods.SetForegroundWindow(selected.MainWindowHandle)
+    End Sub
+
+    Private Sub ClearResurrectOkPointClicked(sender As Object, e As EventArgs)
+        _isPickingResurrectOkPoint = False
+        _resurrectOkPointLeftMouseWasDown = False
+        _resurrectOkPointX = -1
+        _resurrectOkPointY = -1
+        UpdateResurrectOkPointUi()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        AppendLog("Auto Resurrect OK point cleared.")
+    End Sub
+
+    Private Sub HandlePendingResurrectOkPointCapture()
+        Try
+            If Not _isPickingResurrectOkPoint Then
+                Return
+            End If
+
+            Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+            If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
+                Return
+            End If
+
+            Dim leftDown As Boolean = (GetAsyncKeyState(CInt(Keys.LButton)) And &H8000S) <> 0
+            If leftDown AndAlso Not _resurrectOkPointLeftMouseWasDown Then
+                Dim screenPoint As NativeMethods.POINT
+                If NativeMethods.GetCursorPos(screenPoint) Then
+                    Dim hoveredWindow As IntPtr = NativeMethods.WindowFromPoint(screenPoint)
+                    Dim hoveredRoot As IntPtr = If(hoveredWindow <> IntPtr.Zero, NativeMethods.GetAncestor(hoveredWindow, NativeMethods.GA_ROOT), IntPtr.Zero)
+                    If hoveredRoot <> selected.MainWindowHandle Then
+                        _resurrectOkPointLeftMouseWasDown = leftDown
+                        Return
+                    End If
+
+                    Dim clientPoint As NativeMethods.POINT = screenPoint
+                    If NativeMethods.ScreenToClient(selected.MainWindowHandle, clientPoint) Then
+                        Dim clientRect As NativeMethods.RECT
+                        If Not NativeMethods.GetClientRect(selected.MainWindowHandle, clientRect) Then
+                            _resurrectOkPointLeftMouseWasDown = leftDown
+                            Return
+                        End If
+
+                        Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
+                        Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
+                        If clientPoint.X < 0 OrElse clientPoint.Y < 0 OrElse clientPoint.X >= clientWidth OrElse clientPoint.Y >= clientHeight Then
+                            AppendLog("Auto Resurrect: click must be inside the selected game window.")
+                            _resurrectOkPointLeftMouseWasDown = leftDown
+                            Return
+                        End If
+
+                        _resurrectOkPointX = Math.Max(0, clientPoint.X)
+                        _resurrectOkPointY = Math.Max(0, clientPoint.Y)
+                        _isPickingResurrectOkPoint = False
+                        _resurrectOkPointLeftMouseWasDown = leftDown
+                        UpdateResurrectOkPointUi()
+                        PushLiveConfig()
+                        SavePersistedListState(False)
+                        AppendLog($"Auto Resurrect OK point set: x={_resurrectOkPointX}, y={_resurrectOkPointY}.")
+                    End If
+                End If
+            End If
+
+            _resurrectOkPointLeftMouseWasDown = leftDown
+        Catch ex As Exception
+            _isPickingResurrectOkPoint = False
+            _resurrectOkPointLeftMouseWasDown = False
+            UpdateResurrectOkPointUi()
+            AppendLog("Auto Resurrect OK point capture failed: " & ex.Message)
+        End Try
+    End Sub
+
+    Private Sub UpdateResurrectOkPointUi()
+        If lblResurrectOkPoint IsNot Nothing Then
+            lblResurrectOkPoint.Text = If(_resurrectOkPointX >= 0 AndAlso _resurrectOkPointY >= 0,
+                $"OK Point: {_resurrectOkPointX}, {_resurrectOkPointY}",
+                "OK Point: (not set)")
+        End If
+
+        If btnPickResurrectOkPoint IsNot Nothing Then
+            btnPickResurrectOkPoint.Text = If(_isPickingResurrectOkPoint, "Click Game...", "Set OK Point")
+            btnPickResurrectOkPoint.BackColor = If(_isPickingResurrectOkPoint, Color.FromArgb(175, 110, 30), Color.FromArgb(45, 95, 140))
+        End If
+
+        If btnClearResurrectOkPoint IsNot Nothing Then
+            btnClearResurrectOkPoint.Enabled = (_resurrectOkPointX >= 0 AndAlso _resurrectOkPointY >= 0)
+        End If
+    End Sub
+
+    Private Sub ResurrectOverlayChanged(sender As Object, e As EventArgs)
+        _resurrectOverlayEnabled = (chkResurrectOverlay IsNot Nothing AndAlso chkResurrectOverlay.Checked)
+        SetResurrectOverlayVisible(_resurrectOverlayEnabled)
+        PushLiveConfig()
+        SavePersistedListState(False)
+    End Sub
+
+    Private Sub SetResurrectOverlayVisible(visible As Boolean)
+        If Not visible Then
+            If _resurrectOverlayForm IsNot Nothing AndAlso Not _resurrectOverlayForm.IsDisposed Then
+                _resurrectOverlayForm.Close()
+            End If
+            _resurrectOverlayForm = Nothing
+            Return
+        End If
+
+        If _resurrectOverlayForm IsNot Nothing AndAlso Not _resurrectOverlayForm.IsDisposed Then
+            Return
+        End If
+
+        _resurrectOverlayForm = New AutoRelaunchClickOverlayForm(
+            Function() ResolveAutoRelaunchClickWindow(IntPtr.Zero, ""),
+            Function() GetResurrectOverlaySteps())
+        AddHandler _resurrectOverlayForm.FormClosed,
+            Sub(_s As Object, _e As FormClosedEventArgs)
+                _resurrectOverlayForm = Nothing
+            End Sub
+        _resurrectOverlayForm.Show(Me)
+    End Sub
+
+    Private Function GetResurrectOverlaySteps() As List(Of AutoRelaunchOverlayStep)
+        Dim overlaySteps As New List(Of AutoRelaunchOverlayStep)()
+        If _resurrectOkPointX >= 0 AndAlso _resurrectOkPointY >= 0 Then
+            overlaySteps.Add(New AutoRelaunchOverlayStep With {
+                .StepNumber = 1,
+                .X = _resurrectOkPointX,
+                .Y = _resurrectOkPointY,
+                .DelaySeconds = 0D,
+                .TimingLabel = "on detection",
+                .Description = "Click OK (resurrect)",
+                .MarkerColor = Color.FromArgb(235, 210, 40, 40)
+            })
+        End If
         Return overlaySteps
     End Function
 
@@ -7125,7 +7574,13 @@ Public Class Form1
         _liteRightMouseWasDown = False
         _isPickingArrowUnbundlePoint = False
         _arrowUnbundleLeftMouseWasDown = False
+        _isPickingArrowBundleIcon = False
+        _arrowBundleIconLeftMouseWasDown = False
+        _isPickingResurrectOkPoint = False
+        _resurrectOkPointLeftMouseWasDown = False
         UpdateArrowUnbundleUi()
+        UpdateArrowBundleIconUi()
+        UpdateResurrectOkPointUi()
         UpdateLiteAutoPotUi()
         AppendLog($"Lite AutoPots: switching to Tantra. RIGHT click horizontally at the desired {(If(kind = LitePointCaptureKind.Hp, "HP", "Mana"))} potion percentage.")
         AppendLog("Lite AutoPots: the bar may be full, low, or empty during setup; Lite now reads the complete bar with the Combat Full detector.")
@@ -8614,6 +9069,8 @@ Public Class Form1
         Dim st As BotStatus = GetStatusForEdition(_edition)
         HandlePendingLitePointCapture()
         HandlePendingArrowUnbundlePointCapture()
+        HandlePendingArrowBundleIconCapture()
+        HandlePendingResurrectOkPointCapture()
         HandlePendingAutoRelaunchClickCapture()
         If _fullEngine.IsRunning() Then
             HandlePeriodicStatsNotification(_fullStatus)
@@ -8786,6 +9243,8 @@ Public Class Form1
         _ctrlShiftWasDown = comboDown
         HandlePendingLitePointCapture()
         HandlePendingArrowUnbundlePointCapture()
+        HandlePendingArrowBundleIconCapture()
+        HandlePendingResurrectOkPointCapture()
         HandlePendingAutoRelaunchClickCapture()
     End Sub
 
@@ -9629,8 +10088,14 @@ Public Class Form1
         _pendingAutoRelaunchClickRowIndex = rowIndex
         _isPickingArrowUnbundlePoint = False
         _arrowUnbundleLeftMouseWasDown = False
+        _isPickingArrowBundleIcon = False
+        _arrowBundleIconLeftMouseWasDown = False
+        _isPickingResurrectOkPoint = False
+        _resurrectOkPointLeftMouseWasDown = False
         UpdateAutoRelaunchUseCursorUi()
         UpdateArrowUnbundleUi()
+        UpdateArrowBundleIconUi()
+        UpdateResurrectOkPointUi()
         AppendLog($"Auto relaunch click step {rowIndex + 1}: RIGHT click the desired spot inside the selected game window.")
         NativeMethods.SetForegroundWindow(selected.MainWindowHandle)
     End Sub
@@ -10618,24 +11083,6 @@ Public Class Form1
         PushLiveConfig()
     End Sub
 
-    Private Sub TestAlarmClicked(sender As Object, e As EventArgs)
-        _alarmVolumePercent = CInt(nudAlarmVolume.Value)
-        AppendLog($"Testing HP=0 alarm + notification via {GetNotificationProviderName()} at {_alarmVolumePercent}% volume.")
-        Task.Run(Sub() PlayAlarmPulse(_alarmVolumePercent))
-        Task.Run(
-            Async Function()
-                Await SendPhoneNotificationAsync("KathanaBot Test", "Combined test: HP alarm sound + notification.")
-            End Function)
-    End Sub
-
-    Private Sub TestPhoneAlertClicked(sender As Object, e As EventArgs)
-        AppendLog($"Sending test notification via {GetNotificationDestinationSummary()}.")
-        Task.Run(
-            Async Function()
-                Await SendPhoneNotificationAsync("KathanaBot Test", "Test notification from Auto-Pot tab.")
-            End Function)
-    End Sub
-
     Private Function BuildFullConfig() As BotConfig
         Return BuildConfig()
     End Function
@@ -10830,6 +11277,7 @@ Public Class Form1
         cfg.RupiahsRect = BuildRect("rupiahs_rect")
         cfg.PartyInviteScanRect = BuildRect("party_invite_scan_rect")
         cfg.PartyInviteOkRect = BuildRect("party_invite_ok_rect")
+        cfg.ResurrectDialogScanRect = BuildRect("resurrect_scan_rect")
         cfg.PartyListRect = BuildRect("party_list_rect")
         cfg.DisconnectMessageRect = BuildRectOrFallback("disconnect_message_rect", BotConfig.DefaultDisconnectMessageRect())
         cfg.DisconnectOkRect = BuildRectOrFallback("disconnect_ok_rect", BotConfig.DefaultDisconnectOkRect())
@@ -10861,7 +11309,11 @@ Public Class Form1
         cfg.ArrowUnbundleEnabled = (chkArrowUnbundleEnabled IsNot Nothing AndAlso chkArrowUnbundleEnabled.Checked)
         cfg.ArrowUnbundleIntervalMs = CInt(Math.Round(CDbl(If(nudArrowUnbundleSeconds IsNot Nothing, nudArrowUnbundleSeconds.Value, 60D)) * 1000.0R))
         cfg.ArrowUnbundlePoints = CloneLootScanPoints(_arrowUnbundlePoints)
-        cfg.ArrowMoveQuantityDialogRect = BuildRectOrFallback("arrow_move_dialog_rect", New RectRegion(320, 300, 380, 90))
+        cfg.ArrowBundleIconBase64 = _arrowBundleIconBase64
+        cfg.ArrowBundleIconTolerance = CInt(If(nudArrowBundleIconTolerance IsNot Nothing, nudArrowBundleIconTolerance.Value, 45D))
+        cfg.ResurrectAutoAcceptEnabled = _resurrectAutoAcceptEnabled
+        cfg.ResurrectDialogOkPointX = _resurrectOkPointX
+        cfg.ResurrectDialogOkPointY = _resurrectOkPointY
 
         cfg.DeniedMobs.Clear()
         cfg.LootAllowedNames.Clear()
@@ -11733,12 +12185,27 @@ Public Class Form1
             If state.ArrowUnbundlePoints IsNot Nothing Then
                 _arrowUnbundlePoints.AddRange(CloneLootScanPoints(state.ArrowUnbundlePoints))
             End If
+            _arrowBundleIconBase64 = If(state.ArrowBundleIconBase64, "")
+            SetNumericControlValue(nudArrowBundleIconTolerance, CDec(Math.Max(5, state.ArrowBundleIconTolerance)))
+            _resurrectAutoAcceptEnabled = state.ResurrectAutoAcceptEnabled
+            _resurrectOkPointX = state.ResurrectOkPointX
+            _resurrectOkPointY = state.ResurrectOkPointY
+            _resurrectOverlayEnabled = state.ResurrectOverlayEnabled
+            If chkResurrectOverlay IsNot Nothing Then
+                chkResurrectOverlay.Checked = _resurrectOverlayEnabled
+            End If
             _isPickingLootRejectPoint = False
             _isPickingLootNamePickupPoint = False
             _isPickingArrowUnbundlePoint = False
+            _isPickingArrowBundleIcon = False
+            _isPickingResurrectOkPoint = False
             UpdateLootRejectPointUi()
             UpdateLootNamePickupPointUi()
             UpdateArrowUnbundleUi()
+            UpdateArrowBundleIconUi()
+            UpdateResurrectAutoAcceptUi()
+            UpdateResurrectOkPointUi()
+            SetResurrectOverlayVisible(_resurrectOverlayEnabled)
             _partyAutoAccept = state.PromptAutoAcceptEnabled
             UpdatePromptAutoAcceptButton()
             _partyAskEnabled = state.AskForPartyEnabled
@@ -11887,6 +12354,12 @@ Public Class Form1
                 .ArrowUnbundleSeconds = If(nudArrowUnbundleSeconds IsNot Nothing, nudArrowUnbundleSeconds.Value, 60D),
                 .ArrowUnbundleOverlayEnabled = (chkArrowUnbundleOverlay IsNot Nothing AndAlso chkArrowUnbundleOverlay.Checked),
                 .ArrowUnbundlePoints = CloneLootScanPoints(_arrowUnbundlePoints),
+                .ArrowBundleIconBase64 = _arrowBundleIconBase64,
+                .ArrowBundleIconTolerance = If(nudArrowBundleIconTolerance IsNot Nothing, nudArrowBundleIconTolerance.Value, 45D),
+                .ResurrectAutoAcceptEnabled = _resurrectAutoAcceptEnabled,
+                .ResurrectOkPointX = _resurrectOkPointX,
+                .ResurrectOkPointY = _resurrectOkPointY,
+                .ResurrectOverlayEnabled = _resurrectOverlayEnabled,
                 .PromptAutoAcceptEnabled = _partyAutoAccept,
                 .AskForPartyEnabled = _partyAskEnabled,
                 .AskForPartySeconds = If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D),
@@ -12324,6 +12797,16 @@ Public Class Form1
         _arrowUnbundlePoints.AddRange(CloneLootScanPoints(If(cfg.ArrowUnbundlePoints, New List(Of LootScanPoint)())))
         _isPickingArrowUnbundlePoint = False
         UpdateArrowUnbundleUi()
+        _arrowBundleIconBase64 = If(cfg.ArrowBundleIconBase64, "")
+        SetNumericControlValue(nudArrowBundleIconTolerance, CDec(Math.Max(5, cfg.ArrowBundleIconTolerance)))
+        _isPickingArrowBundleIcon = False
+        UpdateArrowBundleIconUi()
+        _resurrectAutoAcceptEnabled = cfg.ResurrectAutoAcceptEnabled
+        _resurrectOkPointX = cfg.ResurrectDialogOkPointX
+        _resurrectOkPointY = cfg.ResurrectDialogOkPointY
+        _isPickingResurrectOkPoint = False
+        UpdateResurrectAutoAcceptUi()
+        UpdateResurrectOkPointUi()
 
         UpsertRegionRow("hp_bar", cfg.HpBar)
         UpsertRegionRow("mp_bar", cfg.MpBar)
@@ -12335,10 +12818,10 @@ Public Class Form1
         UpsertRegionRow("rupiahs_rect", cfg.RupiahsRect)
         UpsertRegionRow("party_invite_scan_rect", cfg.PartyInviteScanRect)
         UpsertRegionRow("party_invite_ok_rect", cfg.PartyInviteOkRect)
+        UpsertRegionRow("resurrect_scan_rect", If(cfg.ResurrectDialogScanRect, New RectRegion(349, 318, 328, 124)))
         UpsertRegionRow("party_list_rect", cfg.PartyListRect)
         UpsertRegionRow("disconnect_message_rect", If(cfg.DisconnectMessageRect, BotConfig.DefaultDisconnectMessageRect()))
         UpsertRegionRow("disconnect_ok_rect", If(cfg.DisconnectOkRect, BotConfig.DefaultDisconnectOkRect()))
-        UpsertRegionRow("arrow_move_dialog_rect", If(cfg.ArrowMoveQuantityDialogRect, New RectRegion(320, 300, 380, 90)))
         RemoveRegionRow("map_rect")
         Dim mapCoordinateXRect As RectRegion = ResolveMapCoordinateXRect(cfg)
         Dim mapCoordinateYRect As RectRegion = ResolveMapCoordinateYRect(cfg)
@@ -14286,6 +14769,9 @@ Public Class Form1
         End If
         If _arrowUnbundleOverlayForm IsNot Nothing AndAlso Not _arrowUnbundleOverlayForm.IsDisposed Then
             _arrowUnbundleOverlayForm.Close()
+        End If
+        If _resurrectOverlayForm IsNot Nothing AndAlso Not _resurrectOverlayForm.IsDisposed Then
+            _resurrectOverlayForm.Close()
         End If
         If _inGameBotToggleForm IsNot Nothing AndAlso Not _inGameBotToggleForm.IsDisposed Then
             RemoveHandler _inGameBotToggleForm.ToggleRequested, AddressOf InGameBotToggleRequested
