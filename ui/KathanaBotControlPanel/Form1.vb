@@ -10861,6 +10861,7 @@ Public Class Form1
         cfg.ArrowUnbundleEnabled = (chkArrowUnbundleEnabled IsNot Nothing AndAlso chkArrowUnbundleEnabled.Checked)
         cfg.ArrowUnbundleIntervalMs = CInt(Math.Round(CDbl(If(nudArrowUnbundleSeconds IsNot Nothing, nudArrowUnbundleSeconds.Value, 60D)) * 1000.0R))
         cfg.ArrowUnbundlePoints = CloneLootScanPoints(_arrowUnbundlePoints)
+        cfg.ArrowMoveQuantityDialogRect = BuildRectOrFallback("arrow_move_dialog_rect", New RectRegion(320, 300, 380, 90))
 
         cfg.DeniedMobs.Clear()
         cfg.LootAllowedNames.Clear()
@@ -12337,6 +12338,7 @@ Public Class Form1
         UpsertRegionRow("party_list_rect", cfg.PartyListRect)
         UpsertRegionRow("disconnect_message_rect", If(cfg.DisconnectMessageRect, BotConfig.DefaultDisconnectMessageRect()))
         UpsertRegionRow("disconnect_ok_rect", If(cfg.DisconnectOkRect, BotConfig.DefaultDisconnectOkRect()))
+        UpsertRegionRow("arrow_move_dialog_rect", If(cfg.ArrowMoveQuantityDialogRect, New RectRegion(320, 300, 380, 90)))
         RemoveRegionRow("map_rect")
         Dim mapCoordinateXRect As RectRegion = ResolveMapCoordinateXRect(cfg)
         Dim mapCoordinateYRect As RectRegion = ResolveMapCoordinateYRect(cfg)

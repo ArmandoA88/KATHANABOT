@@ -288,6 +288,10 @@ Public Class BotConfig
     Public Property ArrowUnbundleEnabled As Boolean = False
     Public Property ArrowUnbundleIntervalMs As Integer = 60000
     Public Property ArrowUnbundlePoints As List(Of LootScanPoint) = New List(Of LootScanPoint)()
+    ' Right-clicking a slot that already holds loose (already-unbundled) arrows instead of a bundle
+    ' opens a "enter the number of items to move" quantity prompt, which blocks combat input until
+    ' dismissed. This region is scanned so that prompt can be detected and closed automatically.
+    Public Property ArrowMoveQuantityDialogRect As RectRegion = New RectRegion(320, 300, 380, 90)
     Public Property LootAllowedNames As List(Of String) = New List(Of String)()
     Public Property LootNameMatchThresholdPercent As Integer = 80
     Public Property PartyAutoAcceptEnabled As Boolean = True
@@ -936,6 +940,12 @@ Public Class BotEngine
     Private _pendingLootPickupVerifyAt As DateTime = DateTime.MinValue
     Private _lastArrowUnbundleAt As DateTime = DateTime.MinValue
     Private _arrowUnbundleNextIndex As Integer = 0
+    Private _lastArrowMoveDialogScan As DateTime = DateTime.MinValue
+    Private _lastArrowMoveDialogDismissAt As DateTime = DateTime.MinValue
+    Private _arrowMoveDialogOcrTask As Task(Of String) = Nothing
+    Private _arrowMoveDialogOcrTaskGeneration As Long = -1L
+    Private _lastArrowMoveDialogCandidate As String = ""
+    Private _lastArrowMoveDialogVisualSignature As ULong = 0UL
     Private _firstHitPending As Boolean = False
     Private _firstHitTargetSignature As String = ""
     Private _firstHitWindowUntil As DateTime = DateTime.MinValue
@@ -1250,6 +1260,11 @@ Public Class BotEngine
             _pendingLootPickupVerifyAt = DateTime.MinValue
             _lastArrowUnbundleAt = DateTime.MinValue
             _arrowUnbundleNextIndex = 0
+            _lastArrowMoveDialogScan = DateTime.MinValue
+            _lastArrowMoveDialogDismissAt = DateTime.MinValue
+            _arrowMoveDialogOcrTask = Nothing
+            _lastArrowMoveDialogCandidate = ""
+            _lastArrowMoveDialogVisualSignature = 0UL
             _firstHitPending = False
             _firstHitTargetSignature = ""
             _firstHitWindowUntil = DateTime.MinValue
@@ -1483,6 +1498,7 @@ Public Class BotEngine
             _disconnectOcrTask = Nothing
             _expOcrTask = Nothing
             _rupiahsOcrTask = Nothing
+            _arrowMoveDialogOcrTask = Nothing
         End SyncLock
         ReleaseLootScannerAltKey()
         ClearLatestLoopFrame()
@@ -2338,9 +2354,15 @@ Public Class BotEngine
             End If
 
             Dim reason As String = ""
-            Dim actionSent As Boolean = TryHandleAutoAcceptPrompts(cfg, hwnd, frame, now, partyInviteScanRegion, partyInviteOkRegion)
+            Dim actionSent As Boolean = TryHandleArrowMoveQuantityPrompt(cfg, hwnd, now)
             If actionSent Then
-                reason = "Auto-accept prompt detected and accepted."
+                reason = "Arrow move-quantity dialog detected and dismissed."
+            End If
+            If Not actionSent Then
+                actionSent = TryHandleAutoAcceptPrompts(cfg, hwnd, frame, now, partyInviteScanRegion, partyInviteOkRegion)
+                If actionSent Then
+                    reason = "Auto-accept prompt detected and accepted."
+                End If
             End If
             If Not actionSent Then
                 actionSent = TryHandlePartyAsk(cfg, hwnd, now)
@@ -6619,6 +6641,120 @@ Public Class BotEngine
             RaiseEvent LogLine($"Arrow unbundle skipped at {clickX},{clickY}: {clickDiagnostic}.")
         End If
     End Sub
+
+    ' Right-clicking a bundle unbundles it silently, but right-clicking a slot that already holds
+    ' loose arrows opens a "enter the number of items to move" quantity prompt instead. That prompt
+    ' is a blocking, in-game modal - combat and further input stall until it is closed - and there is
+    ' no way to know in advance whether a given slot holds a bundle or loose arrows, so this scans for
+    ' the prompt every loop and dismisses it with Escape the moment it appears.
+    Private Function TryHandleArrowMoveQuantityPrompt(cfg As BotConfig, hwnd As IntPtr, now As DateTime) As Boolean
+        If cfg Is Nothing OrElse hwnd = IntPtr.Zero OrElse Not cfg.ArrowUnbundleEnabled Then
+            _lastArrowMoveDialogCandidate = ""
+            Return False
+        End If
+
+        If _lastArrowMoveDialogDismissAt <> DateTime.MinValue AndAlso (now - _lastArrowMoveDialogDismissAt).TotalMilliseconds < 1500 Then
+            Return False
+        End If
+
+        If _arrowMoveDialogOcrTask IsNot Nothing AndAlso _arrowMoveDialogOcrTask.IsCompleted Then
+            Dim taskGeneration As Long = _arrowMoveDialogOcrTaskGeneration
+            Dim isCurrent As Boolean = taskGeneration = _runGeneration
+            Try
+                Dim text As String = If(_arrowMoveDialogOcrTask.Result, "").Trim()
+                If isCurrent Then
+                    _lastArrowMoveDialogCandidate = text
+                End If
+            Catch ex As Exception
+                If isCurrent Then
+                    _lastArrowMoveDialogCandidate = ""
+                    LogOcrFault("Arrow move-quantity dialog", ex)
+                End If
+            End Try
+            _arrowMoveDialogOcrTask = Nothing
+        End If
+
+        If IsArrowMoveQuantityPrompt(_lastArrowMoveDialogCandidate) Then
+            _lastArrowMoveDialogCandidate = ""
+            If SendKey(hwnd, "ESC", FastKeyPressMs) Then
+                _lastArrowMoveDialogDismissAt = now
+                SetLastAction("ESC (dismissed arrow move-quantity dialog)")
+                RaiseEvent LogLine("Arrow unbundle: a slot held loose arrows instead of a bundle, opening a move-quantity dialog. Dismissed it with Escape.")
+                Return True
+            End If
+        End If
+
+        If _arrowMoveDialogOcrTask IsNot Nothing Then
+            Return False
+        End If
+
+        Const scanIntervalMs As Integer = 300
+        If _lastArrowMoveDialogScan <> DateTime.MinValue AndAlso (now - _lastArrowMoveDialogScan).TotalMilliseconds < scanIntervalMs Then
+            Return False
+        End If
+
+        Dim region As RectRegion = If(cfg.ArrowMoveQuantityDialogRect, New RectRegion(320, 300, 380, 90))
+        Dim crop As Bitmap = CaptureClientRegion(hwnd, region)
+        If crop Is Nothing Then
+            Return False
+        End If
+
+        If cfg.PixelChangeGateEnabled Then
+            Dim signature As ULong = ComputeVisualSignature(crop)
+            If signature <> 0UL AndAlso signature = _lastArrowMoveDialogVisualSignature Then
+                crop.Dispose()
+                Return False
+            End If
+            _lastArrowMoveDialogVisualSignature = signature
+        End If
+
+        _lastArrowMoveDialogScan = now
+        _arrowMoveDialogOcrTaskGeneration = _runGeneration
+        _arrowMoveDialogOcrTask = Task.Run(
+            Function()
+                Try
+                    Using enlarged As Bitmap = EnlargeBitmap(crop, 3)
+                        Dim text As String = If(OcrReader.ReadScreenTextIsolated(enlarged), "").Trim()
+                        If text = "" Then
+                            text = If(OcrReader.ReadName(enlarged), "").Trim()
+                        End If
+                        Return text
+                    End Using
+                Catch
+                    Return ""
+                Finally
+                    crop.Dispose()
+                End Try
+            End Function)
+
+        Return False
+    End Function
+
+    Private Shared Function IsArrowMoveQuantityPrompt(rawText As String) As Boolean
+        If String.IsNullOrWhiteSpace(rawText) Then
+            Return False
+        End If
+
+        Dim norm As String = NormalizeForLooseTextMatch(rawText)
+        If norm = "" Then
+            Return False
+        End If
+
+        Dim compact As String = norm.Replace(" ", "")
+        If compact.Contains("numberofitemstomove", StringComparison.OrdinalIgnoreCase) OrElse
+           compact.Contains("enterthenumberofitems", StringComparison.OrdinalIgnoreCase) Then
+            Return True
+        End If
+
+        If AreTextsClose(norm, "please enter the number of items to move") Then
+            Return True
+        End If
+
+        Dim hasNumber As Boolean = norm.Contains("number", StringComparison.OrdinalIgnoreCase)
+        Dim hasItems As Boolean = norm.Contains("item", StringComparison.OrdinalIgnoreCase)
+        Dim hasMove As Boolean = norm.Contains("move", StringComparison.OrdinalIgnoreCase)
+        Return hasNumber AndAlso hasItems AndAlso hasMove
+    End Function
 
     Private Function GetCachedPranaExpPercent() As Double
         If _expOcrTask IsNot Nothing AndAlso _expOcrTask.IsCompleted Then
