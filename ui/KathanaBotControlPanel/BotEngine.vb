@@ -61,8 +61,6 @@ Public Class ActionRule
     Public Property Priority As Integer = 100
     Public Property CooldownMs As Integer = 500
     Public Property TriggerPercent As Integer = 40
-    Public Property MinHpPercent As Integer = 1
-    Public Property MinMpPercent As Integer = 1
 End Class
 
 Public Enum LevelingAgentState
@@ -158,14 +156,6 @@ Public Class BotConfig
         Return New RectRegion(151, 98, 59, 22)
     End Function
 
-    Public Shared Function DefaultHpBarColorArgb() As Integer
-        Return Color.FromArgb(230, 0, 0).ToArgb()
-    End Function
-
-    Public Shared Function DefaultMpBarColorArgb() As Integer
-        Return Color.FromArgb(24, 62, 235).ToArgb()
-    End Function
-
     Public Shared Function DefaultMapCoordinateRect() As RectRegion
         Return New RectRegion(6, 744, 120, 22)
     End Function
@@ -226,10 +216,6 @@ Public Class BotConfig
     Public Property LiteMpCheckPointY As Integer = -1
     Public Property LiteMpCheckColorEnabled As Boolean = False
     Public Property LiteMpCheckColorArgb As Integer = 0
-    Public Property CustomBarColorsEnabled As Boolean = False
-    Public Property HpBarColorArgb As Integer = DefaultHpBarColorArgb()
-    Public Property MpBarColorArgb As Integer = DefaultMpBarColorArgb()
-    Public Property BarColorTolerance As Integer = DefaultBarColorTolerance
     Public Property LoopMs As Integer = 80
     Public Property RetargetMs As Integer = 550
     Public Property ForcedRetargetMs As Integer = 550
@@ -428,9 +414,7 @@ Public Class BotConfig
                 .Role = role,
                 .Priority = (i + 1) * 10,
                 .CooldownMs = cooldownMs,
-                .TriggerPercent = trigger,
-                .MinHpPercent = 1,
-                .MinMpPercent = 1
+                .TriggerPercent = trigger
             })
         Next
         Return cfg
@@ -9260,7 +9244,6 @@ Public Class BotEngine
         End If
 
         Dim hasAttackKey As Boolean = False
-        Dim statBlocked As Boolean = False
         Dim cooldownBlocked As Boolean = False
         Dim highMaxHpRoleWaitingForLifeRead As Boolean = False
         Dim offensiveBuffBlocked As Boolean = False
@@ -9287,11 +9270,6 @@ Public Class BotEngine
 
             If role = "high_max_hp" AndAlso Not highMaxHpAttackActive Then
                 highMaxHpRoleWaitingForLifeRead = True
-                Continue For
-            End If
-
-            If (Not cfg.LiteModeEnabled) AndAlso (hpPercent < action.MinHpPercent OrElse mpPercent < action.MinMpPercent) Then
-                statBlocked = True
                 Continue For
             End If
 
@@ -9330,8 +9308,6 @@ Public Class BotEngine
             reason = "Buff keys paused because monster blacklist blocked the selected target."
         ElseIf highMaxHpRoleWaitingForLifeRead Then
             reason = "High Max HP keys waiting for mob_life_rect Max HP OCR."
-        ElseIf statBlocked Then
-            reason = "HP/MP limits blocked all attack keys."
         ElseIf cooldownBlocked Then
             reason = $"Attack cooldowns remaining: {String.Join(", ", cooldownDetails)}."
         Else
@@ -10134,7 +10110,7 @@ Public Class BotEngine
                 profile.TargetR = sampled.R
                 profile.TargetG = sampled.G
                 profile.TargetB = sampled.B
-                profile.Tolerance = Math.Max(10, Math.Min(70, If(cfg IsNot Nothing, cfg.BarColorTolerance, BotConfig.DefaultBarColorTolerance)))
+                profile.Tolerance = Math.Max(10, Math.Min(70, BotConfig.DefaultBarColorTolerance))
             Catch
                 sampleColorEnabled = False
             End Try
@@ -10410,12 +10386,7 @@ Public Class BotEngine
     End Function
 
     Private Shared Function ComputeMobHpPercent(frame As Bitmap, region As RectRegion, cfg As BotConfig) As Double
-        Dim genericPercent As Double = ComputeBarPercent(frame, region, True, Nothing)
-        If cfg Is Nothing OrElse Not cfg.CustomBarColorsEnabled Then
-            Return genericPercent
-        End If
-
-        Return Math.Max(genericPercent, ComputeBarPercent(frame, region, True, cfg))
+        Return ComputeBarPercent(frame, region, True, Nothing)
     End Function
 
     Private Shared Function ComputeBarPercent(buffer As BitmapReadBuffer, rect As Rectangle, profile As BarColorProfile) As Double
@@ -10594,10 +10565,6 @@ Public Class BotEngine
 
         Dim edgeFill As Double = ComputeLeadingEdgeFillRatio(frame, rect, True, Nothing)
         Dim colorFill As Double = ComputeColorFillRatio(frame, rect, True, Nothing)
-        If cfg IsNot Nothing AndAlso cfg.CustomBarColorsEnabled Then
-            edgeFill = Math.Max(edgeFill, ComputeLeadingEdgeFillRatio(frame, rect, True, cfg))
-            colorFill = Math.Max(colorFill, ComputeColorFillRatio(frame, rect, True, cfg))
-        End If
         Dim hasName As Boolean = Not String.IsNullOrWhiteSpace(mobName)
 
         If edgeFill >= 0.04 AndAlso colorFill >= 0.01 Then
@@ -10868,7 +10835,7 @@ Public Class BotEngine
     End Function
 
     Private Shared Function CreateBarColorProfile(isHp As Boolean, cfg As BotConfig) As BarColorProfile
-        Dim profile As New BarColorProfile With {
+        Return New BarColorProfile With {
             .IsHp = isHp,
             .UseCustom = False,
             .TargetR = 0,
@@ -10876,24 +10843,6 @@ Public Class BotEngine
             .TargetB = 0,
             .Tolerance = BotConfig.DefaultBarColorTolerance
         }
-
-        If cfg Is Nothing OrElse Not cfg.CustomBarColorsEnabled Then
-            Return profile
-        End If
-
-        Dim target As Color
-        Try
-            target = Color.FromArgb(If(isHp, cfg.HpBarColorArgb, cfg.MpBarColorArgb))
-        Catch
-            target = Color.FromArgb(If(isHp, BotConfig.DefaultHpBarColorArgb(), BotConfig.DefaultMpBarColorArgb()))
-        End Try
-
-        profile.UseCustom = True
-        profile.TargetR = target.R
-        profile.TargetG = target.G
-        profile.TargetB = target.B
-        profile.Tolerance = Math.Max(8, Math.Min(120, cfg.BarColorTolerance))
-        Return profile
     End Function
 
     Private Shared Function IsBarColorRgb(r As Integer, g As Integer, b As Integer, profile As BarColorProfile) As Boolean

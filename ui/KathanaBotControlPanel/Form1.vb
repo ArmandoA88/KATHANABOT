@@ -95,7 +95,6 @@ Public Class Form1
     Private _combatTab As TabPage
     Private _visionTab As TabPage
     Private _autoPotTab As TabPage
-    Private _autoRelaunchTab As TabPage
     Private _autoLootTab As TabPage
     Private _levelingTab As TabPage
     Private _holdPlaceTab As TabPage
@@ -387,20 +386,11 @@ Public Class Form1
     Private lblUpdateStatus As Label
     Private txtUpdateDetails As TextBox
 
-    Private nudAutoPotHp As NumericUpDown
-    Private nudAutoPotMp As NumericUpDown
     Private nudStuckTargetMs As NumericUpDown
     Private nudStuckNoProgressRetargetMs As NumericUpDown
     Private nudLootNameMatchThreshold As NumericUpDown
-    Private nudAlarmVolume As NumericUpDown
     Private nudStatsNtfyIntervalMinutes As NumericUpDown
     Private txtNtfyTopic As TextBox
-    Private chkCustomBarColors As CheckBox
-    Private btnHpBarColor As Button
-    Private btnMpBarColor As Button
-    Private btnPickHpBarColor As Button
-    Private btnPickMpBarColor As Button
-    Private nudBarColorTolerance As NumericUpDown
 
     Private _lastAction As String = ""
     Private _lastState As String = ""
@@ -427,7 +417,7 @@ Public Class Form1
     Private _inGameBotToggleHeight As Integer = 38
     Private _inGameBotToggleEdition As BotEdition = BotEdition.Full
     Private _autoStarted As Boolean = False
-    Private _alarmVolumePercent As Integer = 85
+    Private Const AlarmVolumePercent As Integer = 85
     Private _hpZeroAlarmActive As Boolean = False
     Private _lastStatsNotificationUtc As DateTime = DateTime.MinValue
     Private _hpZeroPending As Boolean = False
@@ -489,12 +479,6 @@ Public Class Form1
     Private _liteMpBarRegion As RectRegion = BotConfig.DefaultMpBarRect()
     Private _pendingLitePointCapture As LitePointCaptureKind = LitePointCaptureKind.None
     Private _liteRightMouseWasDown As Boolean = False
-    Private _customBarColorsEnabled As Boolean = False
-    Private _hpBarColor As Color = Color.FromArgb(BotConfig.DefaultHpBarColorArgb())
-    Private _mpBarColor As Color = Color.FromArgb(BotConfig.DefaultMpBarColorArgb())
-    Private _barColorTolerance As Integer = BotConfig.DefaultBarColorTolerance
-    Private _pendingBarColorPick As BarColorPickKind = BarColorPickKind.None
-    Private _barColorSyncInProgress As Boolean = False
     Private _themeSnapshotCaptured As Boolean = False
     Private _lastUiTintActive As Boolean = False
     Private _lastUiTintColorArgb As Integer = Integer.MinValue
@@ -682,12 +666,6 @@ Public Class Form1
         Mp
     End Enum
 
-    Private Enum BarColorPickKind
-        None
-        Hp
-        Mp
-    End Enum
-
     Private Enum UpdateTabState
         Unknown
         Checking
@@ -766,9 +744,6 @@ Public Class Form1
         Public Property AutoRelaunchDelaySeconds As Decimal = 5D
         Public Property AutoRelaunchClickOverlayEnabled As Boolean = False
         Public Property AutoRelaunchClicks As List(Of PersistedAutoRelaunchClick) = New List(Of PersistedAutoRelaunchClick)()
-        Public Property AutoPotHpPercent As Decimal = 80D
-        Public Property AutoPotMpPercent As Decimal = 35D
-        Public Property AlarmVolumePercent As Integer = 85
         Public Property SavedConfig As BotConfig = Nothing
         Public Property MonsterNames As List(Of String) = New List(Of String)()
         Public Property LootNames As List(Of String) = New List(Of String)()
@@ -812,8 +787,6 @@ Public Class Form1
         Public Property Priority As Integer = 100
         Public Property CooldownSec As Double = 1.0
         Public Property TriggerPercent As Integer = 40
-        Public Property MinHpPercent As Integer = 1
-        Public Property MinMpPercent As Integer = 1
     End Class
 
     <DllImport("winmm.dll")>
@@ -857,7 +830,6 @@ Public Class Form1
         SetArrowUnbundleOverlayVisible(chkArrowUnbundleOverlay IsNot Nothing AndAlso chkArrowUnbundleOverlay.Checked)
         SetResurrectOverlayVisible(chkResurrectOverlay IsNot Nothing AndAlso chkResurrectOverlay.Checked)
         ApplyDarkTheme(Me)
-        UpdateBarColorUi()
         CaptureThemeSnapshot(Me)
         _themeSnapshotCaptured = True
 
@@ -1093,8 +1065,6 @@ Public Class Form1
         If chkEvadeDadati IsNot Nothing Then
             AddHandler chkEvadeDadati.CheckedChanged, AddressOf LiveConfigChanged
         End If
-        AddHandler nudAutoPotHp.ValueChanged, AddressOf LiveConfigChanged
-        AddHandler nudAutoPotMp.ValueChanged, AddressOf LiveConfigChanged
         If nudStuckTargetMs IsNot Nothing Then
             AddHandler nudStuckTargetMs.ValueChanged, AddressOf LiveConfigChanged
         End If
@@ -1104,7 +1074,6 @@ Public Class Form1
         If nudLootNameMatchThreshold IsNot Nothing Then
             AddHandler nudLootNameMatchThreshold.ValueChanged, AddressOf LiveConfigChanged
         End If
-        AddHandler nudAlarmVolume.ValueChanged, AddressOf LiveConfigChanged
         AddHandler chkMonsterFilter.CheckedChanged, AddressOf MonsterFilterOptionChanged
         AddHandler chkMonsterFilter.CheckedChanged, AddressOf LiveConfigChanged
         If chkMonsterWhitelistMode IsNot Nothing Then
@@ -1541,150 +1510,9 @@ Public Class Form1
         SavePersistedListState(False)
     End Sub
 
-    Private Sub BarColorSettingsChanged(_sender As Object, _e As EventArgs)
-        If _barColorSyncInProgress Then
-            Return
-        End If
-
-        _customBarColorsEnabled = (chkCustomBarColors IsNot Nothing AndAlso chkCustomBarColors.Checked)
-        If nudBarColorTolerance IsNot Nothing Then
-            _barColorTolerance = CInt(nudBarColorTolerance.Value)
-        End If
-
-        UpdateBarColorUi()
-        PushLiveConfig()
-        SavePersistedListState(False)
-    End Sub
-
-    Private Sub ChooseHpBarColorClicked(sender As Object, e As EventArgs)
-        ChooseBarColor(BarColorPickKind.Hp)
-    End Sub
-
-    Private Sub ChooseMpBarColorClicked(sender As Object, e As EventArgs)
-        ChooseBarColor(BarColorPickKind.Mp)
-    End Sub
-
-    Private Sub PickHpBarColorFromSnapshotClicked(sender As Object, e As EventArgs)
-        BeginBarColorSnapshotPick(BarColorPickKind.Hp)
-    End Sub
-
-    Private Sub PickMpBarColorFromSnapshotClicked(sender As Object, e As EventArgs)
-        BeginBarColorSnapshotPick(BarColorPickKind.Mp)
-    End Sub
-
-    Private Sub ChooseBarColor(kind As BarColorPickKind)
-        If kind = BarColorPickKind.None Then
-            Return
-        End If
-
-        Using dialog As New ColorDialog()
-            dialog.FullOpen = True
-            dialog.Color = If(kind = BarColorPickKind.Hp, _hpBarColor, _mpBarColor)
-            If dialog.ShowDialog(Me) = DialogResult.OK Then
-                SetBarColor(kind, dialog.Color, "manual picker")
-            End If
-        End Using
-    End Sub
-
-    Private Sub BeginBarColorSnapshotPick(kind As BarColorPickKind)
-        If kind = BarColorPickKind.None Then
-            Return
-        End If
-
-        _pendingBarColorPick = kind
-        _isPickingLootRejectPoint = False
-        _isPickingLootNamePickupPoint = False
-        _isPickingArrowUnbundlePoint = False
-        _isPickingArrowBundleIcon = False
-        _isPickingResurrectOkPoint = False
-        UpdateLootRejectPointUi()
-        UpdateLootNamePickupPointUi()
-        UpdateArrowUnbundleUi()
-        UpdateArrowBundleIconUi()
-        UpdateResurrectOkPointUi()
-        UpdateBarColorUi()
-        FocusVisionSnapshotForPick(If(kind = BarColorPickKind.Hp, "HP bar color", "MP bar color"))
-    End Sub
-
-    Private Sub SetBarColor(kind As BarColorPickKind, color As Color, source As String)
-        If kind = BarColorPickKind.None Then
-            Return
-        End If
-
-        Dim normalized As Color = Color.FromArgb(255, color.R, color.G, color.B)
-        If kind = BarColorPickKind.Hp Then
-            _hpBarColor = normalized
-        Else
-            _mpBarColor = normalized
-        End If
-
-        _customBarColorsEnabled = True
-        If chkCustomBarColors IsNot Nothing AndAlso Not chkCustomBarColors.Checked Then
-            chkCustomBarColors.Checked = True
-        End If
-
-        UpdateBarColorUi()
-        PushLiveConfig()
-        SavePersistedListState(False)
-        AppendLog($"{If(kind = BarColorPickKind.Hp, "HP", "MP")} bar color set to {FormatBarColor(normalized)} from {source}.")
-    End Sub
-
-    Private Sub UpdateBarColorUi()
-        If chkCustomBarColors IsNot Nothing AndAlso chkCustomBarColors.Checked <> _customBarColorsEnabled Then
-            chkCustomBarColors.Checked = _customBarColorsEnabled
-        End If
-
-        If nudBarColorTolerance IsNot Nothing Then
-            Dim bounded As Decimal = Math.Max(nudBarColorTolerance.Minimum, Math.Min(nudBarColorTolerance.Maximum, CDec(_barColorTolerance)))
-            If nudBarColorTolerance.Value <> bounded Then
-                nudBarColorTolerance.Value = bounded
-            End If
-            nudBarColorTolerance.Enabled = _customBarColorsEnabled
-        End If
-
-        UpdateBarColorButton(btnHpBarColor, _hpBarColor)
-        UpdateBarColorButton(btnMpBarColor, _mpBarColor)
-
-        If btnPickHpBarColor IsNot Nothing Then
-            btnPickHpBarColor.Text = If(_pendingBarColorPick = BarColorPickKind.Hp, "Click Snapshot...", "Pick Snapshot")
-            btnPickHpBarColor.BackColor = If(_pendingBarColorPick = BarColorPickKind.Hp, Color.FromArgb(175, 110, 30), Color.FromArgb(45, 95, 140))
-            btnPickHpBarColor.ForeColor = Color.White
-        End If
-
-        If btnPickMpBarColor IsNot Nothing Then
-            btnPickMpBarColor.Text = If(_pendingBarColorPick = BarColorPickKind.Mp, "Click Snapshot...", "Pick Snapshot")
-            btnPickMpBarColor.BackColor = If(_pendingBarColorPick = BarColorPickKind.Mp, Color.FromArgb(175, 110, 30), Color.FromArgb(45, 95, 140))
-            btnPickMpBarColor.ForeColor = Color.White
-        End If
-
-        If picSnapshot IsNot Nothing Then
-            picSnapshot.Cursor = If(IsSnapshotPickActive(), Cursors.Cross, Cursors.Default)
-        End If
-    End Sub
-
-    Private Sub UpdateBarColorButton(button As Button, color As Color)
-        If button Is Nothing Then
-            Return
-        End If
-
-        button.Text = FormatBarColor(color)
-        button.BackColor = color
-        button.ForeColor = GetReadableForeground(color)
-    End Sub
-
     Private Function IsSnapshotPickActive() As Boolean
         Return _isPickingLootRejectPoint OrElse
-               _isPickingLootNamePickupPoint OrElse
-               _pendingBarColorPick <> BarColorPickKind.None
-    End Function
-
-    Private Shared Function FormatBarColor(color As Color) As String
-        Return $"#{color.R:X2}{color.G:X2}{color.B:X2}"
-    End Function
-
-    Private Shared Function GetReadableForeground(background As Color) As Color
-        Dim luma As Integer = (background.R * 30 + background.G * 59 + background.B * 11) \ 100
-        Return If(luma >= 130, Color.Black, Color.White)
+               _isPickingLootNamePickupPoint
     End Function
 
     Private Sub MonsterFilterOptionChanged(_sender As Object, _e As EventArgs)
@@ -2062,47 +1890,6 @@ Public Class Form1
         End Try
     End Sub
 
-    Private Sub ApplyBarColorSettingsToConfig(cfg As BotConfig)
-        If cfg Is Nothing Then
-            Return
-        End If
-
-        Dim tolerance As Integer = _barColorTolerance
-        If nudBarColorTolerance IsNot Nothing Then
-            tolerance = CInt(nudBarColorTolerance.Value)
-        End If
-
-        cfg.CustomBarColorsEnabled = _customBarColorsEnabled
-        cfg.HpBarColorArgb = _hpBarColor.ToArgb()
-        cfg.MpBarColorArgb = _mpBarColor.ToArgb()
-        cfg.BarColorTolerance = Math.Max(8, Math.Min(120, tolerance))
-    End Sub
-
-    Private Sub ApplyBarColorConfigToUi(cfg As BotConfig)
-        If cfg Is Nothing Then
-            Return
-        End If
-
-        _barColorSyncInProgress = True
-        Try
-            _customBarColorsEnabled = cfg.CustomBarColorsEnabled
-            Try
-                _hpBarColor = Color.FromArgb(cfg.HpBarColorArgb)
-            Catch
-                _hpBarColor = Color.FromArgb(BotConfig.DefaultHpBarColorArgb())
-            End Try
-            Try
-                _mpBarColor = Color.FromArgb(cfg.MpBarColorArgb)
-            Catch
-                _mpBarColor = Color.FromArgb(BotConfig.DefaultMpBarColorArgb())
-            End Try
-            _barColorTolerance = Math.Max(8, Math.Min(120, cfg.BarColorTolerance))
-            UpdateBarColorUi()
-        Finally
-            _barColorSyncInProgress = False
-        End Try
-    End Sub
-
     Private Sub BuildUi()
         BuildFullUi()
     End Sub
@@ -2144,12 +1931,10 @@ Public Class Form1
         _combatTab = BuildCombatTab()
         _visionTab = BuildVisionTab()
         _autoPotTab = BuildAutoPotTab()
-        _autoRelaunchTab = BuildAutoRelaunchTab()
         _mainTabs.TabPages.Add(_liteTab)
         _mainTabs.TabPages.Add(_combatTab)
         _mainTabs.TabPages.Add(_visionTab)
         _mainTabs.TabPages.Add(_autoPotTab)
-        _mainTabs.TabPages.Add(_autoRelaunchTab)
         _autoLootTab = BuildAutoLootTab()
         _mainTabs.TabPages.Add(_autoLootTab)
         _levelingTab = BuildLevelingTab()
@@ -2666,13 +2451,36 @@ Public Class Form1
             .Dock = DockStyle.Fill,
             .Multiline = True,
             .ReadOnly = True,
+            .ScrollBars = ScrollBars.Vertical,
             .Visible = False,
             .BackColor = Color.White,
             .ForeColor = Color.FromArgb(70, 70, 70),
             .BorderStyle = BorderStyle.FixedSingle,
             .Font = New Font("Segoe UI", 7.5F, FontStyle.Regular),
-            .Text = "EN: First use Show HP/MP Overlay to calibrate Lite's own bars. Fixed AutoPots use the selected HP/MP levels with keys 9/0. If three pot sends show no bar recovery, that resource pauses until its bar rises, preventing endless use after a bad or stale capture. Skill slots can independently use Role HP or MP plus their own At % threshold." & Environment.NewLine & Environment.NewLine &
-                    "ES: Primero usa Show HP/MP Overlay para calibrar las barras propias de Lite. AutoPots fijos usa los niveles elegidos con 9/0. Si tres usos no muestran recuperacion de la barra, ese recurso se pausa hasta que la barra suba para evitar uso infinito por una captura incorrecta.",
+            .Text = "HOW TO USE FIXED AUTOPOTS (ENGLISH)" & Environment.NewLine &
+                    "1. Click Show HP/MP Overlay. Two rectangles appear on the game window: one for your HP bar, one for Mana. Drag each rectangle onto your actual bar, and drag its white corner handle to resize it to match the bar's exact width/height." & Environment.NewLine &
+                    "2. Click Select HP Level, then RIGHT-click on your in-game HP bar at the fill point where you want a Heal potion to trigger (e.g. right-click where the bar looks about 30% full to set a 30% trigger). Do the same with Select Mana level for your MP bar." & Environment.NewLine &
+                    "3. The HP trigger / MP trigger lines below show the percentage and screen X/Y point that were just recorded, so you can confirm the click landed correctly." & Environment.NewLine &
+                    "4. Make sure your in-game keybinds have key 9 set to a Heal potion and key 0 set to a Mana potion (this matches Tantra's default inventory slot 10 hotkey layout)." & Environment.NewLine &
+                    "5. Check Enable fixed AutoPots (9/0) to turn the feature on - the bot will press 9 when HP drops to/below your HP trigger %, and 0 when MP drops to/below your MP trigger %." & Environment.NewLine &
+                    "6. Safety: if 3 potion presses in a row show no bar recovery, that resource (HP or MP) pauses itself until its bar actually rises again - this stops endless key-mashing caused by a bad or stale bar capture. Use Reset Bars to put the HP/MP overlay rectangles back to their default position/size if your calibration gets messed up." & Environment.NewLine &
+                    "7. This is separate from (and can be used alongside) Combat Skills rows with Role = heal or mana - those let individual skill keys trigger at their own % threshold independently of this fixed 9/0 AutoPot." & Environment.NewLine & Environment.NewLine &
+                    "COMO USAR AUTOPOTS FIJOS (ESPANOL)" & Environment.NewLine &
+                    "1. Haz clic en Show HP/MP Overlay. Apareceran dos rectangulos sobre la ventana del juego: uno para tu barra de HP y otro para Mana. Arrastra cada rectangulo sobre tu barra real, y arrastra su cuadro blanco de la esquina para ajustar el tamano al ancho/alto exacto de la barra." & Environment.NewLine &
+                    "2. Haz clic en Select HP Level y luego haz clic DERECHO sobre tu barra de HP en el punto de llenado donde quieres que se use una pocion de curacion (por ejemplo, clic derecho donde la barra se ve al 30% para fijar el disparador en 30%). Repite lo mismo con Select Mana level para tu barra de Mana." & Environment.NewLine &
+                    "3. Las lineas HP trigger / MP trigger de abajo muestran el porcentaje y el punto X/Y de pantalla que se acaban de registrar, para que confirmes que el clic cayo en el lugar correcto." & Environment.NewLine &
+                    "4. Asegurate de que tus teclas del juego tengan la tecla 9 asignada a una pocion de curacion y la tecla 0 a una pocion de mana (esto coincide con el atajo por defecto del slot de inventario 10 en Tantra)." & Environment.NewLine &
+                    "5. Marca Enable fixed AutoPots (9/0) para activar la funcion - el bot presionara 9 cuando el HP baje a tu porcentaje de disparo o menos, y 0 cuando el Mana baje al suyo." & Environment.NewLine &
+                    "6. Seguridad: si 3 usos seguidos de pocion no muestran recuperacion de la barra, ese recurso (HP o Mana) se pausa solo hasta que su barra realmente suba - esto evita presionar la tecla sin parar por una captura de barra mala o desactualizada. Usa Reset Bars para volver los rectangulos del overlay HP/MP a su posicion y tamano por defecto si tu calibracion se desajusta." & Environment.NewLine &
+                    "7. Esto es independiente de (y se puede usar junto con) las filas de Combat Skills con Role = heal o mana - esas permiten que teclas de habilidad individuales se disparen con su propio umbral %, sin depender de este AutoPot fijo 9/0." & Environment.NewLine & Environment.NewLine &
+                    "PAANO GAMITIN ANG FIXED AUTOPOTS (FILIPINO)" & Environment.NewLine &
+                    "1. I-click ang Show HP/MP Overlay. Lalabas ang dalawang rectangle sa ibabaw ng game window: isa para sa HP bar mo, isa para sa Mana. I-drag ang bawat rectangle papunta sa totoong bar mo, at i-drag ang puting handle sa sulok para i-resize ito ayon sa eksaktong lapad/taas ng bar." & Environment.NewLine &
+                    "2. I-click ang Select HP Level, tapos RIGHT-click sa HP bar mo sa loob ng laro sa punto kung saan mo gustong mag-trigger ang Heal potion (hal. right-click kung saan mukhang 30% puno ang bar para i-set ang trigger sa 30%). Gawin din ito sa Select Mana level para sa Mana bar mo." & Environment.NewLine &
+                    "3. Ipinapakita ng HP trigger / MP trigger sa baba ang porsyento at ang X/Y point sa screen na kaka-record lang, para ma-confirm mong tama ang tinamaan ng click." & Environment.NewLine &
+                    "4. Siguraduhing naka-bind sa laro ang key 9 sa isang Heal potion at ang key 0 sa isang Mana potion (tugma ito sa default hotkey ng inventory slot 10 sa Tantra)." & Environment.NewLine &
+                    "5. I-check ang Enable fixed AutoPots (9/0) para i-on ang feature - pipindutin ng bot ang 9 kapag bumaba ang HP sa o pababa sa trigger % mo, at ang 0 kapag bumaba ang Mana sa sarili nitong trigger." & Environment.NewLine &
+                    "6. Safety: kung 3 beses sunod-sunod na pinindot ang potion pero walang recovery ang bar, awtomatikong magpa-pause muna ang resource na iyon (HP o Mana) hanggang tumaas talaga ang bar nito - pumipigil ito sa walang-tigil na pag-pindot dahil sa mali o lumang capture ng bar. Gamitin ang Reset Bars para ibalik ang HP/MP overlay rectangles sa default na posisyon/laki kung nagulo ang calibration mo." & Environment.NewLine &
+                    "7. Hiwalay ito sa (at puwedeng gamitin kasabay ng) mga row sa Combat Skills na may Role = heal o mana - doon puwedeng mag-trigger ang indibidwal na skill keys sa sarili nilang % threshold, hiwalay sa fixed 9/0 AutoPot na ito.",
             .Tag = "lite-scope"
         }
         layout.Controls.Add(txtLiteAutoPotHelp, 0, 8)
@@ -2896,9 +2704,7 @@ Public Class Form1
                 .Role = GetLiteConfiguredRole(keyName),
                 .Priority = 10 + actions.Count,
                 .CooldownSec = Math.Max(1.0, CDbl(_liteActionCooldownInputs(keyName).Value)),
-                .TriggerPercent = GetLiteConfiguredTriggerPercent(keyName),
-                .MinHpPercent = 1,
-                .MinMpPercent = 1
+                .TriggerPercent = GetLiteConfiguredTriggerPercent(keyName)
             })
         Next
         Return actions
@@ -3375,7 +3181,7 @@ Public Class Form1
         chkSnapshotLive = New CheckBox() With {.Text = "Live", .Dock = DockStyle.Fill, .Checked = True}
         snapshotHeader.Controls.Add(chkSnapshotLive, 0, 0)
 
-        chkSnapshotZoomRegion = New CheckBox() With {.Text = "Zoom Selected Region", .Dock = DockStyle.Fill}
+        chkSnapshotZoomRegion = New CheckBox() With {.Text = "Zoom Selected Region", .Dock = DockStyle.Fill, .Checked = True}
         snapshotHeader.Controls.Add(chkSnapshotZoomRegion, 1, 0)
 
         lblSnapshotZoomInfo = New Label() With {
@@ -3526,97 +3332,24 @@ Public Class Form1
     Private Function BuildAutoPotTab() As TabPage
         Dim tab As New TabPage("Auto-Pot") With {.BackColor = Color.FromArgb(20, 20, 20)}
         Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2, .Padding = New Padding(10)}
-        root.RowStyles.Add(New RowStyle(SizeType.Percent, 68.0F))
-        root.RowStyles.Add(New RowStyle(SizeType.Percent, 32.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Percent, 50.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Percent, 50.0F))
 
         Dim settingsGroup As New GroupBox() With {.Text = "Auto-Pot Controls", .Dock = DockStyle.Fill, .Padding = New Padding(12)}
         Dim settingsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1}
-        settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 48.0F))
-        settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 52.0F))
+        settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 55.0F))
+        settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 45.0F))
         settingsLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
 
-        Dim thresholdsGroup As New GroupBox() With {.Text = "Thresholds", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
-        Dim thresholdsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 8}
-        thresholdsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 190.0F))
-        thresholdsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
-        thresholdsLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
-        thresholdsLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
-        thresholdsLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
-        thresholdsLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
-        thresholdsLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
-        thresholdsLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
-        thresholdsLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
-        thresholdsLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
-
-        thresholdsLayout.Controls.Add(New Label() With {.Text = "Heal Trigger %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
-        nudAutoPotHp = New NumericUpDown() With {.Minimum = 1, .Maximum = 99, .Value = 80, .Dock = DockStyle.Fill}
-        AddHandler nudAutoPotHp.ValueChanged, Sub(_s As Object, _e As EventArgs) ApplyQuickAutoPotThresholds(True)
-        thresholdsLayout.Controls.Add(nudAutoPotHp, 1, 0)
-
-        thresholdsLayout.Controls.Add(New Label() With {.Text = "Mana Trigger %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
-        nudAutoPotMp = New NumericUpDown() With {.Minimum = 1, .Maximum = 99, .Value = 35, .Dock = DockStyle.Fill}
-        AddHandler nudAutoPotMp.ValueChanged, Sub(_s As Object, _e As EventArgs) ApplyQuickAutoPotThresholds(True)
-        thresholdsLayout.Controls.Add(nudAutoPotMp, 1, 1)
-
-        thresholdsLayout.Controls.Add(New Label() With {.Text = "HP=0 Alarm Volume %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
-        nudAlarmVolume = New NumericUpDown() With {.Minimum = 0, .Maximum = 100, .Value = 85, .Dock = DockStyle.Fill}
-        AddHandler nudAlarmVolume.ValueChanged,
-            Sub(_s As Object, _e As EventArgs)
-                _alarmVolumePercent = CInt(nudAlarmVolume.Value)
-            End Sub
-        thresholdsLayout.Controls.Add(nudAlarmVolume, 1, 2)
-
-        chkCustomBarColors = New CheckBox() With {.Text = "Use Custom Bar Colors", .Dock = DockStyle.Fill, .Checked = False}
-        AddHandler chkCustomBarColors.CheckedChanged, AddressOf BarColorSettingsChanged
-        thresholdsLayout.Controls.Add(chkCustomBarColors, 0, 3)
-        thresholdsLayout.SetColumnSpan(chkCustomBarColors, 2)
-
-        thresholdsLayout.Controls.Add(New Label() With {.Text = "HP Bar Color", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 4)
-        Dim hpColorPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(0)}
-        btnHpBarColor = New Button() With {.Text = "HP Color", .Width = 94, .Height = 28, .BackColor = _hpBarColor}
-        AddHandler btnHpBarColor.Click, AddressOf ChooseHpBarColorClicked
-        btnPickHpBarColor = New Button() With {.Text = "Pick Snapshot", .Width = 112, .Height = 28, .BackColor = Color.FromArgb(45, 95, 140), .ForeColor = Color.White}
-        AddHandler btnPickHpBarColor.Click, AddressOf PickHpBarColorFromSnapshotClicked
-        hpColorPanel.Controls.Add(btnHpBarColor)
-        hpColorPanel.Controls.Add(btnPickHpBarColor)
-        thresholdsLayout.Controls.Add(hpColorPanel, 1, 4)
-
-        thresholdsLayout.Controls.Add(New Label() With {.Text = "MP Bar Color", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 5)
-        Dim mpColorPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(0)}
-        btnMpBarColor = New Button() With {.Text = "MP Color", .Width = 94, .Height = 28, .BackColor = _mpBarColor}
-        AddHandler btnMpBarColor.Click, AddressOf ChooseMpBarColorClicked
-        btnPickMpBarColor = New Button() With {.Text = "Pick Snapshot", .Width = 112, .Height = 28, .BackColor = Color.FromArgb(45, 95, 140), .ForeColor = Color.White}
-        AddHandler btnPickMpBarColor.Click, AddressOf PickMpBarColorFromSnapshotClicked
-        mpColorPanel.Controls.Add(btnMpBarColor)
-        mpColorPanel.Controls.Add(btnPickMpBarColor)
-        thresholdsLayout.Controls.Add(mpColorPanel, 1, 5)
-
-        thresholdsLayout.Controls.Add(New Label() With {.Text = "Color Tolerance", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 6)
-        nudBarColorTolerance = New NumericUpDown() With {.Minimum = 8D, .Maximum = 120D, .Value = BotConfig.DefaultBarColorTolerance, .Dock = DockStyle.Left, .Width = 100}
-        AddHandler nudBarColorTolerance.ValueChanged, AddressOf BarColorSettingsChanged
-        thresholdsLayout.Controls.Add(nudBarColorTolerance, 1, 6)
-
-        Dim thresholdsHint As New Label() With {
-            .Text = "Custom colors affect Full combat HP, MP, and mob HP bar detection. Use Capture Snapshot in Vision, then Pick Snapshot on a solid bar pixel.",
-            .Dock = DockStyle.Fill,
-            .ForeColor = Color.LightSteelBlue,
-            .TextAlign = ContentAlignment.TopLeft
-        }
-        thresholdsLayout.Controls.Add(thresholdsHint, 0, 7)
-        thresholdsLayout.SetColumnSpan(thresholdsHint, 2)
-        thresholdsGroup.Controls.Add(thresholdsLayout)
-        UpdateBarColorUi()
-
-        Dim notifyGroup As New GroupBox() With {.Text = "Notifications + Loot Matching", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
-        Dim notifyLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 14}
+        Dim notifyGroup As New GroupBox() With {.Text = "Notifications", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
+        Dim notifyLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 12}
         tblNotificationSettings = notifyLayout
         notifyLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 180.0F))
         notifyLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
-        For i As Integer = 0 To 11
+        For i As Integer = 0 To 10
             notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
         Next
         notifyLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
-        notifyLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 30.0F))
 
         notifyLayout.Controls.Add(New Label() With {.Text = "Notification Provider", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
         cboNotificationProvider = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList}
@@ -3673,34 +3406,10 @@ Public Class Form1
         txtNtfyStatusRequestTopic = New TextBox() With {.Dock = DockStyle.Fill, .Text = ""}
         notifyLayout.Controls.Add(txtNtfyStatusRequestTopic, 1, 10)
 
-        notifyLayout.Controls.Add(New Label() With {.Text = "Loot Matching", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 11)
-        notifyLayout.Controls.Add(New Label() With {.Text = "Moved to Auto-Loot tab", .Dock = DockStyle.Fill, .ForeColor = Color.LightSteelBlue, .TextAlign = ContentAlignment.MiddleLeft}, 1, 11)
-
-        Dim note As New Label() With {
-            .Text = "Use provider 'discord' with one webhook per alert stream (global, items, stats), or provider 'ntfy' with the topic fields below." & Environment.NewLine &
-                    "Use role 'max_health' in Combat Skills if you want the max-health potion threshold controlled here. HP alarm only triggers at HP=0." & Environment.NewLine &
-                    "Stats alerts send Prana/EXP %, EXP/hr, Rupiahs total, and Rupiahs/hr on the interval you choose while the bot is running." & Environment.NewLine &
-                    "Type shot in the Discord data channel to upload the latest rolling screenshot to the Stats webhook channel." & Environment.NewLine &
-                    "On-Demand Request: pick any private ntfy topic name and publish (POST) to https://ntfy.sh/<topic> from your phone (e.g. an iOS Shortcut or an Android HTTP-shortcut app) to get a status push within ~20s - character, on/off, HP%/MP%, EXP%+rate, Rupiahs+rate, and the mob being attacked - sent to your Stats destination above. Nothing is sent unless you trigger it. Checked every 20s to stay under ntfy.sh's free request limit; if that limit is still hit, checking pauses for a few minutes and resumes automatically.",
-            .Dock = DockStyle.Fill,
-            .ForeColor = Color.LightSteelBlue,
-            .TextAlign = ContentAlignment.TopLeft
-        }
-        notifyLayout.Controls.Add(note, 0, 12)
-        notifyLayout.SetColumnSpan(note, 2)
-
-        Dim notifyFoot As New Label() With {
-            .Text = "Discord and ntfy both use separate global/items/stats destinations.",
-            .Dock = DockStyle.Fill,
-            .ForeColor = Color.Gray,
-            .TextAlign = ContentAlignment.MiddleLeft
-        }
-        notifyLayout.Controls.Add(notifyFoot, 0, 13)
-        notifyLayout.SetColumnSpan(notifyFoot, 2)
         notifyGroup.Controls.Add(notifyLayout)
 
-        settingsLayout.Controls.Add(thresholdsGroup, 0, 0)
-        settingsLayout.Controls.Add(notifyGroup, 1, 0)
+        settingsLayout.Controls.Add(notifyGroup, 0, 0)
+        settingsLayout.Controls.Add(BuildAutoPotUnstuckGroup(), 1, 0)
 
         settingsGroup.Controls.Add(settingsLayout)
         root.Controls.Add(settingsGroup, 0, 0)
@@ -3709,8 +3418,8 @@ Public Class Form1
         bottomRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
         bottomRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
         bottomRow.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
-        bottomRow.Controls.Add(BuildAutoPotUnstuckGroup(), 0, 0)
-        bottomRow.Controls.Add(BuildAutoResurrectGroup(), 1, 0)
+        bottomRow.Controls.Add(BuildAutoResurrectGroup(), 0, 0)
+        bottomRow.Controls.Add(BuildAutoRelaunchGroup(), 1, 0)
         root.Controls.Add(bottomRow, 0, 1)
         UpdateNotificationProviderUi()
         tab.Controls.Add(root)
@@ -3718,19 +3427,9 @@ Public Class Form1
         Return tab
     End Function
 
-    Private Function BuildAutoRelaunchTab() As TabPage
-        Dim tab As New TabPage("Auto Relaunch") With {.BackColor = Color.FromArgb(20, 20, 20)}
-        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 1, .Padding = New Padding(12)}
-        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
-        root.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
-        root.Controls.Add(BuildAutoRelaunchGroup(), 0, 0)
-        tab.Controls.Add(root)
-        Return tab
-    End Function
-
     Private Function BuildAutoRelaunchGroup() As GroupBox
         Dim group As New GroupBox() With {.Text = "Auto Relaunch Game", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
-        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 7}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 6}
         layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 130.0F))
         layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
@@ -3739,7 +3438,6 @@ Public Class Form1
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 68.0F))
 
         chkAutoRelaunchGame = New CheckBox() With {.Text = "Enable when game closes, crashes, or disconnects", .Dock = DockStyle.Fill, .Checked = False}
         layout.Controls.Add(chkAutoRelaunchGame, 0, 0)
@@ -3806,15 +3504,6 @@ Public Class Form1
         clickButtonRow.Controls.Add(chkAutoRelaunchClickOverlay)
         layout.Controls.Add(clickButtonRow, 0, 5)
         layout.SetColumnSpan(clickButtonRow, 2)
-
-        Dim note As New Label() With {
-            .Text = "On disconnect, the bot reads OK inside Vision's disconnect_ok_rect, left-clicks it, and waits for the old game to close before relaunching. Post-launch clicks use game-window coordinates after each row's delay. Select a row, click Use Cursor, then RIGHT click the desired game spot.",
-            .Dock = DockStyle.Fill,
-            .ForeColor = Color.LightSteelBlue,
-            .TextAlign = ContentAlignment.TopLeft
-        }
-        layout.Controls.Add(note, 0, 6)
-        layout.SetColumnSpan(note, 2)
 
         group.Controls.Add(layout)
         Return group
@@ -4808,8 +4497,6 @@ Public Class Form1
         dgvCombat.Columns.Add(roleColumn)
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Priority", .FillWeight = 75.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "TriggerPercent", .HeaderText = "Trigger%", .FillWeight = 62.0F})
-        dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "MinHpPercent", .HeaderText = "MinHp%", .FillWeight = 62.0F})
-        dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "MinMpPercent", .HeaderText = "MinMp%", .FillWeight = 62.0F})
         layout.Controls.Add(dgvCombat, 0, 0)
         layout.Controls.Add(New Label() With {
             .Text = "repair role: watches unreachable_text_rect for about-to-break, broken-soon, needs-repair, or low/critical-durability warnings (with OCR tolerance). After 5 OCR reads inside a 10-minute rolling window it sends the key once, then waits for the warning to clear. TriggerPercent is ignored.",
@@ -5369,9 +5056,6 @@ Public Class Form1
         End If
         UpdateResurrectAutoAcceptUi()
         UpdateResurrectOkPointUi()
-        nudAutoPotHp.Value = 1D
-        nudAutoPotMp.Value = 1D
-        nudAlarmVolume.Value = 1D
         If Not MonsterExists("avara kara") Then
             lstMonsterFilter.Items.Add("avara kara")
         End If
@@ -5406,7 +5090,6 @@ Public Class Form1
         If txtPartyAskText IsNot Nothing Then
             txtPartyAskText.Text = DefaultPartyAskCommand
         End If
-        _alarmVolumePercent = CInt(nudAlarmVolume.Value)
         UpdateAttackButtonAppearance(False)
         UpdateLootNamePickupPointUi()
         UpdateArrowUnbundleUi()
@@ -7273,19 +6956,6 @@ Public Class Form1
             Return
         End If
 
-        If _pendingBarColorPick <> BarColorPickKind.None Then
-            Dim sampled As Color
-            Using bmp As New Bitmap(picSnapshot.Image)
-                sampled = bmp.GetPixel(mapped.X, mapped.Y)
-            End Using
-
-            Dim pickedKind As BarColorPickKind = _pendingBarColorPick
-            _pendingBarColorPick = BarColorPickKind.None
-            UpdateBarColorUi()
-            SetBarColor(pickedKind, sampled, $"snapshot x={mapped.X}, y={mapped.Y}")
-            Return
-        End If
-
         If _isPickingLootRejectPoint Then
             _lootRejectPointX = mapped.X
             _lootRejectPointY = mapped.Y
@@ -8468,7 +8138,6 @@ Public Class Form1
             "- Role: attack, heal, max_health, mana, buff, high_max_hp, repair, stop.",
             "- Priority: lower values act first inside same category checks.",
             "- TriggerPercent: role threshold (heal/mana/max_health use this heavily).",
-            "- MinHpPercent / MinMpPercent: minimum self HP/MP to allow this action.",
             "- high_max_hp only fires when enabled in Vision and mob_life_rect OCR reads Max HP above your threshold.",
             "- Avoid mobs over max HP uses the same mob_life_rect OCR, but retargets instead of attacking when Max HP is over your avoid threshold.",
             "- repair watches unreachable_text_rect for '___ is about to break'. After 5 OCR reads inside 10 minutes it sends the configured key once, resets the repair OCR count, then waits until the warning clears before it can trigger again. TriggerPercent is ignored for repair.",
@@ -8603,7 +8272,6 @@ Public Class Form1
             "- Role: attack, heal, max_health, mana, buff, high_max_hp, repair, stop.",
             "- Priority: orden de prioridad.",
             "- TriggerPercent: umbral principal para roles de soporte.",
-            "- MinHpPercent / MinMpPercent: minimos para permitir la accion.",
             "- high_max_hp solo dispara si esta activo en Vision y el OCR de mob_life_rect lee Max HP arriba del umbral.",
             "- repair vigila unreachable_text_rect para '___ is about to break'. Despues de 5 lecturas OCR envia la tecla una vez y espera a que el aviso desaparezca antes de volver a activarse. TriggerPercent no se usa en repair.",
             "",
@@ -8725,7 +8393,6 @@ Public Class Form1
             "- Role: attack, heal, max_health, mana, buff, high_max_hp, repair, stop.",
             "- Priority: pagkakasunod ng aksyon.",
             "- TriggerPercent: pangunahing threshold ng support actions.",
-            "- MinHpPercent / MinMpPercent: minimum HP/MP para payagan ang action.",
             "- high_max_hp gagana lang kapag naka-enable sa Vision at nabasa ng mob_life_rect OCR ang Max HP lampas sa threshold mo.",
             "- repair nagbabantay sa unreachable_text_rect para sa '___ is about to break'. Pag nabasa ito ng OCR ng 5 beses, isang beses nitong ipapadala ang repair key at maghihintay munang mawala ang warning bago puwedeng mag-trigger ulit. Hindi ginagamit ang TriggerPercent sa repair.",
             "",
@@ -8881,16 +8548,20 @@ Public Class Form1
                     "KATHANABOT - AUTO-POT TAB EXPLANATION (ENGLISH)",
                     "============================================================",
                     "",
-                    "- Heal Trigger % and Mana Trigger % are quick values for heal and mana rows.",
-                    "- HP=0 Alarm Volume % only changes the death alarm volume.",
-                    "- Apply To Heal/Mana/Max-HP Rows copies those quick values into matching combat rows.",
                     "- Notification Provider chooses ntfy or Discord.",
+                    "- Discord provider uses one webhook per alert stream (global, items, stats); ntfy provider uses the topic fields instead.",
                     "- Discord Webhook fields are separate endpoints for Global, Items, and Stats alerts.",
                     "- ntfy Channel fields are separate topics for the same three alert groups.",
-                    "- Stats Interval (min) controls how often the running bot sends stat summaries.",
+                    "- Use role 'max_health' in Combat Skills if you want the max-health potion threshold controlled from there. The HP alarm only triggers at HP=0.",
+                    "- Stats Interval (min) controls how often the running bot sends stat summaries; Stats alerts send Prana/EXP %, EXP/hr, Rupiahs total, and Rupiahs/hr.",
+                    "- Type shot in the Discord data channel to upload the latest rolling screenshot to the Stats webhook channel.",
+                    "- On-Demand Request: pick any private ntfy topic name and publish (POST) to https://ntfy.sh/<topic> from your phone (e.g. an iOS Shortcut or an Android HTTP-shortcut app) to get a status push within ~20s - character, on/off, HP%/MP%, EXP%+rate, Rupiahs+rate, and the mob being attacked - sent to your Stats destination above. Nothing is sent unless you trigger it. Checked every 20s to stay under ntfy.sh's free request limit; if that limit is still hit, checking pauses for a few minutes and resumes automatically.",
+                    "- Discord and ntfy both use separate global/items/stats destinations.",
                     "- Test Alarm + Notify tests both sound and the selected provider.",
                     "- Test Notification sends only the notification test.",
-                    "- In Unstuck / Retarget, Search Retarget Delay mirrors the normal retarget delay, Stuck Detection Delay is the minimum time before a target can be considered stuck, and No-Progress Delay is how long HP can stay unchanged before retarget is allowed."
+                    "- In Unstuck / Retarget, Search Retarget Delay mirrors the normal retarget delay, Stuck Detection Delay is the minimum time before a target can be considered stuck, and No-Progress Delay is how long HP can stay unchanged before retarget is allowed.",
+                    "- Auto Relaunch Game: enable to automatically relaunch when the game closes, crashes, or disconnects. Set the Game EXE path and Delay Seconds, then Test Launch to verify it.",
+                    "- Auto Relaunch post-launch clicks: on disconnect the bot reads OK inside Vision's disconnect_ok_rect, clicks it, and waits for the old game process to close before relaunching. Each click step fires at game-window coordinates after its own delay - select a row, click Use Cursor, then RIGHT click the desired game spot to record it."
                 })
             Case HelpScopeAutoLoot
                 Return String.Join(Environment.NewLine, New String() {
@@ -8946,7 +8617,7 @@ Public Class Form1
                     "============================================================",
                     "",
                     "- Combat Full is the complete mode intended for more powerful computers. This tab controls the combat rotation, safety actions, monster filtering, start/stop flow, and live full-mode status.",
-                    "- In the Combat Skills grid: Enabled decides whether the row can run, Key is the game key, CooldownSec is the minimum delay between sends, Role defines when the row is considered, Priority orders rows inside the same category, TriggerPercent is the main threshold, and MinHpPercent / MinMpPercent are self-safety gates.",
+                    "- In the Combat Skills grid: Enabled decides whether the row can run, Key is the game key, CooldownSec is the minimum delay between sends, Role defines when the row is considered, Priority orders rows inside the same category, and TriggerPercent is the main threshold.",
                     "- Role meanings: attack = normal damage, heal = healing action, max_health = HP support threshold, mana = MP support threshold, buff = extra combat skill, high_max_hp = buff branch for high-Max-HP targets, repair = one-shot repair key when the OCR warning is confirmed, stop = stop-movement key burst.",
                     "- Use lower Priority numbers for more important rows within the same role group.",
                     "- high_max_hp only works well if Vision reads the mob_life_rect numbers correctly.",
@@ -9015,16 +8686,20 @@ Public Class Form1
                     "KATHANABOT - EXPLICACION DE LA PESTANA AUTO-POT (ESPANOL)",
                     "============================================================",
                     "",
-                    "- Heal Trigger % y Mana Trigger % son valores rapidos para filas heal y mana.",
-                    "- HP=0 Alarm Volume % solo cambia el volumen de la alarma de muerte.",
-                    "- Apply To Heal/Mana/Max-HP Rows copia esos valores a las filas compatibles.",
                     "- Notification Provider elige entre ntfy y Discord.",
+                    "- El proveedor Discord usa un webhook por cada flujo de alerta (global, items, stats); ntfy usa los campos de topic en su lugar.",
                     "- Los campos Discord Webhook separan alertas Global, Items y Stats.",
                     "- Los campos ntfy Channel hacen lo mismo mediante topics.",
-                    "- Stats Interval (min) controla cada cuanto se envian estadisticas mientras el bot corre.",
+                    "- Usa el rol 'max_health' en Combat Skills si quieres que el umbral de la pocion de vida maxima se controle ahi. La alarma de HP solo se activa en HP=0.",
+                    "- Stats Interval (min) controla cada cuanto se envian estadisticas mientras el bot corre; las alertas de stats envian Prana/EXP %, EXP/hr, Rupiahs total y Rupiahs/hr.",
+                    "- Escribe shot en el canal de datos de Discord para subir la ultima captura rotativa al webhook de Stats.",
+                    "- On-Demand Request: elige cualquier topic privado de ntfy y publica (POST) a https://ntfy.sh/<topic> desde tu telefono (por ejemplo un Shortcut de iOS o una app de HTTP-shortcut de Android) para recibir un aviso de estado en ~20s - personaje, encendido/apagado, HP%/MP%, EXP%+tasa, Rupiahs+tasa, y el mob atacado - enviado a tu destino de Stats. No se envia nada a menos que lo actives. Se revisa cada 20s para no superar el limite gratuito de ntfy.sh; si aun asi se alcanza el limite, la revision se pausa unos minutos y se reanuda sola.",
+                    "- Discord y ntfy usan destinos separados para global/items/stats.",
                     "- Test Alarm + Notify prueba sonido y notificacion.",
                     "- Test Notification prueba solo la notificacion.",
-                    "- En Unstuck / Retarget, Search Retarget Delay replica el retarget normal, Stuck Detection Delay marca cuando un objetivo puede considerarse atascado y No-Progress Delay es el tiempo sin cambio de HP antes de permitir retarget."
+                    "- En Unstuck / Retarget, Search Retarget Delay replica el retarget normal, Stuck Detection Delay marca cuando un objetivo puede considerarse atascado y No-Progress Delay es el tiempo sin cambio de HP antes de permitir retarget.",
+                    "- Auto Relaunch Game: activalo para relanzar el juego automaticamente cuando se cierre, falle o se desconecte. Configura la ruta del EXE y Delay Seconds, luego usa Test Launch para verificarlo.",
+                    "- Clicks posteriores al relanzamiento: al desconectarse, el bot lee OK dentro de disconnect_ok_rect de Vision, hace clic y espera a que cierre el proceso anterior antes de relanzar. Cada paso de clic se ejecuta en coordenadas de la ventana del juego tras su propio delay - selecciona una fila, pulsa Use Cursor y luego haz clic DERECHO en el punto deseado del juego para registrarlo."
                 })
             Case HelpScopeAutoLoot
                 Return String.Join(Environment.NewLine, New String() {
@@ -9079,7 +8754,7 @@ Public Class Form1
                     "============================================================",
                     "",
                     "- Combat Full es el modo completo pensado para computadoras mas potentes. Esta pestana controla la rotacion de combate, acciones de seguridad, filtro de monstruos, inicio/parada y estado en vivo.",
-                    "- En Combat Skills: Enabled decide si la fila puede correr, Key es la tecla del juego, CooldownSec es el tiempo minimo entre envios, Role define cuando se considera la fila, Priority ordena filas del mismo grupo, TriggerPercent es el umbral principal y MinHpPercent / MinMpPercent son filtros de seguridad propios.",
+                    "- En Combat Skills: Enabled decide si la fila puede correr, Key es la tecla del juego, CooldownSec es el tiempo minimo entre envios, Role define cuando se considera la fila, Priority ordena filas del mismo grupo, y TriggerPercent es el umbral principal.",
                     "- Roles: attack = dano normal, heal = curacion, max_health = soporte de HP, mana = soporte de MP, buff = skill ofensiva extra, high_max_hp = rama buff para mobs con mucho Max HP, repair = repair por warning OCR, stop = tecla de parada.",
                     "- Usa prioridades numericamente mas bajas para filas mas importantes dentro del mismo tipo.",
                     "- high_max_hp depende de una lectura correcta de mob_life_rect en Vision.",
@@ -9147,16 +8822,20 @@ Public Class Form1
                     "KATHANABOT - PALIWANAG NG AUTO-POT TAB (FILIPINO)",
                     "============================================================",
                     "",
-                    "- Heal Trigger % at Mana Trigger % ay quick values para sa heal at mana rows.",
-                    "- HP=0 Alarm Volume % ay para lang sa lakas ng death alarm.",
-                    "- Apply To Heal/Mana/Max-HP Rows kokopyahin ang quick values sa tugmang combat rows.",
                     "- Notification Provider pumipili sa ntfy o Discord.",
+                    "- Ang Discord provider ay gumagamit ng isang webhook bawat alert stream (global, items, stats); ang ntfy naman ay gumagamit ng topic fields.",
                     "- Ang Discord Webhook fields ay hiwalay para sa Global, Items, at Stats.",
                     "- Ang ntfy Channel fields ay hiwalay na topics para rin sa tatlong alert group.",
-                    "- Stats Interval (min) ang pagitan ng stats summary habang tumatakbo ang bot.",
+                    "- Gamitin ang role na 'max_health' sa Combat Skills kung gusto mong dito kontrolin ang threshold ng max-health potion. Ang HP alarm ay tumatawag lang sa HP=0.",
+                    "- Ang Stats Interval (min) ang pagitan ng stats summary habang tumatakbo ang bot; ipinapadala ng stats alerts ang Prana/EXP %, EXP/hr, Rupiahs total, at Rupiahs/hr.",
+                    "- I-type ang shot sa Discord data channel para i-upload ang pinakabagong rolling screenshot sa Stats webhook.",
+                    "- On-Demand Request: pumili ng kahit anong pribadong ntfy topic name at mag-publish (POST) sa https://ntfy.sh/<topic> mula sa iyong phone (hal. iOS Shortcut o Android HTTP-shortcut app) para makakuha ng status update sa loob ng ~20s - character, on/off, HP%/MP%, EXP%+rate, Rupiahs+rate, at ang inaatakeng mob - ipapadala sa iyong Stats destination sa itaas. Walang ipapadala maliban kung i-trigger mo. Chine-check ito bawat 20s para hindi maabot ang free limit ng ntfy.sh; kung naabot pa rin, huhupa muna ang pag-check ng ilang minuto bago mag-resume.",
+                    "- Hiwalay ang destinations ng Discord at ntfy para sa global/items/stats.",
                     "- Test Alarm + Notify susubok sa tunog at provider.",
                     "- Test Notification notification lang ang tine-test.",
-                    "- Sa Unstuck / Retarget, Search Retarget Delay ay katulad ng normal retarget, Stuck Detection Delay ang minimum time bago masabing stuck ang target, at No-Progress Delay ang tagal na walang HP change bago payagan ang retarget."
+                    "- Sa Unstuck / Retarget, Search Retarget Delay ay katulad ng normal retarget, Stuck Detection Delay ang minimum time bago masabing stuck ang target, at No-Progress Delay ang tagal na walang HP change bago payagan ang retarget.",
+                    "- Auto Relaunch Game: i-enable para awtomatikong mag-relaunch kapag nag-close, nag-crash, o na-disconnect ang laro. I-set ang Game EXE path at Delay Seconds, tapos gamitin ang Test Launch para i-verify.",
+                    "- Mga click pagkatapos mag-relaunch: kapag na-disconnect, babasahin ng bot ang OK sa loob ng disconnect_ok_rect ng Vision, kliklikin ito, at maghihintay na magsara ang lumang proseso bago mag-relaunch. Bawat click step ay gagana sa game-window coordinates pagkatapos ng sarili nitong delay - piliin ang row, i-click ang Use Cursor, tapos RIGHT-click ang gustong spot sa laro para irecord."
                 })
             Case HelpScopeAutoLoot
                 Return String.Join(Environment.NewLine, New String() {
@@ -9211,7 +8890,7 @@ Public Class Form1
                     "============================================================",
                     "",
                     "- Ang Combat Full ay ang kumpletong mode na para sa mas malalakas na computer. Dito kino-control ang combat rotation, safety actions, monster filtering, start/stop flow, at live full-mode status.",
-                    "- Sa Combat Skills grid: Enabled ang on/off ng row, Key ang key na ipapadala sa game, CooldownSec ang minimum pagitan ng gamit, Role ang nagsasabi kung kailan susuriin ang row, Priority ang order sa loob ng parehong role group, TriggerPercent ang pangunahing threshold, at MinHpPercent / MinMpPercent ang sariling safety gates.",
+                    "- Sa Combat Skills grid: Enabled ang on/off ng row, Key ang key na ipapadala sa game, CooldownSec ang minimum pagitan ng gamit, Role ang nagsasabi kung kailan susuriin ang row, Priority ang order sa loob ng parehong role group, at TriggerPercent ang pangunahing threshold.",
                     "- Mga role: attack = normal damage, heal = heal action, max_health = HP support threshold, mana = MP support threshold, buff = extra skill, high_max_hp = buff branch para sa high-Max-HP mobs, repair = one-shot repair kapag confirmed ang OCR warning, stop = stop-movement key burst.",
                     "- Gumamit ng mas mababang priority number para sa mas importanteng rows sa parehong role group.",
                     "- high_max_hp ay gagana lang kung tama ang OCR reading ng mob_life_rect sa Vision.",
@@ -9550,7 +9229,6 @@ Public Class Form1
             $"ArrowUnbundleEnabled: {If(chkArrowUnbundleEnabled IsNot Nothing AndAlso chkArrowUnbundleEnabled.Checked, "True", "False")}{Environment.NewLine}" &
             $"ArrowUnbundleSeconds: {If(nudArrowUnbundleSeconds IsNot Nothing, nudArrowUnbundleSeconds.Value.ToString(), "60")}{Environment.NewLine}" &
             $"ArrowUnbundlePoints: {FormatLootScanPoints(_arrowUnbundlePoints)}{Environment.NewLine}" &
-            $"AlarmVolume%: {_alarmVolumePercent}{Environment.NewLine}" &
             $"HpZeroAlarm: {_hpZeroAlarmActive}{Environment.NewLine}" &
             $"HpZeroPending: {_hpZeroPending}{Environment.NewLine}" &
             $"HpZeroConfirm: {_deadHpConfirmCount}/{CriticalAlertConfirmFrames} frames, {FormatPendingAlertSeconds(_deadHpFirstSeenUtc)}s/{CriticalAlertConfirmMs \ 1000}s{Environment.NewLine}" &
@@ -11456,21 +11134,6 @@ Public Class Form1
         Return result
     End Function
 
-    Private Sub ApplyQuickAutoPotThresholds(Optional silent As Boolean = False)
-        For Each row As DataGridViewRow In dgvCombat.Rows
-            Dim role As String = NormalizePersistedRole(SafeCell(row, "Role", "attack"))
-            If role = "heal" OrElse role = "max_health" Then
-                row.Cells("TriggerPercent").Value = CInt(nudAutoPotHp.Value).ToString()
-            ElseIf role = "mana" Then
-                row.Cells("TriggerPercent").Value = CInt(nudAutoPotMp.Value).ToString()
-            End If
-        Next
-        If Not silent Then
-            AppendLog("Applied auto-pot thresholds to heal/max-health/mana rows.")
-        End If
-        PushLiveConfig()
-    End Sub
-
     Private Function BuildFullConfig() As BotConfig
         Return BuildConfig()
     End Function
@@ -11517,9 +11180,7 @@ Public Class Form1
                 .Role = action.Role,
                 .Priority = action.Priority,
                 .CooldownMs = CInt(Math.Round(Math.Max(1.0, action.CooldownSec) * 1000.0)),
-                .TriggerPercent = Math.Max(1, Math.Min(100, action.TriggerPercent)),
-                .MinHpPercent = 1,
-                .MinMpPercent = 1
+                .TriggerPercent = Math.Max(1, Math.Min(100, action.TriggerPercent))
             })
         Next
 
@@ -11533,9 +11194,7 @@ Public Class Form1
                     .Role = "heal",
                     .Priority = 500,
                     .CooldownMs = 1000,
-                    .TriggerPercent = hpTriggerPercent,
-                    .MinHpPercent = 1,
-                    .MinMpPercent = 1
+                    .TriggerPercent = hpTriggerPercent
                 })
             End If
 
@@ -11548,9 +11207,7 @@ Public Class Form1
                     .Role = "mana",
                     .Priority = 510,
                     .CooldownMs = 1000,
-                    .TriggerPercent = mpTriggerPercent,
-                    .MinHpPercent = 1,
-                    .MinMpPercent = 1
+                    .TriggerPercent = mpTriggerPercent
                 })
             End If
         End If
@@ -11563,7 +11220,6 @@ Public Class Form1
         Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
         cfg.WindowTitle = If(selected IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(selected.WindowTitle), selected.WindowTitle.Trim(), DefaultGameWindowTitle)
         cfg.SelectedWindowHandle = If(selected IsNot Nothing, selected.MainWindowHandle, IntPtr.Zero)
-        ApplyBarColorSettingsToConfig(cfg)
         cfg.LoopMs = CInt(nudLoopMs.Value)
         cfg.RetargetMs = CInt(nudRetargetMs.Value)
         cfg.ForcedRetargetMs = CInt(If(nudForcedRetargetMs IsNot Nothing, nudForcedRetargetMs.Value, nudRetargetMs.Value))
@@ -11748,9 +11404,7 @@ Public Class Form1
                 .Role = role,
                 .Priority = ParseInt(SafeCell(row, "Priority", "100"), 100),
                 .CooldownMs = CInt(Math.Round(cooldownSec * 1000.0)),
-                .TriggerPercent = Math.Min(99, Math.Max(1, ParseInt(SafeCell(row, "TriggerPercent", "40"), 40))),
-                .MinHpPercent = Math.Min(100, Math.Max(1, ParseInt(SafeCell(row, "MinHpPercent", "1"), 1))),
-                .MinMpPercent = Math.Min(100, Math.Max(1, ParseInt(SafeCell(row, "MinMpPercent", "1"), 1)))
+                .TriggerPercent = Math.Min(99, Math.Max(1, ParseInt(SafeCell(row, "TriggerPercent", "40"), 40)))
             })
         Next
         Return actions
@@ -12673,19 +12327,6 @@ Public Class Form1
             End If
             ApplyAutoRelaunchClickSteps(state.AutoRelaunchClicks)
             UpdateNotificationProviderUi()
-            If nudAutoPotHp IsNot Nothing Then
-                Dim boundedAutoHp As Decimal = Math.Max(nudAutoPotHp.Minimum, Math.Min(nudAutoPotHp.Maximum, state.AutoPotHpPercent))
-                nudAutoPotHp.Value = boundedAutoHp
-            End If
-            If nudAutoPotMp IsNot Nothing Then
-                Dim boundedAutoMp As Decimal = Math.Max(nudAutoPotMp.Minimum, Math.Min(nudAutoPotMp.Maximum, state.AutoPotMpPercent))
-                nudAutoPotMp.Value = boundedAutoMp
-            End If
-            If nudAlarmVolume IsNot Nothing Then
-                Dim boundedVolume As Decimal = Math.Max(nudAlarmVolume.Minimum, Math.Min(nudAlarmVolume.Maximum, state.AlarmVolumePercent))
-                nudAlarmVolume.Value = boundedVolume
-                _alarmVolumePercent = CInt(boundedVolume)
-            End If
 
             If state.MonsterNames IsNot Nothing AndAlso lstMonsterFilter IsNot Nothing Then
                 lstMonsterFilter.Items.Clear()
@@ -12775,9 +12416,6 @@ Public Class Form1
                 .AutoRelaunchDelaySeconds = If(nudAutoRelaunchDelaySeconds IsNot Nothing, nudAutoRelaunchDelaySeconds.Value, 5D),
                 .AutoRelaunchClickOverlayEnabled = (chkAutoRelaunchClickOverlay IsNot Nothing AndAlso chkAutoRelaunchClickOverlay.Checked),
                 .AutoRelaunchClicks = GetAutoRelaunchClickSteps(),
-                .AutoPotHpPercent = If(nudAutoPotHp IsNot Nothing, nudAutoPotHp.Value, 80D),
-                .AutoPotMpPercent = If(nudAutoPotMp IsNot Nothing, nudAutoPotMp.Value, 35D),
-                .AlarmVolumePercent = CInt(If(nudAlarmVolume IsNot Nothing, nudAlarmVolume.Value, CDec(_alarmVolumePercent))),
                 .SavedConfig = If(includeFullConfig, BuildFullConfig(), Nothing),
                 .MonsterNames = GetListBoxItems(lstMonsterFilter),
                 .LootNames = GetListBoxItems(lstLootFilter),
@@ -12943,7 +12581,6 @@ Public Class Form1
             Return
         End If
 
-        ApplyBarColorConfigToUi(cfg)
         SetNumericControlValue(nudLoopMs, cfg.LoopMs)
         SetNumericControlValue(nudRetargetMs, cfg.RetargetMs)
         SetNumericControlValue(nudForcedRetargetMs, If(cfg.ForcedRetargetMs > 0, cfg.ForcedRetargetMs, cfg.RetargetMs))
@@ -13256,9 +12893,7 @@ Public Class Form1
                     .Role = NormalizePersistedRole(action.Role),
                     .Priority = Math.Max(1, action.Priority),
                     .CooldownSec = Math.Max(0.05, Math.Max(1, action.CooldownMs) / 1000.0),
-                    .TriggerPercent = Math.Min(99, Math.Max(1, action.TriggerPercent)),
-                    .MinHpPercent = Math.Min(100, Math.Max(1, action.MinHpPercent)),
-                    .MinMpPercent = Math.Min(100, Math.Max(1, action.MinMpPercent))
+                    .TriggerPercent = Math.Min(99, Math.Max(1, action.TriggerPercent))
                 })
                 actionIndex += 1
             Next
@@ -13375,8 +13010,6 @@ Public Class Form1
             Dim cooldownSec As Double = Math.Max(0.05, ParseDouble(SafeCell(row, "CooldownSec", "1.0"), 1.0))
             Dim priority As Integer = Math.Max(1, ParseInt(SafeCell(row, "Priority", "100"), 100))
             Dim triggerPercent As Integer = Math.Min(99, Math.Max(1, ParseInt(SafeCell(row, "TriggerPercent", "40"), 40)))
-            Dim minHpPercent As Integer = Math.Min(100, Math.Max(1, ParseInt(SafeCell(row, "MinHpPercent", "1"), 1)))
-            Dim minMpPercent As Integer = Math.Min(100, Math.Max(1, ParseInt(SafeCell(row, "MinMpPercent", "1"), 1)))
             Dim role As String = NormalizePersistedRole(SafeCell(row, "Role", "attack").ToLowerInvariant())
 
             result.Add(New PersistedCombatAction With {
@@ -13386,9 +13019,7 @@ Public Class Form1
                 .Role = role,
                 .Priority = priority,
                 .CooldownSec = cooldownSec,
-                .TriggerPercent = triggerPercent,
-                .MinHpPercent = minHpPercent,
-                .MinMpPercent = minMpPercent
+                .TriggerPercent = triggerPercent
             })
         Next
 
@@ -13448,8 +13079,6 @@ Public Class Form1
             row.Cells("CooldownSec").Value = cooldownSec.ToString("0.###")
 
             row.Cells("TriggerPercent").Value = Math.Min(99, Math.Max(1, item.TriggerPercent)).ToString()
-            row.Cells("MinHpPercent").Value = Math.Min(100, Math.Max(1, item.MinHpPercent)).ToString()
-            row.Cells("MinMpPercent").Value = Math.Min(100, Math.Max(1, item.MinMpPercent)).ToString()
         Next
     End Sub
 
@@ -14223,9 +13852,9 @@ Public Class Form1
 
     Private Sub StartHpZeroAlarm(Optional characterName As String = "")
         _hpZeroAlarmActive = True
-        AppendLog($"HP is zero. Death alert started at volume {_alarmVolumePercent}%.")
+        AppendLog($"HP is zero. Death alert started at volume {AlarmVolumePercent}%.")
         SendHpZeroPhoneAlert(characterName)
-        Task.Run(Sub() PlayAlarmPulse(_alarmVolumePercent))
+        Task.Run(Sub() PlayAlarmPulse(AlarmVolumePercent))
         AppendLog("Death confirmed by HP=0 on consecutive frames. Bot will keep running.")
     End Sub
 

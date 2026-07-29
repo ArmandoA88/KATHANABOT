@@ -1,13 +1,13 @@
-# KathanaBot 1.0.89
+# KathanaBot 1.0.95
 
 ## What changed
 
-- **Fixed runaway zoom while dragging/resizing in the Snapshot preview:** resizing a region used to recompute the zoomed viewport from the region's own (changing) size on every frame, which fed back into itself and made the preview zoom in/out wildly with tiny mouse movements. The viewport is now frozen for the whole drag gesture and only re-fits once you release - dragging and resizing are smooth and predictable now.
+- **Much more complete Fixed AutoPots help (Lite tab)**, in English, Spanish, and Filipino: a full numbered walkthrough (calibrate the overlay, set HP/Mana trigger points, confirm the readout, match your in-game 9/0 keybinds, enable the feature, and how the 3-strikes safety pause works) instead of the old one-paragraph blurb that only covered English/Spanish. The Help box now scrolls if the text runs long.
 
 ## Recent change history - last 5
 
-1. **Fixed runaway zoom during Snapshot drag/resize:** the preview viewport no longer rescales itself mid-drag, eliminating the feedback loop that made resizing feel wildly oversensitive.
-2. **Drag/resize regions from the Snapshot preview:** move or resize the selected region directly on the zoomed live preview, synced with the Calibration Regions grid in real time.
-3. **Live, zoomable region preview:** Snapshot panel is real-time now (200ms refresh), with an optional zoomed-in view of the selected calibration region plus its coordinates.
-4. **Notification body cleanup + Stats Interval 0=off:** dropped the redundant Character/Party lines from Stats and On-Demand notification bodies, and Stats Interval (min) now allows 0-9999, with 0 disabling periodic stats notifications.
-5. **HP alert speed-up + character name in every notification title, fixed name detection cadence:** 30s/50-sample death confirmation (was 60s/100), all alert titles now show the character's name, and character-name OCR now refreshes every 5s instead of every 30 minutes.
+1. **Much more complete Fixed AutoPots help (EN/ES/FIL)** in the Lite tab, replacing the old terse EN/ES-only blurb with a full step-by-step walkthrough.
+2. **Zoom Selected Region defaults to on** in the Vision tab's Snapshot panel, matching Live.
+3. **Moved Unstuck/Retarget next to Notifications:** Auto-Pot's top row now holds Notifications + Unstuck/Retarget side by side; the bottom row holds Auto Resurrect + Auto Relaunch Game.
+4. **Consolidated Auto Relaunch into Auto-Pot + moved long text into Explanation:** removed the separate Auto Relaunch tab (now a panel inside Auto-Pot) and relocated static hint paragraphs into the per-tab Explanation popup instead of always-visible labels.
+5. **Removed Auto-Pot Thresholds panel:** dropped Heal/Mana Trigger %, HP=0 Alarm Volume %, and Custom Bar Colors entirely; bar detection always uses default colors now.
