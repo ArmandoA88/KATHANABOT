@@ -767,6 +767,7 @@ Public Class BotEngine
     Private Const MaxValidRupiahsPerHour As Double = 1000000.0
     Private Const ExpOcrMinIntervalMs As Integer = 5000
     Private Const RupiahsOcrMinIntervalMs As Integer = 5000
+    Private Const CharacterNameOcrMinIntervalMs As Integer = 5000
     Private Const MapCoordinateOcrMinIntervalMs As Integer = 900
     Private Const HoldPlaceMaxCoordinateAcceptanceDistance As Double = 100.0R
     Private Const MapCoordinateFarJumpConfirmRequiredCount As Integer = 2
@@ -950,6 +951,7 @@ Public Class BotEngine
     Private _hardcodedVisionStatsInitialSent As Boolean = False
     Private _hardcodedVisionStatsInFlight As Boolean = False
     Private _lastCharacterName As String = ""
+    Private _lastCharacterNameOcrAt As DateTime = DateTime.MinValue
     Private _latestLoopFrame As Bitmap = Nothing
     Private _latestLoopFrameCapturedAt As DateTime = DateTime.MinValue
     Private _lastFullFrameCaptureAttemptAt As DateTime = DateTime.MinValue
@@ -1283,6 +1285,7 @@ Public Class BotEngine
             _hardcodedVisionStatsInitialSent = False
             _hardcodedVisionStatsInFlight = False
             _lastCharacterName = ""
+            _lastCharacterNameOcrAt = DateTime.MinValue
             _lastLootPickup = DateTime.MinValue
             _pendingLootPickupVerifyAt = DateTime.MinValue
             _lastArrowUnbundleAt = DateTime.MinValue
@@ -2664,6 +2667,7 @@ Public Class BotEngine
                 MarkOptionalWorkDeferred()
             Else
                 If frame IsNot Nothing Then
+                    UpdateCharacterNameFromVision(cfg, hwnd, now, frame, hpRegion)
                     TryQueueHardcodedVisionStats(cfg, hwnd, now, frame, hpRegion, mpRegion, hpPct, mpPct, mobName)
                 End If
 
@@ -2817,6 +2821,15 @@ Public Class BotEngine
                             TryExecuteLootNameAutoPickup(hwnd, cfg, matchedItem, matchedRegion, lootScanBounds)
                         End If
 
+                        Dim lootNotificationTitle As String = "KathanaBot Loot Finder"
+                        Dim lootNotificationCharacterName As String
+                        SyncLock _sync
+                            lootNotificationCharacterName = _lastCharacterName
+                        End SyncLock
+                        If Not String.IsNullOrWhiteSpace(lootNotificationCharacterName) Then
+                            lootNotificationTitle &= " - " & lootNotificationCharacterName
+                        End If
+
                         If notificationProvider = NotificationProviderDiscord Then
                             Task.Run(Async Function()
                                 Try
@@ -2833,7 +2846,7 @@ Public Class BotEngine
                                         Using request As New System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, NormalizeDiscordWebhookUrl(discordWebhookUrl))
                                             Dim payload = New With {
                                                 .username = "KathanaBot",
-                                                .content = $"KathanaBot Loot Finder{Environment.NewLine}Found important item: {matchedItem}",
+                                                .content = $"{lootNotificationTitle}{Environment.NewLine}Found important item: {matchedItem}",
                                                 .allowed_mentions = New With {
                                                     .parse = Array.Empty(Of String)()
                                                 }
@@ -2863,7 +2876,7 @@ Public Class BotEngine
                                     Using client As New System.Net.Http.HttpClient()
                                         Using request As New System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, "https://ntfy.sh/" & Uri.EscapeDataString(topic))
                                             request.Content = New System.Net.Http.StringContent("Found important item: " & matchedItem)
-                                            request.Headers.Add("Title", "KathanaBot Loot Finder")
+                                            request.Headers.Add("Title", lootNotificationTitle)
                                             Dim response As System.Net.Http.HttpResponseMessage = Await client.SendAsync(request)
                                             If Not response.IsSuccessStatusCode Then
                                                 RaiseEvent LogLine($"Item notification failed via ntfy ({CInt(response.StatusCode)}) for topic '{topic}'.")
@@ -11409,6 +11422,40 @@ Public Class BotEngine
         Return True
     End Function
 
+    ''' <summary>
+    ''' Refreshes _lastCharacterName from OCR/window-title detection on a short, fixed cadence
+    ''' (CharacterNameOcrMinIntervalMs) so notifications always reflect whichever character is
+    ''' currently logged in. Runs independently of the once-per-30-minutes Discord vision-stats
+    ''' telemetry below, which previously (and incorrectly) was the only place this got refreshed.
+    ''' Keeps the previous name on a failed/ambiguous read instead of clearing it, so a single bad
+    ''' OCR frame doesn't blank out an otherwise-known name.
+    ''' </summary>
+    Private Sub UpdateCharacterNameFromVision(cfg As BotConfig, hwnd As IntPtr, now As DateTime, frame As Bitmap, hpRegion As RectRegion)
+        If cfg Is Nothing OrElse hwnd = IntPtr.Zero OrElse frame Is Nothing OrElse hpRegion Is Nothing Then
+            Return
+        End If
+
+        If _lastCharacterNameOcrAt <> DateTime.MinValue AndAlso (now - _lastCharacterNameOcrAt).TotalMilliseconds < CharacterNameOcrMinIntervalMs Then
+            Return
+        End If
+        _lastCharacterNameOcrAt = now
+
+        Dim actualWindowTitle As String = GetWindowTitle(hwnd)
+        If String.IsNullOrWhiteSpace(actualWindowTitle) Then
+            actualWindowTitle = If(cfg.WindowTitle, "").Trim()
+        End If
+
+        Dim characterNameFromOcr As String = ReadCharacterInfoFromHpBar(frame, hpRegion)
+        Dim titleCharacterName As String = ExtractCharacterNameFromWindowTitle(actualWindowTitle, cfg.WindowTitle)
+        Dim characterName As String = ResolveVisionStatsCharacterName(characterNameFromOcr, titleCharacterName, actualWindowTitle, cfg.WindowTitle)
+
+        If IsKnownCharacterName(characterName) Then
+            SyncLock _sync
+                _lastCharacterName = characterName
+            End SyncLock
+        End If
+    End Sub
+
     Private Sub TryQueueHardcodedVisionStats(cfg As BotConfig, hwnd As IntPtr, now As DateTime, frame As Bitmap, hpRegion As RectRegion, mpRegion As RectRegion, hpPercent As Double, mpPercent As Double, mobName As String)
         If cfg Is Nothing OrElse hwnd = IntPtr.Zero Then
             Return
@@ -11419,6 +11466,7 @@ Public Class BotEngine
         End If
 
         Dim sendNow As Boolean = False
+        Dim characterName As String = ""
         SyncLock _sync
             If _hardcodedVisionStatsInFlight Then
                 Return
@@ -11435,6 +11483,7 @@ Public Class BotEngine
                 _hardcodedVisionStatsInitialSent = True
                 _lastHardcodedVisionStatsSentAt = now
                 _hardcodedVisionStatsInFlight = True
+                characterName = If(String.IsNullOrWhiteSpace(_lastCharacterName), "unknown", _lastCharacterName)
             End If
         End SyncLock
 
@@ -11446,14 +11495,6 @@ Public Class BotEngine
         If String.IsNullOrWhiteSpace(actualWindowTitle) Then
             actualWindowTitle = If(cfg.WindowTitle, "").Trim()
         End If
-
-        Dim characterNameFromOcr As String = ReadCharacterInfoFromHpBar(frame, hpRegion)
-        Dim titleCharacterName As String = ExtractCharacterNameFromWindowTitle(actualWindowTitle, cfg.WindowTitle)
-        Dim characterName As String = ResolveVisionStatsCharacterName(characterNameFromOcr, titleCharacterName, actualWindowTitle, cfg.WindowTitle)
-
-        SyncLock _sync
-            _lastCharacterName = If(IsKnownCharacterName(characterName), characterName, "")
-        End SyncLock
 
         Dim hpNumbersText As String = ReadBarNumbersFromRegion(frame, hpRegion)
         Dim mpNumbersText As String = ReadBarNumbersFromRegion(frame, mpRegion)

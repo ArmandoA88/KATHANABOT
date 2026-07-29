@@ -482,8 +482,8 @@ Public Class Form1
     Private Const HpZeroAlarmGraceMs As Integer = 60000
     Private Const DeadZeroThreshold As Double = 0.1
     Private Const DeadRecoverThreshold As Double = 2.0
-    Private Const CriticalAlertConfirmMs As Integer = 60000
-    Private Const CriticalAlertConfirmFrames As Integer = 100
+    Private Const CriticalAlertConfirmMs As Integer = 30000
+    Private Const CriticalAlertConfirmFrames As Integer = 50
     Private Const DeathNotificationRetryCount As Integer = 3
     Private Const StartupNotificationWarmupSeconds As Integer = 20
     Private Const NotificationProviderNtfy As String = "ntfy"
@@ -3609,8 +3609,8 @@ Public Class Form1
         txtStatsNtfyTopic = New TextBox() With {.Dock = DockStyle.Fill, .Text = ""}
         notifyLayout.Controls.Add(txtStatsNtfyTopic, 1, 6)
 
-        notifyLayout.Controls.Add(New Label() With {.Text = "Stats Interval (min)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 9)
-        nudStatsNtfyIntervalMinutes = New NumericUpDown() With {.Minimum = 1D, .Maximum = 1440D, .DecimalPlaces = 0, .Value = 30D, .Dock = DockStyle.Left, .Width = 100}
+        notifyLayout.Controls.Add(New Label() With {.Text = "Stats Interval (min, 0 = off)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 9)
+        nudStatsNtfyIntervalMinutes = New NumericUpDown() With {.Minimum = 0D, .Maximum = 9999D, .DecimalPlaces = 0, .Value = 30D, .Dock = DockStyle.Left, .Width = 100}
         notifyLayout.Controls.Add(nudStatsNtfyIntervalMinutes, 1, 9)
 
         lblNtfyStatusRequestTopic = New Label() With {.Text = "ntfy Channel (On-Demand Request)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
@@ -6521,7 +6521,8 @@ Public Class Form1
     Private Async Function SendLatestRollingScreenshotToDiscordAsync(webhookUrl As String) As Task(Of Boolean)
         Dim screenshotPath As String = GetLatestRollingScreenshotPath()
         If String.IsNullOrWhiteSpace(screenshotPath) OrElse Not File.Exists(screenshotPath) Then
-            Return Await SendDiscordNotificationAsync("KathanaBot Shot", "No rolling screenshot is available yet. Wait for the next 30-second capture.", webhookUrl, "Discord stats webhook")
+            Dim title As String = WithCharacterName("KathanaBot Shot", GetCurrentCharacterNameForNotification())
+            Return Await SendDiscordNotificationAsync(title, "No rolling screenshot is available yet. Wait for the next 30-second capture.", webhookUrl, "Discord stats webhook")
         End If
 
         Dim rawWebhookUrl As String = If(webhookUrl, "").Trim()
@@ -10690,9 +10691,10 @@ Public Class Form1
                 _gameDisconnectedNotificationLatched = True
                 AppendLog($"Game disconnect detected. Sending alert via {GetNotificationDestinationSummary()}.")
                 BeginDisconnectOkRecovery()
+                Dim title As String = WithCharacterName("KathanaBot Game Disconnected", status.CharacterName)
                 Task.Run(
                     Async Function()
-                        Dim sent As Boolean = Await SendPhoneNotificationAsync("KathanaBot Game Disconnected", "The game reported: connection to server has failed. Please try again.", DeathNotificationRetryCount)
+                        Dim sent As Boolean = Await SendPhoneNotificationAsync(title, "The game reported: connection to server has failed. Please try again.", DeathNotificationRetryCount)
                         If sent Then
                             AppendLogSafe("Game disconnect alert sent.")
                         Else
@@ -10946,7 +10948,7 @@ Public Class Form1
             If Not _windowMissingNotificationLatched AndAlso IsCriticalAlertConfirmed(_windowMissingFirstSeenUtc, _windowMissingConfirmCount) Then
                 _windowMissingNotificationLatched = True
                 ScheduleGameRelaunch(If(captureUnavailable, "capture unavailable", "game window missing/crash"))
-                SendWindowMissingPhoneAlert(captureUnavailable)
+                SendWindowMissingPhoneAlert(captureUnavailable, status.CharacterName)
             End If
             Return
         End If
@@ -13790,7 +13792,7 @@ Public Class Form1
                     CancelHpZeroPendingCountdown(False)
                 End If
                 If Not _hpZeroAlarmActive Then
-                    StartHpZeroAlarm()
+                    StartHpZeroAlarm(status.CharacterName)
                 End If
             End If
             Return
@@ -13868,10 +13870,10 @@ Public Class Form1
         End If
     End Sub
 
-    Private Sub StartHpZeroAlarm()
+    Private Sub StartHpZeroAlarm(Optional characterName As String = "")
         _hpZeroAlarmActive = True
         AppendLog($"HP is zero. Death alert started at volume {_alarmVolumePercent}%.")
-        SendHpZeroPhoneAlert()
+        SendHpZeroPhoneAlert(characterName)
         Task.Run(Sub() PlayAlarmPulse(_alarmVolumePercent))
         AppendLog("Death confirmed by HP=0 on consecutive frames. Bot will keep running.")
     End Sub
@@ -13928,23 +13930,24 @@ Public Class Form1
         End If
     End Sub
 
-    Private Sub SendHpZeroPhoneAlert()
+    Private Sub SendHpZeroPhoneAlert(Optional characterName As String = "")
         Dim now As DateTime = DateTime.UtcNow
         If _lastHpZeroNotification <> DateTime.MinValue AndAlso (now - _lastHpZeroNotification).TotalSeconds < 5 Then
             Return
         End If
 
         _lastHpZeroNotification = now
+        Dim title As String = WithCharacterName("KathanaBot Gamer Alert", characterName)
         Task.Run(
             Async Function()
-                Dim sent As Boolean = Await SendPhoneNotificationAsync("KathanaBot HP Alert", $"HP stayed at zero for {CriticalAlertConfirmMs \ 1000} seconds or {CriticalAlertConfirmFrames} consecutive valid status samples. Character may be dead.", DeathNotificationRetryCount)
+                Dim sent As Boolean = Await SendPhoneNotificationAsync(title, $"HP stayed at zero for {CriticalAlertConfirmMs \ 1000} seconds or {CriticalAlertConfirmFrames} consecutive valid status samples. Character may be dead.", DeathNotificationRetryCount)
                 If Not sent Then
                     AppendLogSafe("Notification failed after retries. Check notification settings/network.")
                 End If
             End Function)
     End Sub
 
-    Private Sub SendWindowMissingPhoneAlert(Optional captureUnavailable As Boolean = False)
+    Private Sub SendWindowMissingPhoneAlert(Optional captureUnavailable As Boolean = False, Optional characterName As String = "")
         Dim now As DateTime = DateTime.UtcNow
         If _lastWindowMissingNotification <> DateTime.MinValue AndAlso (now - _lastWindowMissingNotification).TotalSeconds < 5 Then
             Return
@@ -13955,14 +13958,41 @@ Public Class Form1
             If(captureUnavailable,
                $"Game capture failed for {CriticalAlertConfirmMs \ 1000} seconds or {CriticalAlertConfirmFrames} consecutive status samples. The game may be hidden, black-screened, minimized, or the screen is unavailable.",
                $"Game window was not found for {CriticalAlertConfirmMs \ 1000} seconds or {CriticalAlertConfirmFrames} consecutive status samples. The game may have crashed or been closed.")
+        Dim title As String = WithCharacterName("KathanaBot Game Alert", characterName)
         Task.Run(
             Async Function()
-                Dim sent As Boolean = Await SendPhoneNotificationAsync("KathanaBot Game Alert", body, DeathNotificationRetryCount)
+                Dim sent As Boolean = Await SendPhoneNotificationAsync(title, body, DeathNotificationRetryCount)
                 If Not sent Then
                     AppendLogSafe("Game-window alert failed after retries. Check notification settings/network.")
                 End If
             End Function)
     End Sub
+
+    ''' <summary>
+    ''' Appends " - &lt;CharacterName&gt;" to a notification title when a character name is known.
+    ''' Keeps the "KathanaBot"/base-title prefix untouched so existing self-message filters keep working.
+    ''' </summary>
+    Private Shared Function WithCharacterName(baseTitle As String, characterName As String) As String
+        Dim trimmedName As String = If(characterName, "").Trim()
+        If trimmedName = "" Then
+            Return baseTitle
+        End If
+        Return $"{baseTitle} - {trimmedName}"
+    End Function
+
+    ''' <summary>
+    ''' Best-effort lookup of the currently active character's name, for notification titles that
+    ''' don't already have a BotStatus in scope.
+    ''' </summary>
+    Private Function GetCurrentCharacterNameForNotification() As String
+        Dim isRunning As Boolean = False
+        Dim editionLabel As String = ""
+        Dim status As BotStatus = GetActiveStatusForOnDemand(isRunning, editionLabel)
+        If status IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(status.CharacterName) Then
+            Return status.CharacterName
+        End If
+        Return ""
+    End Function
 
     Private Shared Function NormalizeNotificationProviderName(raw As String) As String
         Dim cleaned As String = If(raw, "").Trim().ToLowerInvariant()
@@ -14115,21 +14145,11 @@ Public Class Form1
         Return status.RupiahsPerHour.ToString("N0") & "/hr"
     End Function
 
-    Private Function FormatPartyForNotification(status As BotStatus) As String
-        If status Is Nothing OrElse status.PartySize <= 0 Then
-            Return "0 member(s) | Alive: 0/0 | All alive: n/a"
-        End If
-
-        Dim aliveCount As Integer = Math.Max(0, Math.Min(status.PartyAliveCount, status.PartySize))
-        Dim allAliveText As String = If(status.PartyAllAlive, "Yes", "No")
-        Return $"{status.PartySize} member(s) | Alive: {aliveCount}/{status.PartySize} | All alive: {allAliveText}"
-    End Function
-
     Private Function GetStatsNotificationIntervalMinutes() As Integer
         If nudStatsNtfyIntervalMinutes Is Nothing Then
             Return 30
         End If
-        Return Math.Max(1, CInt(Math.Truncate(nudStatsNtfyIntervalMinutes.Value)))
+        Return Math.Max(0, CInt(Math.Truncate(nudStatsNtfyIntervalMinutes.Value)))
     End Function
 
     Private Sub HandlePeriodicStatsNotification(status As BotStatus)
@@ -14146,28 +14166,31 @@ Public Class Form1
             Return
         End If
 
+        Dim intervalMinutes As Integer = GetStatsNotificationIntervalMinutes()
+        If intervalMinutes <= 0 Then
+            Return
+        End If
+
         If _lastStatsNotificationUtc = DateTime.MinValue Then
             _lastStatsNotificationUtc = DateTime.UtcNow
             Return
         End If
 
-        Dim intervalMinutes As Integer = GetStatsNotificationIntervalMinutes()
         Dim nextAllowedUtc As DateTime = _lastStatsNotificationUtc.AddMinutes(intervalMinutes)
         If DateTime.UtcNow < nextAllowedUtc Then
             Return
         End If
 
         Dim body As String =
-            $"Character: {If(String.IsNullOrWhiteSpace(status.CharacterName), "n/a", status.CharacterName)}{Environment.NewLine}" &
             $"Prana/EXP: {status.ExpPercent:0.00}% | Rate: {FormatExpRateForNotification(status)}{Environment.NewLine}" &
-            $"Rupiahs: {If(status.RupiahsTotal >= 0, status.RupiahsTotal.ToString("N0"), "n/a")} | Rate: {FormatRupiahsRateForNotification(status)}{Environment.NewLine}" &
-            $"Party: {FormatPartyForNotification(status)}"
+            $"Rupiahs: {If(status.RupiahsTotal >= 0, status.RupiahsTotal.ToString("N0"), "n/a")} | Rate: {FormatRupiahsRateForNotification(status)}"
 
         _lastStatsNotificationUtc = DateTime.UtcNow
         Dim destinationSummary As String = GetStatsNotificationDestinationSummary()
+        Dim title As String = WithCharacterName($"KathanaBot {intervalMinutes}m Stats", status.CharacterName)
         Task.Run(
             Async Function()
-                Dim sent As Boolean = Await SendPhoneNotificationToTopicAsync($"KathanaBot {intervalMinutes}m Stats", body, topic, 1, "default", "chart_with_upwards_trend,moneybag", GetDiscordStatsWebhookUrl(), "Discord stats webhook")
+                Dim sent As Boolean = Await SendPhoneNotificationToTopicAsync(title, body, topic, 1, "default", "chart_with_upwards_trend,moneybag", GetDiscordStatsWebhookUrl(), "Discord stats webhook")
                 If sent Then
                     AppendLogSafe($"{intervalMinutes}-minute stats sent via {destinationSummary}.")
                 Else
@@ -14198,15 +14221,13 @@ Public Class Form1
         Dim editionLabel As String = ""
         Dim status As BotStatus = GetActiveStatusForOnDemand(isRunning, editionLabel)
         Dim statusText As String = If(isRunning, $"On ({editionLabel})", "Off")
-        Dim characterName As String = If(status IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(status.CharacterName), status.CharacterName, "n/a")
 
         If Not isRunning OrElse status Is Nothing Then
-            Return $"Character: {characterName}{Environment.NewLine}Status: {statusText}"
+            Return $"Status: {statusText}"
         End If
 
         Dim attacking As String = If(status.TargetValid AndAlso Not String.IsNullOrWhiteSpace(status.MobName), status.MobName, "None")
         Dim body As String =
-            $"Character: {characterName}{Environment.NewLine}" &
             $"Status: {statusText}{Environment.NewLine}" &
             $"HP: {status.HpPercent:0.0}% | MP: {status.MpPercent:0.0}%{Environment.NewLine}" &
             $"Prana/EXP: {status.ExpPercent:0.00}% | Rate: {FormatExpRateForNotification(status)}{Environment.NewLine}" &
@@ -14231,10 +14252,11 @@ Public Class Form1
         Dim body As String = BuildOnDemandStatusBody()
         Dim destinationSummary As String = GetStatsNotificationDestinationSummary()
         Dim discordStatsWebhookUrl As String = GetDiscordStatsWebhookUrl()
+        Dim title As String = WithCharacterName("KathanaBot Status", GetCurrentCharacterNameForNotification())
         AppendLogSafe("On-demand status request received.")
         Task.Run(
             Async Function()
-                Dim sent As Boolean = Await SendPhoneNotificationToTopicAsync("KathanaBot Status", body, topic, 1, "default", "gamepad,mag", discordStatsWebhookUrl, "Discord stats webhook")
+                Dim sent As Boolean = Await SendPhoneNotificationToTopicAsync(title, body, topic, 1, "default", "gamepad,mag", discordStatsWebhookUrl, "Discord stats webhook")
                 If sent Then
                     AppendLogSafe($"On-demand status sent via {destinationSummary}.")
                 Else

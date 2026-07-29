@@ -2,6 +2,7 @@
 **/bin/
 **/obj/
 dist/
+standalone-exe/
 
 # User files
 **/*.user
@@ -21,6 +22,7 @@ KathanaBotControlPanel.runtimeconfig.json
 KathanaBotControlPanel.pdb
 KathanaBotControlPanel-v*.exe
 KathanaBotControlPanel_*.exe
+KathanaBotControlPanel_*.exe.sha256
 KathanaBotControlPanel - Copy*.exe
 KathanaBotControlPanel - Copy*.dll
 KathanaBotControlPanel.deps - Copy*.json
