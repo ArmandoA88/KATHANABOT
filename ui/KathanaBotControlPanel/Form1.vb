@@ -36,6 +36,7 @@ Public Class Form1
     Private ReadOnly _periodicScreenshotTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _discordShotTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _ntfyStatusRequestTimer As New System.Windows.Forms.Timer()
+    Private ReadOnly _liveSnapshotTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _persistDebounceTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _persistFileLock As New Object()
     Private _pendingPersistState As PersistedAppState = Nothing
@@ -132,6 +133,27 @@ Public Class Form1
     Private nudChatMaxLines As NumericUpDown
     Private lblChatTranslationStatus As Label
     Private picSnapshot As PictureBox
+    Private chkSnapshotLive As CheckBox
+    Private chkSnapshotZoomRegion As CheckBox
+    Private lblSnapshotZoomInfo As Label
+    Private _lastSnapshotRawFrame As Bitmap = Nothing
+    Private _snapshotZoomCropX As Integer = 0
+    Private _snapshotZoomCropY As Integer = 0
+    Private _snapshotZoomCropW As Integer = 1
+    Private _snapshotZoomCropH As Integer = 1
+    Private _snapshotZoomFactor As Double = 1.0R
+    Private Enum SnapshotDragMode
+        None
+        Move
+        ResizeBottomRight
+    End Enum
+    Private _snapshotDragMode As SnapshotDragMode = SnapshotDragMode.None
+    Private _snapshotDragRegionName As String = ""
+    Private _snapshotDragStartRawPoint As System.Drawing.Point
+    Private _snapshotDragOriginalRect As RectRegion
+    Private _isDraggingSnapshotRegion As Boolean = False
+    Private Const SnapshotHandleSizeRawPx As Integer = 10
+    Private Const SnapshotMinRegionSize As Integer = 8
     Private chkPeriodicScreenshots As CheckBox
     Private nudPeriodicScreenshotMinutes As NumericUpDown
     Private txtPeriodicScreenshotDirectory As TextBox
@@ -501,6 +523,8 @@ Public Class Form1
     Private Const DiscordShotPollIntervalMs As Integer = 5000
     Private Const NtfyStatusRequestPollIntervalMs As Integer = 20000
     Private Const NtfyStatusRequestBackoffMinutesOnRateLimit As Integer = 5
+    Private Const LiveSnapshotIntervalMs As Integer = 200
+    Private Const LiveSnapshotZoomTargetPx As Integer = 520
     Private Shared ReadOnly NtfyClient As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(7)}
     Private Shared ReadOnly PersistDirectoryPath As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel")
     Private Shared ReadOnly PersistFilePath As String = Path.Combine(PersistDirectoryPath, "user_lists.json")
@@ -871,6 +895,10 @@ Public Class Form1
         _ntfyStatusRequestTimer.Interval = NtfyStatusRequestPollIntervalMs
         AddHandler _ntfyStatusRequestTimer.Tick, AddressOf NtfyStatusRequestTimerTick
         _ntfyStatusRequestTimer.Start()
+
+        _liveSnapshotTimer.Interval = LiveSnapshotIntervalMs
+        AddHandler _liveSnapshotTimer.Tick, AddressOf LiveSnapshotTimerTick
+        _liveSnapshotTimer.Start()
 
         UpdateEditionUiState(False)
         PushLiveConfig()
@@ -1290,6 +1318,8 @@ Public Class Form1
         AddHandler dgvRegions.CellEndEdit, AddressOf LiveConfigChanged
         AddHandler dgvRegions.CellValueChanged, AddressOf PersistListSettingsChanged
         AddHandler dgvRegions.CellEndEdit, AddressOf PersistListSettingsChanged
+        AddHandler dgvRegions.SelectionChanged, AddressOf RegionSelectionChangedForZoomPreview
+        AddHandler chkSnapshotZoomRegion.CheckedChanged, AddressOf RegionSelectionChangedForZoomPreview
         AddHandler dgvRegions.CurrentCellDirtyStateChanged,
             Sub(_s As Object, _e As EventArgs)
                 ' Only the checkbox column needs to commit on every keystroke/toggle (a checkbox has
@@ -3333,12 +3363,37 @@ Public Class Form1
         right.Controls.Add(BuildProcessListGroup(), 0, 0)
 
         Dim snapshotGroup As New GroupBox() With {.Text = "Snapshot", .Dock = DockStyle.Fill}
-        Dim snapshotLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 1, .Padding = New Padding(6)}
+        Dim snapshotLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2, .Padding = New Padding(6)}
+        snapshotLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 24.0F))
         snapshotLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+
+        Dim snapshotHeader As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 1}
+        snapshotHeader.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 60.0F))
+        snapshotHeader.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 150.0F))
+        snapshotHeader.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+
+        chkSnapshotLive = New CheckBox() With {.Text = "Live", .Dock = DockStyle.Fill, .Checked = True}
+        snapshotHeader.Controls.Add(chkSnapshotLive, 0, 0)
+
+        chkSnapshotZoomRegion = New CheckBox() With {.Text = "Zoom Selected Region", .Dock = DockStyle.Fill}
+        snapshotHeader.Controls.Add(chkSnapshotZoomRegion, 1, 0)
+
+        lblSnapshotZoomInfo = New Label() With {
+            .Text = "Real-time client view. Select a row in Calibration Regions and check ""Zoom Selected Region"" to inspect it up close.",
+            .Dock = DockStyle.Fill,
+            .ForeColor = Color.LightSteelBlue,
+            .TextAlign = ContentAlignment.MiddleLeft,
+            .AutoEllipsis = True
+        }
+        snapshotHeader.Controls.Add(lblSnapshotZoomInfo, 2, 0)
+        snapshotLayout.Controls.Add(snapshotHeader, 0, 0)
 
         picSnapshot = New PictureBox() With {.Dock = DockStyle.Fill, .SizeMode = PictureBoxSizeMode.Zoom, .BackColor = Color.Black}
         AddHandler picSnapshot.MouseClick, AddressOf SnapshotMouseClick
-        snapshotLayout.Controls.Add(picSnapshot, 0, 0)
+        AddHandler picSnapshot.MouseDown, AddressOf SnapshotRegionMouseDown
+        AddHandler picSnapshot.MouseMove, AddressOf SnapshotRegionMouseMove
+        AddHandler picSnapshot.MouseUp, AddressOf SnapshotRegionMouseUp
+        snapshotLayout.Controls.Add(picSnapshot, 0, 1)
 
         snapshotGroup.Controls.Add(snapshotLayout)
         right.Controls.Add(snapshotGroup, 0, 1)
@@ -6141,7 +6196,7 @@ Public Class Form1
         textEditor.MaxLength = 1024
     End Sub
 
-    Private Function CaptureSnapshotIntoPreview(Optional logWhenUnavailable As Boolean = True) As Boolean
+    Private Function CaptureSnapshotIntoPreview(Optional logWhenUnavailable As Boolean = True, Optional suppressSuccessLog As Boolean = False) As Boolean
         PushLiveConfig()
         Dim bmp As Bitmap = _fullEngine.CaptureSnapshot()
         If bmp Is Nothing Then
@@ -6155,14 +6210,310 @@ Public Class Form1
             Return False
         End If
 
+        Dim oldRaw As Bitmap = _lastSnapshotRawFrame
+        _lastSnapshotRawFrame = bmp
+        If oldRaw IsNot Nothing Then
+            oldRaw.Dispose()
+        End If
+
+        RenderSnapshotPreview()
+
+        If Not suppressSuccessLog Then
+            AppendLog("Snapshot captured.")
+        End If
+        Return True
+    End Function
+
+    ''' <summary>
+    ''' Redraws picSnapshot from the cached raw frame (_lastSnapshotRawFrame) without re-capturing -
+    ''' used after a fresh capture, on selection change, and once a drag ends. Recomputes the
+    ''' crop/zoom viewport to auto-fit the current region. NOT used mid-drag - see
+    ''' RenderSnapshotPreviewDuringDrag, which keeps the viewport frozen so resizing can't feed back
+    ''' into its own zoom level.
+    ''' </summary>
+    Private Sub RenderSnapshotPreview()
+        If _lastSnapshotRawFrame Is Nothing OrElse picSnapshot Is Nothing Then
+            Return
+        End If
+
+        Dim regionName As String = ""
+        Dim rx, ry, rw, rh As Integer
+        Dim haveRegion As Boolean = TryGetSelectedRegionRect(regionName, rx, ry, rw, rh)
+        Dim useZoom As Boolean = haveRegion AndAlso Not IsSnapshotPickActive() AndAlso
+            chkSnapshotZoomRegion IsNot Nothing AndAlso chkSnapshotZoomRegion.Checked
+
+        Dim displayBmp As Bitmap
+        Dim zoomInfo As String
+        If useZoom Then
+            ComputeZoomViewport(_lastSnapshotRawFrame, rx, ry, rw, rh, _snapshotZoomCropX, _snapshotZoomCropY, _snapshotZoomCropW, _snapshotZoomCropH, _snapshotZoomFactor)
+            displayBmp = DrawZoomedViewport(_lastSnapshotRawFrame, _snapshotZoomCropX, _snapshotZoomCropY, _snapshotZoomCropW, _snapshotZoomCropH, _snapshotZoomFactor, rx, ry, rw, rh)
+            zoomInfo = $"{regionName}  X:{rx} Y:{ry} W:{rw} H:{rh}  (drag to move/resize)"
+        Else
+            _snapshotZoomCropX = 0
+            _snapshotZoomCropY = 0
+            _snapshotZoomCropW = _lastSnapshotRawFrame.Width
+            _snapshotZoomCropH = _lastSnapshotRawFrame.Height
+            _snapshotZoomFactor = 1.0R
+            displayBmp = DirectCast(_lastSnapshotRawFrame.Clone(), Bitmap)
+            zoomInfo = If(Not haveRegion,
+                "Real-time client view. Select a row in Calibration Regions and check ""Zoom Selected Region"" to inspect + drag it.",
+                "Check ""Zoom Selected Region"" to inspect and drag " & regionName & " here.")
+        End If
+
         Dim oldImage = picSnapshot.Image
-        picSnapshot.Image = bmp
+        picSnapshot.Image = displayBmp
         If oldImage IsNot Nothing Then
             oldImage.Dispose()
         End If
-        AppendLog("Snapshot captured.")
+
+        If lblSnapshotZoomInfo IsNot Nothing Then
+            lblSnapshotZoomInfo.Text = zoomInfo
+        End If
+    End Sub
+
+    ''' <summary>
+    ''' Redraws the preview during a drag using the FROZEN viewport captured at drag-start (see
+    ''' SnapshotRegionMouseDown) - the crop/zoom never changes mid-drag, only the highlighted
+    ''' region rectangle moves/resizes within it. Recomputing the viewport from the live (changing)
+    ''' region size here would feed back into itself: resizing shrinks/grows the crop, which changes
+    ''' the zoom factor, which changes how far the same mouse movement maps in raw pixels, which
+    ''' resizes the region even more - a runaway loop that felt like the drag was "too sensitive".
+    ''' </summary>
+    Private Sub RenderSnapshotPreviewDuringDrag(regionName As String, rx As Integer, ry As Integer, rw As Integer, rh As Integer)
+        If _lastSnapshotRawFrame Is Nothing OrElse picSnapshot Is Nothing Then
+            Return
+        End If
+
+        Dim displayBmp As Bitmap = DrawZoomedViewport(_lastSnapshotRawFrame, _snapshotZoomCropX, _snapshotZoomCropY, _snapshotZoomCropW, _snapshotZoomCropH, _snapshotZoomFactor, rx, ry, rw, rh)
+        Dim oldImage = picSnapshot.Image
+        picSnapshot.Image = displayBmp
+        If oldImage IsNot Nothing Then
+            oldImage.Dispose()
+        End If
+
+        If lblSnapshotZoomInfo IsNot Nothing Then
+            lblSnapshotZoomInfo.Text = $"{regionName}  X:{rx} Y:{ry} W:{rw} H:{rh}  (drag to move/resize)"
+        End If
+    End Sub
+
+    Private Sub RegionSelectionChangedForZoomPreview(sender As Object, e As EventArgs)
+        If chkSnapshotZoomRegion Is Nothing OrElse Not chkSnapshotZoomRegion.Checked Then
+            Return
+        End If
+        If IsSnapshotPickActive() Then
+            Return
+        End If
+        CaptureSnapshotIntoPreview(False, True)
+    End Sub
+
+    Private Sub LiveSnapshotTimerTick(sender As Object, e As EventArgs)
+        If chkSnapshotLive Is Nothing OrElse Not chkSnapshotLive.Checked Then
+            Return
+        End If
+        If IsSnapshotPickActive() OrElse _isDraggingSnapshotRegion Then
+            Return
+        End If
+        If _mainTabs IsNot Nothing AndAlso _visionTab IsNot Nothing AndAlso Not ReferenceEquals(_mainTabs.SelectedTab, _visionTab) Then
+            Return
+        End If
+
+        CaptureSnapshotIntoPreview(False, True)
+    End Sub
+
+    Private Function TryGetSelectedRegionRect(ByRef regionName As String, ByRef x As Integer, ByRef y As Integer, ByRef w As Integer, ByRef h As Integer) As Boolean
+        regionName = ""
+        x = 0 : y = 0 : w = 0 : h = 0
+        If dgvRegions Is Nothing OrElse dgvRegions.CurrentRow Is Nothing Then
+            Return False
+        End If
+
+        Dim row As DataGridViewRow = dgvRegions.CurrentRow
+        regionName = SafeCell(row, "Region", "")
+        If String.IsNullOrWhiteSpace(regionName) Then
+            Return False
+        End If
+
+        If Not Integer.TryParse(SafeCell(row, "X", "0"), x) OrElse
+           Not Integer.TryParse(SafeCell(row, "Y", "0"), y) OrElse
+           Not Integer.TryParse(SafeCell(row, "W", "1"), w) OrElse
+           Not Integer.TryParse(SafeCell(row, "H", "1"), h) Then
+            Return False
+        End If
+
+        w = Math.Max(1, w)
+        h = Math.Max(1, h)
         Return True
     End Function
+
+    ''' <summary>Computes an auto-fit crop rectangle + zoom factor around a region, with padding for context.</summary>
+    Private Shared Sub ComputeZoomViewport(source As Bitmap, regionX As Integer, regionY As Integer, regionW As Integer, regionH As Integer, ByRef cropX As Integer, ByRef cropY As Integer, ByRef cropW As Integer, ByRef cropH As Integer, ByRef zoomFactor As Double)
+        Dim pad As Integer = Math.Max(24, CInt(Math.Max(regionW, regionH) * 0.6))
+        cropX = Math.Max(0, Math.Min(source.Width - 1, regionX - pad))
+        cropY = Math.Max(0, Math.Min(source.Height - 1, regionY - pad))
+        Dim cropRight As Integer = Math.Max(cropX + 1, Math.Min(source.Width, regionX + regionW + pad))
+        Dim cropBottom As Integer = Math.Max(cropY + 1, Math.Min(source.Height, regionY + regionH + pad))
+        cropW = Math.Max(1, cropRight - cropX)
+        cropH = Math.Max(1, cropBottom - cropY)
+        zoomFactor = Math.Max(1.0R, Math.Min(10.0R, LiveSnapshotZoomTargetPx / CDbl(Math.Max(cropW, cropH))))
+    End Sub
+
+    ''' <summary>Draws a fixed crop rectangle (already computed) at the given zoom, with a yellow highlight over the region.</summary>
+    Private Shared Function DrawZoomedViewport(source As Bitmap, cropX As Integer, cropY As Integer, cropW As Integer, cropH As Integer, zoomFactor As Double, regionX As Integer, regionY As Integer, regionW As Integer, regionH As Integer) As Bitmap
+        Dim safeCropW As Integer = Math.Max(1, Math.Min(cropW, source.Width - cropX))
+        Dim safeCropH As Integer = Math.Max(1, Math.Min(cropH, source.Height - cropY))
+        Dim outW As Integer = Math.Max(1, CInt(safeCropW * zoomFactor))
+        Dim outH As Integer = Math.Max(1, CInt(safeCropH * zoomFactor))
+
+        Dim result As New Bitmap(outW, outH, PixelFormat.Format24bppRgb)
+        Using g As Graphics = Graphics.FromImage(result)
+            g.InterpolationMode = Drawing2D.InterpolationMode.NearestNeighbor
+            g.PixelOffsetMode = Drawing2D.PixelOffsetMode.Half
+            g.DrawImage(source, New Rectangle(0, 0, outW, outH), New Rectangle(cropX, cropY, safeCropW, safeCropH), GraphicsUnit.Pixel)
+
+            Dim highlightRect As New Rectangle(
+                CInt((regionX - cropX) * zoomFactor),
+                CInt((regionY - cropY) * zoomFactor),
+                Math.Max(1, CInt(regionW * zoomFactor)),
+                Math.Max(1, CInt(regionH * zoomFactor)))
+            Using pen As New Pen(Color.Yellow, 2.0F)
+                g.DrawRectangle(pen, highlightRect)
+            End Using
+        End Using
+        Return result
+    End Function
+
+    ''' <summary>Maps a picSnapshot client click into raw (unzoomed) client-frame coordinates, undoing the current crop/zoom.</summary>
+    Private Function TryMapSnapshotPointToRaw(clientPoint As System.Drawing.Point, ByRef rawX As Integer, ByRef rawY As Integer) As Boolean
+        rawX = 0 : rawY = 0
+        Dim imagePoint As System.Drawing.Point
+        If Not TryMapPictureBoxPointToImage(picSnapshot, clientPoint, imagePoint) Then
+            Return False
+        End If
+        rawX = _snapshotZoomCropX + CInt(imagePoint.X / _snapshotZoomFactor)
+        rawY = _snapshotZoomCropY + CInt(imagePoint.Y / _snapshotZoomFactor)
+        Return True
+    End Function
+
+    Private Function HitTestSnapshotRegion(rawX As Integer, rawY As Integer, rx As Integer, ry As Integer, rw As Integer, rh As Integer) As SnapshotDragMode
+        Dim handleSizeRaw As Integer = Math.Max(6, CInt(SnapshotHandleSizeRawPx / _snapshotZoomFactor))
+        Dim handleRect As New Rectangle(rx + rw - handleSizeRaw, ry + rh - handleSizeRaw, handleSizeRaw, handleSizeRaw)
+        If handleRect.Contains(rawX, rawY) Then
+            Return SnapshotDragMode.ResizeBottomRight
+        End If
+        If New Rectangle(rx, ry, rw, rh).Contains(rawX, rawY) Then
+            Return SnapshotDragMode.Move
+        End If
+        Return SnapshotDragMode.None
+    End Function
+
+    Private Sub SnapshotRegionMouseDown(sender As Object, e As MouseEventArgs)
+        If e.Button <> MouseButtons.Left OrElse IsSnapshotPickActive() Then
+            Return
+        End If
+        If chkSnapshotZoomRegion Is Nothing OrElse Not chkSnapshotZoomRegion.Checked Then
+            Return
+        End If
+        If _lastSnapshotRawFrame Is Nothing OrElse picSnapshot.Image Is Nothing Then
+            Return
+        End If
+
+        Dim regionName As String = ""
+        Dim rx, ry, rw, rh As Integer
+        If Not TryGetSelectedRegionRect(regionName, rx, ry, rw, rh) Then
+            Return
+        End If
+
+        Dim rawX, rawY As Integer
+        If Not TryMapSnapshotPointToRaw(e.Location, rawX, rawY) Then
+            Return
+        End If
+
+        Dim mode As SnapshotDragMode = HitTestSnapshotRegion(rawX, rawY, rx, ry, rw, rh)
+        If mode = SnapshotDragMode.None Then
+            Return
+        End If
+
+        _snapshotDragMode = mode
+        _snapshotDragRegionName = regionName
+        _snapshotDragOriginalRect = New RectRegion(rx, ry, rw, rh)
+        _snapshotDragStartRawPoint = New System.Drawing.Point(rawX, rawY)
+        _isDraggingSnapshotRegion = True
+        picSnapshot.Capture = True
+    End Sub
+
+    Private Sub SnapshotRegionMouseMove(sender As Object, e As MouseEventArgs)
+        If _isDraggingSnapshotRegion Then
+            Dim rawX, rawY As Integer
+            If Not TryMapSnapshotPointToRaw(e.Location, rawX, rawY) Then
+                Return
+            End If
+
+            Dim dx As Integer = rawX - _snapshotDragStartRawPoint.X
+            Dim dy As Integer = rawY - _snapshotDragStartRawPoint.Y
+            Dim edited As New RectRegion(_snapshotDragOriginalRect.X, _snapshotDragOriginalRect.Y, _snapshotDragOriginalRect.W, _snapshotDragOriginalRect.H)
+            If _snapshotDragMode = SnapshotDragMode.Move Then
+                edited.X += dx
+                edited.Y += dy
+            ElseIf _snapshotDragMode = SnapshotDragMode.ResizeBottomRight Then
+                edited.W = Math.Max(SnapshotMinRegionSize, edited.W + dx)
+                edited.H = Math.Max(SnapshotMinRegionSize, edited.H + dy)
+            End If
+
+            If _lastSnapshotRawFrame IsNot Nothing Then
+                edited.W = Math.Max(SnapshotMinRegionSize, Math.Min(_lastSnapshotRawFrame.Width, edited.W))
+                edited.H = Math.Max(SnapshotMinRegionSize, Math.Min(_lastSnapshotRawFrame.Height, edited.H))
+                edited.X = Math.Max(0, Math.Min(_lastSnapshotRawFrame.Width - edited.W, edited.X))
+                edited.Y = Math.Max(0, Math.Min(_lastSnapshotRawFrame.Height - edited.H, edited.Y))
+            End If
+
+            OverlayRegionChanged(_snapshotDragRegionName, edited)
+            RenderSnapshotPreviewDuringDrag(_snapshotDragRegionName, edited.X, edited.Y, edited.W, edited.H)
+            Return
+        End If
+
+        If IsSnapshotPickActive() OrElse chkSnapshotZoomRegion Is Nothing OrElse Not chkSnapshotZoomRegion.Checked Then
+            Return
+        End If
+
+        Dim regionName As String = ""
+        Dim rx, ry, rw, rh As Integer
+        If Not TryGetSelectedRegionRect(regionName, rx, ry, rw, rh) Then
+            Return
+        End If
+
+        Dim hoverRawX, hoverRawY As Integer
+        If Not TryMapSnapshotPointToRaw(e.Location, hoverRawX, hoverRawY) Then
+            picSnapshot.Cursor = Cursors.Default
+            Return
+        End If
+
+        Select Case HitTestSnapshotRegion(hoverRawX, hoverRawY, rx, ry, rw, rh)
+            Case SnapshotDragMode.ResizeBottomRight
+                picSnapshot.Cursor = Cursors.SizeNWSE
+            Case SnapshotDragMode.Move
+                picSnapshot.Cursor = Cursors.SizeAll
+            Case Else
+                picSnapshot.Cursor = Cursors.Default
+        End Select
+    End Sub
+
+    Private Sub SnapshotRegionMouseUp(sender As Object, e As MouseEventArgs)
+        If Not _isDraggingSnapshotRegion Then
+            Return
+        End If
+
+        picSnapshot.Capture = False
+        _isDraggingSnapshotRegion = False
+        _snapshotDragMode = SnapshotDragMode.None
+        _snapshotDragRegionName = ""
+
+        Dim regionName As String = ""
+        Dim rx, ry, rw, rh As Integer
+        If TryGetSelectedRegionRect(regionName, rx, ry, rw, rh) Then
+            OverlayRegionCommitted(regionName, New RectRegion(rx, ry, rw, rh))
+        End If
+        RenderSnapshotPreview()
+    End Sub
 
     Private Shared Function ResolveDefaultPeriodicScreenshotDirectory() As String
         Dim picturesDirectory As String = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures)
@@ -14819,7 +15170,12 @@ Public Class Form1
         _periodicScreenshotTimer.Stop()
         _discordShotTimer.Stop()
         _ntfyStatusRequestTimer.Stop()
+        _liveSnapshotTimer.Stop()
         _persistDebounceTimer.Stop()
+        If _lastSnapshotRawFrame IsNot Nothing Then
+            _lastSnapshotRawFrame.Dispose()
+            _lastSnapshotRawFrame = Nothing
+        End If
         FlushPendingLogLines()
         SavePersistedListState(True)
         StopHpZeroAlarm()
