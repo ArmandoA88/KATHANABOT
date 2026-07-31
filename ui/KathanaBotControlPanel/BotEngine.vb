@@ -316,7 +316,8 @@ Public Class BotConfig
     Public Property BuffWatchSelfClickY As Integer = -1
     Public Property LootAllowedNames As List(Of String) = New List(Of String)()
     Public Property LootNameMatchThresholdPercent As Integer = 80
-    Public Property PartyAutoAcceptEnabled As Boolean = True
+    Public Property PartyInviteAutoAcceptEnabled As Boolean = True
+    Public Property PartyRessAutoAcceptEnabled As Boolean = True
     Public Property PartyAskEnabled As Boolean = False
     Public Property PartyAskIntervalMs As Integer = 30000
     Public Property PartyAskText As String = "add"
@@ -610,6 +611,11 @@ Friend Module NativeMethods
     Friend Const MOUSEEVENTF_RIGHTUP As UInteger = &H10UI
     Friend Const SW_RESTORE As Integer = 9
     Friend Const SW_MINIMIZE As Integer = 6
+    Friend Const WDA_EXCLUDEFROMCAPTURE As UInteger = &H11UI
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function SetWindowDisplayAffinity(hWnd As IntPtr, dwAffinity As UInteger) As Boolean
+    End Function
 
     <StructLayout(LayoutKind.Sequential)>
     Friend Structure POINT
@@ -1043,7 +1049,6 @@ Public Class BotEngine
     Private _deathMessageOcrTask As Task(Of String) = Nothing
     Private _deathMessageOcrTaskGeneration As Long = -1L
     Private _lastDeathMessageCandidate As String = ""
-    Private _lastDeathMessageVisualSignature As ULong = 0UL
     Private _deathMessageConfirmCount As Integer = 0
     Private _lastDeathMessageMatchAt As DateTime = DateTime.MinValue
     Private _combatPausedForDeath As Boolean = False
@@ -1085,13 +1090,11 @@ Public Class BotEngine
     Private _lastChatOcrUpdatedAt As DateTime = DateTime.MinValue
     Private _lastChatVisualSignature As ULong = 0UL
     Private _lastPartyListVisualSignature As ULong = 0UL
-    Private _lastPartyInviteVisualSignature As ULong = 0UL
     Private _lastResurrectScan As DateTime = DateTime.MinValue
     Private _lastResurrectAccept As DateTime = DateTime.MinValue
     Private _resurrectOcrTask As Task(Of String) = Nothing
     Private _resurrectOcrTaskGeneration As Long = -1L
     Private _lastResurrectCandidate As String = ""
-    Private _lastResurrectVisualSignature As ULong = 0UL
     Private _lastLootScannerVisualSignature As ULong = 0UL
     Private _lastMapMarkerScanAt As DateTime = DateTime.MinValue
     Private _lastMapMarkerDetected As Boolean = False
@@ -1342,7 +1345,6 @@ Public Class BotEngine
             _lastResurrectAccept = DateTime.MinValue
             _resurrectOcrTask = Nothing
             _lastResurrectCandidate = ""
-            _lastResurrectVisualSignature = 0UL
             _lastPartyAskAt = DateTime.MinValue
             _partyAskSuppressedInParty = False
             _partyAskWasEnabled = False
@@ -1373,7 +1375,6 @@ Public Class BotEngine
             _lastDeathMessageScan = DateTime.MinValue
             _deathMessageOcrTask = Nothing
             _lastDeathMessageCandidate = ""
-            _lastDeathMessageVisualSignature = 0UL
             _deathMessageConfirmCount = 0
             _lastDeathMessageMatchAt = DateTime.MinValue
             _combatPausedForDeath = False
@@ -1408,7 +1409,6 @@ Public Class BotEngine
             _lastChatOcrUpdatedAt = DateTime.MinValue
             _lastChatVisualSignature = 0UL
             _lastPartyListVisualSignature = 0UL
-            _lastPartyInviteVisualSignature = 0UL
             _lastLootScannerVisualSignature = 0UL
             _lastMapMarkerScanAt = DateTime.MinValue
             _lastMapMarkerDetected = False
@@ -1909,7 +1909,7 @@ Public Class BotEngine
                     End If
                 End If
 
-                If cfg.PartyAutoAcceptEnabled AndAlso liteFrame Is Nothing Then
+                If (cfg.PartyInviteAutoAcceptEnabled OrElse cfg.PartyRessAutoAcceptEnabled) AndAlso liteFrame Is Nothing Then
                     liteScanWarning = If(liteScanWarning = "", "Unable to capture Lite window for party prompt scan.", liteScanWarning & " Party prompt scan skipped.")
                 End If
                 If needsLiteHpScan AndAlso Not hpScanOk Then
@@ -7322,7 +7322,7 @@ Public Class BotEngine
     End Function
 
     Private Function TryHandleAutoAcceptPrompts(cfg As BotConfig, hwnd As IntPtr, frame As Bitmap, now As DateTime, partyInviteScanRegion As RectRegion, partyInviteOkRegion As RectRegion) As Boolean
-        If cfg Is Nothing OrElse (Not cfg.PartyAutoAcceptEnabled) Then
+        If cfg Is Nothing OrElse (Not cfg.PartyInviteAutoAcceptEnabled AndAlso Not cfg.PartyRessAutoAcceptEnabled) Then
             _lastPartyInviteCandidate = ""
             Return False
         End If
@@ -7356,7 +7356,10 @@ Public Class BotEngine
         End If
 
         Dim promptKind As String = DetectAutoAcceptPromptKind(_lastPartyInviteCandidate)
-        If promptKind <> "" Then
+        Dim promptKindAllowed As Boolean =
+            (promptKind = "party" AndAlso cfg.PartyInviteAutoAcceptEnabled) OrElse
+            (promptKind = "ress" AndAlso cfg.PartyRessAutoAcceptEnabled)
+        If promptKind <> "" AndAlso promptKindAllowed Then
             If ClickClientRegionCenter(hwnd, partyInviteOkRegion, frame.Width, frame.Height) Then
                 _lastPartyInviteAccept = now
                 Dim promptLabel As String = If(promptKind = "ress", "resurrection prompt", "party invite")
@@ -7392,21 +7395,25 @@ Public Class BotEngine
                 g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
             End Using
 
-            If cfg.PixelChangeGateEnabled Then
-                Dim signature As ULong = ComputeVisualSignature(crop)
-                If signature <> 0UL AndAlso signature = _lastPartyInviteVisualSignature Then
-                    crop.Dispose()
-                    Return False
-                End If
-                _lastPartyInviteVisualSignature = signature
-            End If
-
+            ' No pixel-change gate here: this dialog (party invite or resurrection prompt) is static
+            ' while shown, so a gate that skips re-OCR on an unchanged crop would freeze retries
+            ' forever after a single misread until the dialog closes - see the matching comment on
+            ' TryHandleResurrectPrompt.
             _lastPartyInviteScan = now
             _partyInviteOcrTaskGeneration = _runGeneration
             _partyInviteOcrTask = Task.Run(
                 Function()
                     Try
-                        Return OcrReader.ReadName(crop)
+                        ' Full-text OCR (with a single-line fallback), not ReadName alone: ReadName
+                        ' keeps only the single best-scoring line, which can discard the line that
+                        ' actually contains "party"/"invited"/"resurrect" on a multi-line dialog.
+                        Using enlarged As Bitmap = EnlargeBitmap(crop, 3)
+                            Dim text As String = If(OcrReader.ReadScreenTextIsolated(enlarged), "").Trim()
+                            If text = "" Then
+                                text = If(OcrReader.ReadName(enlarged), "").Trim()
+                            End If
+                            Return text
+                        End Using
                     Catch
                         Return ""
                     Finally
@@ -7492,21 +7499,27 @@ Public Class BotEngine
                 g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
             End Using
 
-            If cfg.PixelChangeGateEnabled Then
-                Dim signature As ULong = ComputeVisualSignature(crop)
-                If signature <> 0UL AndAlso signature = _lastResurrectVisualSignature Then
-                    crop.Dispose()
-                    Return False
-                End If
-                _lastResurrectVisualSignature = signature
-            End If
-
+            ' No pixel-change gate here (unlike other scan regions): this dialog's text is static
+            ' while shown, so a gate that skips re-OCR on an unchanged crop would freeze retries
+            ' forever after a single misread - the whole rest of the run - since the pixels never
+            ' change again until the dialog closes.
             _lastResurrectScan = now
             _resurrectOcrTaskGeneration = _runGeneration
             _resurrectOcrTask = Task.Run(
                 Function()
                     Try
-                        Return OcrReader.ReadName(crop)
+                        ' Full-text OCR (with a single-line fallback), not ReadName alone: ReadName
+                        ' keeps only the single best-scoring line, so on a multi-line dialog like
+                        ' "<player> used <skill> on you. Do you wish to resurrect?" the line that
+                        ' actually contains "resurrect" can easily be discarded before IsRessPrompt
+                        ' ever sees it.
+                        Using enlarged As Bitmap = EnlargeBitmap(crop, 3)
+                            Dim text As String = If(OcrReader.ReadScreenTextIsolated(enlarged), "").Trim()
+                            If text = "" Then
+                                text = If(OcrReader.ReadName(enlarged), "").Trim()
+                            End If
+                            Return text
+                        End Using
                     Catch
                         Return ""
                     Finally
@@ -7596,15 +7609,10 @@ Public Class BotEngine
                 g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
             End Using
 
-            If cfg.PixelChangeGateEnabled Then
-                Dim signature As ULong = ComputeVisualSignature(crop)
-                If signature <> 0UL AndAlso signature = _lastDeathMessageVisualSignature Then
-                    crop.Dispose()
-                    Return False
-                End If
-                _lastDeathMessageVisualSignature = signature
-            End If
-
+            ' No pixel-change gate here: the death message is static while shown, and this dialog
+            ' requires 3 consecutive matching reads within a rolling window (see
+            ' ProcessDeathMessageOcrResult) - a gate that skips re-OCR on an unchanged crop would
+            ' let one misread stall the confirmation streak indefinitely instead of just resetting it.
             _lastDeathMessageScan = now
             _deathMessageOcrTaskGeneration = _runGeneration
             _deathMessageOcrTask = Task.Run(

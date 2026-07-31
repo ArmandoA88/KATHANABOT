@@ -45,6 +45,19 @@ Friend Class AutoRelaunchClickOverlayForm
         End Get
     End Property
 
+    Protected Overrides Sub OnHandleCreated(e As EventArgs)
+        MyBase.OnHandleCreated(e)
+        Try
+            ' The bot's screen capture falls back to a raw desktop BitBlt (CopyFromScreen) for games
+            ' that don't support PrintWindow, which would otherwise bake this always-on-top marker
+            ' directly into the OCR crop it draws over (e.g. right on top of a dialog's OK button).
+            ' WDA_EXCLUDEFROMCAPTURE keeps it visible on the physical display but invisible to any
+            ' screen-capture API, so it can no longer corrupt what the bot reads.
+            NativeMethods.SetWindowDisplayAffinity(Me.Handle, NativeMethods.WDA_EXCLUDEFROMCAPTURE)
+        Catch
+        End Try
+    End Sub
+
     Protected Overrides ReadOnly Property CreateParams As CreateParams
         Get
             Dim cp As CreateParams = MyBase.CreateParams

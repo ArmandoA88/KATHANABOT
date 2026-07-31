@@ -322,8 +322,8 @@ Public Class Form1
     Private btnStopBot As Button
     Private btnFullSupport As Button
     Private btnBypassStuck As Button
-    Private btnRetargetNow As Button
-    Private btnPartyAutoAccept As Button
+    Private btnPartyInviteAutoAccept As Button
+    Private btnRessAutoAccept As Button
     Private btnPartyAsk As Button
     Private btnVisionLootScanner As Button
     Private btnLootScanner As Button
@@ -414,7 +414,8 @@ Public Class Form1
     Private _lastRouteRecordingSavedPath As String = ""
     Private _fullSupportModeEnabled As Boolean = False
     Private _bypassStuckTarget As Boolean = True
-    Private _partyAutoAccept As Boolean = True
+    Private _partyInviteAutoAccept As Boolean = True
+    Private _ressAutoAccept As Boolean = True
     Private _partyAskEnabled As Boolean = False
     Private _litePartyAutoAccept As Boolean = False
     Private _litePartyAskEnabled As Boolean = False
@@ -760,7 +761,8 @@ Public Class Form1
         Public Property DeathMessagePauseEnabled As Boolean = False
         Public Property HoldToShowGameWindowEnabled As Boolean = False
         Public Property HoldToShowGameWindowKey As String = "F10"
-        Public Property PromptAutoAcceptEnabled As Boolean = True
+        Public Property PartyInviteAutoAcceptEnabled As Boolean = True
+        Public Property PartyRessAutoAcceptEnabled As Boolean = True
         Public Property AskForPartyEnabled As Boolean = False
         Public Property AskForPartySeconds As Decimal = 30D
         Public Property AskForPartyText As String
@@ -4934,13 +4936,20 @@ Public Class Form1
             .BackColor = If(_bypassStuckTarget, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
             .ForeColor = Color.White
         }
-        btnRetargetNow = CreateResponsiveCenterButton("Retarget Now (E)", Color.FromArgb(155, 90, 25))
-        btnPartyAutoAccept = New Button() With {
-            .Text = If(_partyAutoAccept, "Auto Accept Party/Ress: ON", "Auto Accept Party/Ress: OFF"),
+        btnPartyInviteAutoAccept = New Button() With {
+            .Text = If(_partyInviteAutoAccept, "Auto Accept Party: ON", "Auto Accept Party: OFF"),
             .Dock = DockStyle.Fill,
             .MinimumSize = New Size(0, 38),
             .Margin = New Padding(3, 3, 3, 3),
-            .BackColor = If(_partyAutoAccept, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
+            .BackColor = If(_partyInviteAutoAccept, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
+            .ForeColor = Color.White
+        }
+        btnRessAutoAccept = New Button() With {
+            .Text = If(_ressAutoAccept, "Auto Accept Ress: ON", "Auto Accept Ress: OFF"),
+            .Dock = DockStyle.Fill,
+            .MinimumSize = New Size(0, 38),
+            .Margin = New Padding(3, 3, 3, 3),
+            .BackColor = If(_ressAutoAccept, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
             .ForeColor = Color.White
         }
         Dim lblPartyAskEvery As Label = CreateResponsiveCenterLabel("Ask Party Every (sec)", Color.White)
@@ -4979,8 +4988,8 @@ Public Class Form1
         AddHandler btnStopBot.Click, AddressOf StopClicked
         AddHandler btnFullSupport.Click, AddressOf ToggleFullSupportClicked
         AddHandler btnBypassStuck.Click, AddressOf ToggleStuckTargetBypassClicked
-        AddHandler btnRetargetNow.Click, AddressOf ManualRetargetClicked
-        AddHandler btnPartyAutoAccept.Click, AddressOf TogglePartyAutoAcceptClicked
+        AddHandler btnPartyInviteAutoAccept.Click, AddressOf TogglePartyInviteAutoAcceptClicked
+        AddHandler btnRessAutoAccept.Click, AddressOf ToggleRessAutoAcceptClicked
         AddHandler btnPartyAsk.Click, AddressOf TogglePartyAskClicked
         AddHandler txtPartyAskText.TextChanged, AddressOf PartyAskTextChanged
         AddHandler btnHelp.Click, AddressOf HelpClicked
@@ -5013,7 +5022,7 @@ Public Class Form1
         Dim controls As Control() = {
             lblFullEdition, lblRunState, lblShortcutHint, lblState, lblSystem, hpMpLayout,
             lblMobName, lblExpRate, lblRupiahsRate, btnAttack, btnSaveSettings, btnStopBot,
-            btnFullSupport, btnBypassStuck, btnRetargetNow, btnPartyAutoAccept,
+            btnFullSupport, btnBypassStuck, btnPartyInviteAutoAccept, btnRessAutoAccept,
             lblPartyAskEvery, nudPartyAskSeconds, lblPartyAskText, txtPartyAskText, btnPartyAsk, btnProfiles, btnHelp,
             holdToShowGameWindowRow
         }
@@ -5283,7 +5292,8 @@ Public Class Form1
 
         Dim keyIndex As Integer = 1
         dgvCombat.Rows.Clear()
-        _partyAutoAccept = False
+        _partyInviteAutoAccept = False
+        _ressAutoAccept = False
         _partyAskEnabled = False
         _litePartyAskEnabled = False
         _lootScannerEnabled = False
@@ -5393,7 +5403,8 @@ Public Class Form1
         UpdateLootNamePickupPointUi()
         UpdateArrowUnbundleUi()
         UpdateNotificationProviderUi()
-        UpdatePromptAutoAcceptButton()
+        UpdatePartyInviteAutoAcceptButton()
+        UpdateRessAutoAcceptButton()
         UpdatePartyAskButton()
         ApplyLiteDefaults()
         UpdateLootRejectPointUi()
@@ -8485,9 +8496,6 @@ Public Class Form1
         If btnBypassStuck IsNot Nothing Then
             btnBypassStuck.Enabled = Not _fullSupportModeEnabled
         End If
-        If btnRetargetNow IsNot Nothing Then
-            btnRetargetNow.Enabled = Not _fullSupportModeEnabled
-        End If
     End Sub
 
     Private Sub ToggleStuckTargetBypassClicked(sender As Object, e As EventArgs)
@@ -8499,32 +8507,49 @@ Public Class Form1
     End Sub
 
     Private Sub TogglePartyAutoAcceptClicked(sender As Object, e As EventArgs)
-        If sender Is btnLitePartyAutoAccept Then
-            _litePartyAutoAccept = Not _litePartyAutoAccept
-            UpdateLitePromptAutoAcceptButton()
-        Else
-            _partyAutoAccept = Not _partyAutoAccept
-            UpdatePromptAutoAcceptButton()
-        End If
+        _litePartyAutoAccept = Not _litePartyAutoAccept
+        UpdateLitePromptAutoAcceptButton()
         PushLiveConfig()
         SavePersistedListState(False)
         UpdateMainTabIndicators()
-        AppendLog(If(If(sender Is btnLitePartyAutoAccept, _litePartyAutoAccept, _partyAutoAccept), "Party/resurrection auto-accept enabled.", "Party/resurrection auto-accept disabled."))
+        AppendLog(If(_litePartyAutoAccept, "Party/resurrection auto-accept enabled.", "Party/resurrection auto-accept disabled."))
     End Sub
 
-    Private Sub UpdatePromptAutoAcceptButton()
-        UpdatePromptAutoAcceptButtonCore(btnPartyAutoAccept, _partyAutoAccept)
+    Private Sub TogglePartyInviteAutoAcceptClicked(sender As Object, e As EventArgs)
+        _partyInviteAutoAccept = Not _partyInviteAutoAccept
+        UpdatePartyInviteAutoAcceptButton()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        UpdateMainTabIndicators()
+        AppendLog(If(_partyInviteAutoAccept, "Party invite auto-accept enabled.", "Party invite auto-accept disabled."))
+    End Sub
+
+    Private Sub ToggleRessAutoAcceptClicked(sender As Object, e As EventArgs)
+        _ressAutoAccept = Not _ressAutoAccept
+        UpdateRessAutoAcceptButton()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        UpdateMainTabIndicators()
+        AppendLog(If(_ressAutoAccept, "Resurrection prompt auto-accept enabled.", "Resurrection prompt auto-accept disabled."))
+    End Sub
+
+    Private Sub UpdatePartyInviteAutoAcceptButton()
+        UpdatePromptAutoAcceptButtonCore(btnPartyInviteAutoAccept, _partyInviteAutoAccept, "Auto Accept Party")
+    End Sub
+
+    Private Sub UpdateRessAutoAcceptButton()
+        UpdatePromptAutoAcceptButtonCore(btnRessAutoAccept, _ressAutoAccept, "Auto Accept Ress")
     End Sub
 
     Private Sub UpdateLitePromptAutoAcceptButton()
-        UpdatePromptAutoAcceptButtonCore(btnLitePartyAutoAccept, _litePartyAutoAccept)
+        UpdatePromptAutoAcceptButtonCore(btnLitePartyAutoAccept, _litePartyAutoAccept, "Auto Accept Party/Ress")
     End Sub
 
-    Private Shared Sub UpdatePromptAutoAcceptButtonCore(target As Button, isEnabled As Boolean)
+    Private Shared Sub UpdatePromptAutoAcceptButtonCore(target As Button, isEnabled As Boolean, labelPrefix As String)
         If target Is Nothing Then
             Return
         End If
-        target.Text = If(isEnabled, "Auto Accept Party/Ress: ON", "Auto Accept Party/Ress: OFF")
+        target.Text = $"{labelPrefix}: {If(isEnabled, "ON", "OFF")}"
         target.BackColor = If(isEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
     End Sub
 
@@ -9516,15 +9541,6 @@ Public Class Form1
         End Select
     End Function
 
-    Private Sub ManualRetargetClicked(sender As Object, e As EventArgs)
-        Dim title As String = GetSelectedWindowTitleForFallback(BotEdition.Full)
-        If _fullEngine.ManualRetarget(title) Then
-            AppendLog("Manual retarget requested (E sent).")
-        Else
-            AppendLog("Manual retarget failed: game window not found.")
-        End If
-    End Sub
-
     Private Sub ToggleOverlayClicked(sender As Object, e As EventArgs)
         If _overlayForm IsNot Nothing AndAlso Not _overlayForm.IsDisposed Then
             _overlayForm.Close()
@@ -9756,7 +9772,8 @@ Public Class Form1
             $"Running: {st.Running}{Environment.NewLine}" &
             $"FullSupportModeEnabled: {_fullSupportModeEnabled}{Environment.NewLine}" &
             $"BypassStuckTarget: {_bypassStuckTarget}{Environment.NewLine}" &
-            $"PromptAutoAccept (Party/Ress): {_partyAutoAccept}{Environment.NewLine}" &
+            $"PromptAutoAccept (Party): {_partyInviteAutoAccept}{Environment.NewLine}" &
+            $"PromptAutoAccept (Ress): {_ressAutoAccept}{Environment.NewLine}" &
             $"AutoAskPartyEnabled: {_partyAskEnabled}{Environment.NewLine}" &
             $"AutoAskPartyIntervalSec: {If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value.ToString(), "30")}{Environment.NewLine}" &
             $"AutoAskPartyText: {GetPartyAskCommandText()}{Environment.NewLine}" &
@@ -11036,9 +11053,14 @@ Public Class Form1
 
             If NativeMethods.SetCursorPos(clickPoint.X, clickPoint.Y) Then
                 Thread.Sleep(80)
-                NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTDOWN, CUInt(clickPoint.X), CUInt(clickPoint.Y), 0UI, UIntPtr.Zero)
+                ' dx/dy are 0 (not the click coordinates) because MOUSEEVENTF_ABSOLUTE isn't set, so
+                ' Windows ignores them here anyway - the cursor was already positioned via SetCursorPos
+                ' just above. Passing the coordinates through CUInt() used to throw an OverflowException
+                ' the moment either was negative, which happens whenever the game window sits on a
+                ' monitor positioned left of/above the primary monitor (negative absolute desktop coords).
+                NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTDOWN, 0UI, 0UI, 0UI, UIntPtr.Zero)
                 Thread.Sleep(70)
-                NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTUP, CUInt(clickPoint.X), CUInt(clickPoint.Y), 0UI, UIntPtr.Zero)
+                NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTUP, 0UI, 0UI, 0UI, UIntPtr.Zero)
                 Dim description As String = If(String.IsNullOrWhiteSpace(stepInfo.Description), "", $" [{stepInfo.Description.Trim()}]")
                 Dim coordinateNote As String = If(mappedToClient, $"game {stepInfo.X},{stepInfo.Y} -> screen {clickPoint.X},{clickPoint.Y}", $"screen {clickPoint.X},{clickPoint.Y}")
                 AppendLogSafe($"Auto relaunch post-launch click {i + 1}{description} sent at {coordinateNote} ({trigger}).")
@@ -11509,9 +11531,12 @@ Public Class Form1
             End If
 
             Thread.Sleep(60)
-            NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTDOWN, CUInt(screenPoint.X), CUInt(screenPoint.Y), 0UI, UIntPtr.Zero)
+            ' dx/dy are 0 (not the click coordinates) - see the comment on the matching auto-relaunch
+            ' click code for why CUInt() on the actual coordinates was a crash risk on multi-monitor
+            ' setups where the game window can have negative absolute screen coordinates.
+            NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTDOWN, 0UI, 0UI, 0UI, UIntPtr.Zero)
             Thread.Sleep(90)
-            NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTUP, CUInt(screenPoint.X), CUInt(screenPoint.Y), 0UI, UIntPtr.Zero)
+            NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTUP, 0UI, 0UI, 0UI, UIntPtr.Zero)
             Return True
         Catch
             Return False
@@ -11770,7 +11795,8 @@ Public Class Form1
         cfg.ForcedRetargetMs = 550
         cfg.HpBar = CloneRectRegion(If(_liteHpBarRegion, BotConfig.DefaultHpBarRect()))
         cfg.MpBar = CloneRectRegion(If(_liteMpBarRegion, BotConfig.DefaultMpBarRect()))
-        cfg.PartyAutoAcceptEnabled = False
+        cfg.PartyInviteAutoAcceptEnabled = False
+        cfg.PartyRessAutoAcceptEnabled = False
         cfg.PartyAskEnabled = False
         cfg.PartyAskText = DefaultPartyAskCommand
         cfg.NotificationProvider = GetNotificationProviderName()
@@ -11848,7 +11874,8 @@ Public Class Form1
         cfg.EvadeDadatiEnabled = (chkEvadeDadati IsNot Nothing AndAlso chkEvadeDadati.Checked)
         cfg.FullSupportModeEnabled = _fullSupportModeEnabled
         cfg.BypassStuckTarget = _bypassStuckTarget
-        cfg.PartyAutoAcceptEnabled = _partyAutoAccept
+        cfg.PartyInviteAutoAcceptEnabled = _partyInviteAutoAccept
+        cfg.PartyRessAutoAcceptEnabled = _ressAutoAccept
         cfg.PartyAskEnabled = _partyAskEnabled
         cfg.PartyAskIntervalMs = CInt(Math.Round(CDbl(If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D)) * 1000.0))
         cfg.PartyAskText = GetPartyAskCommandText()
@@ -12887,8 +12914,10 @@ Public Class Form1
             Dim parsedHoldToShowKey As Keys
             _holdToShowGameWindowKey = If([Enum].TryParse(Of Keys)(state.HoldToShowGameWindowKey, parsedHoldToShowKey), parsedHoldToShowKey, Keys.F10)
             UpdateHoldToShowGameWindowUi()
-            _partyAutoAccept = state.PromptAutoAcceptEnabled
-            UpdatePromptAutoAcceptButton()
+            _partyInviteAutoAccept = state.PartyInviteAutoAcceptEnabled
+            _ressAutoAccept = state.PartyRessAutoAcceptEnabled
+            UpdatePartyInviteAutoAcceptButton()
+            UpdateRessAutoAcceptButton()
             _partyAskEnabled = state.AskForPartyEnabled
             If nudPartyAskSeconds IsNot Nothing Then
                 Dim boundedAskSeconds As Decimal = Math.Max(nudPartyAskSeconds.Minimum, Math.Min(nudPartyAskSeconds.Maximum, state.AskForPartySeconds))
@@ -13036,7 +13065,8 @@ Public Class Form1
                 .DeathMessagePauseEnabled = _deathMessagePauseEnabled,
                 .HoldToShowGameWindowEnabled = _holdToShowGameWindowEnabled,
                 .HoldToShowGameWindowKey = _holdToShowGameWindowKey.ToString(),
-                .PromptAutoAcceptEnabled = _partyAutoAccept,
+                .PartyInviteAutoAcceptEnabled = _partyInviteAutoAccept,
+                .PartyRessAutoAcceptEnabled = _ressAutoAccept,
                 .AskForPartyEnabled = _partyAskEnabled,
                 .AskForPartySeconds = If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D),
                                 .AskForPartyText = GetPartyAskCommandText(),
@@ -13257,8 +13287,10 @@ Public Class Form1
             btnBypassStuck.BackColor = If(_bypassStuckTarget, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
         End If
 
-        _partyAutoAccept = cfg.PartyAutoAcceptEnabled
-        UpdatePromptAutoAcceptButton()
+        _partyInviteAutoAccept = cfg.PartyInviteAutoAcceptEnabled
+        _ressAutoAccept = cfg.PartyRessAutoAcceptEnabled
+        UpdatePartyInviteAutoAcceptButton()
+        UpdateRessAutoAcceptButton()
         _partyAskEnabled = cfg.PartyAskEnabled
         SetNumericControlValue(nudPartyAskSeconds, CDec(Math.Max(1, cfg.PartyAskIntervalMs) / 1000.0))
         If txtPartyAskText IsNot Nothing Then
