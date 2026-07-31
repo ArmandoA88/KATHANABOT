@@ -63,6 +63,22 @@ Public Class ActionRule
     Public Property TriggerPercent As Integer = 40
 End Class
 
+Public Class BuffWatchSlot
+    Public Property Enabled As Boolean = True
+    Public Property Name As String = ""
+    Public Property IconRelativePath As String = ""
+    Public Property Tolerance As Integer = 45
+    Public Property KeyName As String = ""
+    Public Property CooldownSec As Decimal = 3D
+    Public Property SelfClickBeforeCast As Boolean = False
+End Class
+
+Public Class BuffIconLibraryEntry
+    Public Property Category As String = ""
+    Public Property Name As String = ""
+    Public Property RelativePath As String = ""
+End Class
+
 Public Enum LevelingAgentState
     Disabled
     Searching
@@ -292,6 +308,12 @@ Public Class BotConfig
     ' means uncalibrated: every point is clicked unconditionally, matching the original behavior.
     Public Property ArrowBundleIconBase64 As String = ""
     Public Property ArrowBundleIconTolerance As Integer = 45
+    Public Property BuffWatchEnabled As Boolean = False
+    Public Property BuffWatchSlots As List(Of BuffWatchSlot) = New List(Of BuffWatchSlot)()
+    Public Property BuffAreaRect As RectRegion = New RectRegion(0, 0, 300, 40)
+    Public Property BuffWatchSelfClickEnabled As Boolean = False
+    Public Property BuffWatchSelfClickX As Integer = -1
+    Public Property BuffWatchSelfClickY As Integer = -1
     Public Property LootAllowedNames As List(Of String) = New List(Of String)()
     Public Property LootNameMatchThresholdPercent As Integer = 80
     Public Property PartyAutoAcceptEnabled As Boolean = True
@@ -587,6 +609,7 @@ Friend Module NativeMethods
     Friend Const MOUSEEVENTF_RIGHTDOWN As UInteger = &H8UI
     Friend Const MOUSEEVENTF_RIGHTUP As UInteger = &H10UI
     Friend Const SW_RESTORE As Integer = 9
+    Friend Const SW_MINIMIZE As Integer = 6
 
     <StructLayout(LayoutKind.Sequential)>
     Friend Structure POINT
@@ -623,6 +646,10 @@ Friend Module NativeMethods
     End Function
 
     <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function BringWindowToTop(hWnd As IntPtr) As Boolean
+    End Function
+
+    <DllImport("user32.dll", SetLastError:=True)>
     Friend Function GetCursorPos(ByRef lpPoint As POINT) As Boolean
     End Function
 
@@ -633,6 +660,27 @@ Friend Module NativeMethods
     <DllImport("user32.dll", SetLastError:=True)>
     Friend Sub mouse_event(dwFlags As UInteger, dx As UInteger, dy As UInteger, dwData As UInteger, dwExtraInfo As UIntPtr)
     End Sub
+
+    Friend Const VK_MENU As Byte = &H12
+    Friend Const KEYEVENTF_KEYUP As UInteger = &H2UI
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Sub keybd_event(bVk As Byte, bScan As Byte, dwFlags As UInteger, dwExtraInfo As UIntPtr)
+    End Sub
+
+    Friend Const SPI_GETFOREGROUNDLOCKTIMEOUT As UInteger = &H2000UI
+    Friend Const SPI_SETFOREGROUNDLOCKTIMEOUT As UInteger = &H2001UI
+
+    ' SystemParametersInfo's pvParam is polymorphic per-action: for GET it is a pointer that receives
+    ' the value, but for SET of *ForegroundLockTimeout specifically it IS the value itself (not a
+    ' pointer to it) - hence two distinct P/Invoke signatures bound to the same native entry point.
+    <DllImport("user32.dll", EntryPoint:="SystemParametersInfoW", SetLastError:=True)>
+    Friend Function SystemParametersInfoGet(uiAction As UInteger, uiParam As UInteger, ByRef pvParam As UInteger, fWinIni As UInteger) As Boolean
+    End Function
+
+    <DllImport("user32.dll", EntryPoint:="SystemParametersInfoW", SetLastError:=True)>
+    Friend Function SystemParametersInfoSet(uiAction As UInteger, uiParam As UInteger, pvParam As UIntPtr, fWinIni As UInteger) As Boolean
+    End Function
 
     Friend Delegate Function EnumWindowsProc(hWnd As IntPtr, lParam As IntPtr) As Boolean
 
@@ -888,6 +936,7 @@ Public Class BotEngine
     Private Shared ReadOnly _captureMethodByWindow As New Dictionary(Of IntPtr, CaptureClientMethod)()
     Private Shared _captureBackendPreference As String = "auto"
     Private Shared ReadOnly NavigationRouteStorageRoot As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel", "navigation_routes")
+    Public Shared ReadOnly BuffIconLibraryRoot As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel", "buff_icons")
     Public Shared ReadOnly SessionHistoryFilePath As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel", "session_history.csv")
     Private Shared ReadOnly _sessionHistorySync As New Object()
     Private Shared ReadOnly NavigationRouteJsonOptions As New JsonSerializerOptions With {.WriteIndented = True}
@@ -945,6 +994,8 @@ Public Class BotEngine
     Private _arrowUnbundleNextIndex As Integer = 0
     Private _cachedArrowBundleIconBase64 As String = ""
     Private _cachedArrowBundleIcon As Bitmap = Nothing
+    Private ReadOnly _lastBuffWatchAttemptBySlot As New Dictionary(Of Integer, DateTime)()
+    Private ReadOnly _cachedBuffWatchIcons As New Dictionary(Of String, Bitmap)(StringComparer.OrdinalIgnoreCase)
     Private _firstHitPending As Boolean = False
     Private _firstHitTargetSignature As String = ""
     Private _firstHitWindowUntil As DateTime = DateTime.MinValue
@@ -2644,6 +2695,7 @@ Public Class BotEngine
 
             TryHandleLootPickup(cfg, hwnd, now, actionSent OrElse _firstHitPending)
             TryHandleArrowUnbundle(cfg, hwnd, fullClientWidth, fullClientHeight, now, actionSent OrElse _firstHitPending)
+            TryHandleBuffWatch(cfg, hwnd, now)
             UpdateLevelingAgentRuntimeState(cfg, now, hpPct, mpPct, targetWindowVisible, effectiveTargetValid, actionSent, forcedRetarget OrElse unreachableTriggered, unreachableLockActive, reason)
 
             Dim statsOcrDue As Boolean = IsStatsOcrDue(now)
@@ -6795,6 +6847,245 @@ Public Class BotEngine
             Return True
         End Using
     End Function
+
+    Public Shared Function SanitizeBuffIconIdentifier(rawValue As String) As String
+        Dim cleaned As String = Regex.Replace(If(rawValue, "").Trim().ToLowerInvariant(), "[^a-z0-9]+", "_").Trim("_"c)
+        If cleaned = "" Then
+            Return "icon"
+        End If
+        Return cleaned
+    End Function
+
+    ' Walks buff_icons\<category>\*.png on disk (mirrors the navigation_routes folder-per-category
+    ' convention) rather than duplicating icon Base64 blobs into the main settings JSON.
+    Public Shared Function ScanBuffIconLibrary() As List(Of BuffIconLibraryEntry)
+        Dim entries As New List(Of BuffIconLibraryEntry)()
+        Try
+            If Not Directory.Exists(BuffIconLibraryRoot) Then
+                Return entries
+            End If
+            For Each categoryDir As String In Directory.GetDirectories(BuffIconLibraryRoot)
+                Dim category As String = Path.GetFileName(categoryDir)
+                For Each filePath As String In Directory.GetFiles(categoryDir, "*.png")
+                    entries.Add(New BuffIconLibraryEntry() With {
+                        .Category = category,
+                        .Name = Path.GetFileNameWithoutExtension(filePath),
+                        .RelativePath = Path.Combine(category, Path.GetFileName(filePath))
+                    })
+                Next
+            Next
+        Catch
+        End Try
+        Return entries
+    End Function
+
+    ' Loads a fresh (uncached, caller-owned) copy of a library icon for UI preview purposes - the
+    ' engine's own GetBuffWatchReferenceIcon caches per BotEngine instance for matching performance, but
+    ' UI thumbnails are refreshed rarely enough that a plain load is simpler and avoids sharing a Bitmap
+    ' instance between the UI thread and the engine loop.
+    Public Shared Function LoadBuffIconPreview(relativePath As String) As Bitmap
+        Dim key As String = If(relativePath, "").Trim()
+        If key = "" Then
+            Return Nothing
+        End If
+        Try
+            Dim fullPath As String = Path.Combine(BuffIconLibraryRoot, key)
+            If Not File.Exists(fullPath) Then
+                Return Nothing
+            End If
+            Using raw As New Bitmap(fullPath)
+                Return New Bitmap(raw)
+            End Using
+        Catch
+            Return Nothing
+        End Try
+    End Function
+
+    ' Saves a captured/imported icon bitmap into the library, returning its relative path (category\file.png).
+    Public Shared Function SaveBuffIconToLibrary(category As String, name As String, icon As Bitmap) As String
+        Dim safeCategory As String = SanitizeBuffIconIdentifier(category)
+        Dim safeName As String = SanitizeBuffIconIdentifier(name)
+        Dim categoryDir As String = Path.Combine(BuffIconLibraryRoot, safeCategory)
+        Directory.CreateDirectory(categoryDir)
+        Dim fileName As String = safeName & ".png"
+        Dim fullPath As String = Path.Combine(categoryDir, fileName)
+        Dim counter As Integer = 1
+        While File.Exists(fullPath)
+            counter += 1
+            fileName = $"{safeName}_{counter}.png"
+            fullPath = Path.Combine(categoryDir, fileName)
+        End While
+        icon.Save(fullPath, ImageFormat.Png)
+        Return Path.Combine(safeCategory, fileName)
+    End Function
+
+    ' Decodes and caches a buff icon reference image from disk (mirrors GetArrowBundleReferenceIcon's
+    ' caching/normalize-to-24bpp pattern, but the source is a PNG file under BuffIconLibraryRoot instead
+    ' of a Base64 string embedded in config).
+    Private Function GetBuffWatchReferenceIcon(relativePath As String) As Bitmap
+        Dim key As String = If(relativePath, "").Trim()
+        If key = "" Then
+            Return Nothing
+        End If
+
+        Dim cached As Bitmap = Nothing
+        If _cachedBuffWatchIcons.TryGetValue(key, cached) AndAlso cached IsNot Nothing Then
+            Return cached
+        End If
+
+        Try
+            Dim fullPath As String = Path.Combine(BuffIconLibraryRoot, key)
+            If Not File.Exists(fullPath) Then
+                Return Nothing
+            End If
+
+            Using raw As New Bitmap(fullPath)
+                Dim normalized As New Bitmap(raw.Width, raw.Height, PixelFormat.Format24bppRgb)
+                Using g As Graphics = Graphics.FromImage(normalized)
+                    g.DrawImage(raw, New Rectangle(0, 0, raw.Width, raw.Height))
+                End Using
+                _cachedBuffWatchIcons(key) = normalized
+                Return normalized
+            End Using
+        Catch
+            Return Nothing
+        End Try
+    End Function
+
+    ' Searches the whole buff-area crop for the reference icon rather than checking one fixed point -
+    ' buff bars typically shift remaining icons left as buffs expire, so a fixed-position check would
+    ' break as soon as any earlier buff in the row expired. Tests every pixel offset (stride 1): icons
+    ' are static bitmaps, not sub-pixel rendered, so the truly correct alignment is a near-zero-diff
+    ' match while anything even 1px off is usually a much worse match - a coarser stride can therefore
+    ' step right over the one offset that would have matched and land only on near-miss offsets, causing
+    ' the icon to be reported as "missing" even while clearly present. Performance is a non-issue here
+    ' since this only runs once per slot's cooldown window, not every engine loop tick.
+    Private Shared Function FindIconWithinArea(area As Bitmap, referenceIcon As Bitmap, tolerance As Integer) As Boolean
+        If area Is Nothing OrElse referenceIcon Is Nothing Then
+            Return False
+        End If
+        If referenceIcon.Width > area.Width OrElse referenceIcon.Height > area.Height Then
+            Return False
+        End If
+
+        Const stride As Integer = 1
+        Try
+            Using areaBuffer As New BitmapReadBuffer(area), refBuffer As New BitmapReadBuffer(referenceIcon)
+                Dim maxY As Integer = area.Height - referenceIcon.Height
+                Dim maxX As Integer = area.Width - referenceIcon.Width
+                Dim y As Integer = 0
+                While y <= maxY
+                    Dim x As Integer = 0
+                    While x <= maxX
+                        If MatchesAt(areaBuffer, refBuffer, x, y, referenceIcon.Width, referenceIcon.Height, tolerance) Then
+                            Return True
+                        End If
+                        x += stride
+                    End While
+                    y += stride
+                End While
+            End Using
+        Catch
+            Return False
+        End Try
+        Return False
+    End Function
+
+    Private Shared Function MatchesAt(areaBuffer As BitmapReadBuffer, refBuffer As BitmapReadBuffer, offsetX As Integer, offsetY As Integer, w As Integer, h As Integer, tolerance As Integer) As Boolean
+        Dim totalDiff As Long = 0
+        For yy As Integer = 0 To h - 1
+            For xx As Integer = 0 To w - 1
+                Dim ra As Integer, ga As Integer, ba As Integer
+                Dim rb As Integer, gb As Integer, bb As Integer
+                areaBuffer.GetRgb(offsetX + xx, offsetY + yy, ra, ga, ba)
+                refBuffer.GetRgb(xx, yy, rb, gb, bb)
+                totalDiff += Math.Abs(ra - rb) + Math.Abs(ga - gb) + Math.Abs(ba - bb)
+            Next
+        Next
+        Dim average As Double = totalDiff / (w * h * 3.0)
+        Return average <= tolerance
+    End Function
+
+    ' Modeled directly on TryHandleArrowUnbundle: cheap per-slot cooldown gate first, then only decode/
+    ' capture/compare when the cooldown has actually elapsed. Unlike arrow-unbundle (which clicks when a
+    ' fixed point still LOOKS like a bundle), this recasts when a configured icon is NOT found anywhere
+    ' in the shared buff area - i.e. the buff has expired.
+    Private Sub TryHandleBuffWatch(cfg As BotConfig, hwnd As IntPtr, now As DateTime)
+        If cfg Is Nothing OrElse hwnd = IntPtr.Zero OrElse Not cfg.BuffWatchEnabled Then
+            Return
+        End If
+        If cfg.BuffAreaRect Is Nothing OrElse cfg.BuffAreaRect.W <= 0 OrElse cfg.BuffAreaRect.H <= 0 Then
+            Return
+        End If
+        If cfg.BuffWatchSlots Is Nothing OrElse cfg.BuffWatchSlots.Count = 0 Then
+            Return
+        End If
+
+        Dim anyDue As Boolean = False
+        For i As Integer = 0 To cfg.BuffWatchSlots.Count - 1
+            Dim slot As BuffWatchSlot = cfg.BuffWatchSlots(i)
+            If slot Is Nothing OrElse Not slot.Enabled Then
+                Continue For
+            End If
+            Dim cooldownMs As Integer = Math.Max(500, CInt(Math.Round(Math.Max(0.5D, slot.CooldownSec) * 1000D)))
+            Dim lastAttempt As DateTime = DateTime.MinValue
+            If _lastBuffWatchAttemptBySlot.TryGetValue(i, lastAttempt) AndAlso (now - lastAttempt).TotalMilliseconds < cooldownMs Then
+                Continue For
+            End If
+            anyDue = True
+            Exit For
+        Next
+        If Not anyDue Then
+            Return
+        End If
+
+        Using areaCrop As Bitmap = CaptureClientRegion(hwnd, cfg.BuffAreaRect)
+            If areaCrop Is Nothing Then
+                Return
+            End If
+
+            For i As Integer = 0 To cfg.BuffWatchSlots.Count - 1
+                Dim slot As BuffWatchSlot = cfg.BuffWatchSlots(i)
+                If slot Is Nothing OrElse Not slot.Enabled Then
+                    Continue For
+                End If
+                Dim keyName As String = If(slot.KeyName, "").Trim()
+                Dim iconRelativePath As String = If(slot.IconRelativePath, "").Trim()
+                If keyName = "" OrElse iconRelativePath = "" Then
+                    Continue For
+                End If
+
+                Dim cooldownMs As Integer = Math.Max(500, CInt(Math.Round(Math.Max(0.5D, slot.CooldownSec) * 1000D)))
+                Dim lastAttempt As DateTime = DateTime.MinValue
+                If _lastBuffWatchAttemptBySlot.TryGetValue(i, lastAttempt) AndAlso (now - lastAttempt).TotalMilliseconds < cooldownMs Then
+                    Continue For
+                End If
+
+                Dim referenceIcon As Bitmap = GetBuffWatchReferenceIcon(iconRelativePath)
+                If referenceIcon Is Nothing Then
+                    Continue For
+                End If
+
+                Dim found As Boolean = FindIconWithinArea(areaCrop, referenceIcon, Math.Max(1, slot.Tolerance))
+                _lastBuffWatchAttemptBySlot(i) = now
+                If found Then
+                    Continue For
+                End If
+
+                Dim slotLabel As String = If(String.IsNullOrWhiteSpace(slot.Name), $"slot {i + 1}", slot.Name)
+                If slot.SelfClickBeforeCast AndAlso cfg.BuffWatchSelfClickEnabled AndAlso cfg.BuffWatchSelfClickX >= 0 AndAlso cfg.BuffWatchSelfClickY >= 0 Then
+                    ClickClientPoint(hwnd, cfg.BuffWatchSelfClickX, cfg.BuffWatchSelfClickY)
+                End If
+
+                If SendKey(hwnd, keyName, FastKeyPressMs) Then
+                    SetLastAction($"Buff watch recast ""{slotLabel}"" ({keyName})")
+                    RaiseEvent LogLine($"Buff watch: ""{slotLabel}"" icon not found in buff area - sent {keyName} to recast.")
+                Else
+                    RaiseEvent LogLine($"Buff watch: ""{slotLabel}"" icon missing but failed to send {keyName}.")
+                End If
+            Next
+        End Using
+    End Sub
 
     Private Function GetCachedPranaExpPercent() As Double
         If _expOcrTask IsNot Nothing AndAlso _expOcrTask.IsCompleted Then

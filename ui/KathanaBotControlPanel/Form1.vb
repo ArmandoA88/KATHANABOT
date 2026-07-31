@@ -98,6 +98,7 @@ Public Class Form1
     Private _autoLootTab As TabPage
     Private _levelingTab As TabPage
     Private _holdPlaceTab As TabPage
+    Private _buffWatchTab As TabPage
     Private _diagnosticsTab As TabPage
     Private _updateTab As TabPage
     Private Const HelpScopeAll As String = "all"
@@ -181,6 +182,19 @@ Public Class Form1
     Private lblResurrectOkPoint As Label
     Private chkResurrectOverlay As CheckBox
     Private btnDeathMessagePause As Button
+    Private btnHoldToShowGameWindow As Button
+    Private cboHoldToShowGameWindowKey As ComboBox
+    Private chkBuffWatchEnabled As CheckBox
+    Private dgvBuffWatch As DataGridView
+    Private btnAddBuffWatchSlot As Button
+    Private btnRemoveBuffWatchSlot As Button
+    Private btnClearBuffWatchSlots As Button
+    Private chkBuffWatchSelfClickEnabled As CheckBox
+    Private btnSetBuffWatchSelfClickPoint As Button
+    Private btnClearBuffWatchSelfClickPoint As Button
+    Private lblBuffWatchSelfClickPoint As Label
+    Private btnCalibrateBuffArea As Button
+    Private lblBuffWatchStatus As Label
 
     Private NotInheritable Class ChatLanguageOption
         Public Property Label As String
@@ -455,6 +469,23 @@ Public Class Form1
     Private _resurrectOverlayEnabled As Boolean = False
     Private _resurrectOverlayForm As AutoRelaunchClickOverlayForm
     Private _deathMessagePauseEnabled As Boolean = False
+    Private _buffWatchEnabled As Boolean = False
+    Private _buffWatchSlots As New List(Of BuffWatchSlot)()
+    Private _buffWatchSelfClickEnabled As Boolean = False
+    Private _isPickingBuffWatchSelfClickPoint As Boolean = False
+    Private _buffWatchSelfClickLeftMouseWasDown As Boolean = False
+    Private _buffWatchSelfClickX As Integer = -1
+    Private _buffWatchSelfClickY As Integer = -1
+    Private _holdToShowGameWindowEnabled As Boolean = False
+    Private _holdToShowGameWindowKey As Keys = Keys.F10
+    Private _holdToShowGameWindowWasDown As Boolean = False
+    Private _holdToShowGameWindowTarget As IntPtr = IntPtr.Zero
+    Private _holdToShowGameWindowPreviousForeground As IntPtr = IntPtr.Zero
+    Private _holdToShowGameWindowWasMinimized As Boolean = False
+    Private _holdToShowGameWindowCachedTarget As IntPtr = IntPtr.Zero
+    Private ReadOnly _holdToShowGameWindowSyncRoot As New Object()
+    Private _holdToShowGameWindowThread As System.Threading.Thread
+    Private _holdToShowGameWindowThreadStop As Boolean = False
     Private _isPickingAutoRelaunchClick As Boolean = False
     Private _autoRelaunchRightMouseWasDown As Boolean = False
     Private _pendingAutoRelaunchClickRowIndex As Integer = -1
@@ -717,11 +748,18 @@ Public Class Form1
         Public Property ArrowUnbundlePoints As List(Of LootScanPoint) = New List(Of LootScanPoint)()
         Public Property ArrowBundleIconBase64 As String = ""
         Public Property ArrowBundleIconTolerance As Decimal = 45D
+        Public Property BuffWatchEnabled As Boolean = False
+        Public Property BuffWatchSlots As List(Of BuffWatchSlot) = New List(Of BuffWatchSlot)()
+        Public Property BuffWatchSelfClickEnabled As Boolean = False
+        Public Property BuffWatchSelfClickX As Integer = -1
+        Public Property BuffWatchSelfClickY As Integer = -1
         Public Property ResurrectAutoAcceptEnabled As Boolean = False
         Public Property ResurrectOkPointX As Integer = -1
         Public Property ResurrectOkPointY As Integer = -1
         Public Property ResurrectOverlayEnabled As Boolean = False
         Public Property DeathMessagePauseEnabled As Boolean = False
+        Public Property HoldToShowGameWindowEnabled As Boolean = False
+        Public Property HoldToShowGameWindowKey As String = "F10"
         Public Property PromptAutoAcceptEnabled As Boolean = True
         Public Property AskForPartyEnabled As Boolean = False
         Public Property AskForPartySeconds As Decimal = 30D
@@ -846,6 +884,21 @@ Public Class Form1
         _enterToggleTimer.Interval = 45
         AddHandler _enterToggleTimer.Tick, AddressOf EnterToggleTimerTick
         _enterToggleTimer.Start()
+
+        ' Runs on one dedicated, persistent background thread - not a thread-pool timer and not the
+        ' WinForms message-loop timer above. Two things this avoids: (1) WM_TIMER-based timers get
+        ' coalesced/throttled by Windows once the app is in the background, which made key-release
+        ' detection lag whenever KathanaBot itself wasn't focused; (2) the AttachThreadInput trick used
+        ' to force the game foreground is tied to a specific OS thread ID - a thread-pool timer can (and
+        ' does) run its callback on a different pool thread each tick, so the thread that attaches on
+        ' key-down often isn't the same one detaching/restoring focus on key-up, which left the restore
+        ' call failing silently and the game window stuck in front. A single long-lived thread guarantees
+        ' the same OS thread handles both halves of every hold.
+        _holdToShowGameWindowThread = New System.Threading.Thread(AddressOf HoldToShowGameWindowThreadLoop) With {
+            .IsBackground = True,
+            .Name = "HoldToShowGameWindow"
+        }
+        _holdToShowGameWindowThread.Start()
 
         _logFlushTimer.Interval = LogFlushIntervalMs
         AddHandler _logFlushTimer.Tick, AddressOf LogFlushTimerTick
@@ -1941,6 +1994,8 @@ Public Class Form1
         _mainTabs.TabPages.Add(_levelingTab)
         _holdPlaceTab = BuildHoldPlaceTab()
         _mainTabs.TabPages.Add(_holdPlaceTab)
+        _buffWatchTab = BuildBuffWatchTab()
+        _mainTabs.TabPages.Add(_buffWatchTab)
         _diagnosticsTab = BuildDiagnosticsTab()
         _mainTabs.TabPages.Add(_diagnosticsTab)
         _updateTab = BuildUpdateTab()
@@ -4476,6 +4531,229 @@ Public Class Form1
         Return tab
     End Function
 
+    Private Function BuildBuffWatchTab() As TabPage
+        Dim tab As New TabPage("Buff Watch") With {.BackColor = Color.FromArgb(20, 20, 20)}
+        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3, .Padding = New Padding(8)}
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 150.0F))
+        tab.Controls.Add(root)
+
+        Dim topRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
+        chkBuffWatchEnabled = New CheckBox() With {.Text = "Enable Buff Watch", .AutoSize = True, .ForeColor = Color.Gainsboro, .Margin = New Padding(3, 10, 14, 3)}
+        btnCalibrateBuffArea = New Button() With {.Text = "Calibrate Buff Area (Vision tab)", .AutoSize = True, .BackColor = Color.FromArgb(70, 70, 70), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat, .Margin = New Padding(3, 4, 3, 3)}
+        topRow.Controls.Add(chkBuffWatchEnabled)
+        topRow.Controls.Add(btnCalibrateBuffArea)
+        root.Controls.Add(topRow, 0, 0)
+
+        dgvBuffWatch = New DataGridView() With {
+            .Dock = DockStyle.Fill,
+            .AllowUserToAddRows = False,
+            .AllowUserToDeleteRows = False,
+            .RowHeadersVisible = False,
+            .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+            .EditMode = DataGridViewEditMode.EditOnEnter,
+            .BackgroundColor = Color.FromArgb(20, 20, 20)
+        }
+        dgvBuffWatch.RowTemplate.Height = 40
+        Dim iconColumn As New DataGridViewImageColumn() With {.Name = "Icon", .HeaderText = "Icon", .ImageLayout = DataGridViewImageCellLayout.Zoom, .FillWeight = 45.0F}
+        dgvBuffWatch.Columns.Add(iconColumn)
+        dgvBuffWatch.Columns.Add(New DataGridViewCheckBoxColumn() With {.Name = "Enabled", .FillWeight = 45.0F})
+        dgvBuffWatch.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Name", .ReadOnly = True, .FillWeight = 110.0F})
+        dgvBuffWatch.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Key", .HeaderText = "Recast Key", .FillWeight = 70.0F})
+        dgvBuffWatch.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Tolerance", .FillWeight = 65.0F})
+        dgvBuffWatch.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "CooldownSec", .HeaderText = "Cooldown (s)", .FillWeight = 75.0F})
+        dgvBuffWatch.Columns.Add(New DataGridViewCheckBoxColumn() With {.Name = "SelfClick", .HeaderText = "Self-Click", .FillWeight = 60.0F})
+        root.Controls.Add(dgvBuffWatch, 0, 1)
+
+        Dim bottomLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3}
+        bottomLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
+        bottomLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
+        bottomLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        Dim buttonRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True}
+        btnAddBuffWatchSlot = New Button() With {.Text = "Add From Library...", .AutoSize = True, .BackColor = Color.FromArgb(30, 120, 80), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat}
+        btnRemoveBuffWatchSlot = New Button() With {.Text = "Remove Selected", .AutoSize = True, .BackColor = Color.FromArgb(120, 45, 45), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat}
+        btnClearBuffWatchSlots = New Button() With {.Text = "Clear All", .AutoSize = True, .BackColor = Color.FromArgb(70, 70, 70), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat}
+        buttonRow.Controls.Add(btnAddBuffWatchSlot)
+        buttonRow.Controls.Add(btnRemoveBuffWatchSlot)
+        buttonRow.Controls.Add(btnClearBuffWatchSlots)
+        bottomLayout.Controls.Add(buttonRow, 0, 0)
+
+        Dim selfClickRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True}
+        chkBuffWatchSelfClickEnabled = New CheckBox() With {.Text = "Enable self-click before recast", .AutoSize = True, .ForeColor = Color.Gainsboro, .Margin = New Padding(3, 8, 14, 3)}
+        btnSetBuffWatchSelfClickPoint = New Button() With {.Text = "Set Self-Click Point", .AutoSize = True, .BackColor = Color.FromArgb(45, 95, 140), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat}
+        btnClearBuffWatchSelfClickPoint = New Button() With {.Text = "Clear", .AutoSize = True, .BackColor = Color.FromArgb(70, 70, 70), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat, .Enabled = False}
+        lblBuffWatchSelfClickPoint = New Label() With {.Text = "Self-Click Point: (not set)", .AutoSize = True, .ForeColor = Color.LightSteelBlue, .Margin = New Padding(6, 8, 3, 3)}
+        selfClickRow.Controls.Add(chkBuffWatchSelfClickEnabled)
+        selfClickRow.Controls.Add(btnSetBuffWatchSelfClickPoint)
+        selfClickRow.Controls.Add(btnClearBuffWatchSelfClickPoint)
+        selfClickRow.Controls.Add(lblBuffWatchSelfClickPoint)
+        bottomLayout.Controls.Add(selfClickRow, 0, 1)
+
+        lblBuffWatchStatus = New Label() With {
+            .Text = "Add buffs from the icon library, assign a recast key, then calibrate the Buff Area above.",
+            .AutoSize = True,
+            .ForeColor = Color.Khaki,
+            .Margin = New Padding(3, 4, 3, 3)
+        }
+        bottomLayout.Controls.Add(lblBuffWatchStatus, 0, 2)
+        root.Controls.Add(bottomLayout, 0, 2)
+
+        AddHandler chkBuffWatchEnabled.CheckedChanged, AddressOf BuffWatchEnabledChanged
+        AddHandler btnCalibrateBuffArea.Click, AddressOf CalibrateBuffAreaClicked
+        AddHandler btnAddBuffWatchSlot.Click, AddressOf AddBuffWatchSlotClicked
+        AddHandler btnRemoveBuffWatchSlot.Click, AddressOf RemoveBuffWatchSlotClicked
+        AddHandler btnClearBuffWatchSlots.Click, AddressOf ClearBuffWatchSlotsClicked
+        AddHandler chkBuffWatchSelfClickEnabled.CheckedChanged, AddressOf BuffWatchSelfClickEnabledChanged
+        AddHandler btnSetBuffWatchSelfClickPoint.Click, AddressOf PickBuffWatchSelfClickPointClicked
+        AddHandler btnClearBuffWatchSelfClickPoint.Click, AddressOf ClearBuffWatchSelfClickPointClicked
+        AddHandler dgvBuffWatch.CellValueChanged, AddressOf LiveConfigChanged
+        AddHandler dgvBuffWatch.CellEndEdit, AddressOf LiveConfigChanged
+        AddHandler dgvBuffWatch.CellValueChanged, AddressOf PersistListSettingsChanged
+        AddHandler dgvBuffWatch.CellEndEdit, AddressOf PersistListSettingsChanged
+        AddHandler dgvBuffWatch.CurrentCellDirtyStateChanged, AddressOf BuffWatchGridCurrentCellDirtyStateChanged
+
+        Return tab
+    End Function
+
+    Private Sub BuffWatchGridCurrentCellDirtyStateChanged(sender As Object, e As EventArgs)
+        If dgvBuffWatch Is Nothing OrElse dgvBuffWatch.CurrentCell Is Nothing OrElse Not dgvBuffWatch.IsCurrentCellDirty Then
+            Return
+        End If
+
+        Dim column As DataGridViewColumn = dgvBuffWatch.Columns(dgvBuffWatch.CurrentCell.ColumnIndex)
+        If TypeOf column Is DataGridViewCheckBoxColumn Then
+            dgvBuffWatch.CommitEdit(DataGridViewDataErrorContexts.Commit)
+        End If
+    End Sub
+
+    Private Sub BuffWatchEnabledChanged(sender As Object, e As EventArgs)
+        _buffWatchEnabled = (chkBuffWatchEnabled IsNot Nothing AndAlso chkBuffWatchEnabled.Checked)
+        PushLiveConfig()
+        SavePersistedListState(False)
+    End Sub
+
+    Private Sub BuffWatchSelfClickEnabledChanged(sender As Object, e As EventArgs)
+        _buffWatchSelfClickEnabled = (chkBuffWatchSelfClickEnabled IsNot Nothing AndAlso chkBuffWatchSelfClickEnabled.Checked)
+        PushLiveConfig()
+        SavePersistedListState(False)
+    End Sub
+
+    Private Sub CalibrateBuffAreaClicked(sender As Object, e As EventArgs)
+        If _mainTabs IsNot Nothing AndAlso _visionTab IsNot Nothing Then
+            _mainTabs.SelectedTab = _visionTab
+        End If
+        If dgvRegions IsNot Nothing Then
+            For Each row As DataGridViewRow In dgvRegions.Rows
+                If row.Cells("Region") IsNot Nothing AndAlso String.Equals(Convert.ToString(row.Cells("Region").Value), "buff_area_rect", StringComparison.OrdinalIgnoreCase) Then
+                    dgvRegions.ClearSelection()
+                    row.Selected = True
+                    dgvRegions.CurrentCell = row.Cells(0)
+                    Exit For
+                End If
+            Next
+        End If
+        AppendLog("Buff Watch: drag/resize the ""buff_area_rect"" row's live preview on the Vision tab to cover the whole buff icon row.")
+    End Sub
+
+    Private Sub AddBuffWatchSlotClicked(sender As Object, e As EventArgs)
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+        Dim hwnd As IntPtr = If(selected IsNot Nothing, selected.MainWindowHandle, IntPtr.Zero)
+        Dim suggestedIconSize As Integer = 40
+        Dim buffAreaRegion As RectRegion = Nothing
+        If TryBuildRect("buff_area_rect", buffAreaRegion) AndAlso buffAreaRegion IsNot Nothing AndAlso buffAreaRegion.H > 0 Then
+            suggestedIconSize = Math.Max(16, Math.Min(128, buffAreaRegion.H))
+        End If
+        Using picker As New BuffIconSelectorForm(hwnd, suggestedIconSize)
+            If picker.ShowDialog(Me) = DialogResult.OK AndAlso Not String.IsNullOrWhiteSpace(picker.SelectedRelativePath) Then
+                Dim slot As New BuffWatchSlot() With {
+                    .Enabled = True,
+                    .Name = If(String.IsNullOrWhiteSpace(picker.SelectedName), "Buff", picker.SelectedName),
+                    .IconRelativePath = picker.SelectedRelativePath,
+                    .Tolerance = 45,
+                    .KeyName = "",
+                    .CooldownSec = 3D,
+                    .SelfClickBeforeCast = False
+                }
+                AddBuffWatchSlotRow(slot)
+                PushLiveConfig()
+                SavePersistedListState(False)
+                AppendLog($"Buff Watch: added ""{slot.Name}"" - set its recast key in the grid.")
+            End If
+        End Using
+    End Sub
+
+    Private Sub AddBuffWatchSlotRow(slot As BuffWatchSlot)
+        If dgvBuffWatch Is Nothing OrElse slot Is Nothing Then
+            Return
+        End If
+
+        Dim preview As Image = If(BotEngine.LoadBuffIconPreview(slot.IconRelativePath), New Bitmap(36, 36))
+        Dim rowIndex As Integer = dgvBuffWatch.Rows.Add(preview, slot.Enabled, slot.Name, slot.KeyName, slot.Tolerance, slot.CooldownSec, slot.SelfClickBeforeCast)
+        dgvBuffWatch.Rows(rowIndex).Tag = slot.IconRelativePath
+    End Sub
+
+    Private Sub RemoveBuffWatchSlotClicked(sender As Object, e As EventArgs)
+        If dgvBuffWatch Is Nothing OrElse dgvBuffWatch.CurrentRow Is Nothing Then
+            Return
+        End If
+        CommitPendingGridEdits()
+        dgvBuffWatch.Rows.Remove(dgvBuffWatch.CurrentRow)
+        PushLiveConfig()
+        SavePersistedListState(False)
+    End Sub
+
+    Private Sub ClearBuffWatchSlotsClicked(sender As Object, e As EventArgs)
+        If dgvBuffWatch Is Nothing Then
+            Return
+        End If
+        dgvBuffWatch.Rows.Clear()
+        PushLiveConfig()
+        SavePersistedListState(False)
+    End Sub
+
+    Private Function GetBuffWatchSlotsFromGrid() As List(Of BuffWatchSlot)
+        Dim result As New List(Of BuffWatchSlot)()
+        If dgvBuffWatch Is Nothing Then
+            Return result
+        End If
+
+        For Each row As DataGridViewRow In dgvBuffWatch.Rows
+            If row.IsNewRow Then
+                Continue For
+            End If
+            Dim tolerance As Integer = 45
+            Integer.TryParse(Convert.ToString(row.Cells("Tolerance").Value), tolerance)
+            Dim cooldownSec As Decimal = 3D
+            Decimal.TryParse(Convert.ToString(row.Cells("CooldownSec").Value), cooldownSec)
+            result.Add(New BuffWatchSlot() With {
+                .Enabled = (row.Cells("Enabled").Value IsNot Nothing AndAlso Convert.ToBoolean(row.Cells("Enabled").Value)),
+                .Name = Convert.ToString(row.Cells("Name").Value),
+                .IconRelativePath = Convert.ToString(row.Tag),
+                .Tolerance = Math.Max(1, tolerance),
+                .KeyName = If(Convert.ToString(row.Cells("Key").Value), "").Trim(),
+                .CooldownSec = Math.Max(0.5D, cooldownSec),
+                .SelfClickBeforeCast = (row.Cells("SelfClick").Value IsNot Nothing AndAlso Convert.ToBoolean(row.Cells("SelfClick").Value))
+            })
+        Next
+        Return result
+    End Function
+
+    Private Sub ApplyBuffWatchSlotsToGrid(slots As List(Of BuffWatchSlot))
+        If dgvBuffWatch Is Nothing Then
+            Return
+        End If
+        dgvBuffWatch.Rows.Clear()
+        If slots Is Nothing Then
+            Return
+        End If
+        For Each slot As BuffWatchSlot In slots
+            If slot IsNot Nothing Then
+                AddBuffWatchSlotRow(slot)
+            End If
+        Next
+    End Sub
+
     Private Function BuildCombatSkillsGroup() As GroupBox
         Dim group As New GroupBox() With {.Text = "Combat Skills", .Dock = DockStyle.Fill}
         Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
@@ -4598,7 +4876,7 @@ Public Class Form1
             .AutoSize = True,
             .AutoSizeMode = AutoSizeMode.GrowAndShrink,
             .ColumnCount = 1,
-            .RowCount = 23,
+            .RowCount = 24,
             .GrowStyle = TableLayoutPanelGrowStyle.FixedSize,
             .Margin = New Padding(0),
             .Padding = New Padding(4)
@@ -4713,11 +4991,31 @@ Public Class Form1
         hpMpLayout.Controls.Add(lblHp, 0, 0)
         hpMpLayout.Controls.Add(lblMp, 1, 0)
 
+        btnHoldToShowGameWindow = New Button() With {
+            .Text = "Hold to Show Game Window: OFF",
+            .Dock = DockStyle.Fill,
+            .MinimumSize = New Size(0, 38),
+            .Margin = New Padding(3, 3, 3, 3),
+            .BackColor = Color.FromArgb(110, 45, 45),
+            .ForeColor = Color.White
+        }
+        cboHoldToShowGameWindowKey = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList, .MinimumSize = New Size(0, 28), .Margin = New Padding(3, 3, 3, 3)}
+        cboHoldToShowGameWindowKey.Items.AddRange(HoldToShowGameWindowKeyOptions())
+        cboHoldToShowGameWindowKey.SelectedItem = _holdToShowGameWindowKey.ToString()
+        AddHandler btnHoldToShowGameWindow.Click, AddressOf ToggleHoldToShowGameWindowClicked
+        AddHandler cboHoldToShowGameWindowKey.SelectedIndexChanged, AddressOf HoldToShowGameWindowKeyChanged
+        Dim holdToShowGameWindowRow As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .ColumnCount = 2, .RowCount = 1, .Margin = New Padding(0)}
+        holdToShowGameWindowRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 62.0F))
+        holdToShowGameWindowRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 38.0F))
+        holdToShowGameWindowRow.Controls.Add(btnHoldToShowGameWindow, 0, 0)
+        holdToShowGameWindowRow.Controls.Add(cboHoldToShowGameWindowKey, 1, 0)
+
         Dim controls As Control() = {
             lblFullEdition, lblRunState, lblShortcutHint, lblState, lblSystem, hpMpLayout,
             lblMobName, lblExpRate, lblRupiahsRate, btnAttack, btnSaveSettings, btnStopBot,
             btnFullSupport, btnBypassStuck, btnRetargetNow, btnPartyAutoAccept,
-            lblPartyAskEvery, nudPartyAskSeconds, lblPartyAskText, txtPartyAskText, btnPartyAsk, btnProfiles, btnHelp
+            lblPartyAskEvery, nudPartyAskSeconds, lblPartyAskText, txtPartyAskText, btnPartyAsk, btnProfiles, btnHelp,
+            holdToShowGameWindowRow
         }
         For rowIndex As Integer = 0 To controls.Length - 1
             content.Controls.Add(controls(rowIndex), 0, rowIndex)
@@ -4958,6 +5256,7 @@ Public Class Form1
         dgvRegions.Rows.Add(True, "map_coordinate_x_rect", defaultMapX.X.ToString(), defaultMapX.Y.ToString(), defaultMapX.W.ToString(), defaultMapX.H.ToString())
         dgvRegions.Rows.Add(True, "map_coordinate_y_rect", defaultMapY.X.ToString(), defaultMapY.Y.ToString(), defaultMapY.W.ToString(), defaultMapY.H.ToString())
         dgvRegions.Rows.Add(True, "chat_rect", "18", "548", "430", "144")
+        dgvRegions.Rows.Add(True, "buff_area_rect", "0", "0", "300", "40")
         If txtLootScanAreaPoints IsNot Nothing Then
             txtLootScanAreaPoints.Text = FormatLootScanPoints(BotConfig.CreateDefaultLootScanPoints())
         End If
@@ -7159,6 +7458,206 @@ Public Class Form1
         btnDeathMessagePause.BackColor = If(_deathMessagePauseEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
     End Sub
 
+    Private Shared Function HoldToShowGameWindowKeyOptions() As String()
+        ' PageUp/PageDown are deliberately excluded: Keys aliases them to Prior/Next, so
+        ' Keys.ToString() would return a name that doesn't match this list and break the combo selection.
+        Return New String() {
+            "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
+            "Insert", "Home", "End", "Pause", "Scroll"
+        }
+    End Function
+
+    Private Sub ToggleHoldToShowGameWindowClicked(sender As Object, e As EventArgs)
+        _holdToShowGameWindowEnabled = Not _holdToShowGameWindowEnabled
+        If Not _holdToShowGameWindowEnabled Then
+            SyncLock _holdToShowGameWindowSyncRoot
+                _holdToShowGameWindowWasDown = False
+                EndHoldToShowGameWindow()
+            End SyncLock
+        End If
+        UpdateHoldToShowGameWindowUi()
+        SavePersistedListState(False)
+        AppendLog(If(_holdToShowGameWindowEnabled,
+                     $"Hold to Show Game Window enabled: hold {_holdToShowGameWindowKey} to bring the game window to the front; release it to return focus.",
+                     "Hold to Show Game Window disabled."))
+    End Sub
+
+    Private Sub HoldToShowGameWindowKeyChanged(sender As Object, e As EventArgs)
+        If cboHoldToShowGameWindowKey Is Nothing OrElse cboHoldToShowGameWindowKey.SelectedItem Is Nothing Then
+            Return
+        End If
+        Dim parsed As Keys
+        If [Enum].TryParse(Of Keys)(cboHoldToShowGameWindowKey.SelectedItem.ToString(), parsed) Then
+            _holdToShowGameWindowKey = parsed
+            SavePersistedListState(False)
+        End If
+    End Sub
+
+    Private Sub UpdateHoldToShowGameWindowUi()
+        If btnHoldToShowGameWindow IsNot Nothing Then
+            btnHoldToShowGameWindow.Text = If(_holdToShowGameWindowEnabled, "Hold to Show Game Window: ON", "Hold to Show Game Window: OFF")
+            btnHoldToShowGameWindow.BackColor = If(_holdToShowGameWindowEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+        End If
+        If cboHoldToShowGameWindowKey IsNot Nothing Then
+            cboHoldToShowGameWindowKey.SelectedItem = _holdToShowGameWindowKey.ToString()
+        End If
+    End Sub
+
+    ' Runs on the UI thread every EnterToggleTimerTick (45ms) - just snapshots which game window is
+    ' currently selected so the independent background timer below never has to touch a WinForms
+    ' ListBox off the UI thread.
+    Private Sub RefreshHoldToShowGameWindowCachedTarget()
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindow()
+        _holdToShowGameWindowCachedTarget = If(selected IsNot Nothing, selected.MainWindowHandle, IntPtr.Zero)
+    End Sub
+
+    ' Runs for the app's whole lifetime on the single dedicated background thread started in Sub New.
+    ' Must stay on that one OS thread the entire time - see the comment where the thread is created for
+    ' why (AttachThreadInput's attach/detach have to be issued by the same thread ID).
+    Private Sub HoldToShowGameWindowThreadLoop()
+        While Not _holdToShowGameWindowThreadStop
+            Try
+                SyncLock _holdToShowGameWindowSyncRoot
+                    If Not _holdToShowGameWindowEnabled Then
+                        If _holdToShowGameWindowWasDown Then
+                            _holdToShowGameWindowWasDown = False
+                            EndHoldToShowGameWindow()
+                        End If
+                    Else
+                        Dim keyDown As Boolean = (GetAsyncKeyState(CInt(_holdToShowGameWindowKey)) And &H8000S) <> 0
+                        If keyDown AndAlso Not _holdToShowGameWindowWasDown Then
+                            BeginHoldToShowGameWindow()
+                        ElseIf Not keyDown AndAlso _holdToShowGameWindowWasDown Then
+                            EndHoldToShowGameWindow()
+                        End If
+                        _holdToShowGameWindowWasDown = keyDown
+                    End If
+                End SyncLock
+            Catch
+            End Try
+            System.Threading.Thread.Sleep(15)
+        End While
+    End Sub
+
+    ' No single trick here has proven 100% reliable across every case reported (single monitor, multiple
+    ' monitors, restoring focus to a genuinely unrelated app), so this now stacks three independent,
+    ' well-established workarounds instead of betting on just one: (1) a fresh AttachThreadInput to
+    ' whatever is CURRENTLY foreground right now (scoped entirely to this one call, so there's no stale
+    ' cross-call thread-ID mismatch like earlier versions had), (2) a simulated Alt key tap so Windows
+    ' credits this process with the most recent input event, and (3) briefly zeroing the OS-wide
+    ' foreground-lock timeout, which is the explicit, documented override for this exact restriction
+    ' (restored immediately after). Finishes with a verify-and-retry in case the first attempt didn't
+    ' actually land.
+    Private Shared Sub ForceSetForegroundWindow(target As IntPtr)
+        If target = IntPtr.Zero Then
+            Return
+        End If
+
+        If NativeMethods.GetForegroundWindow() = target Then
+            NativeMethods.BringWindowToTop(target)
+            NativeMethods.SetForegroundWindow(target)
+            Return
+        End If
+
+        For attempt As Integer = 1 To 2
+            Dim currentForeground As IntPtr = NativeMethods.GetForegroundWindow()
+            If currentForeground = target Then
+                Return
+            End If
+
+            Dim currentThreadId As UInteger = NativeMethods.GetCurrentThreadId()
+            Dim unusedProcessId As UInteger = 0
+            Dim foregroundThreadId As UInteger = If(currentForeground <> IntPtr.Zero,
+                NativeMethods.GetWindowThreadProcessId(currentForeground, unusedProcessId), 0UI)
+            Dim attached As Boolean = False
+            Dim originalLockTimeout As UInteger = 0
+            Dim lockTimeoutChanged As Boolean = False
+
+            Try
+                If foregroundThreadId <> 0 AndAlso foregroundThreadId <> currentThreadId Then
+                    attached = NativeMethods.AttachThreadInput(currentThreadId, foregroundThreadId, True)
+                End If
+
+                Try
+                    If NativeMethods.SystemParametersInfoGet(NativeMethods.SPI_GETFOREGROUNDLOCKTIMEOUT, 0, originalLockTimeout, 0) Then
+                        lockTimeoutChanged = NativeMethods.SystemParametersInfoSet(NativeMethods.SPI_SETFOREGROUNDLOCKTIMEOUT, 0, UIntPtr.Zero, 0)
+                    End If
+                Catch
+                End Try
+
+                NativeMethods.keybd_event(NativeMethods.VK_MENU, 0, 0, UIntPtr.Zero)
+                Try
+                    NativeMethods.BringWindowToTop(target)
+                    NativeMethods.SetForegroundWindow(target)
+                Finally
+                    Try
+                        NativeMethods.keybd_event(NativeMethods.VK_MENU, 0, NativeMethods.KEYEVENTF_KEYUP, UIntPtr.Zero)
+                    Catch
+                    End Try
+                End Try
+            Finally
+                If lockTimeoutChanged Then
+                    Try
+                        NativeMethods.SystemParametersInfoSet(NativeMethods.SPI_SETFOREGROUNDLOCKTIMEOUT, 0, New UIntPtr(originalLockTimeout), 0)
+                    Catch
+                    End Try
+                End If
+                If attached Then
+                    Try
+                        NativeMethods.AttachThreadInput(currentThreadId, foregroundThreadId, False)
+                    Catch
+                    End Try
+                End If
+            End Try
+
+            If NativeMethods.GetForegroundWindow() = target Then
+                Return
+            End If
+            System.Threading.Thread.Sleep(20)
+        Next
+    End Sub
+
+    Private Sub BeginHoldToShowGameWindow()
+        Dim hwnd As IntPtr = _holdToShowGameWindowCachedTarget
+        If hwnd = IntPtr.Zero Then
+            Return
+        End If
+
+        _holdToShowGameWindowTarget = hwnd
+        _holdToShowGameWindowPreviousForeground = NativeMethods.GetForegroundWindow()
+        _holdToShowGameWindowWasMinimized = NativeMethods.IsIconic(hwnd)
+
+        Try
+            If _holdToShowGameWindowWasMinimized Then
+                NativeMethods.ShowWindow(hwnd, NativeMethods.SW_RESTORE)
+            End If
+            ForceSetForegroundWindow(hwnd)
+        Catch
+        End Try
+    End Sub
+
+    Private Sub EndHoldToShowGameWindow()
+        Dim hwnd As IntPtr = _holdToShowGameWindowTarget
+        _holdToShowGameWindowTarget = IntPtr.Zero
+        If hwnd = IntPtr.Zero Then
+            Return
+        End If
+
+        Try
+            If _holdToShowGameWindowPreviousForeground <> IntPtr.Zero AndAlso _holdToShowGameWindowPreviousForeground <> hwnd Then
+                ForceSetForegroundWindow(_holdToShowGameWindowPreviousForeground)
+            End If
+        Catch
+        End Try
+
+        If _holdToShowGameWindowWasMinimized Then
+            Try
+                NativeMethods.ShowWindow(hwnd, NativeMethods.SW_MINIMIZE)
+            Catch
+            End Try
+        End If
+    End Sub
+
     Private Sub PickResurrectOkPointClicked(sender As Object, e As EventArgs)
         Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
         If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
@@ -7265,6 +7764,117 @@ Public Class Form1
 
         If btnClearResurrectOkPoint IsNot Nothing Then
             btnClearResurrectOkPoint.Enabled = (_resurrectOkPointX >= 0 AndAlso _resurrectOkPointY >= 0)
+        End If
+    End Sub
+
+    Private Sub PickBuffWatchSelfClickPointClicked(sender As Object, e As EventArgs)
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+        If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
+            AppendLog("Buff Watch: select a Full game process window first.")
+            Return
+        End If
+
+        _isPickingBuffWatchSelfClickPoint = True
+        _buffWatchSelfClickLeftMouseWasDown = False
+        _isPickingArrowUnbundlePoint = False
+        _isPickingArrowBundleIcon = False
+        _isPickingLootRejectPoint = False
+        _isPickingLootNamePickupPoint = False
+        _isPickingResurrectOkPoint = False
+        UpdateLootRejectPointUi()
+        UpdateLootNamePickupPointUi()
+        UpdateArrowUnbundleUi()
+        UpdateArrowBundleIconUi()
+        UpdateResurrectOkPointUi()
+        UpdateBuffWatchSelfClickPointUi()
+        AppendLog("Buff Watch: click your own character/portrait in the selected game window to set the self-click point.")
+        NativeMethods.SetForegroundWindow(selected.MainWindowHandle)
+    End Sub
+
+    Private Sub ClearBuffWatchSelfClickPointClicked(sender As Object, e As EventArgs)
+        _isPickingBuffWatchSelfClickPoint = False
+        _buffWatchSelfClickLeftMouseWasDown = False
+        _buffWatchSelfClickX = -1
+        _buffWatchSelfClickY = -1
+        UpdateBuffWatchSelfClickPointUi()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        AppendLog("Buff Watch self-click point cleared.")
+    End Sub
+
+    Private Sub HandlePendingBuffWatchSelfClickPointCapture()
+        Try
+            If Not _isPickingBuffWatchSelfClickPoint Then
+                Return
+            End If
+
+            Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+            If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
+                Return
+            End If
+
+            Dim leftDown As Boolean = (GetAsyncKeyState(CInt(Keys.LButton)) And &H8000S) <> 0
+            If leftDown AndAlso Not _buffWatchSelfClickLeftMouseWasDown Then
+                Dim screenPoint As NativeMethods.POINT
+                If NativeMethods.GetCursorPos(screenPoint) Then
+                    Dim hoveredWindow As IntPtr = NativeMethods.WindowFromPoint(screenPoint)
+                    Dim hoveredRoot As IntPtr = If(hoveredWindow <> IntPtr.Zero, NativeMethods.GetAncestor(hoveredWindow, NativeMethods.GA_ROOT), IntPtr.Zero)
+                    If hoveredRoot <> selected.MainWindowHandle Then
+                        _buffWatchSelfClickLeftMouseWasDown = leftDown
+                        Return
+                    End If
+
+                    Dim clientPoint As NativeMethods.POINT = screenPoint
+                    If NativeMethods.ScreenToClient(selected.MainWindowHandle, clientPoint) Then
+                        Dim clientRect As NativeMethods.RECT
+                        If Not NativeMethods.GetClientRect(selected.MainWindowHandle, clientRect) Then
+                            _buffWatchSelfClickLeftMouseWasDown = leftDown
+                            Return
+                        End If
+
+                        Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
+                        Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
+                        If clientPoint.X < 0 OrElse clientPoint.Y < 0 OrElse clientPoint.X >= clientWidth OrElse clientPoint.Y >= clientHeight Then
+                            AppendLog("Buff Watch: click must be inside the selected game window.")
+                            _buffWatchSelfClickLeftMouseWasDown = leftDown
+                            Return
+                        End If
+
+                        _buffWatchSelfClickX = Math.Max(0, clientPoint.X)
+                        _buffWatchSelfClickY = Math.Max(0, clientPoint.Y)
+                        _isPickingBuffWatchSelfClickPoint = False
+                        _buffWatchSelfClickLeftMouseWasDown = leftDown
+                        UpdateBuffWatchSelfClickPointUi()
+                        PushLiveConfig()
+                        SavePersistedListState(False)
+                        AppendLog($"Buff Watch self-click point set: x={_buffWatchSelfClickX}, y={_buffWatchSelfClickY}.")
+                    End If
+                End If
+            End If
+
+            _buffWatchSelfClickLeftMouseWasDown = leftDown
+        Catch ex As Exception
+            _isPickingBuffWatchSelfClickPoint = False
+            _buffWatchSelfClickLeftMouseWasDown = False
+            UpdateBuffWatchSelfClickPointUi()
+            AppendLog("Buff Watch self-click point capture failed: " & ex.Message)
+        End Try
+    End Sub
+
+    Private Sub UpdateBuffWatchSelfClickPointUi()
+        If lblBuffWatchSelfClickPoint IsNot Nothing Then
+            lblBuffWatchSelfClickPoint.Text = If(_buffWatchSelfClickX >= 0 AndAlso _buffWatchSelfClickY >= 0,
+                $"Self-Click Point: {_buffWatchSelfClickX}, {_buffWatchSelfClickY}",
+                "Self-Click Point: (not set)")
+        End If
+
+        If btnSetBuffWatchSelfClickPoint IsNot Nothing Then
+            btnSetBuffWatchSelfClickPoint.Text = If(_isPickingBuffWatchSelfClickPoint, "Click Game...", "Set Self-Click Point")
+            btnSetBuffWatchSelfClickPoint.BackColor = If(_isPickingBuffWatchSelfClickPoint, Color.FromArgb(175, 110, 30), Color.FromArgb(45, 95, 140))
+        End If
+
+        If btnClearBuffWatchSelfClickPoint IsNot Nothing Then
+            btnClearBuffWatchSelfClickPoint.Enabled = (_buffWatchSelfClickX >= 0 AndAlso _buffWatchSelfClickY >= 0)
         End If
     End Sub
 
@@ -9138,6 +9748,7 @@ Public Class Form1
         HandlePendingArrowBundleIconCapture()
         HandlePendingResurrectOkPointCapture()
         HandlePendingAutoRelaunchClickCapture()
+        HandlePendingBuffWatchSelfClickPointCapture()
         If _fullEngine.IsRunning() Then
             HandlePeriodicStatsNotification(_fullStatus)
         End If
@@ -9306,11 +9917,13 @@ Public Class Form1
             HandleCtrlShiftTogglePress()
         End If
         _ctrlShiftWasDown = comboDown
+        RefreshHoldToShowGameWindowCachedTarget()
         HandlePendingLitePointCapture()
         HandlePendingArrowUnbundlePointCapture()
         HandlePendingArrowBundleIconCapture()
         HandlePendingResurrectOkPointCapture()
         HandlePendingAutoRelaunchClickCapture()
+        HandlePendingBuffWatchSelfClickPointCapture()
     End Sub
 
     Private Sub HandleCtrlShiftTogglePress()
@@ -11332,6 +11945,12 @@ Public Class Form1
         cfg.MapCoordinateYRect = BuildRectOrFallback("map_coordinate_y_rect", BotConfig.SplitMapCoordinateRect(legacyMapCoordinateRect, False))
         cfg.MapCoordinateRect = BotConfig.CombineMapCoordinateRects(cfg.MapCoordinateXRect, cfg.MapCoordinateYRect)
         cfg.ChatRect = BuildRect("chat_rect")
+        cfg.BuffAreaRect = BuildRectOrFallback("buff_area_rect", New RectRegion(0, 0, 300, 40))
+        cfg.BuffWatchEnabled = (chkBuffWatchEnabled IsNot Nothing AndAlso chkBuffWatchEnabled.Checked)
+        cfg.BuffWatchSlots = GetBuffWatchSlotsFromGrid()
+        cfg.BuffWatchSelfClickEnabled = (chkBuffWatchSelfClickEnabled IsNot Nothing AndAlso chkBuffWatchSelfClickEnabled.Checked)
+        cfg.BuffWatchSelfClickX = _buffWatchSelfClickX
+        cfg.BuffWatchSelfClickY = _buffWatchSelfClickY
         cfg.LootScanPoints = BuildLootScanPoints()
         cfg.LootScanRect = BuildLootScanBoundingRect(cfg.LootScanPoints)
         cfg.LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked)
@@ -12252,6 +12871,22 @@ Public Class Form1
             SetResurrectOverlayVisible(_resurrectOverlayEnabled)
             _deathMessagePauseEnabled = state.DeathMessagePauseEnabled
             UpdateDeathMessagePauseUi()
+            _buffWatchEnabled = state.BuffWatchEnabled
+            If chkBuffWatchEnabled IsNot Nothing Then
+                chkBuffWatchEnabled.Checked = _buffWatchEnabled
+            End If
+            _buffWatchSelfClickEnabled = state.BuffWatchSelfClickEnabled
+            If chkBuffWatchSelfClickEnabled IsNot Nothing Then
+                chkBuffWatchSelfClickEnabled.Checked = _buffWatchSelfClickEnabled
+            End If
+            _buffWatchSelfClickX = state.BuffWatchSelfClickX
+            _buffWatchSelfClickY = state.BuffWatchSelfClickY
+            UpdateBuffWatchSelfClickPointUi()
+            ApplyBuffWatchSlotsToGrid(state.BuffWatchSlots)
+            _holdToShowGameWindowEnabled = state.HoldToShowGameWindowEnabled
+            Dim parsedHoldToShowKey As Keys
+            _holdToShowGameWindowKey = If([Enum].TryParse(Of Keys)(state.HoldToShowGameWindowKey, parsedHoldToShowKey), parsedHoldToShowKey, Keys.F10)
+            UpdateHoldToShowGameWindowUi()
             _partyAutoAccept = state.PromptAutoAcceptEnabled
             UpdatePromptAutoAcceptButton()
             _partyAskEnabled = state.AskForPartyEnabled
@@ -12389,11 +13024,18 @@ Public Class Form1
                 .ArrowUnbundlePoints = CloneLootScanPoints(_arrowUnbundlePoints),
                 .ArrowBundleIconBase64 = _arrowBundleIconBase64,
                 .ArrowBundleIconTolerance = If(nudArrowBundleIconTolerance IsNot Nothing, nudArrowBundleIconTolerance.Value, 45D),
+                .BuffWatchEnabled = (chkBuffWatchEnabled IsNot Nothing AndAlso chkBuffWatchEnabled.Checked),
+                .BuffWatchSlots = GetBuffWatchSlotsFromGrid(),
+                .BuffWatchSelfClickEnabled = (chkBuffWatchSelfClickEnabled IsNot Nothing AndAlso chkBuffWatchSelfClickEnabled.Checked),
+                .BuffWatchSelfClickX = _buffWatchSelfClickX,
+                .BuffWatchSelfClickY = _buffWatchSelfClickY,
                 .ResurrectAutoAcceptEnabled = _resurrectAutoAcceptEnabled,
                 .ResurrectOkPointX = _resurrectOkPointX,
                 .ResurrectOkPointY = _resurrectOkPointY,
                 .ResurrectOverlayEnabled = _resurrectOverlayEnabled,
                 .DeathMessagePauseEnabled = _deathMessagePauseEnabled,
+                .HoldToShowGameWindowEnabled = _holdToShowGameWindowEnabled,
+                .HoldToShowGameWindowKey = _holdToShowGameWindowKey.ToString(),
                 .PromptAutoAcceptEnabled = _partyAutoAccept,
                 .AskForPartyEnabled = _partyAskEnabled,
                 .AskForPartySeconds = If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D),
@@ -12865,6 +13507,17 @@ Public Class Form1
         UpsertRegionRow("map_coordinate_y_rect", mapCoordinateYRect)
         RemoveRegionRow("map_coordinate_rect")
         UpsertRegionRow("chat_rect", cfg.ChatRect)
+        UpsertRegionRow("buff_area_rect", If(cfg.BuffAreaRect, New RectRegion(0, 0, 300, 40)))
+        If chkBuffWatchEnabled IsNot Nothing Then
+            chkBuffWatchEnabled.Checked = cfg.BuffWatchEnabled
+        End If
+        If chkBuffWatchSelfClickEnabled IsNot Nothing Then
+            chkBuffWatchSelfClickEnabled.Checked = cfg.BuffWatchSelfClickEnabled
+        End If
+        _buffWatchSelfClickX = cfg.BuffWatchSelfClickX
+        _buffWatchSelfClickY = cfg.BuffWatchSelfClickY
+        UpdateBuffWatchSelfClickPointUi()
+        ApplyBuffWatchSlotsToGrid(cfg.BuffWatchSlots)
         ApplyCalibrationRegionOverlayStates(cfg)
         If txtLootScanAreaPoints IsNot Nothing Then
             Dim lootPoints As List(Of LootScanPoint) = GetEffectiveLootScanPoints(cfg)
@@ -14801,6 +15454,7 @@ Public Class Form1
         _ntfyStatusRequestTimer.Stop()
         _liveSnapshotTimer.Stop()
         _persistDebounceTimer.Stop()
+        _holdToShowGameWindowThreadStop = True
         If _lastSnapshotRawFrame IsNot Nothing Then
             _lastSnapshotRawFrame.Dispose()
             _lastSnapshotRawFrame = Nothing
