@@ -4642,19 +4642,7 @@ Public Class Form1
     End Sub
 
     Private Sub CalibrateBuffAreaClicked(sender As Object, e As EventArgs)
-        If _mainTabs IsNot Nothing AndAlso _visionTab IsNot Nothing Then
-            _mainTabs.SelectedTab = _visionTab
-        End If
-        If dgvRegions IsNot Nothing Then
-            For Each row As DataGridViewRow In dgvRegions.Rows
-                If row.Cells("Region") IsNot Nothing AndAlso String.Equals(Convert.ToString(row.Cells("Region").Value), "buff_area_rect", StringComparison.OrdinalIgnoreCase) Then
-                    dgvRegions.ClearSelection()
-                    row.Selected = True
-                    dgvRegions.CurrentCell = row.Cells(0)
-                    Exit For
-                End If
-            Next
-        End If
+        JumpToCalibrationRegionZoomPreview("buff_area_rect")
         AppendLog("Buff Watch: drag/resize the ""buff_area_rect"" row's live preview on the Vision tab to cover the whole buff icon row.")
     End Sub
 
@@ -8294,7 +8282,36 @@ Public Class Form1
             End Sub
         _liteOverlayForm.Show(Me)
         btnLiteOverlayToggle.Text = "Hide HP/MP Overlay"
-        AppendLog("Lite AutoPots: independent HP/MP overlay shown. Drag a bar to move it or drag its white square to resize it.")
+        JumpToCalibrationRegionZoomPreview("hp_bar")
+        AppendLog("Lite AutoPots: independent HP/MP overlay shown. Drag a bar to move it or drag its white square to resize it. Jumped to the Vision tab's zoomed hp_bar preview so the bars are easier to see while you align them.")
+    End Sub
+
+    ''' <summary>
+    ''' Switches to the Vision tab, selects the given row in Calibration Regions, and makes sure
+    ''' Live + Zoom Selected Region are on, so a small/hard-to-see bar gets a magnified live view
+    ''' right away instead of the user having to find and enable all of that manually.
+    ''' </summary>
+    Private Sub JumpToCalibrationRegionZoomPreview(regionName As String)
+        If _mainTabs IsNot Nothing AndAlso _visionTab IsNot Nothing Then
+            _mainTabs.SelectedTab = _visionTab
+        End If
+        If chkSnapshotLive IsNot Nothing Then
+            chkSnapshotLive.Checked = True
+        End If
+        If chkSnapshotZoomRegion IsNot Nothing Then
+            chkSnapshotZoomRegion.Checked = True
+        End If
+        If dgvRegions IsNot Nothing Then
+            For Each row As DataGridViewRow In dgvRegions.Rows
+                If row.Cells("Region") IsNot Nothing AndAlso String.Equals(Convert.ToString(row.Cells("Region").Value), regionName, StringComparison.OrdinalIgnoreCase) Then
+                    dgvRegions.ClearSelection()
+                    row.Selected = True
+                    dgvRegions.CurrentCell = row.Cells(0)
+                    Exit For
+                End If
+            Next
+        End If
+        CaptureSnapshotIntoPreview(False, True)
     End Sub
 
     Private Sub LiteOverlayRegionChanged(regionName As String, region As RectRegion)
