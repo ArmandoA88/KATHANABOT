@@ -285,7 +285,7 @@ Public Class BotConfig
     Public Property MonsterFilterConfirmReads As Integer = 2
     Public Property LootPickupEnabled As Boolean = False
     Public Property LootPickupIntervalMs As Integer = 4000
-    Public Property LootPickupVerifyDelayMs As Integer = 80
+    Public Property LootPickupVerifyDelayMs As Integer = 220
     Public Property LootNameAutoPickupEnabled As Boolean = False
     Public Property LootNamePickupOffsetX As Integer = 0
     Public Property LootNamePickupOffsetY As Integer = 18
@@ -378,6 +378,7 @@ Public Class BotConfig
     Public Property PartyListScanIntervalMs As Integer = 700
     Public Property PartyInviteScanIntervalMs As Integer = 900
     Public Property MobNameScanIntervalMs As Integer = 650
+    Public Property MobHpTextScanIntervalMs As Integer = 450
     Public Property ChatTranslationEnabled As Boolean = False
     Public Property ChatTranslationOverlayEnabled As Boolean = True
     Public Property DisabledCalibrationRegionOverlays As List(Of String) = New List(Of String)()
@@ -827,7 +828,6 @@ Public Class BotEngine
     Private Const RouteRecordingMinSampleIntervalMs As Integer = 250
     Private Const NavigationRotationConfirmationsRequired As Integer = 2
     Private Const NavigationRotationChangeCooldownMs As Integer = 1200
-    Private Const MobHpTextOcrMinIntervalMs As Integer = 450
     Private Const PartyInviteOcrMinIntervalMs As Integer = 900
     Private Const PartyListScanMinIntervalMs As Integer = 700
     Private Const UnreachableOcrMinIntervalMs As Integer = 260
@@ -1095,7 +1095,6 @@ Public Class BotEngine
     Private _resurrectOcrTask As Task(Of String) = Nothing
     Private _resurrectOcrTaskGeneration As Long = -1L
     Private _lastResurrectCandidate As String = ""
-    Private _lastLootScannerVisualSignature As ULong = 0UL
     Private _lastMapMarkerScanAt As DateTime = DateTime.MinValue
     Private _lastMapMarkerDetected As Boolean = False
     Private _lastMapMarkerX As Integer = -1
@@ -1409,7 +1408,6 @@ Public Class BotEngine
             _lastChatOcrUpdatedAt = DateTime.MinValue
             _lastChatVisualSignature = 0UL
             _lastPartyListVisualSignature = 0UL
-            _lastLootScannerVisualSignature = 0UL
             _lastMapMarkerScanAt = DateTime.MinValue
             _lastMapMarkerDetected = False
             _lastMapMarkerX = -1
@@ -2823,7 +2821,6 @@ Public Class BotEngine
         Dim topic As String = If(cfg.ItemNtfyTopic, "").Trim()
         Dim notificationProvider As String = NormalizeNotificationProviderName(cfg.NotificationProvider)
         Dim discordWebhookUrl As String = GetDiscordItemWebhookUrl(cfg)
-        Dim pixelGateEnabled As Boolean = cfg.PixelChangeGateEnabled
 
         _lootScannerProcessingTask = Task.Run(Sub()
             Dim scanFrame As Bitmap = frameClone
@@ -2836,14 +2833,12 @@ Public Class BotEngine
                     lootScanBounds = New Rectangle(0, 0, lootScanFrame.Width, lootScanFrame.Height)
                 End If
 
-                If pixelGateEnabled Then
-                    Dim signature As ULong = ComputeVisualSignature(lootScanFrame)
-                    If signature <> 0UL AndAlso signature = _lastLootScannerVisualSignature Then
-                        Return
-                    End If
-                    _lastLootScannerVisualSignature = signature
-                End If
-
+                ' No pixel-change gate here: a drop sitting still on the ground looks "unchanged"
+                ' to a signature-based gate forever, which would
+                ' silently stop re-scanning it after a single missed OCR read for the rest of the
+                ' run - the same class of bug fixed earlier for the resurrect/party-invite dialogs.
+                ' This scan already only runs once per LootScannerIntervalMs (several seconds), so
+                ' the extra OCR cost of always re-reading is negligible next to that.
                 Dim ocrRegions As List(Of OcrReader.OcrTextRegion) = OcrReader.ReadScreenTextRegionsIsolated(lootScanFrame)
                 Dim ocrText As String = String.Join(Environment.NewLine, ocrRegions.Select(Function(region) region.Text))
                 If Not String.IsNullOrWhiteSpace(ocrText) AndAlso allowedNames IsNot Nothing Then
@@ -2974,7 +2969,12 @@ Public Class BotEngine
         End If
 
         Try
-            Dim selectedName As String = ReadMobNameIfNeeded(frame, mobNameRegion, now, True)
+            ' Blocking, one-shot OCR read - NOT ReadMobNameIfNeeded, which is async and would return
+            ' whatever name was cached from BEFORE the F press (e.g. the last combat target) while
+            ' the real read for this fresh frame only completes on some later, unrelated call. This
+            ' verification only runs once per F press (rate-limited to LootPickupIntervalMs, at
+            ' least 1s), so a synchronous OCR call here is cheap enough to just wait for the answer.
+            Dim selectedName As String = ReadMobNameSynchronous(frame, mobNameRegion)
             If IsAllowedLootName(selectedName, cfg.LootAllowedNames, cfg.LootNameMatchThresholdPercent) Then
                 SetLastAction($"F (loot accepted: {If(String.IsNullOrWhiteSpace(selectedName), "unknown", selectedName)})")
                 Return
@@ -6454,6 +6454,35 @@ Public Class BotEngine
         Return _cachedMobName
     End Function
 
+    ''' <summary>
+    ''' Blocking OCR read of a name-plate region from an already-captured frame - unlike
+    ''' ReadMobNameIfNeeded, this never returns a stale cached value while a background OCR task is
+    ''' still running; it crops and reads right now and waits for the result. Only meant for rare,
+    ''' one-shot checks (like the post-F loot-name verification) where waiting a few tens of
+    ''' milliseconds is fine - never call this from the hot per-tick combat loop.
+    ''' </summary>
+    Private Shared Function ReadMobNameSynchronous(frame As Bitmap, region As RectRegion) As String
+        If frame Is Nothing OrElse region Is Nothing Then
+            Return ""
+        End If
+
+        Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
+        If rect.Width <= 1 OrElse rect.Height <= 1 Then
+            Return ""
+        End If
+
+        Using crop As New Bitmap(rect.Width, rect.Height, PixelFormat.Format24bppRgb)
+            Using g As Graphics = Graphics.FromImage(crop)
+                g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), rect, GraphicsUnit.Pixel)
+            End Using
+            Try
+                Return NormalizeMobNameDisplay(If(OcrReader.ReadName(crop), "").Trim())
+            Catch
+                Return ""
+            End Try
+        End Using
+    End Function
+
     Private Function ReadMobNameFromClientRegionIfNeeded(hwnd As IntPtr, region As RectRegion, now As DateTime, Optional forceRefresh As Boolean = False, Optional minIntervalMs As Integer = 650) As String
         If hwnd = IntPtr.Zero OrElse region Is Nothing Then
             Return _cachedMobName
@@ -6514,7 +6543,7 @@ Public Class BotEngine
             Return _lastMobDetectedMaxHp
         End If
 
-        If _lastMobHpTextScan <> DateTime.MinValue AndAlso (now - _lastMobHpTextScan).TotalMilliseconds < MobHpTextOcrMinIntervalMs Then
+        If _lastMobHpTextScan <> DateTime.MinValue AndAlso (now - _lastMobHpTextScan).TotalMilliseconds < Math.Max(120, cfg.MobHpTextScanIntervalMs) Then
             Return _lastMobDetectedMaxHp
         End If
 

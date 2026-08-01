@@ -221,6 +221,7 @@ Public Class Form1
     Private nudLootNamePickupOffsetX As NumericUpDown
     Private nudLootNamePickupOffsetY As NumericUpDown
     Private nudLootPickupSeconds As NumericUpDown
+    Private nudLootPickupVerifyMs As NumericUpDown
     Private nudLootNamePickupClickDelayMs As NumericUpDown
     Private nudLootNamePickupFPressCount As NumericUpDown
     Private nudLootNamePickupFPressGapMs As NumericUpDown
@@ -380,6 +381,8 @@ Public Class Form1
     Private nudMapScanMs As NumericUpDown
     Private nudPartyScanMs As NumericUpDown
     Private nudMobNameScanMs As NumericUpDown
+    Private nudMobHpTextScanMs As NumericUpDown
+    Private _scanTimerToolTip As ToolTip
     Private chkLogCombat As CheckBox
     Private chkLogLoot As CheckBox
     Private chkLogOcrVision As CheckBox
@@ -1099,6 +1102,10 @@ Public Class Form1
             AddHandler nudMobNameScanMs.ValueChanged, AddressOf LiveConfigChanged
             AddHandler nudMobNameScanMs.ValueChanged, AddressOf PersistListSettingsChanged
         End If
+        If nudMobHpTextScanMs IsNot Nothing Then
+            AddHandler nudMobHpTextScanMs.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler nudMobHpTextScanMs.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
         AddHandler nudLoopMs.ValueChanged, AddressOf LiveConfigChanged
         AddHandler nudRetargetMs.ValueChanged, AddressOf LiveConfigChanged
         If nudForcedRetargetMs IsNot Nothing Then
@@ -1141,6 +1148,7 @@ Public Class Form1
         End If
         AddHandler chkLootPickup.CheckedChanged, AddressOf LiveConfigChanged
         AddHandler nudLootPickupSeconds.ValueChanged, AddressOf LiveConfigChanged
+        AddHandler nudLootPickupVerifyMs.ValueChanged, AddressOf LiveConfigChanged
         If chkLootNameAutoPickup IsNot Nothing Then
             AddHandler chkLootNameAutoPickup.CheckedChanged, AddressOf LiveConfigChanged
         End If
@@ -1378,6 +1386,7 @@ Public Class Form1
         End If
         AddHandler chkLootPickup.CheckedChanged, AddressOf PersistListSettingsChanged
         AddHandler nudLootPickupSeconds.ValueChanged, AddressOf PersistListSettingsChanged
+        AddHandler nudLootPickupVerifyMs.ValueChanged, AddressOf PersistListSettingsChanged
         If chkLootNameAutoPickup IsNot Nothing Then
             AddHandler chkLootNameAutoPickup.CheckedChanged, AddressOf PersistListSettingsChanged
         End If
@@ -3977,7 +3986,8 @@ Public Class Form1
         nudLootScannerSeconds = AddScanTimerInput(scanTimerPanel, "Loot sec", 1, 120, 1, 10D)
         nudMapScanMs = AddScanTimerInput(scanTimerPanel, "Map ms", 250, 10000, 50, 900D)
         nudPartyScanMs = AddScanTimerInput(scanTimerPanel, "Party ms", 250, 10000, 50, 700D)
-        nudMobNameScanMs = AddScanTimerInput(scanTimerPanel, "Mob OCR ms", 120, 5000, 25, 650D)
+        nudMobNameScanMs = AddScanTimerInput(scanTimerPanel, "Mob OCR ms", 120, 5000, 25, 650D, "How often the mob's name is re-read from mob_name_rect.")
+        nudMobHpTextScanMs = AddScanTimerInput(scanTimerPanel, "Mob Life OCR ms", 120, 5000, 25, 450D, "How often the mob's max-HP text is re-read from mob_life_rect.")
         controls.Controls.Add(scanTimerPanel, 0, 3)
         controls.SetColumnSpan(scanTimerPanel, 8)
 
@@ -4103,11 +4113,19 @@ Public Class Form1
         Return tab
     End Function
 
-    Private Function AddScanTimerInput(parent As FlowLayoutPanel, labelText As String, minimum As Decimal, maximum As Decimal, increment As Decimal, defaultValue As Decimal) As NumericUpDown
+    Private Function AddScanTimerInput(parent As FlowLayoutPanel, labelText As String, minimum As Decimal, maximum As Decimal, increment As Decimal, defaultValue As Decimal, Optional recommendedHint As String = "") As NumericUpDown
         Dim label As New Label() With {.Text = labelText, .AutoSize = True, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = Color.Gainsboro, .Margin = New Padding(8, 8, 2, 0)}
         Dim editor As New NumericUpDown() With {.Minimum = minimum, .Maximum = maximum, .Increment = increment, .Value = defaultValue, .Width = 72, .Margin = New Padding(0, 4, 8, 0)}
         parent.Controls.Add(label)
         parent.Controls.Add(editor)
+        If Not String.IsNullOrWhiteSpace(recommendedHint) Then
+            If _scanTimerToolTip Is Nothing Then
+                _scanTimerToolTip = New ToolTip() With {.AutoPopDelay = 15000, .InitialDelay = 300, .ReshowDelay = 300}
+            End If
+            Dim hintText As String = $"Recommended: {defaultValue:0.###}ms - {recommendedHint} You can lower it if you want faster refreshes; lower values mean more OCR/CPU load."
+            _scanTimerToolTip.SetToolTip(label, hintText)
+            _scanTimerToolTip.SetToolTip(editor, hintText)
+        End If
         Return editor
     End Function
 
@@ -4841,6 +4859,16 @@ Public Class Form1
         intervalRow.Controls.Add(New Label() With {.Text = "Every (sec):", .AutoSize = True, .Padding = New Padding(0, 6, 0, 0)})
         nudLootPickupSeconds = New NumericUpDown() With {.Minimum = 1, .Maximum = 20, .Value = 4, .Width = 55}
         intervalRow.Controls.Add(nudLootPickupSeconds)
+        Dim lblLootPickupVerifyMs As New Label() With {.Text = "Verify (ms):", .AutoSize = True, .Padding = New Padding(10, 6, 0, 0)}
+        intervalRow.Controls.Add(lblLootPickupVerifyMs)
+        nudLootPickupVerifyMs = New NumericUpDown() With {.Minimum = 80, .Maximum = 2000, .Increment = 20, .Value = 220, .Width = 60}
+        intervalRow.Controls.Add(nudLootPickupVerifyMs)
+        If _scanTimerToolTip Is Nothing Then
+            _scanTimerToolTip = New ToolTip() With {.AutoPopDelay = 15000, .InitialDelay = 300, .ReshowDelay = 300}
+        End If
+        Dim lootVerifyHint As String = "Recommended: 220ms. After pressing F, the picked-up item's name appears in the same nameplate area used for monster names - this is how long the bot waits before reading it and deciding to keep or reject it. Raise it if the name doesn't render in time on your connection/game; lower it for a faster reject."
+        _scanTimerToolTip.SetToolTip(lblLootPickupVerifyMs, lootVerifyHint)
+        _scanTimerToolTip.SetToolTip(nudLootPickupVerifyMs, lootVerifyHint)
         layout.Controls.Add(intervalRow, 0, 1)
 
         lstLootFilter = New ListBox() With {.Dock = DockStyle.Fill}
@@ -9830,6 +9858,7 @@ Public Class Form1
             $"MapScanMs: {If(nudMapScanMs IsNot Nothing, nudMapScanMs.Value.ToString(), "900")}{Environment.NewLine}" &
             $"PartyScanMs: {If(nudPartyScanMs IsNot Nothing, nudPartyScanMs.Value.ToString(), "700")}{Environment.NewLine}" &
             $"MobNameScanMs: {If(nudMobNameScanMs IsNot Nothing, nudMobNameScanMs.Value.ToString(), "650")}{Environment.NewLine}" &
+            $"MobHpTextScanMs: {If(nudMobHpTextScanMs IsNot Nothing, nudMobHpTextScanMs.Value.ToString(), "450")}{Environment.NewLine}" &
             $"NavigationEnabled: {If(chkNavigationEnabled IsNot Nothing AndAlso chkNavigationEnabled.Checked, "True", "False")}{Environment.NewLine}" &
             $"MapOpenKey: {If(txtMapOpenKey IsNot Nothing AndAlso txtMapOpenKey.Text.Trim() <> "", txtMapOpenKey.Text.Trim().ToUpperInvariant(), DefaultMapOpenKey)}{Environment.NewLine}" &
             $"TravelPreviewEnabled: {If(chkTravelPreview IsNot Nothing AndAlso chkTravelPreview.Checked, "True", "False")}{Environment.NewLine}" &
@@ -9867,6 +9896,7 @@ Public Class Form1
             $"LastStatsNtfyUtc: {If(_lastStatsNotificationUtc = DateTime.MinValue, "n/a", _lastStatsNotificationUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"))}{Environment.NewLine}" &
             $"LootPickupEnabled: {If(chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked, "True", "False")}{Environment.NewLine}" &
             $"LootPickupIntervalSec: {If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value.ToString(), "4")}{Environment.NewLine}" &
+            $"LootPickupVerifyMs: {If(nudLootPickupVerifyMs IsNot Nothing, nudLootPickupVerifyMs.Value.ToString(), "220")}{Environment.NewLine}" &
             $"LootNameAutoPickupEnabled: {If(chkLootNameAutoPickup IsNot Nothing AndAlso chkLootNameAutoPickup.Checked, "True", "False")}{Environment.NewLine}" &
             $"LootNamePickupPoint: {If(_lootNamePickupPointX >= 0 AndAlso _lootNamePickupPointY >= 0, _lootNamePickupPointX.ToString() & "," & _lootNamePickupPointY.ToString(), "not set")}{Environment.NewLine}" &
             $"LootNameMatchThreshold%: {If(nudLootNameMatchThreshold IsNot Nothing, nudLootNameMatchThreshold.Value.ToString(), DefaultLootNameMatchThresholdPercent.ToString())}{Environment.NewLine}" &
@@ -11968,6 +11998,7 @@ Public Class Form1
         cfg.PartyListScanIntervalMs = CInt(If(nudPartyScanMs IsNot Nothing, nudPartyScanMs.Value, 700D))
         cfg.PartyInviteScanIntervalMs = CInt(If(nudPartyScanMs IsNot Nothing, nudPartyScanMs.Value, 900D))
         cfg.MobNameScanIntervalMs = CInt(If(nudMobNameScanMs IsNot Nothing, nudMobNameScanMs.Value, 650D))
+        cfg.MobHpTextScanIntervalMs = CInt(If(nudMobHpTextScanMs IsNot Nothing, nudMobHpTextScanMs.Value, 450D))
         cfg.HpBar = BuildRect("hp_bar")
         cfg.MpBar = BuildRect("mp_bar")
         cfg.MobNameRect = BuildRect("mob_name_rect")
@@ -12010,7 +12041,7 @@ Public Class Form1
         cfg.LootNamePickupFPressGapMs = CInt(If(nudLootNamePickupFPressGapMs IsNot Nothing, nudLootNamePickupFPressGapMs.Value, 110D))
         cfg.LootNamePickupMouseHoldMs = CInt(If(nudLootNamePickupMouseHoldMs IsNot Nothing, nudLootNamePickupMouseHoldMs.Value, 35D))
         cfg.LootNamePickupRestoreCursor = (chkLootNamePickupRestoreCursor Is Nothing OrElse chkLootNamePickupRestoreCursor.Checked)
-        cfg.LootPickupVerifyDelayMs = 80
+        cfg.LootPickupVerifyDelayMs = CInt(If(nudLootPickupVerifyMs IsNot Nothing, nudLootPickupVerifyMs.Value, 220D))
         cfg.LootRejectClickEnabled = (_lootRejectPointX >= 0 AndAlso _lootRejectPointY >= 0)
         cfg.LootRejectPointX = _lootRejectPointX
         cfg.LootRejectPointY = _lootRejectPointY
@@ -13458,6 +13489,7 @@ Public Class Form1
         SetNumericControlValue(nudMapScanMs, CDec(Math.Max(250, cfg.MapCoordinateScanIntervalMs)))
         SetNumericControlValue(nudPartyScanMs, CDec(Math.Max(250, cfg.PartyListScanIntervalMs)))
         SetNumericControlValue(nudMobNameScanMs, CDec(Math.Max(120, cfg.MobNameScanIntervalMs)))
+        SetNumericControlValue(nudMobHpTextScanMs, CDec(Math.Max(120, cfg.MobHpTextScanIntervalMs)))
         PopulateNavigationNodeCombos()
         If cboNavigationStartNode IsNot Nothing Then
             cboNavigationStartNode.SelectedIndex = 0
@@ -13478,6 +13510,7 @@ Public Class Form1
             chkLootPickup.Checked = cfg.LootPickupEnabled
         End If
         SetNumericControlValue(nudLootPickupSeconds, CDec(Math.Max(100, cfg.LootPickupIntervalMs) / 1000.0))
+        SetNumericControlValue(nudLootPickupVerifyMs, CDec(Math.Max(80, cfg.LootPickupVerifyDelayMs)))
         SetNumericControlValue(nudLootNameMatchThreshold, CDec(cfg.LootNameMatchThresholdPercent))
         If chkLootNameAutoPickup IsNot Nothing Then
             chkLootNameAutoPickup.Checked = cfg.LootNameAutoPickupEnabled
