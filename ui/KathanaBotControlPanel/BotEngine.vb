@@ -862,6 +862,11 @@ Public Class BotEngine
     Private Const FastKeyPressMs As Integer = 12
     Private Const AttackBurstKeysPerLoop As Integer = 3
     Private Const AttackBurstGapMs As Integer = 4
+    ' Most action-combat MMOs cancel an attack/skill animation if a movement key is pressed
+    ' during it. Hold on Place / Navigation Travel corrections must not fire this soon after an
+    ' attack, or the correction step keeps interrupting combat instead of just repositioning
+    ' between fights.
+    Private Const PostAttackMovementGraceMs As Integer = 600
     Private Const StopKeyRepeatGapMs As Integer = 10
     Private Const ForegroundInputSettleMs As Integer = 15
     ' Lowered from 4: fewer consecutive lost-signal frames tolerated before the combat lock
@@ -2537,6 +2542,13 @@ Public Class BotEngine
                 reason = ""
             End If
 
+            ' Tracks whether Hold on Place / Navigation Travel actually sent a movement key (W/A/S/D)
+            ' this tick, as opposed to just a status flag like holdBlocksRetarget or the travel mob
+            ' scan's E press. Most action-combat MMOs cancel an attack/skill if movement fires in the
+            ' same moment, so the attack burst below must never run in the same tick as a movement
+            ' key - otherwise Hold Place/Navigation corrections keep interrupting active combat.
+            Dim movementActionSent As Boolean = False
+
             If Not forcedRetarget AndAlso Not actionSentBeforeSupport Then
                 If Not actionSent Then
                     If cfg.HoldPlaceEnabled Then
@@ -2545,6 +2557,7 @@ Public Class BotEngine
                         Dim holdBlocksRetarget As Boolean = False
                         If TryHandleHoldPlace(cfg, hwnd, now, holdCombatActive, holdReason, holdBlocksRetarget) Then
                             actionSent = True
+                            movementActionSent = True
                             reason = holdReason
                         ElseIf holdBlocksRetarget Then
                             actionSent = True
@@ -2556,6 +2569,7 @@ Public Class BotEngine
                         Dim travelReason As String = ""
                         If TryHandleNavigationTravel(cfg, hwnd, now, targetWindowVisible, targetValid, travelReason) Then
                             actionSent = True
+                            movementActionSent = True
                             reason = travelReason
                         ElseIf String.IsNullOrWhiteSpace(reason) AndAlso Not String.IsNullOrWhiteSpace(travelReason) Then
                             reason = travelReason
@@ -2583,7 +2597,7 @@ Public Class BotEngine
                 Dim suppressOffensiveBuffsForBlacklist As Boolean =
                     monsterFilterActive AndAlso
                     (monsterFilterBlockedTarget OrElse blacklistLockActive OrElse Not nameConfirmedForAttack)
-                Dim attackBurst As List(Of ActionRule) = If(deathPaused, New List(Of ActionRule)(), ChooseAttackBurstActions(cfg, hpPct, mpPct, effectiveTargetValid, allowBlindAttack, highMaxHpAttackActive, suppressOffensiveBuffsForBlacklist, reason))
+                Dim attackBurst As List(Of ActionRule) = If(deathPaused OrElse movementActionSent, New List(Of ActionRule)(), ChooseAttackBurstActions(cfg, hpPct, mpPct, effectiveTargetValid, allowBlindAttack, highMaxHpAttackActive, suppressOffensiveBuffsForBlacklist, reason))
                 If attackBurst.Count > 0 Then
                     Dim sentKeys As New List(Of String)()
                     Dim targetSignature As String = If(normMobName <> "", normMobName, If(mobName <> "", mobName, $"{mobHpPct:0.0}"))
@@ -5916,6 +5930,12 @@ Public Class BotEngine
             Return False
         End If
 
+        If Not emergencyCorrection AndAlso _lastAttackAction <> DateTime.MinValue AndAlso (now - _lastAttackAction).TotalMilliseconds < PostAttackMovementGraceMs Then
+            reason = $"Hold on place: waiting {PostAttackMovementGraceMs}ms after the last attack before moving, so correction doesn't cancel it."
+            SetHoldPlaceRuntime(False, targetX, targetY, distance, reason)
+            Return False
+        End If
+
         Dim correctionIntervalMs As Integer = Math.Max(150, cfg.HoldPlaceCorrectionIntervalMs)
         If _lastHoldPlaceMoveAt <> DateTime.MinValue AndAlso (now - _lastHoldPlaceMoveAt).TotalMilliseconds < correctionIntervalMs Then
             Dim correctionMode As String = If(emergencyCorrection, "emergency leash", If(postFightReturn, "post-fight return", "correction"))
@@ -5998,6 +6018,12 @@ Public Class BotEngine
 
         If targetWindowVisible OrElse targetValid Then
             _lastNavigationTravelReason = "Travel execution paused while a combat target is active."
+            Return False
+        End If
+
+        If _lastAttackAction <> DateTime.MinValue AndAlso (now - _lastAttackAction).TotalMilliseconds < PostAttackMovementGraceMs Then
+            _lastNavigationTravelReason = $"Travel waiting {PostAttackMovementGraceMs}ms after the last attack before moving, so it doesn't cancel it."
+            reason = _lastNavigationTravelReason
             Return False
         End If
 

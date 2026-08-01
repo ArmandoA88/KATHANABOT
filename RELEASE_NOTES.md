@@ -1,7 +1,8 @@
-# KathanaBot 1.0.106
+# KathanaBot 1.0.107
 
 ## What changed
 
+- **Fixed Hold on Place / Leveling Navigation interrupting active combat to reposition.** Movement corrections could previously fire in the very same tick as an attack, or right after one - and in most action-combat games, a movement key press cancels whatever attack/skill animation is playing. That's what was causing "attacks stop mid-fight to move a little": the correction wasn't the problem, it was landing on top of combat. Movement and attacks can no longer be sent in the same tick, and Hold on Place / Navigation Travel now wait at least 600ms after the last attack before correcting position, so repositioning happens between fights instead of during them.
 - **Fixed a remaining case where the Monster Filter still attacked a blacklisted mob right after a retarget.** Every retarget key press (search, stuck-bypass, avoid-high-max-hp, Dadati evade) now immediately clears the cached/confirmed mob name from the previous target. Before this, a stale "confirmed allowed" name from the target you'd just left could still count as valid for a tick or two after the game had already switched to a new (possibly blacklisted) target - if the fresh OCR read hadn't landed yet, an attack could fire against that new target using the old target's identity. The bot now strictly follows retarget -> scan OCR -> decide: it will not attack or buff again until a fresh read of the current target's name comes back and clears the filter.
 - **Added a "Match %" setting to the Monster Filter**, right next to Mode and Name Check, so it behaves like Loot Name Match %: an OCR-read mob name only needs to be this close (not byte-for-byte identical) to a listed name to count as a match. Helps when OCR occasionally misreads a letter or two in a mob's name. Uses the same fuzzy-matching scorer as loot names.
 - **When Monster Filter is disabled, its other options now fully hide** instead of just graying out: Mode, Name Check, Match %, the listed-names box, and the add/remove row. They reappear as soon as the filter is switched back on.
@@ -14,8 +15,8 @@
 
 ## Recent change history - last 5
 
-1. **Fixed the Monster Filter attacking a blacklisted mob for a tick or two right after retargeting**, by clearing stale cached/confirmed mob-name state on every retarget key press so the bot always re-scans OCR before deciding to attack.
-2. **Monster Filter gets a "Match %" fuzzy-match setting** (like Loot Name Match %) and now fully hides its other options when disabled.
-3. **Advanced tuning settings hidden behind Developer Mode** (Vision tab timing row, Unstuck/Retarget group, Pickup By Name group, loot Verify (ms)), the **Developer Mode toggle moved into the Combat Full tab**, **heal/mana now always fire**, a **Monster Filter attack-gating fix**, **buffs suppressed on any filter-blocked mob**, and new **High/Medium/Low bot-speed buttons** next to the Attack button.
-4. **Auto Loot reliability fixes**: the F-press name filter now reads the real revealed item name instead of a stale cached one, a tunable verify delay, and removed a gate that could freeze the Loot Scanner on a still drop. Also exposed "Mob Life OCR ms" in the UI.
+1. **Fixed Hold on Place / Navigation interrupting combat to reposition**: movement and attacks can no longer fire in the same tick, and corrections now wait 600ms after the last attack.
+2. **Fixed the Monster Filter attacking a blacklisted mob for a tick or two right after retargeting**, by clearing stale cached/confirmed mob-name state on every retarget key press so the bot always re-scans OCR before deciding to attack.
+3. **Monster Filter gets a "Match %" fuzzy-match setting** (like Loot Name Match %) and now fully hides its other options when disabled.
+4. **Advanced tuning settings hidden behind Developer Mode** (Vision tab timing row, Unstuck/Retarget group, Pickup By Name group, loot Verify (ms)), the **Developer Mode toggle moved into the Combat Full tab**, **heal/mana now always fire**, a **Monster Filter attack-gating fix**, **buffs suppressed on any filter-blocked mob**, and new **High/Medium/Low bot-speed buttons** next to the Attack button.
 5. **Lite AutoPots' "Show HP/MP Overlay" jumps to a zoomed Vision tab preview** of hp_bar automatically, making the bars much easier to see while aligning the overlay.
