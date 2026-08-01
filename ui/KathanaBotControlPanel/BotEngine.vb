@@ -283,6 +283,7 @@ Public Class BotConfig
     Public Property DeniedMobs As List(Of String) = New List(Of String)()
     Public Property MonsterFilterMode As String = "blacklist"
     Public Property MonsterFilterConfirmReads As Integer = 2
+    Public Property MobNameMatchThresholdPercent As Integer = 80
     Public Property LootPickupEnabled As Boolean = False
     Public Property LootPickupIntervalMs As Integer = 4000
     Public Property LootPickupVerifyDelayMs As Integer = 220
@@ -2249,7 +2250,7 @@ Public Class BotEngine
                 cfg.EvadeDadatiEnabled AndAlso
                 dadatiNameIsFresh AndAlso
                 IsDadatiMobName(normMobName)
-            Dim listedMonsterTarget As Boolean = IsDeniedMob(mobName, cfg.DeniedMobs)
+            Dim listedMonsterTarget As Boolean = IsDeniedMob(mobName, cfg.DeniedMobs, cfg.MobNameMatchThresholdPercent)
             Dim monsterFilterBlockedTarget As Boolean =
                 monsterFilterActive AndAlso
                 normMobName <> "" AndAlso
@@ -2402,10 +2403,16 @@ Public Class BotEngine
                 (Not avoidHighMaxHpTarget) AndAlso
                 (Not evadeDadatiTarget) AndAlso
                 (Not blacklistLockActive) AndAlso
-                (Not unreachableLockActive)
+                (Not unreachableLockActive) AndAlso
+                nameConfirmedForAttack
             If targetValid Then
                 _lastTargetValidAt = now
             End If
+            ' nameConfirmedForAttack is unconditional (does not require targetWindowVisible this
+            ' tick), unlike missingNameBlockedByFilter/nameConfirmationBlockedByFilter above. This
+            ' closes the gap where a stale combat lock or the mob-HP-color fallback signal (used
+            ' when the target window itself is not visible this frame) could keep attacks flowing
+            ' against a target whose name was never OCR-confirmed against the monster filter.
             Dim targetActionBlocked As Boolean =
                 monsterFilterBlockedTarget OrElse
                 avoidHighMaxHpTarget OrElse
@@ -2415,7 +2422,8 @@ Public Class BotEngine
                 missingNameBlockedByPreference OrElse
                 preferredTargetMismatch OrElse
                 nameConfirmationBlockedByFilter OrElse
-                unreachableLockActive
+                unreachableLockActive OrElse
+                (monsterFilterActive AndAlso Not nameConfirmedForAttack)
             Dim targetSignalHoldActive As Boolean = (Not targetActionBlocked) AndAlso IsRecentTargetSignalHoldActive(now, cfg)
             If nameOnlyNonMobTarget Then
                 targetSignalHoldActive = False
@@ -2518,13 +2526,18 @@ Public Class BotEngine
                 End If
             End If
 
-            If Not forcedRetarget AndAlso Not actionSent Then
-                Dim supportSent As Boolean = (Not deathPaused) AndAlso TrySendSupportActions(cfg, hwnd, hpPct, mpPct, hpRegion, mpRegion)
-                If supportSent Then
-                    actionSent = True
-                    reason = ""
-                End If
+            ' Healing/mana must always get a chance to fire regardless of any other gate this tick
+            ' (forced retarget, monster filter blocking the target, auto-accept/repair/evade paths
+            ' having already fired, etc.) - the character's survival should never depend on the
+            ' currently-selected mob being an allowed attack target.
+            Dim actionSentBeforeSupport As Boolean = actionSent
+            Dim supportSent As Boolean = (Not deathPaused) AndAlso TrySendSupportActions(cfg, hwnd, hpPct, mpPct, hpRegion, mpRegion)
+            If supportSent Then
+                actionSent = True
+                reason = ""
+            End If
 
+            If Not forcedRetarget AndAlso Not actionSentBeforeSupport Then
                 If Not actionSent Then
                     If cfg.HoldPlaceEnabled Then
                         Dim holdReason As String = ""
@@ -2564,10 +2577,12 @@ Public Class BotEngine
 
                 ' Support keys can fire without blocking attack/buff in the same loop.
                 Dim allowBlindAttack As Boolean = AllowBlindAttackWhenTargetMissing AndAlso (Not monsterFilterActive) AndAlso (Not monsterFilterBlockedTarget) AndAlso (Not avoidHighMaxHpTarget) AndAlso (Not _lastNavigationTravelActive)
+                ' Buffs must never fire on a filter-disallowed target: blocked in blacklist mode,
+                ' not-listed in whitelist mode (previously only blacklist mode suppressed buffs,
+                ' letting them slip through against a non-whitelisted mob), or not yet OCR-confirmed.
                 Dim suppressOffensiveBuffsForBlacklist As Boolean =
                     monsterFilterActive AndAlso
-                    (Not monsterFilterWhitelistMode) AndAlso
-                    (monsterFilterBlockedTarget OrElse blacklistLockActive)
+                    (monsterFilterBlockedTarget OrElse blacklistLockActive OrElse Not nameConfirmedForAttack)
                 Dim attackBurst As List(Of ActionRule) = If(deathPaused, New List(Of ActionRule)(), ChooseAttackBurstActions(cfg, hpPct, mpPct, effectiveTargetValid, allowBlindAttack, highMaxHpAttackActive, suppressOffensiveBuffsForBlacklist, reason))
                 If attackBurst.Count > 0 Then
                     Dim sentKeys As New List(Of String)()
@@ -2650,6 +2665,8 @@ Public Class BotEngine
                                     reason = $"Leveling agent skipped non-preferred mob '{If(String.IsNullOrWhiteSpace(mobName), "unknown", mobName)}'. Retarget key sent."
                                 ElseIf nameConfirmationBlockedByFilter Then
                                     reason = $"Monster filter waiting for {monsterFilterConfirmRequired}x name confirmation. Retarget key sent."
+                                ElseIf monsterFilterActive AndAlso Not nameConfirmedForAttack Then
+                                    reason = "Monster filter waiting for OCR name confirmation before attacking. Retarget key sent."
                                 ElseIf unreachableLockActive Then
                                     reason = "Unable-to-reach lock active. Retarget key sent."
                                 ElseIf nameOnlyNonMobTarget Then
@@ -2678,6 +2695,8 @@ Public Class BotEngine
                             reason = "Leveling agent is searching for a preferred mob."
                         ElseIf nameConfirmationBlockedByFilter Then
                             reason = $"Monster filter waiting for {monsterFilterConfirmRequired}x name confirmation. Waiting retarget cooldown."
+                        ElseIf monsterFilterActive AndAlso Not nameConfirmedForAttack Then
+                            reason = "Monster filter waiting for OCR name confirmation before attacking. Waiting retarget cooldown."
                         ElseIf unreachableLockActive Then
                             reason = "Unable-to-reach lock active. Waiting retarget cooldown."
                         ElseIf nameOnlyNonMobTarget Then
@@ -8331,7 +8350,7 @@ Public Class BotEngine
         Return hasRes AndAlso hasPrompt
     End Function
 
-    Private Shared Function IsDeniedMob(mobName As String, denied As List(Of String)) As Boolean
+    Private Shared Function IsDeniedMob(mobName As String, denied As List(Of String), matchThresholdPercent As Integer) As Boolean
         If String.IsNullOrWhiteSpace(mobName) OrElse denied Is Nothing OrElse denied.Count = 0 Then
             Return False
         End If
@@ -8341,6 +8360,7 @@ Public Class BotEngine
             Return False
         End If
 
+        Dim threshold As Double = ClampMobMatchThresholdPercent(matchThresholdPercent) / 100.0
         For Each item In denied
             Dim normDenied As String = NormalizeMobName(item)
             If normDenied = "" Then
@@ -8349,15 +8369,23 @@ Public Class BotEngine
             If normMob.Equals(normDenied, StringComparison.OrdinalIgnoreCase) Then
                 Return True
             End If
-            If normMob.Contains(normDenied, StringComparison.OrdinalIgnoreCase) Then
-                Return True
-            End If
-            If IsFuzzyBlacklistMatch(normMob, normDenied) Then
+            If GetMobMatchScore(normMob, normDenied) >= threshold Then
                 Return True
             End If
         Next
 
         Return False
+    End Function
+
+    ' Reuses the loot-name fuzzy scorer (same OCR-noise problem: small misreads on a name that
+    ' should still count as a match) so the Monster Filter gets a user-tunable "Match %" exactly
+    ' like Loot Name Match %, instead of a fixed internal similarity threshold.
+    Private Shared Function ClampMobMatchThresholdPercent(value As Integer) As Integer
+        Return ClampLootMatchThresholdPercent(value)
+    End Function
+
+    Private Shared Function GetMobMatchScore(normObserved As String, normCandidate As String) As Double
+        Return GetLootMatchScore(normObserved, normCandidate)
     End Function
 
     Private Shared Function IsPreferredMob(mobName As String, preferred As List(Of String)) As Boolean
@@ -8433,33 +8461,6 @@ Public Class BotEngine
             For start As Integer = 0 To mobTokens.Length - preferredTokens.Length
                 Dim mobWindow As String = String.Join(" ", mobTokens.Skip(start).Take(preferredTokens.Length))
                 If AreTextsClose(mobWindow, normPreferred) Then
-                    Return True
-                End If
-            Next
-        End If
-
-        Return False
-    End Function
-
-    Private Shared Function IsFuzzyBlacklistMatch(normMob As String, normDenied As String) As Boolean
-        If String.IsNullOrWhiteSpace(normMob) OrElse String.IsNullOrWhiteSpace(normDenied) Then
-            Return False
-        End If
-
-        If AreTextsClose(normMob, normDenied) Then
-            Return True
-        End If
-
-        Dim mobTokens As String() = normMob.Split({" "c}, StringSplitOptions.RemoveEmptyEntries)
-        Dim deniedTokens As String() = normDenied.Split({" "c}, StringSplitOptions.RemoveEmptyEntries)
-        If mobTokens.Length = 0 OrElse deniedTokens.Length = 0 Then
-            Return False
-        End If
-
-        If mobTokens.Length >= deniedTokens.Length Then
-            For start As Integer = 0 To mobTokens.Length - deniedTokens.Length
-                Dim window As String = String.Join(" ", mobTokens.Skip(start).Take(deniedTokens.Length))
-                If AreTextsClose(window, normDenied) Then
                     Return True
                 End If
             Next
@@ -8900,12 +8901,33 @@ Public Class BotEngine
         If SendKey(hwnd, "E", FastKeyPressMs) Then
             ClearCombatLock()
             ClearMobMaxHpTracking()
+            ResetMobNameTrackingAfterRetarget()
             SetLastAction(actionText)
             Return True
         End If
 
         Return False
     End Function
+
+    ' Whatever mob name/confirmation state was built up for the PREVIOUS target must never survive
+    ' a retarget key press. Without this, a stale cached name (or an already-confirmed name from
+    ' the previous target) could still read as "confirmed allowed" for one or more ticks after E is
+    ' pressed - while the game has already switched to a new, possibly blacklisted, target - letting
+    ' an attack/buff fire against a target whose name was never actually re-checked. Clearing this
+    ' here forces the fresh "retarget -> scan OCR -> decide" sequence on every retarget, normal or
+    ' forced (stuck bypass, avoid-high-max-hp, Dadati evade, etc. all funnel through this function).
+    Private Sub ResetMobNameTrackingAfterRetarget()
+        _cachedMobName = ""
+        _lastMobNameRead = DateTime.MinValue
+        _lastMobNameDetectedAt = DateTime.MinValue
+        _mobNameOcrStartedAt = DateTime.MinValue
+        _mobNameOcrTask = Nothing
+        _nameConfirmCandidate = ""
+        _nameConfirmCount = 0
+        _nameConfirmConfirmedName = ""
+        _nameConfirmLastSampleAt = DateTime.MinValue
+        _nameConfirmLastReadProcessedAt = DateTime.MinValue
+    End Sub
 
     Private Function TryEvadeDadatiTarget(hwnd As IntPtr, cfg As BotConfig, now As DateTime) As Boolean
         If hwnd = IntPtr.Zero OrElse (cfg IsNot Nothing AndAlso cfg.FullSupportModeEnabled) Then

@@ -113,6 +113,9 @@ Public Class Form1
 
     Private lblSelectedProcess As Label
     Private nudLoopMs As NumericUpDown
+    Private btnScanSpeedHigh As Button
+    Private btnScanSpeedMedium As Button
+    Private btnScanSpeedLow As Button
     Private nudRetargetMs As NumericUpDown
     Private nudForcedRetargetMs As NumericUpDown
     Private nudMobHpThreshold As NumericUpDown
@@ -214,6 +217,8 @@ Public Class Form1
     Private chkMonsterFilter As CheckBox
     Private chkMonsterWhitelistMode As CheckBox
     Private chkMonsterConfirmOnce As CheckBox
+    Private nudMobNameMatchThreshold As NumericUpDown
+    Private ReadOnly _monsterFilterOptionalControls As New List(Of Control)()
     Private chkLootPickup As CheckBox
     Private chkLootNameAutoPickup As CheckBox
     Private chkLootNamePickupRestoreCursor As CheckBox
@@ -480,6 +485,9 @@ Public Class Form1
     Private _buffWatchSelfClickLeftMouseWasDown As Boolean = False
     Private _buffWatchSelfClickX As Integer = -1
     Private _buffWatchSelfClickY As Integer = -1
+    Private _developerModeEnabled As Boolean = False
+    Private chkDeveloperMode As CheckBox
+    Private ReadOnly _developerOnlyControls As New List(Of Control)()
     Private _holdToShowGameWindowEnabled As Boolean = False
     Private _holdToShowGameWindowKey As Keys = Keys.F10
     Private _holdToShowGameWindowWasDown As Boolean = False
@@ -535,6 +543,7 @@ Public Class Form1
     Private Const DefaultNtfyTopicName As String = "Katana12345"
     Private Const DefaultPartyAskCommand As String = "add"
     Private Const DefaultLootNameMatchThresholdPercent As Integer = 80
+    Private Const DefaultMobNameMatchThresholdPercent As Integer = 80
     Private Const DefaultMapOpenKey As String = "M"
     Private Const DefaultLevelingMinExpPerHour As Decimal = 0.15D
     Private Const RollingScreenshotIntervalMs As Integer = 30000
@@ -729,6 +738,7 @@ Public Class Form1
         Public Property MonsterFilterEnabled As Boolean = True
         Public Property MonsterFilterMode As String = "blacklist"
         Public Property MonsterFilterConfirmReads As Integer = 2
+        Public Property MobNameMatchThresholdPercent As Decimal = 80D
         Public Property LootPickupEnabled As Boolean = False
         Public Property LootPickupSeconds As Decimal = 4D
         Public Property LootNameMatchThresholdPercent As Decimal = 80D
@@ -762,6 +772,7 @@ Public Class Form1
         Public Property ResurrectOkPointY As Integer = -1
         Public Property ResurrectOverlayEnabled As Boolean = False
         Public Property DeathMessagePauseEnabled As Boolean = False
+        Public Property DeveloperModeEnabled As Boolean = False
         Public Property HoldToShowGameWindowEnabled As Boolean = False
         Public Property HoldToShowGameWindowKey As String = "F10"
         Public Property PartyInviteAutoAcceptEnabled As Boolean = True
@@ -1107,6 +1118,7 @@ Public Class Form1
             AddHandler nudMobHpTextScanMs.ValueChanged, AddressOf PersistListSettingsChanged
         End If
         AddHandler nudLoopMs.ValueChanged, AddressOf LiveConfigChanged
+        AddHandler nudLoopMs.ValueChanged, Sub(_s As Object, _e As EventArgs) UpdateScanSpeedButtonsUi()
         AddHandler nudRetargetMs.ValueChanged, AddressOf LiveConfigChanged
         If nudForcedRetargetMs IsNot Nothing Then
             AddHandler nudForcedRetargetMs.ValueChanged, AddressOf LiveConfigChanged
@@ -1135,6 +1147,9 @@ Public Class Form1
         End If
         If nudLootNameMatchThreshold IsNot Nothing Then
             AddHandler nudLootNameMatchThreshold.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If nudMobNameMatchThreshold IsNot Nothing Then
+            AddHandler nudMobNameMatchThreshold.ValueChanged, AddressOf LiveConfigChanged
         End If
         AddHandler chkMonsterFilter.CheckedChanged, AddressOf MonsterFilterOptionChanged
         AddHandler chkMonsterFilter.CheckedChanged, AddressOf LiveConfigChanged
@@ -1447,6 +1462,9 @@ Public Class Form1
         If nudLootNameMatchThreshold IsNot Nothing Then
             AddHandler nudLootNameMatchThreshold.ValueChanged, AddressOf PersistListSettingsChanged
         End If
+        If nudMobNameMatchThreshold IsNot Nothing Then
+            AddHandler nudMobNameMatchThreshold.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
         If nudPartyAskSeconds IsNot Nothing Then
             AddHandler nudPartyAskSeconds.ValueChanged, AddressOf PersistListSettingsChanged
         End If
@@ -1633,11 +1651,8 @@ Public Class Form1
             chkMonsterConfirmOnce.ForeColor = Color.White
         End If
 
-        If lstMonsterFilter IsNot Nothing Then
-            If Not enabled Then
-                lstMonsterFilter.BackColor = Color.FromArgb(35, 35, 35)
-                lstMonsterFilter.ForeColor = Color.LightGray
-            ElseIf whitelist Then
+        If lstMonsterFilter IsNot Nothing AndAlso enabled Then
+            If whitelist Then
                 lstMonsterFilter.BackColor = Color.FromArgb(0, 118, 48)
                 lstMonsterFilter.ForeColor = Color.White
             Else
@@ -1645,6 +1660,12 @@ Public Class Form1
                 lstMonsterFilter.ForeColor = Color.White
             End If
         End If
+
+        For Each control As Control In _monsterFilterOptionalControls
+            If control IsNot Nothing Then
+                control.Visible = enabled
+            End If
+        Next
     End Sub
 
     Private Sub HoldPlaceRestrictivenessChanged(_sender As Object, _e As EventArgs)
@@ -2009,10 +2030,12 @@ Public Class Form1
         _mainTabs.TabPages.Add(_buffWatchTab)
         _diagnosticsTab = BuildDiagnosticsTab()
         _mainTabs.TabPages.Add(_diagnosticsTab)
+        UpdateDiagnosticsTabVisibility()
         _updateTab = BuildUpdateTab()
         _mainTabs.TabPages.Add(_updateTab)
         _mainTabs.SelectedTab = _combatTab
         UpdateMainTabIndicators()
+        UpdateDeveloperOnlyControlsVisibility()
     End Sub
 
     Private Function BuildLiteTab() As TabPage
@@ -3067,7 +3090,8 @@ Public Class Form1
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 130.0F))
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
 
-        generalLayout.Controls.Add(New Label() With {.Text = "Selected Process", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
+        Dim lblSelectedProcessCaption As New Label() With {.Text = "Selected Process", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        generalLayout.Controls.Add(lblSelectedProcessCaption, 0, 0)
         lblSelectedProcess = New Label() With {
             .Text = "No process selected",
             .Dock = DockStyle.Fill,
@@ -3079,21 +3103,33 @@ Public Class Form1
         generalLayout.Controls.Add(lblSelectedProcess, 1, 0)
         generalLayout.SetColumnSpan(lblSelectedProcess, 3)
 
-        generalLayout.Controls.Add(New Label() With {.Text = "Loop (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
+        Dim lblLoopMsCaption As New Label() With {.Text = "Loop (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        generalLayout.Controls.Add(lblLoopMsCaption, 0, 1)
         nudLoopMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 20, .Maximum = 1000, .Value = 80}
         generalLayout.Controls.Add(nudLoopMs, 1, 1)
 
-        generalLayout.Controls.Add(New Label() With {.Text = "Normal Retarget (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 2, 1)
+        Dim lblNormalRetargetCaption As New Label() With {.Text = "Normal Retarget (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        generalLayout.Controls.Add(lblNormalRetargetCaption, 2, 1)
         nudRetargetMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 100, .Maximum = 5000, .Value = 550}
         generalLayout.Controls.Add(nudRetargetMs, 3, 1)
 
-        generalLayout.Controls.Add(New Label() With {.Text = "Mob HP Presence %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
+        Dim lblMobHpCaption As New Label() With {.Text = "Mob HP Presence %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        generalLayout.Controls.Add(lblMobHpCaption, 0, 2)
         nudMobHpThreshold = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 0.1D, .Maximum = 100, .DecimalPlaces = 1, .Increment = 0.1D, .Value = 1.0D}
         generalLayout.Controls.Add(nudMobHpThreshold, 1, 2)
 
-        generalLayout.Controls.Add(New Label() With {.Text = "Forced Retarget (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 2, 2)
+        Dim lblForcedRetargetCaption As New Label() With {.Text = "Forced Retarget (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        generalLayout.Controls.Add(lblForcedRetargetCaption, 2, 2)
         nudForcedRetargetMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 100, .Maximum = 5000, .Value = 550}
         generalLayout.Controls.Add(nudForcedRetargetMs, 3, 2)
+
+        _developerOnlyControls.AddRange({
+            CType(lblSelectedProcessCaption, Control), lblSelectedProcess,
+            lblLoopMsCaption, nudLoopMs,
+            lblNormalRetargetCaption, nudRetargetMs,
+            lblMobHpCaption, nudMobHpThreshold,
+            lblForcedRetargetCaption, nudForcedRetargetMs
+        })
 
         btnOverlayToggle = New Button() With {.Text = "Show Overlay", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(70, 70, 70), .ForeColor = Color.White}
         AddHandler btnOverlayToggle.Click, AddressOf ToggleOverlayClicked
@@ -3475,7 +3511,9 @@ Public Class Form1
         notifyGroup.Controls.Add(notifyLayout)
 
         settingsLayout.Controls.Add(notifyGroup, 0, 0)
-        settingsLayout.Controls.Add(BuildAutoPotUnstuckGroup(), 1, 0)
+        Dim autoPotUnstuckGroup As GroupBox = BuildAutoPotUnstuckGroup()
+        settingsLayout.Controls.Add(autoPotUnstuckGroup, 1, 0)
+        _developerOnlyControls.Add(autoPotUnstuckGroup)
 
         settingsGroup.Controls.Add(settingsLayout)
         root.Controls.Add(settingsGroup, 0, 0)
@@ -3728,7 +3766,9 @@ Public Class Form1
         Dim right As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
         right.RowStyles.Add(New RowStyle(SizeType.Percent, 62.0F))
         right.RowStyles.Add(New RowStyle(SizeType.Percent, 38.0F))
-        right.Controls.Add(BuildLootNameAutoPickupGroup(), 0, 0)
+        Dim lootNameAutoPickupGroup As GroupBox = BuildLootNameAutoPickupGroup()
+        right.Controls.Add(lootNameAutoPickupGroup, 0, 0)
+        _developerOnlyControls.Add(lootNameAutoPickupGroup)
         right.Controls.Add(BuildArrowUnbundleGroup(), 0, 1)
 
         root.Controls.Add(left, 0, 0)
@@ -4817,14 +4857,25 @@ Public Class Form1
         toggleRow.Controls.Add(chkMonsterFilter)
         toggleRow.Controls.Add(chkMonsterWhitelistMode)
         toggleRow.Controls.Add(chkMonsterConfirmOnce)
+        Dim lblMobMatchThreshold As New Label() With {.Text = "Match %:", .AutoSize = True, .Padding = New Padding(10, 6, 0, 0)}
+        nudMobNameMatchThreshold = New NumericUpDown() With {.Minimum = 50, .Maximum = 100, .Value = DefaultMobNameMatchThresholdPercent, .Width = 55, .Margin = New Padding(3, 4, 3, 3)}
+        toggleRow.Controls.Add(lblMobMatchThreshold)
+        toggleRow.Controls.Add(nudMobNameMatchThreshold)
+        If _scanTimerToolTip Is Nothing Then
+            _scanTimerToolTip = New ToolTip() With {.AutoPopDelay = 15000, .InitialDelay = 300, .ReshowDelay = 300}
+        End If
+        Dim mobMatchHint As String = "How closely an OCR-read mob name must match a listed name to count, same idea as Loot Name Match %. Lower it if small OCR misreads (a swapped letter, etc.) are keeping matching mobs off the list's effect; 100% requires an exact match."
+        _scanTimerToolTip.SetToolTip(lblMobMatchThreshold, mobMatchHint)
+        _scanTimerToolTip.SetToolTip(nudMobNameMatchThreshold, mobMatchHint)
         layout.Controls.Add(toggleRow, 0, 0)
 
-        layout.Controls.Add(New Label() With {
+        Dim hintLabel As New Label() With {
             .Text = "Blacklist skips listed names. Whitelist only attacks listed names. 2 reads is safer; 1 read attacks sooner.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.MiddleLeft
-        }, 0, 1)
+        }
+        layout.Controls.Add(hintLabel, 0, 1)
 
         lstMonsterFilter = New ListBox() With {.Dock = DockStyle.Fill}
         layout.Controls.Add(lstMonsterFilter, 0, 2)
@@ -4839,6 +4890,13 @@ Public Class Form1
         actionRow.Controls.Add(btnAddMonster)
         actionRow.Controls.Add(btnRemoveMonster)
         layout.Controls.Add(actionRow, 0, 3)
+
+        _monsterFilterOptionalControls.AddRange({
+            CType(chkMonsterWhitelistMode, Control), chkMonsterConfirmOnce,
+            lblMobMatchThreshold, nudMobNameMatchThreshold,
+            hintLabel, lstMonsterFilter, actionRow
+        })
+
         UpdateMonsterFilterUi()
         Return group
     End Function
@@ -4869,6 +4927,7 @@ Public Class Form1
         Dim lootVerifyHint As String = "Recommended: 220ms. After pressing F, the picked-up item's name appears in the same nameplate area used for monster names - this is how long the bot waits before reading it and deciding to keep or reject it. Raise it if the name doesn't render in time on your connection/game; lower it for a faster reject."
         _scanTimerToolTip.SetToolTip(lblLootPickupVerifyMs, lootVerifyHint)
         _scanTimerToolTip.SetToolTip(nudLootPickupVerifyMs, lootVerifyHint)
+        _developerOnlyControls.AddRange({CType(lblLootPickupVerifyMs, Control), nudLootPickupVerifyMs})
         layout.Controls.Add(intervalRow, 0, 1)
 
         lstLootFilter = New ListBox() With {.Dock = DockStyle.Fill}
@@ -4894,7 +4953,7 @@ Public Class Form1
             .AutoSize = True,
             .AutoSizeMode = AutoSizeMode.GrowAndShrink,
             .ColumnCount = 1,
-            .RowCount = 24,
+            .RowCount = 25,
             .GrowStyle = TableLayoutPanelGrowStyle.FixedSize,
             .Margin = New Padding(0),
             .Padding = New Padding(4)
@@ -5035,12 +5094,55 @@ Public Class Form1
         holdToShowGameWindowRow.Controls.Add(btnHoldToShowGameWindow, 0, 0)
         holdToShowGameWindowRow.Controls.Add(cboHoldToShowGameWindowKey, 1, 0)
 
+        chkDeveloperMode = New CheckBox() With {
+            .Text = "Developer Mode: OFF",
+            .Appearance = Appearance.Button,
+            .Dock = DockStyle.Fill,
+            .MinimumSize = New Size(0, 38),
+            .Margin = New Padding(3, 3, 3, 3),
+            .TextAlign = ContentAlignment.MiddleCenter,
+            .ForeColor = Color.White,
+            .BackColor = Color.FromArgb(110, 45, 45),
+            .UseVisualStyleBackColor = False,
+            .Checked = False
+        }
+        AddHandler chkDeveloperMode.CheckedChanged, AddressOf DeveloperModeChanged
+        UpdateDeveloperModeUi()
+
+        btnScanSpeedHigh = New Button() With {.Text = "High", .Dock = DockStyle.Fill, .MinimumSize = New Size(0, 42), .Margin = New Padding(2, 0, 1, 0), .ForeColor = Color.White, .UseVisualStyleBackColor = False}
+        btnScanSpeedMedium = New Button() With {.Text = "Medium", .Dock = DockStyle.Fill, .MinimumSize = New Size(0, 42), .Margin = New Padding(1, 0, 1, 0), .ForeColor = Color.White, .UseVisualStyleBackColor = False}
+        btnScanSpeedLow = New Button() With {.Text = "Low", .Dock = DockStyle.Fill, .MinimumSize = New Size(0, 42), .Margin = New Padding(1, 0, 2, 0), .ForeColor = Color.White, .UseVisualStyleBackColor = False}
+        AddHandler btnScanSpeedHigh.Click, Sub(_s As Object, _e As EventArgs) SetScanSpeedPreset(200)
+        AddHandler btnScanSpeedMedium.Click, Sub(_s As Object, _e As EventArgs) SetScanSpeedPreset(500)
+        AddHandler btnScanSpeedLow.Click, Sub(_s As Object, _e As EventArgs) SetScanSpeedPreset(1000)
+        Dim scanSpeedRow As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .ColumnCount = 3, .RowCount = 1, .Margin = New Padding(4, 3, 3, 3)}
+        scanSpeedRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 33.34F))
+        scanSpeedRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 33.33F))
+        scanSpeedRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 33.33F))
+        scanSpeedRow.Controls.Add(btnScanSpeedHigh, 0, 0)
+        scanSpeedRow.Controls.Add(btnScanSpeedMedium, 1, 0)
+        scanSpeedRow.Controls.Add(btnScanSpeedLow, 2, 0)
+        If _scanTimerToolTip Is Nothing Then
+            _scanTimerToolTip = New ToolTip() With {.AutoPopDelay = 15000, .InitialDelay = 300, .ReshowDelay = 300}
+        End If
+        Dim scanSpeedHint As String = "How often the bot re-checks for mobs and re-runs OCR/combat logic. High = every 200ms (fastest, more CPU). Medium = every 500ms. Low = every 1000ms (lightest load)."
+        _scanTimerToolTip.SetToolTip(btnScanSpeedHigh, scanSpeedHint)
+        _scanTimerToolTip.SetToolTip(btnScanSpeedMedium, scanSpeedHint)
+        _scanTimerToolTip.SetToolTip(btnScanSpeedLow, scanSpeedHint)
+        UpdateScanSpeedButtonsUi()
+
+        Dim runRow As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .ColumnCount = 2, .RowCount = 1, .Margin = New Padding(0)}
+        runRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
+        runRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
+        runRow.Controls.Add(btnAttack, 0, 0)
+        runRow.Controls.Add(scanSpeedRow, 1, 0)
+
         Dim controls As Control() = {
             lblFullEdition, lblRunState, lblShortcutHint, lblState, lblSystem, hpMpLayout,
-            lblMobName, lblExpRate, lblRupiahsRate, btnAttack, btnSaveSettings, btnStopBot,
+            lblMobName, lblExpRate, lblRupiahsRate, runRow, btnSaveSettings, btnStopBot,
             btnFullSupport, btnBypassStuck, btnPartyInviteAutoAccept, btnRessAutoAccept,
             lblPartyAskEvery, nudPartyAskSeconds, lblPartyAskText, txtPartyAskText, btnPartyAsk, btnProfiles, btnHelp,
-            holdToShowGameWindowRow
+            holdToShowGameWindowRow, chkDeveloperMode
         }
         For rowIndex As Integer = 0 To controls.Length - 1
             content.Controls.Add(controls(rowIndex), 0, rowIndex)
@@ -7494,6 +7596,50 @@ Public Class Form1
         }
     End Function
 
+    Private Sub DeveloperModeChanged(sender As Object, e As EventArgs)
+        If chkDeveloperMode Is Nothing Then
+            Return
+        End If
+        _developerModeEnabled = chkDeveloperMode.Checked
+        UpdateDeveloperModeUi()
+        UpdateDiagnosticsTabVisibility()
+        SavePersistedListState(False)
+        AppendLog(If(_developerModeEnabled, "Developer Mode enabled: Diagnostics tab is now visible.", "Developer Mode disabled: Diagnostics tab is now hidden."))
+    End Sub
+
+    Private Sub UpdateDeveloperModeUi()
+        If chkDeveloperMode Is Nothing Then
+            Return
+        End If
+        chkDeveloperMode.Checked = _developerModeEnabled
+        chkDeveloperMode.Text = If(_developerModeEnabled, "Developer Mode: ON", "Developer Mode: OFF")
+        chkDeveloperMode.BackColor = If(_developerModeEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+        UpdateDeveloperOnlyControlsVisibility()
+    End Sub
+
+    Private Sub UpdateDeveloperOnlyControlsVisibility()
+        For Each control As Control In _developerOnlyControls
+            If control IsNot Nothing Then
+                control.Visible = _developerModeEnabled
+            End If
+        Next
+    End Sub
+
+    Private Sub UpdateDiagnosticsTabVisibility()
+        If _mainTabs Is Nothing OrElse _diagnosticsTab Is Nothing Then
+            Return
+        End If
+        Dim isShown As Boolean = _mainTabs.TabPages.Contains(_diagnosticsTab)
+        If _developerModeEnabled AndAlso Not isShown Then
+            _mainTabs.TabPages.Add(_diagnosticsTab)
+        ElseIf Not _developerModeEnabled AndAlso isShown Then
+            If _mainTabs.SelectedTab Is _diagnosticsTab Then
+                _mainTabs.SelectedTab = _combatTab
+            End If
+            _mainTabs.TabPages.Remove(_diagnosticsTab)
+        End If
+    End Sub
+
     Private Sub ToggleHoldToShowGameWindowClicked(sender As Object, e As EventArgs)
         _holdToShowGameWindowEnabled = Not _holdToShowGameWindowEnabled
         If Not _holdToShowGameWindowEnabled Then
@@ -7518,6 +7664,30 @@ Public Class Form1
             _holdToShowGameWindowKey = parsed
             SavePersistedListState(False)
         End If
+    End Sub
+
+    Private Sub SetScanSpeedPreset(targetMs As Integer)
+        If nudLoopMs Is Nothing Then
+            Return
+        End If
+        Dim clampedMs As Decimal = Math.Min(nudLoopMs.Maximum, Math.Max(nudLoopMs.Minimum, CDec(targetMs)))
+        If nudLoopMs.Value <> clampedMs Then
+            nudLoopMs.Value = clampedMs
+        Else
+            UpdateScanSpeedButtonsUi()
+        End If
+    End Sub
+
+    Private Sub UpdateScanSpeedButtonsUi()
+        If btnScanSpeedHigh Is Nothing OrElse btnScanSpeedMedium Is Nothing OrElse btnScanSpeedLow Is Nothing OrElse nudLoopMs Is Nothing Then
+            Return
+        End If
+        Dim currentMs As Integer = CInt(nudLoopMs.Value)
+        Dim selectedColor As Color = Color.FromArgb(35, 130, 80)
+        Dim unselectedColor As Color = Color.FromArgb(70, 70, 70)
+        btnScanSpeedHigh.BackColor = If(currentMs = 200, selectedColor, unselectedColor)
+        btnScanSpeedMedium.BackColor = If(currentMs = 500, selectedColor, unselectedColor)
+        btnScanSpeedLow.BackColor = If(currentMs = 1000, selectedColor, unselectedColor)
     End Sub
 
     Private Sub UpdateHoldToShowGameWindowUi()
@@ -9824,7 +9994,7 @@ Public Class Form1
             $"AutoAskPartyText: {GetPartyAskCommandText()}{Environment.NewLine}" &
             $"LevelingAgentEnabled: {st.AgentEnabled}{Environment.NewLine}" &
             $"LevelingPreferredMobs: {If(txtLevelingPreferredMobs IsNot Nothing, txtLevelingPreferredMobs.Text.Trim(), "")}{Environment.NewLine}" &
-            $"MonsterFilter: {If(chkMonsterFilter IsNot Nothing AndAlso chkMonsterFilter.Checked, "Enabled", "Disabled")} | Mode: {GetMonsterFilterMode()} | NameConfirmReads: {GetMonsterFilterConfirmReads()}{Environment.NewLine}" &
+            $"MonsterFilter: {If(chkMonsterFilter IsNot Nothing AndAlso chkMonsterFilter.Checked, "Enabled", "Disabled")} | Mode: {GetMonsterFilterMode()} | NameConfirmReads: {GetMonsterFilterConfirmReads()} | MatchThreshold%: {If(nudMobNameMatchThreshold IsNot Nothing, nudMobNameMatchThreshold.Value.ToString(), DefaultMobNameMatchThresholdPercent.ToString())}{Environment.NewLine}" &
             $"LevelingStopHpEnabled: {If(chkLevelingStopHp Is Nothing OrElse chkLevelingStopHp.Checked, "True", "False")}{Environment.NewLine}" &
             $"LevelingStopHp%: {If(nudLevelingStopHp IsNot Nothing, nudLevelingStopHp.Value.ToString(), "20")}{Environment.NewLine}" &
             $"LevelingStopMpEnabled: {If(chkLevelingStopMp Is Nothing OrElse chkLevelingStopMp.Checked, "True", "False")}{Environment.NewLine}" &
@@ -11914,6 +12084,7 @@ Public Class Form1
         cfg.MobHpPresenceThreshold = CDbl(nudMobHpThreshold.Value)
         cfg.MonsterFilterMode = GetMonsterFilterMode()
         cfg.MonsterFilterConfirmReads = GetMonsterFilterConfirmReads()
+        cfg.MobNameMatchThresholdPercent = CInt(If(nudMobNameMatchThreshold IsNot Nothing, nudMobNameMatchThreshold.Value, CDec(DefaultMobNameMatchThresholdPercent)))
         cfg.HighMaxHpSpecialEnabled = (chkHighMaxHpSpecial IsNot Nothing AndAlso chkHighMaxHpSpecial.Checked)
         cfg.HighMaxHpThreshold = CInt(If(nudHighMaxHpThreshold IsNot Nothing, nudHighMaxHpThreshold.Value, 2000D))
         cfg.AvoidHighMaxHpEnabled = (chkAvoidHighMaxHpTargets IsNot Nothing AndAlso chkAvoidHighMaxHpTargets.Checked)
@@ -12860,6 +13031,10 @@ Public Class Form1
             If chkMonsterConfirmOnce IsNot Nothing Then
                 chkMonsterConfirmOnce.Checked = Math.Max(1, state.MonsterFilterConfirmReads) <= 1
             End If
+            If nudMobNameMatchThreshold IsNot Nothing Then
+                Dim boundedMobMatch As Decimal = Math.Max(nudMobNameMatchThreshold.Minimum, Math.Min(nudMobNameMatchThreshold.Maximum, If(state.MobNameMatchThresholdPercent > 0, state.MobNameMatchThresholdPercent, DefaultMobNameMatchThresholdPercent)))
+                nudMobNameMatchThreshold.Value = boundedMobMatch
+            End If
             UpdateMonsterFilterUi()
             If chkLootPickup IsNot Nothing Then
                 chkLootPickup.Checked = state.LootPickupEnabled
@@ -12946,6 +13121,9 @@ Public Class Form1
             SetResurrectOverlayVisible(_resurrectOverlayEnabled)
             _deathMessagePauseEnabled = state.DeathMessagePauseEnabled
             UpdateDeathMessagePauseUi()
+            _developerModeEnabled = state.DeveloperModeEnabled
+            UpdateDeveloperModeUi()
+            UpdateDiagnosticsTabVisibility()
             _buffWatchEnabled = state.BuffWatchEnabled
             If chkBuffWatchEnabled IsNot Nothing Then
                 chkBuffWatchEnabled.Checked = _buffWatchEnabled
@@ -13078,6 +13256,7 @@ Public Class Form1
                 .MonsterFilterEnabled = (chkMonsterFilter IsNot Nothing AndAlso chkMonsterFilter.Checked),
                 .MonsterFilterMode = GetMonsterFilterMode(),
                 .MonsterFilterConfirmReads = GetMonsterFilterConfirmReads(),
+                .MobNameMatchThresholdPercent = If(nudMobNameMatchThreshold IsNot Nothing, nudMobNameMatchThreshold.Value, CDec(DefaultMobNameMatchThresholdPercent)),
                 .LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked),
                 .LootPickupSeconds = If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value, 4D),
                 .LootNameMatchThresholdPercent = If(nudLootNameMatchThreshold IsNot Nothing, nudLootNameMatchThreshold.Value, CDec(DefaultLootNameMatchThresholdPercent)),
@@ -13111,6 +13290,7 @@ Public Class Form1
                 .ResurrectOkPointY = _resurrectOkPointY,
                 .ResurrectOverlayEnabled = _resurrectOverlayEnabled,
                 .DeathMessagePauseEnabled = _deathMessagePauseEnabled,
+                .DeveloperModeEnabled = _developerModeEnabled,
                 .HoldToShowGameWindowEnabled = _holdToShowGameWindowEnabled,
                 .HoldToShowGameWindowKey = _holdToShowGameWindowKey.ToString(),
                 .PartyInviteAutoAcceptEnabled = _partyInviteAutoAccept,
@@ -13302,6 +13482,7 @@ Public Class Form1
         End If
 
         SetNumericControlValue(nudLoopMs, cfg.LoopMs)
+        UpdateScanSpeedButtonsUi()
         SetNumericControlValue(nudRetargetMs, cfg.RetargetMs)
         SetNumericControlValue(nudForcedRetargetMs, If(cfg.ForcedRetargetMs > 0, cfg.ForcedRetargetMs, cfg.RetargetMs))
         SetNumericControlValue(nudStuckTargetMs, cfg.StuckTargetMs)
@@ -13311,6 +13492,7 @@ Public Class Form1
         If chkMonsterConfirmOnce IsNot Nothing Then
             chkMonsterConfirmOnce.Checked = Math.Max(1, cfg.MonsterFilterConfirmReads) <= 1
         End If
+        SetNumericControlValue(nudMobNameMatchThreshold, CDec(If(cfg.MobNameMatchThresholdPercent > 0, cfg.MobNameMatchThresholdPercent, DefaultMobNameMatchThresholdPercent)))
         UpdateMonsterFilterUi()
         If chkHighMaxHpSpecial IsNot Nothing Then
             chkHighMaxHpSpecial.Checked = cfg.HighMaxHpSpecialEnabled
