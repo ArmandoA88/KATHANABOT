@@ -876,6 +876,7 @@ Public Class Form1
         BuildUi()
         AddHandler _periodicScreenshotTimer.Tick, AddressOf PeriodicScreenshotTimerTick
         SeedDefaults()
+        SeedFirstRunSettingsFileIfMissing()
         LoadPersistedListState()
         ForceLevelingAgentOffForStartup()
         SetupLiveConfigBindings()
@@ -12943,6 +12944,44 @@ Public Class Form1
         End If
 
         Return ""
+    End Function
+
+    ' First-run only: if no settings file exists yet at all (a genuinely fresh install, never one
+    ' that's been auto-updated from an existing install), seed it from the embedded factory-default
+    ' template before the normal load runs, so a new user starts from calibrated/tuned defaults
+    ' instead of the bare factory numbers. Once this file exists, this never runs again for that
+    ' install - every subsequent save is the user's own settings, and auto-update never touches it.
+    Private Sub SeedFirstRunSettingsFileIfMissing()
+        Try
+            If File.Exists(PersistFilePath) Then
+                Return
+            End If
+
+            Dim seedJson As String = ReadEmbeddedDefaultUserSettingsJson()
+            If String.IsNullOrWhiteSpace(seedJson) Then
+                Return
+            End If
+
+            Directory.CreateDirectory(PersistDirectoryPath)
+            File.WriteAllText(PersistFilePath, seedJson)
+        Catch
+        End Try
+    End Sub
+
+    Private Shared Function ReadEmbeddedDefaultUserSettingsJson() As String
+        Try
+            Dim assembly As System.Reflection.Assembly = System.Reflection.Assembly.GetExecutingAssembly()
+            Using stream As Stream = assembly.GetManifestResourceStream("KathanaBotControlPanel.DefaultUserSettings.json")
+                If stream Is Nothing Then
+                    Return ""
+                End If
+                Using reader As New StreamReader(stream, Encoding.UTF8)
+                    Return reader.ReadToEnd()
+                End Using
+            End Using
+        Catch
+            Return ""
+        End Try
     End Function
 
     Private Sub LoadPersistedListState()

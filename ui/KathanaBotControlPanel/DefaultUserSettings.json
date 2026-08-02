@@ -1,0 +1,1121 @@
+{
+  "WindowTitle": "Kathana - The Reign of Shadow",
+  "PeriodicScreenshotsEnabled": true,
+  "PeriodicScreenshotIntervalMinutes": 60,
+  "PeriodicScreenshotDirectory": "",
+  "InGameBotToggleX": 971,
+  "InGameBotToggleY": 299,
+  "InGameBotToggleWidth": 101,
+  "InGameBotToggleHeight": 60,
+  "UpdateRepositoryUrl": "https://github.com/ArmandoA88/KATHANABOT",
+  "UpdateCheckAtStartup": true,
+  "UpdateIncludePrereleases": false,
+  "Full": {
+    "MonsterFilterEnabled": false,
+    "MonsterFilterMode": "blacklist",
+    "MonsterFilterConfirmReads": 1,
+    "MobNameMatchThresholdPercent": 80,
+    "LootPickupEnabled": false,
+    "LootPickupSeconds": 2,
+    "LootNameMatchThresholdPercent": 60,
+    "LootNameAutoPickupEnabled": false,
+    "LootNamePickupOffsetX": 0,
+    "LootNamePickupOffsetY": 18,
+    "LootNamePickupPointEnabled": false,
+    "LootNamePickupPointX": -1,
+    "LootNamePickupPointY": -1,
+    "LootNamePickupClickDelayMs": 180,
+    "LootNamePickupFPressCount": 3,
+    "LootNamePickupFPressGapMs": 110,
+    "LootNamePickupMouseHoldMs": 35,
+    "LootNamePickupRestoreCursor": true,
+    "LootRejectPointEnabled": false,
+    "LootRejectPointX": -1,
+    "LootRejectPointY": -1,
+    "ArrowUnbundleEnabled": true,
+    "ArrowUnbundleSeconds": 10,
+    "ArrowUnbundleOverlayEnabled": false,
+    "ArrowUnbundlePoints": [
+      {
+        "X": 1302,
+        "Y": 540
+      },
+      {
+        "X": 1301,
+        "Y": 574
+      },
+      {
+        "X": 1301,
+        "Y": 611
+      },
+      {
+        "X": 1302,
+        "Y": 503
+      }
+    ],
+    "ArrowBundleIconBase64": "iVBORw0KGgoAAAANSUhEUgAAACQAAAAkCAIAAABuYg/PAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAA3nSURBVFhHvddnVJtXmgdwnfFmdmwEuBDABkwVoAaiS1RJqCAJgRqiqaAG6hJNNCEJsKgSICQEAtvEBWM6NgYblwkMicElk8w4EzsuWcdjB49jdhMn2eyn0R5gZzM5\u002B32f8//wnnvvOb9zn/feDxdAZOQR6FRcPmU3uXh6HpFFJxUyyUUsSjEzh5WPp5EJ9FwiM49UyKRyivP5nHweh8bnMAVctphXKOEXlQtKpEKOQsRTSXgaqbBWKzc1V3Z31vRb6wYH6p2OhiFnw5CjwWkHTA/2Az09BURsWlqWyaRrb5dZrZVNTWovj4OHQ4JTBWWZOl22wUA0GkkmE/n/hGQyEY1GnMGQqdMllZaAkajQiMA4ChkpEqZVarMaG3EGQ77JBEejpwf7AbNDA0BPoICIra6uc7uFL15UX7vW4Xa3mU9o04nU/NYTRecvlN/\u002BuGZrq8ntNrjdxt2Y/vHR5HbXbG2V3/64ZPxCmrr29JjDUFNCk1SQ9Hr2wKB0eUn1xV/a3e787u7ZoQHAvMvhAdzBZDKp212s0ykBgICvv\u002B5cvNJGxacZy3LYJGxxTQ17blb69LH63Tvtf/2s\u002Bfln7W7U776XPnlcODdbXFNTRMaqqeihU/TlpQ50BprDLRXy8qKQCZypycrtbXxLy7zLAbg06vTw8NjFVG539qNH3GvXWtzu2r7uarJaUsNImzRVNTbrMKbWstu35X97o/rhJ/VP/6n68SfVDz8qXr8pu72BMbU1NusmTVVqcmL59U5uFohFiFM1IB\u002BuSknsEpp9QPXyZbbJdGnUubOzAx4HdjGl242/fVtktUpMpsrAo6GkCsrU2llng1hESMYptYXzl8RPn8u238n/40f5dz/Ktr\u002BXPP23wvlLOKVWREgeahQPL7l6emtLY6IM9vpsNTovISGjVJDf1694/gJjMu3sbHZoYA/TajVut0LfrAb8o7CH9lnXByxVtM\u002BWTueUFOaNjPE//VzyzduKN\u002B/K33wvefWW/\u002Bnnea6xnJLCPy2dtlTRmpe7anMy763N6gWUVnLCWZswMR7OsA9VPHueZTTt/LMZp20Po\u002BXmLs3NlhYw9u3/7R5m4NCsLqlqoq2OhavWKNGtnSVrm2XPvhG\u002B2ha\u002B\u002BnfBs62StU10W2e1VlnHwqkm2sw2wUJPLT0\u002BQl2E41gI18YFTKmGYnOKn77MMJpmnDbAlKNvDzuOxUEpxcxkBAHpw64pHD/vqi/LEzDiLV\u002BMdXWqNCW0DG0dc\u002BYK57OnvCd/4z99XfrZU\u002BbMlYzKOk0JvatTZf1ijJsHH6iVrC/OcPV8WhGcikpC8cvznKeFj79JMxinHH072N4BieOK8EoNJSPdwMSdHNIKuZiTuvKxlsriNkb7hfZBCQtGL6JY7IzLq\u002ByNh\u002BzbXzAur1Isdhi9eFDCar/QXtzGONNaZVfzecUZzgFVPRlNSktHMQso/SPcP32N3MNmnLY9DMHmZpJIV2f1m7PGajyKlR53fbG/MjfLYZbSJnUnjeVVDEJEaQXB3Es5NUU5NUkw94aXVFTRCSeN5bRJncMsrczNun6ln5UeX41H3Zk1rsw1p6BSyBZn0Z0vk5qNO22cG7bvtTGaWZzf3DPaVSo4x\u002BeXZq10NlaUFpxzNpuoaSPDPIeT/Ula0GAROorBRYnkSLE8ksFxFKE/SQtyONkjwzwTNe2cs7mitGCls5FfmiU4xx/t5hCVDdgeJ/vuk4Rmw9yw/ZejD\u002BdVoHStbDyhDB3e89FoQ4fYxCZNd1TxxaSBHtEfuRH1HNJ1iO\u002BmICMJg4vHEjYFGTcgvvUc0h\u002B5EQPdIr54Z7GJTWroEPd8NFqGDmcTCHESDdE1wbj3HNFg\u002BNWlhgpV2T0uBgEzWC\u002B163hal7zrqq04C/6BQZ5JgK2xY5\u002BZOTBISh/s4O9llE/Ls3ug3lAI8iszZ40dm0GAfWCQF2fBu67atC65XccbrJcyidj0hnb82KW8O89htYadS70wMugB3MHA4sps\u002B3g2V9xubtTkota6xSwdyflwQluGEZOoGVEQdytptVkkIuGflBMXU4NLSbh1o8jdQk6PhIhJVG0ZxvlwgqUjrXWLNbmo9hONOJ4krcWG/WCZtP4UWqlfGBkEzI849rBISS3u3I3kunYQiSXVVOik7LEGgVBKsGyM1NWXHg6FdeMRn2vJL7hgDjSai4z9oZvn7mIO48DeoTF1daWWjRGhlDDWINDJ2FJNBYjESq7vyLRNpJ\u002B5gb/xKFqpnx9xAOZ2MWFOdoS4LmtqE2U5l9bcB\u002BGq0zkSqYSjLaVXSahNlzWNNZnDVOJKXup0aeamgfusnvGqJvereqo\u002BJc5YjWpc1FZKqNpSulTCSedIIFx1anN/qvU8cmQJNXYja/FBRHn93IgDMOuy72FhgprUi3cS7QtJlvEU42CcQg9hSxC5LD9oupCEflYOvUiOGWBgHrZwPi\u002BnfF3NuHtCNllEeCyL3\u002BCF8ShYP2g6gsKCsMVxCn2ycTDRMp7kWEhyLSe5rqZN3w8T1My67ICZ4YE9LJijTRr7A8IyiTCfjdM7EjUtCI4sAJ2nKszdYkIYQb4yfMp2I\u002BnDfMSTbs1HQuoza9ndsvQOfBIjJHSLAVYV5gag8\u002BK4skR1a7zegeg4g7BMIWzzCNtC8pn14xzNzPAAYMrZDwQChTnZxwoUiIFleONQjKo9hC4OzKJCU7KnCzKfMCMTjwQlpmfdV\u002BYOoWLXGnm3K3HrTdxNFbYJEXmznJiSkZlwJOgxM3KanQlNyQ5EU0No4hhVe0zjMKztPLT9IsJ5K5CtmHL2AyYH\u002B4BAoICUfTRPBG85CxbWg7D0muaW7sGh/lqlK9jTPwisYGK2hbG8oIDCXMqWtWRWI3nVK1zRMLm0XF5w4LYwRsHEHj0OdgV79tcqexzD1foWEJYOFjWAq21RTachvcv\u002B9IrJwT7ARUfvHuaPK4QrO0OQ2aeGh25eXbp/9878rQ8D41JGJdRHzGhUSIg/NPGpVbChYf6lR3pLjP5QXfBVn8APmogKCX3EiD4poQbGpczf\u002Bv39u3duXl06NTwUkooHl9VHKC2R5nlfivCioxcwYbfuYcfSyEHoApOxbXrqIhgMEcnkWp7wOgu6QYRDgkDe4bDFhvwnovg\u002BBuZxA\u002B6aMGuwKPuJMH6xId87fGfBBhF\u002BnQXV8oQimRwMhkxPXTSZ2o4lEyO59WFNEz547oTd\u002Bj9YWQ72YFRSiby2uroqh0xZXFy8vrp\u002BytKtiwwKi4zxB8Em9OJvFclcaKxDzR1nwi8Uxg6qOVxozLeK5Am92B8EC4uM0UUGnbJ0X19dX1xczCFTqqurCgXyIBwnuPL04aziX2H\u002B4GQ8lQWOir66vGyz2dZWV2\u002BtfxwCj4FDY640yf7eRc6OAIXGZ2w7OCgYNBUG3baXhsVnZIMi/t5FvtIkg0NjQuAxt9Y/XltdtdlsV5eXIdHRaDw5ClcUWOH0RrF\u002BwfhEjH9UfAwSe2H8vMXay2CyJFJZcmp6FijocnXhW22mAZe8zz/cJSR/VI4MgKcfg6evl6e4ROR9R8MNuOS32szL1YVZoKDk1HSJVMZgsizW3onx85A4JCiL6cft9UrM/xXmFRhdpWswm0/kUqh8Pg\u002BNxVSRsD9c7P3zxlIbIR7o5VNUwP5Qk0uLjjyOIgWnkmjgyFVNblEBG\u002Bjl00aI//PG0g8Xe6tIWDQWw\u002BfzcilUs9ms1miOJZB8WO3AWMoONm7r2cPej0hA4WkhwWGUnJy79\u002B49\u002BvLx/c3NFy\u002B3Xm9/12hs4hQXvX795q9vv8WQ8gMQuAAEDkOi/fXtt69fv\u002BEUFzUam15vf/fi5db9zc1HXz6\u002Be\u002B8eJScnNDgsOTMnJJV5iKw/AMaP23oA5/q6PIAefALm/fCEIGgGAU988OCBSCT65N79hcuLaq22t99Gy89bWVm5dfPmzPRUUhbVH0HxR1CS0dSZ6albN2\u002BurKzQ8vN7\u002B21qrXbh8uIn9\u002B6LRKIHDx4Q8MSAyMTjyXQvdM1\u002BEOZcXxfgjLVjF8N6BcLgSdhRl7Ojs5PHK1uYXxiw2y1Wa2JCQqVaPTs7x\u002BNyK2RK3/BU/3imXyLLNyK1Qqbkcbmzs3OValVCQoLFah2w2xfmF3i8so7OzlHXEDQW5Q/LASKV/xqafsbaARjrMQM9gXwC9neHwtQanUAootELFDKZ3WGTK1QRINihw349Xd22gX5DszEgLN4XTD4IYRyE0H3B5ICweEOz0TbQ39PVffiwXwQILleo7XabQi6j0QsEQrFCoX4/NGN/jOS9Y8ixHvMe5sknYA8FICITGYGgDN/jCVhiQVwK0T8UGQ7HxSZgbDabWFxxHJTkB6YcjGYdABUeABV6R7P8oynHI5LFknKbzRabgAmH4fxDkYgUIpbI8j0eHwjKjIglHYVSfwcWvee/i52xdgA9PcuI2b/1PObhB/fyg3ofhXgcifA4EuntD/HyizoaFI1EpnofOubtG3XAF/aeT\u002Bw\u002Bn9h9RxDv\u002BSD2\u002B8K8/SK9Dx1DIlOPBkV7\u002BUZ5\u002B0E8fEAeRyIOHoV4\u002BkEP\u002BID3vw/7F9\u002Bk3wCDdtrIVVbwNYqyKo2orrZc3yQ1GGRGg7zFqGhrVZnNyt3I21plJqO8xahsM6rb2yq7u2p6e3U2W4PDoR8aMo6OGkZc\u002BmGnftjRNGRvGrI3Ou0NTkfTsLN51NV80mU4NWI6c7p1/CzgfL9l5zFIwgE9gUDPXwq4k50RoCfQA7gXjwMeuwX85/wy\u002B78j/1x7U0Ag8Hy/BfD/\u002Bcz9b8mNIXBlOyNCAAAAAElFTkSuQmCC",
+    "ArrowBundleIconTolerance": 60,
+    "BuffWatchEnabled": true,
+    "BuffWatchSlots": [
+      {
+        "Enabled": true,
+        "Name": "asura_wings",
+        "IconRelativePath": "general\\asura_wings.png",
+        "Tolerance": 40,
+        "KeyName": "9",
+        "CooldownSec": 3,
+        "SelfClickBeforeCast": false
+      },
+      {
+        "Enabled": true,
+        "Name": "anit",
+        "IconRelativePath": "general\\anit.png",
+        "Tolerance": 45,
+        "KeyName": "F10",
+        "CooldownSec": 3,
+        "SelfClickBeforeCast": false
+      }
+    ],
+    "BuffWatchSelfClickEnabled": false,
+    "BuffWatchSelfClickX": 31,
+    "BuffWatchSelfClickY": 745,
+    "ResurrectAutoAcceptEnabled": true,
+    "ResurrectOkPointX": 665,
+    "ResurrectOkPointY": 426,
+    "ResurrectOverlayEnabled": false,
+    "DeathMessagePauseEnabled": true,
+    "DeveloperModeEnabled": true,
+    "HoldToShowGameWindowEnabled": true,
+    "HoldToShowGameWindowKey": "Home",
+    "PartyInviteAutoAcceptEnabled": true,
+    "PartyRessAutoAcceptEnabled": true,
+    "AskForPartyEnabled": false,
+    "AskForPartySeconds": 5,
+    "AskForPartyText": "add",
+    "LootScannerEnabled": false,
+    "NotificationProvider": "ntfy",
+    "DiscordWebhookUrl": "",
+    "DiscordGlobalWebhookUrl": "",
+    "DiscordItemWebhookUrl": "",
+    "DiscordStatsWebhookUrl": "",
+    "DiscordShotBotToken": "",
+    "DiscordShotChannelId": "",
+    "ItemNtfyTopic": "",
+    "NtfyTopic": "",
+    "StatsNtfyTopic": "",
+    "StatsNtfyIntervalMinutes": 9999,
+    "StatusRequestNtfyTopic": "",
+    "AutoRelaunchGameEnabled": false,
+    "AutoRelaunchGameExePath": "",
+    "AutoRelaunchDelaySeconds": 30,
+    "AutoRelaunchClickOverlayEnabled": false,
+    "AutoRelaunchClicks": [
+      {
+        "Enabled": true,
+        "X": 610,
+        "Y": 546,
+        "DelaySeconds": 15,
+        "Description": "server"
+      },
+      {
+        "Enabled": true,
+        "X": 625,
+        "Y": 418,
+        "DelaySeconds": 10,
+        "Description": "character"
+      },
+      {
+        "Enabled": true,
+        "X": 169,
+        "Y": 430,
+        "DelaySeconds": 5,
+        "Description": "accept"
+      },
+      {
+        "Enabled": false,
+        "X": 0,
+        "Y": 0,
+        "DelaySeconds": 5,
+        "Description": ""
+      },
+      {
+        "Enabled": false,
+        "X": 0,
+        "Y": 0,
+        "DelaySeconds": 5,
+        "Description": ""
+      }
+    ],
+    "SavedConfig": {
+      "WindowTitle": "Kathana - The Reign of Shadow",
+      "LiteModeEnabled": false,
+      "LiteHpCheckPointX": -1,
+      "LiteHpCheckPointY": -1,
+      "LiteHpCheckColorEnabled": false,
+      "LiteHpCheckColorArgb": 0,
+      "LiteMpCheckPointX": -1,
+      "LiteMpCheckPointY": -1,
+      "LiteMpCheckColorEnabled": false,
+      "LiteMpCheckColorArgb": 0,
+      "LoopMs": 200,
+      "RetargetMs": 600,
+      "ForcedRetargetMs": 1100,
+      "MobHpPresenceThreshold": 1,
+      "HighMaxHpSpecialEnabled": true,
+      "HighMaxHpThreshold": 24900,
+      "AvoidHighMaxHpEnabled": false,
+      "AvoidHighMaxHpThreshold": 2000,
+      "EvadeDadatiEnabled": true,
+      "HpBar": {
+        "X": 3,
+        "Y": 24,
+        "W": 213,
+        "H": 12
+      },
+      "MpBar": {
+        "X": 3,
+        "Y": 39,
+        "W": 213,
+        "H": 11
+      },
+      "MobNameRect": {
+        "X": 4,
+        "Y": 57,
+        "W": 160,
+        "H": 16
+      },
+      "MobHpRect": {
+        "X": 5,
+        "Y": 75,
+        "W": 212,
+        "H": 12
+      },
+      "MobLifeRect": {
+        "X": 2,
+        "Y": 73,
+        "W": 217,
+        "H": 15
+      },
+      "UnreachableTextRect": {
+        "X": 11,
+        "Y": 505,
+        "W": 269,
+        "H": 96
+      },
+      "PranaExpRect": {
+        "X": 659,
+        "Y": 753,
+        "W": 46,
+        "H": 13
+      },
+      "RupiahsRect": {
+        "X": 1222,
+        "Y": 268,
+        "W": 69,
+        "H": 14
+      },
+      "PartyInviteScanRect": {
+        "X": 516,
+        "Y": 325,
+        "W": 329,
+        "H": 121
+      },
+      "PartyInviteOkRect": {
+        "X": 639,
+        "Y": 414,
+        "W": 53,
+        "H": 16
+      },
+      "ResurrectAutoAcceptEnabled": true,
+      "ResurrectDialogScanRect": {
+        "X": 522,
+        "Y": 318,
+        "W": 328,
+        "H": 124
+      },
+      "ResurrectDialogOkPointX": 665,
+      "ResurrectDialogOkPointY": 426,
+      "DeathMessagePauseEnabled": true,
+      "DeathMessageScanRect": {
+        "X": 520,
+        "Y": 324,
+        "W": 328,
+        "H": 124
+      },
+      "PartyListRect": {
+        "X": 0,
+        "Y": 230,
+        "W": 167,
+        "H": 270
+      },
+      "DisconnectMessageRect": {
+        "X": 516,
+        "Y": 323,
+        "W": 326,
+        "H": 121
+      },
+      "DisconnectOkRect": {
+        "X": 745,
+        "Y": 414,
+        "W": 40,
+        "H": 15
+      },
+      "MapRect": {
+        "X": 0,
+        "Y": 0,
+        "W": 1024,
+        "H": 768
+      },
+      "MapCoordinateRect": {
+        "X": 860,
+        "Y": 504,
+        "W": 56,
+        "H": 13
+      },
+      "MapCoordinateXRect": {
+        "X": 860,
+        "Y": 504,
+        "W": 25,
+        "H": 12
+      },
+      "MapCoordinateYRect": {
+        "X": 890,
+        "Y": 505,
+        "W": 26,
+        "H": 12
+      },
+      "ChatRect": {
+        "X": 14,
+        "Y": 611,
+        "W": 391,
+        "H": 91
+      },
+      "LootScanRect": {
+        "X": 31,
+        "Y": 52,
+        "W": 1331,
+        "H": 684
+      },
+      "LootScanPoints": [
+        {
+          "X": 457,
+          "Y": 736
+        },
+        {
+          "X": 31,
+          "Y": 112
+        },
+        {
+          "X": 1348,
+          "Y": 52
+        },
+        {
+          "X": 1362,
+          "Y": 717
+        }
+      ],
+      "FullSupportModeEnabled": false,
+      "BypassStuckTarget": true,
+      "StuckTargetMs": 1500,
+      "StuckTargetNoProgressRetargetMs": 3000,
+      "BlackScreenProtectionEnabled": true,
+      "DeniedMobs": [],
+      "MonsterFilterMode": "blacklist",
+      "MonsterFilterConfirmReads": 1,
+      "MobNameMatchThresholdPercent": 80,
+      "LootPickupEnabled": false,
+      "LootPickupIntervalMs": 2000,
+      "LootPickupVerifyDelayMs": 80,
+      "LootNameAutoPickupEnabled": false,
+      "LootNamePickupOffsetX": 0,
+      "LootNamePickupOffsetY": 18,
+      "LootNamePickupPointX": -1,
+      "LootNamePickupPointY": -1,
+      "LootNamePickupClickDelayMs": 180,
+      "LootNamePickupFPressCount": 3,
+      "LootNamePickupFPressGapMs": 110,
+      "LootNamePickupMouseHoldMs": 35,
+      "LootNamePickupRestoreCursor": true,
+      "LootRejectClickEnabled": false,
+      "LootRejectPointX": -1,
+      "LootRejectPointY": -1,
+      "ArrowUnbundleEnabled": true,
+      "ArrowUnbundleIntervalMs": 10000,
+      "ArrowUnbundlePoints": [
+        {
+          "X": 1302,
+          "Y": 540
+        },
+        {
+          "X": 1301,
+          "Y": 574
+        },
+        {
+          "X": 1301,
+          "Y": 611
+        },
+        {
+          "X": 1302,
+          "Y": 503
+        }
+      ],
+      "ArrowBundleIconBase64": "iVBORw0KGgoAAAANSUhEUgAAACQAAAAkCAIAAABuYg/PAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAA3nSURBVFhHvddnVJtXmgdwnfFmdmwEuBDABkwVoAaiS1RJqCAJgRqiqaAG6hJNNCEJsKgSICQEAtvEBWM6NgYblwkMicElk8w4EzsuWcdjB49jdhMn2eyn0R5gZzM5\u002B32f8//wnnvvOb9zn/feDxdAZOQR6FRcPmU3uXh6HpFFJxUyyUUsSjEzh5WPp5EJ9FwiM49UyKRyivP5nHweh8bnMAVctphXKOEXlQtKpEKOQsRTSXgaqbBWKzc1V3Z31vRb6wYH6p2OhiFnw5CjwWkHTA/2Az09BURsWlqWyaRrb5dZrZVNTWovj4OHQ4JTBWWZOl22wUA0GkkmE/n/hGQyEY1GnMGQqdMllZaAkajQiMA4ChkpEqZVarMaG3EGQ77JBEejpwf7AbNDA0BPoICIra6uc7uFL15UX7vW4Xa3mU9o04nU/NYTRecvlN/\u002BuGZrq8ntNrjdxt2Y/vHR5HbXbG2V3/64ZPxCmrr29JjDUFNCk1SQ9Hr2wKB0eUn1xV/a3e787u7ZoQHAvMvhAdzBZDKp212s0ykBgICvv\u002B5cvNJGxacZy3LYJGxxTQ17blb69LH63Tvtf/2s\u002Bfln7W7U776XPnlcODdbXFNTRMaqqeihU/TlpQ50BprDLRXy8qKQCZypycrtbXxLy7zLAbg06vTw8NjFVG539qNH3GvXWtzu2r7uarJaUsNImzRVNTbrMKbWstu35X97o/rhJ/VP/6n68SfVDz8qXr8pu72BMbU1NusmTVVqcmL59U5uFohFiFM1IB\u002BuSknsEpp9QPXyZbbJdGnUubOzAx4HdjGl242/fVtktUpMpsrAo6GkCsrU2llng1hESMYptYXzl8RPn8u238n/40f5dz/Ktr\u002BXPP23wvlLOKVWREgeahQPL7l6emtLY6IM9vpsNTovISGjVJDf1694/gJjMu3sbHZoYA/TajVut0LfrAb8o7CH9lnXByxVtM\u002BWTueUFOaNjPE//VzyzduKN\u002B/K33wvefWW/\u002Bnnea6xnJLCPy2dtlTRmpe7anMy763N6gWUVnLCWZswMR7OsA9VPHueZTTt/LMZp20Po\u002BXmLs3NlhYw9u3/7R5m4NCsLqlqoq2OhavWKNGtnSVrm2XPvhG\u002B2ha\u002B\u002BnfBs62StU10W2e1VlnHwqkm2sw2wUJPLT0\u002BQl2E41gI18YFTKmGYnOKn77MMJpmnDbAlKNvDzuOxUEpxcxkBAHpw64pHD/vqi/LEzDiLV\u002BMdXWqNCW0DG0dc\u002BYK57OnvCd/4z99XfrZU\u002BbMlYzKOk0JvatTZf1ijJsHH6iVrC/OcPV8WhGcikpC8cvznKeFj79JMxinHH072N4BieOK8EoNJSPdwMSdHNIKuZiTuvKxlsriNkb7hfZBCQtGL6JY7IzLq\u002ByNh\u002BzbXzAur1Isdhi9eFDCar/QXtzGONNaZVfzecUZzgFVPRlNSktHMQso/SPcP32N3MNmnLY9DMHmZpJIV2f1m7PGajyKlR53fbG/MjfLYZbSJnUnjeVVDEJEaQXB3Es5NUU5NUkw94aXVFTRCSeN5bRJncMsrczNun6ln5UeX41H3Zk1rsw1p6BSyBZn0Z0vk5qNO22cG7bvtTGaWZzf3DPaVSo4x\u002BeXZq10NlaUFpxzNpuoaSPDPIeT/Ula0GAROorBRYnkSLE8ksFxFKE/SQtyONkjwzwTNe2cs7mitGCls5FfmiU4xx/t5hCVDdgeJ/vuk4Rmw9yw/ZejD\u002BdVoHStbDyhDB3e89FoQ4fYxCZNd1TxxaSBHtEfuRH1HNJ1iO\u002BmICMJg4vHEjYFGTcgvvUc0h\u002B5EQPdIr54Z7GJTWroEPd8NFqGDmcTCHESDdE1wbj3HNFg\u002BNWlhgpV2T0uBgEzWC\u002B163hal7zrqq04C/6BQZ5JgK2xY5\u002BZOTBISh/s4O9llE/Ls3ug3lAI8iszZ40dm0GAfWCQF2fBu67atC65XccbrJcyidj0hnb82KW8O89htYadS70wMugB3MHA4sps\u002B3g2V9xubtTkota6xSwdyflwQluGEZOoGVEQdytptVkkIuGflBMXU4NLSbh1o8jdQk6PhIhJVG0ZxvlwgqUjrXWLNbmo9hONOJ4krcWG/WCZtP4UWqlfGBkEzI849rBISS3u3I3kunYQiSXVVOik7LEGgVBKsGyM1NWXHg6FdeMRn2vJL7hgDjSai4z9oZvn7mIO48DeoTF1daWWjRGhlDDWINDJ2FJNBYjESq7vyLRNpJ\u002B5gb/xKFqpnx9xAOZ2MWFOdoS4LmtqE2U5l9bcB\u002BGq0zkSqYSjLaVXSahNlzWNNZnDVOJKXup0aeamgfusnvGqJvereqo\u002BJc5YjWpc1FZKqNpSulTCSedIIFx1anN/qvU8cmQJNXYja/FBRHn93IgDMOuy72FhgprUi3cS7QtJlvEU42CcQg9hSxC5LD9oupCEflYOvUiOGWBgHrZwPi\u002BnfF3NuHtCNllEeCyL3\u002BCF8ShYP2g6gsKCsMVxCn2ycTDRMp7kWEhyLSe5rqZN3w8T1My67ICZ4YE9LJijTRr7A8IyiTCfjdM7EjUtCI4sAJ2nKszdYkIYQb4yfMp2I\u002BnDfMSTbs1HQuoza9ndsvQOfBIjJHSLAVYV5gag8\u002BK4skR1a7zegeg4g7BMIWzzCNtC8pn14xzNzPAAYMrZDwQChTnZxwoUiIFleONQjKo9hC4OzKJCU7KnCzKfMCMTjwQlpmfdV\u002BYOoWLXGnm3K3HrTdxNFbYJEXmznJiSkZlwJOgxM3KanQlNyQ5EU0No4hhVe0zjMKztPLT9IsJ5K5CtmHL2AyYH\u002B4BAoICUfTRPBG85CxbWg7D0muaW7sGh/lqlK9jTPwisYGK2hbG8oIDCXMqWtWRWI3nVK1zRMLm0XF5w4LYwRsHEHj0OdgV79tcqexzD1foWEJYOFjWAq21RTachvcv\u002B9IrJwT7ARUfvHuaPK4QrO0OQ2aeGh25eXbp/9878rQ8D41JGJdRHzGhUSIg/NPGpVbChYf6lR3pLjP5QXfBVn8APmogKCX3EiD4poQbGpczf\u002Bv39u3duXl06NTwUkooHl9VHKC2R5nlfivCioxcwYbfuYcfSyEHoApOxbXrqIhgMEcnkWp7wOgu6QYRDgkDe4bDFhvwnovg\u002BBuZxA\u002B6aMGuwKPuJMH6xId87fGfBBhF\u002BnQXV8oQimRwMhkxPXTSZ2o4lEyO59WFNEz547oTd\u002Bj9YWQ72YFRSiby2uroqh0xZXFy8vrp\u002BytKtiwwKi4zxB8Em9OJvFclcaKxDzR1nwi8Uxg6qOVxozLeK5Am92B8EC4uM0UUGnbJ0X19dX1xczCFTqqurCgXyIBwnuPL04aziX2H\u002B4GQ8lQWOir66vGyz2dZWV2\u002BtfxwCj4FDY640yf7eRc6OAIXGZ2w7OCgYNBUG3baXhsVnZIMi/t5FvtIkg0NjQuAxt9Y/XltdtdlsV5eXIdHRaDw5ClcUWOH0RrF\u002BwfhEjH9UfAwSe2H8vMXay2CyJFJZcmp6FijocnXhW22mAZe8zz/cJSR/VI4MgKcfg6evl6e4ROR9R8MNuOS32szL1YVZoKDk1HSJVMZgsizW3onx85A4JCiL6cft9UrM/xXmFRhdpWswm0/kUqh8Pg\u002BNxVSRsD9c7P3zxlIbIR7o5VNUwP5Qk0uLjjyOIgWnkmjgyFVNblEBG\u002Bjl00aI//PG0g8Xe6tIWDQWw\u002BfzcilUs9ms1miOJZB8WO3AWMoONm7r2cPej0hA4WkhwWGUnJy79\u002B49\u002BvLx/c3NFy\u002B3Xm9/12hs4hQXvX795q9vv8WQ8gMQuAAEDkOi/fXtt69fv\u002BEUFzUam15vf/fi5db9zc1HXz6\u002Be\u002B8eJScnNDgsOTMnJJV5iKw/AMaP23oA5/q6PIAefALm/fCEIGgGAU988OCBSCT65N79hcuLaq22t99Gy89bWVm5dfPmzPRUUhbVH0HxR1CS0dSZ6albN2\u002BurKzQ8vN7\u002B21qrXbh8uIn9\u002B6LRKIHDx4Q8MSAyMTjyXQvdM1\u002BEOZcXxfgjLVjF8N6BcLgSdhRl7Ojs5PHK1uYXxiw2y1Wa2JCQqVaPTs7x\u002BNyK2RK3/BU/3imXyLLNyK1Qqbkcbmzs3OValVCQoLFah2w2xfmF3i8so7OzlHXEDQW5Q/LASKV/xqafsbaARjrMQM9gXwC9neHwtQanUAootELFDKZ3WGTK1QRINihw349Xd22gX5DszEgLN4XTD4IYRyE0H3B5ICweEOz0TbQ39PVffiwXwQILleo7XabQi6j0QsEQrFCoX4/NGN/jOS9Y8ixHvMe5sknYA8FICITGYGgDN/jCVhiQVwK0T8UGQ7HxSZgbDabWFxxHJTkB6YcjGYdABUeABV6R7P8oynHI5LFknKbzRabgAmH4fxDkYgUIpbI8j0eHwjKjIglHYVSfwcWvee/i52xdgA9PcuI2b/1PObhB/fyg3ofhXgcifA4EuntD/HyizoaFI1EpnofOubtG3XAF/aeT\u002Bw\u002Bn9h9RxDv\u002BSD2\u002B8K8/SK9Dx1DIlOPBkV7\u002BUZ5\u002B0E8fEAeRyIOHoV4\u002BkEP\u002BID3vw/7F9\u002Bk3wCDdtrIVVbwNYqyKo2orrZc3yQ1GGRGg7zFqGhrVZnNyt3I21plJqO8xahsM6rb2yq7u2p6e3U2W4PDoR8aMo6OGkZc\u002BmGnftjRNGRvGrI3Ou0NTkfTsLN51NV80mU4NWI6c7p1/CzgfL9l5zFIwgE9gUDPXwq4k50RoCfQA7gXjwMeuwX85/wy\u002B78j/1x7U0Ag8Hy/BfD/\u002Bcz9b8mNIXBlOyNCAAAAAElFTkSuQmCC",
+      "ArrowBundleIconTolerance": 60,
+      "BuffWatchEnabled": true,
+      "BuffWatchSlots": [
+        {
+          "Enabled": true,
+          "Name": "asura_wings",
+          "IconRelativePath": "general\\asura_wings.png",
+          "Tolerance": 40,
+          "KeyName": "9",
+          "CooldownSec": 3,
+          "SelfClickBeforeCast": false
+        },
+        {
+          "Enabled": true,
+          "Name": "anit",
+          "IconRelativePath": "general\\anit.png",
+          "Tolerance": 45,
+          "KeyName": "F10",
+          "CooldownSec": 3,
+          "SelfClickBeforeCast": false
+        }
+      ],
+      "BuffAreaRect": {
+        "X": 252,
+        "Y": 0,
+        "W": 300,
+        "H": 32
+      },
+      "BuffWatchSelfClickEnabled": false,
+      "BuffWatchSelfClickX": 31,
+      "BuffWatchSelfClickY": 745,
+      "LootAllowedNames": [],
+      "LootNameMatchThresholdPercent": 60,
+      "PartyInviteAutoAcceptEnabled": true,
+      "PartyRessAutoAcceptEnabled": true,
+      "PartyAskEnabled": false,
+      "PartyAskIntervalMs": 5000,
+      "PartyAskText": "add",
+      "LootScannerEnabled": false,
+      "NotificationProvider": "ntfy",
+      "DiscordWebhookUrl": "",
+      "DiscordGlobalWebhookUrl": "",
+      "DiscordItemWebhookUrl": "",
+      "DiscordStatsWebhookUrl": "",
+      "ItemNtfyTopic": "",
+      "NtfyTopic": "",
+      "LevelingAgentEnabled": false,
+      "LevelingPreferredMobs": [],
+      "LevelingStopHpEnabled": true,
+      "LevelingStopHpPercent": 20,
+      "LevelingStopMpEnabled": false,
+      "LevelingStopMpPercent": 1,
+      "LevelingMaxNoTargetEnabled": false,
+      "LevelingMaxNoTargetSeconds": 600,
+      "LevelingStopOnLowExpRate": false,
+      "LevelingMinExpPerHour": 1.36,
+      "LevelingStopOnRepeatedUnreachable": false,
+      "LevelingUnreachableLimit": 4,
+      "NavigationEnabled": true,
+      "MapOpenKey": "M",
+      "NavigationMapName": "Jina Basin",
+      "NavigationStartNodeId": "",
+      "NavigationTargetNodeId": "recorded_kruma_016",
+      "NavigationTravelPreviewEnabled": true,
+      "NavigationTravelExecutionEnabled": true,
+      "NavigationWaypointReachRadius": 50,
+      "NavigationMoveBurstMs": 1500,
+      "NavigationResampleIntervalMs": 1050,
+      "NavigationStallTimeoutMs": 30000,
+      "NavigationRepathOnStuck": true,
+      "NavigationReturnToStartEnabled": true,
+      "HoldPlaceEnabled": false,
+      "HoldPlaceAnchorSet": true,
+      "HoldPlaceTargetX": 247,
+      "HoldPlaceTargetY": 904,
+      "HoldPlaceRestrictivenessMode": "custom",
+      "HoldPlaceRadius": 1,
+      "HoldPlaceMoveBurstMs": 800,
+      "HoldPlaceCorrectionIntervalMs": 350,
+      "HoldPlacePostFightReturnEnabled": true,
+      "HoldPlaceCombatSafeEnabled": true,
+      "HoldPlaceEmergencyLeashDistance": 5,
+      "HoldPlaceDirectionLearningEnabled": true,
+      "RouteRecordingEnabled": false,
+      "RouteRecordingName": "kruma",
+      "RouteRecordingMinConfidencePercent": 99,
+      "RouteRecordingMinSampleDistance": 2,
+      "RouteRecordingMinNodeSpacing": 1,
+      "RouteRecordingSampleIntervalMs": 100,
+      "FullFrameRefreshIntervalMs": 150,
+      "LootScannerIntervalMs": 1000,
+      "MapCoordinateScanIntervalMs": 250,
+      "PartyListScanIntervalMs": 700,
+      "PartyInviteScanIntervalMs": 700,
+      "MobNameScanIntervalMs": 150,
+      "MobHpTextScanIntervalMs": 150,
+      "ChatTranslationEnabled": false,
+      "ChatTranslationOverlayEnabled": true,
+      "DisabledCalibrationRegionOverlays": [
+        "party_list_rect",
+        "disconnect_ok_rect"
+      ],
+      "ChatTranslationTargetLanguage": "es",
+      "ChatTranslationScanIntervalMs": 250,
+      "ChatTranslationMaxLines": 1,
+      "AdaptivePerformanceEnabled": true,
+      "AdaptiveSlowLoopMinMs": 140,
+      "AdaptiveSlowLoopMultiplier": 1.8,
+      "AdaptiveRecoveryLoopMultiplier": 1.25,
+      "AdaptiveSlowConfirmCount": 5,
+      "AdaptiveRecoveryConfirmCount": 14,
+      "PixelChangeGateEnabled": true,
+      "CaptureBackendPreference": "auto",
+      "Actions": [
+        {
+          "CooldownId": "full-action:0",
+          "KeyName": "0",
+          "Enabled": false,
+          "Role": "heal",
+          "Priority": 15,
+          "CooldownMs": 1000,
+          "TriggerPercent": 75
+        },
+        {
+          "CooldownId": "full-action:1",
+          "KeyName": "1",
+          "Enabled": true,
+          "Role": "attack",
+          "Priority": 10,
+          "CooldownMs": 800,
+          "TriggerPercent": 40
+        },
+        {
+          "CooldownId": "full-action:2",
+          "KeyName": "2",
+          "Enabled": true,
+          "Role": "heal",
+          "Priority": 1,
+          "CooldownMs": 1000,
+          "TriggerPercent": 75
+        },
+        {
+          "CooldownId": "full-action:3",
+          "KeyName": "3",
+          "Enabled": true,
+          "Role": "attack",
+          "Priority": 10,
+          "CooldownMs": 600,
+          "TriggerPercent": 40
+        },
+        {
+          "CooldownId": "full-action:4",
+          "KeyName": "4",
+          "Enabled": true,
+          "Role": "attack",
+          "Priority": 9,
+          "CooldownMs": 800,
+          "TriggerPercent": 40
+        },
+        {
+          "CooldownId": "full-action:5",
+          "KeyName": "5",
+          "Enabled": true,
+          "Role": "attack",
+          "Priority": 11,
+          "CooldownMs": 800,
+          "TriggerPercent": 40
+        },
+        {
+          "CooldownId": "full-action:6",
+          "KeyName": "6",
+          "Enabled": true,
+          "Role": "attack",
+          "Priority": 60,
+          "CooldownMs": 1000,
+          "TriggerPercent": 80
+        },
+        {
+          "CooldownId": "full-action:7",
+          "KeyName": "7",
+          "Enabled": false,
+          "Role": "attack",
+          "Priority": 2,
+          "CooldownMs": 800,
+          "TriggerPercent": 99
+        },
+        {
+          "CooldownId": "full-action:8",
+          "KeyName": "8",
+          "Enabled": true,
+          "Role": "heal",
+          "Priority": 4,
+          "CooldownMs": 8000,
+          "TriggerPercent": 90
+        },
+        {
+          "CooldownId": "full-action:9",
+          "KeyName": "9",
+          "Enabled": false,
+          "Role": "attack",
+          "Priority": 5,
+          "CooldownMs": 45000,
+          "TriggerPercent": 22
+        },
+        {
+          "CooldownId": "full-action:10",
+          "KeyName": "F1",
+          "Enabled": false,
+          "Role": "heal",
+          "Priority": 11,
+          "CooldownMs": 1000,
+          "TriggerPercent": 75
+        },
+        {
+          "CooldownId": "full-action:11",
+          "KeyName": "F10",
+          "Enabled": false,
+          "Role": "mana",
+          "Priority": 200,
+          "CooldownMs": 1000,
+          "TriggerPercent": 20
+        },
+        {
+          "CooldownId": "full-action:12",
+          "KeyName": "F13",
+          "Enabled": false,
+          "Role": "attack",
+          "Priority": 230,
+          "CooldownMs": 1000,
+          "TriggerPercent": 40
+        },
+        {
+          "CooldownId": "full-action:13",
+          "KeyName": "F2",
+          "Enabled": false,
+          "Role": "high_max_hp",
+          "Priority": 11,
+          "CooldownMs": 1000,
+          "TriggerPercent": 75
+        },
+        {
+          "CooldownId": "full-action:14",
+          "KeyName": "F3",
+          "Enabled": true,
+          "Role": "attack",
+          "Priority": 11,
+          "CooldownMs": 1000,
+          "TriggerPercent": 75
+        },
+        {
+          "CooldownId": "full-action:15",
+          "KeyName": "F4",
+          "Enabled": true,
+          "Role": "heal",
+          "Priority": 10,
+          "CooldownMs": 500,
+          "TriggerPercent": 80
+        },
+        {
+          "CooldownId": "full-action:16",
+          "KeyName": "F5",
+          "Enabled": false,
+          "Role": "attack",
+          "Priority": 15,
+          "CooldownMs": 1000,
+          "TriggerPercent": 75
+        },
+        {
+          "CooldownId": "full-action:17",
+          "KeyName": "F6",
+          "Enabled": true,
+          "Role": "high_max_hp",
+          "Priority": 11,
+          "CooldownMs": 900,
+          "TriggerPercent": 70
+        },
+        {
+          "CooldownId": "full-action:18",
+          "KeyName": "F7",
+          "Enabled": true,
+          "Role": "high_max_hp",
+          "Priority": 5,
+          "CooldownMs": 500,
+          "TriggerPercent": 40
+        },
+        {
+          "CooldownId": "full-action:19",
+          "KeyName": "F8",
+          "Enabled": true,
+          "Role": "mana",
+          "Priority": 15,
+          "CooldownMs": 3000,
+          "TriggerPercent": 15
+        },
+        {
+          "CooldownId": "full-action:20",
+          "KeyName": "F9",
+          "Enabled": true,
+          "Role": "repair",
+          "Priority": 30,
+          "CooldownMs": 60000,
+          "TriggerPercent": 40
+        },
+        {
+          "CooldownId": "full-action:21",
+          "KeyName": "R",
+          "Enabled": false,
+          "Role": "attack",
+          "Priority": 5,
+          "CooldownMs": 1000,
+          "TriggerPercent": 49
+        },
+        {
+          "CooldownId": "full-action:22",
+          "KeyName": "F",
+          "Enabled": false,
+          "Role": "attack",
+          "Priority": 11,
+          "CooldownMs": 3000,
+          "TriggerPercent": 40
+        }
+      ]
+    },
+    "MonsterNames": [
+      "Dadati",
+      "Kemsa Tonyo"
+    ],
+    "LootNames": [],
+    "CombatActions": [
+      {
+        "ActionKey": "0",
+        "RowIndex": 0,
+        "Enabled": false,
+        "Role": "heal",
+        "Priority": 15,
+        "CooldownSec": 1,
+        "TriggerPercent": 75
+      },
+      {
+        "ActionKey": "1",
+        "RowIndex": 1,
+        "Enabled": true,
+        "Role": "attack",
+        "Priority": 10,
+        "CooldownSec": 0.8,
+        "TriggerPercent": 40
+      },
+      {
+        "ActionKey": "2",
+        "RowIndex": 2,
+        "Enabled": true,
+        "Role": "heal",
+        "Priority": 1,
+        "CooldownSec": 1,
+        "TriggerPercent": 75
+      },
+      {
+        "ActionKey": "3",
+        "RowIndex": 3,
+        "Enabled": true,
+        "Role": "attack",
+        "Priority": 10,
+        "CooldownSec": 0.6,
+        "TriggerPercent": 40
+      },
+      {
+        "ActionKey": "4",
+        "RowIndex": 4,
+        "Enabled": true,
+        "Role": "attack",
+        "Priority": 9,
+        "CooldownSec": 0.8,
+        "TriggerPercent": 40
+      },
+      {
+        "ActionKey": "5",
+        "RowIndex": 5,
+        "Enabled": true,
+        "Role": "attack",
+        "Priority": 11,
+        "CooldownSec": 0.8,
+        "TriggerPercent": 40
+      },
+      {
+        "ActionKey": "6",
+        "RowIndex": 6,
+        "Enabled": true,
+        "Role": "attack",
+        "Priority": 60,
+        "CooldownSec": 1,
+        "TriggerPercent": 80
+      },
+      {
+        "ActionKey": "7",
+        "RowIndex": 7,
+        "Enabled": false,
+        "Role": "attack",
+        "Priority": 2,
+        "CooldownSec": 0.8,
+        "TriggerPercent": 99
+      },
+      {
+        "ActionKey": "8",
+        "RowIndex": 8,
+        "Enabled": true,
+        "Role": "heal",
+        "Priority": 4,
+        "CooldownSec": 8,
+        "TriggerPercent": 90
+      },
+      {
+        "ActionKey": "9",
+        "RowIndex": 9,
+        "Enabled": false,
+        "Role": "attack",
+        "Priority": 5,
+        "CooldownSec": 45,
+        "TriggerPercent": 22
+      },
+      {
+        "ActionKey": "F1",
+        "RowIndex": 10,
+        "Enabled": false,
+        "Role": "heal",
+        "Priority": 11,
+        "CooldownSec": 1,
+        "TriggerPercent": 75
+      },
+      {
+        "ActionKey": "F10",
+        "RowIndex": 11,
+        "Enabled": false,
+        "Role": "mana",
+        "Priority": 200,
+        "CooldownSec": 1,
+        "TriggerPercent": 20
+      },
+      {
+        "ActionKey": "F13",
+        "RowIndex": 12,
+        "Enabled": false,
+        "Role": "attack",
+        "Priority": 230,
+        "CooldownSec": 1,
+        "TriggerPercent": 40
+      },
+      {
+        "ActionKey": "F2",
+        "RowIndex": 13,
+        "Enabled": false,
+        "Role": "high_max_hp",
+        "Priority": 11,
+        "CooldownSec": 1,
+        "TriggerPercent": 75
+      },
+      {
+        "ActionKey": "F3",
+        "RowIndex": 14,
+        "Enabled": true,
+        "Role": "attack",
+        "Priority": 11,
+        "CooldownSec": 1,
+        "TriggerPercent": 75
+      },
+      {
+        "ActionKey": "F4",
+        "RowIndex": 15,
+        "Enabled": true,
+        "Role": "heal",
+        "Priority": 10,
+        "CooldownSec": 0.5,
+        "TriggerPercent": 80
+      },
+      {
+        "ActionKey": "F5",
+        "RowIndex": 16,
+        "Enabled": false,
+        "Role": "attack",
+        "Priority": 15,
+        "CooldownSec": 1,
+        "TriggerPercent": 75
+      },
+      {
+        "ActionKey": "F6",
+        "RowIndex": 17,
+        "Enabled": true,
+        "Role": "high_max_hp",
+        "Priority": 11,
+        "CooldownSec": 0.9,
+        "TriggerPercent": 70
+      },
+      {
+        "ActionKey": "F7",
+        "RowIndex": 18,
+        "Enabled": true,
+        "Role": "high_max_hp",
+        "Priority": 5,
+        "CooldownSec": 0.5,
+        "TriggerPercent": 40
+      },
+      {
+        "ActionKey": "F8",
+        "RowIndex": 19,
+        "Enabled": true,
+        "Role": "mana",
+        "Priority": 15,
+        "CooldownSec": 3,
+        "TriggerPercent": 15
+      },
+      {
+        "ActionKey": "F9",
+        "RowIndex": 20,
+        "Enabled": true,
+        "Role": "repair",
+        "Priority": 30,
+        "CooldownSec": 60,
+        "TriggerPercent": 40
+      },
+      {
+        "ActionKey": "R",
+        "RowIndex": 21,
+        "Enabled": false,
+        "Role": "attack",
+        "Priority": 5,
+        "CooldownSec": 1,
+        "TriggerPercent": 49
+      },
+      {
+        "ActionKey": "F",
+        "RowIndex": 22,
+        "Enabled": false,
+        "Role": "attack",
+        "Priority": 11,
+        "CooldownSec": 3,
+        "TriggerPercent": 40
+      }
+    ]
+  },
+  "Lite": {
+    "AutoPotsEnabled": false,
+    "HpBarRect": {
+      "X": 1,
+      "Y": 22,
+      "W": 218,
+      "H": 14
+    },
+    "MpBarRect": {
+      "X": 3,
+      "Y": 39,
+      "W": 216,
+      "H": 10
+    },
+    "HpPointEnabled": true,
+    "HpPointX": 206,
+    "HpPointY": 27,
+    "HpPointColorEnabled": false,
+    "HpPointColorArgb": 0,
+    "MpPointEnabled": true,
+    "MpPointX": 53,
+    "MpPointY": 46,
+    "MpPointColorEnabled": false,
+    "MpPointColorArgb": 0,
+    "PromptAutoAcceptEnabled": false,
+    "AskForPartyEnabled": false,
+    "AskForPartySeconds": 30,
+    "AskForPartyText": "add",
+    "Actions": [
+      {
+        "ActionKey": "E",
+        "RowIndex": -1,
+        "Enabled": false,
+        "Role": "attack",
+        "Priority": 10,
+        "CooldownSec": 2,
+        "TriggerPercent": 1
+      },
+      {
+        "ActionKey": "R",
+        "RowIndex": -1,
+        "Enabled": false,
+        "Role": "buff",
+        "Priority": 11,
+        "CooldownSec": 1,
+        "TriggerPercent": 1
+      },
+      {
+        "ActionKey": "F",
+        "RowIndex": -1,
+        "Enabled": false,
+        "Role": "buff",
+        "Priority": 12,
+        "CooldownSec": 2,
+        "TriggerPercent": 1
+      },
+      {
+        "ActionKey": "1",
+        "RowIndex": -1,
+        "Enabled": false,
+        "Role": "attack",
+        "Priority": 13,
+        "CooldownSec": 1,
+        "TriggerPercent": 50
+      },
+      {
+        "ActionKey": "2",
+        "RowIndex": -1,
+        "Enabled": true,
+        "Role": "heal",
+        "Priority": 14,
+        "CooldownSec": 1,
+        "TriggerPercent": 95
+      },
+      {
+        "ActionKey": "3",
+        "RowIndex": -1,
+        "Enabled": false,
+        "Role": "attack",
+        "Priority": 15,
+        "CooldownSec": 1,
+        "TriggerPercent": 50
+      },
+      {
+        "ActionKey": "4",
+        "RowIndex": -1,
+        "Enabled": false,
+        "Role": "attack",
+        "Priority": 16,
+        "CooldownSec": 1,
+        "TriggerPercent": 50
+      },
+      {
+        "ActionKey": "5",
+        "RowIndex": -1,
+        "Enabled": false,
+        "Role": "attack",
+        "Priority": 17,
+        "CooldownSec": 1,
+        "TriggerPercent": 50
+      },
+      {
+        "ActionKey": "6",
+        "RowIndex": -1,
+        "Enabled": false,
+        "Role": "attack",
+        "Priority": 18,
+        "CooldownSec": 1,
+        "TriggerPercent": 50
+      },
+      {
+        "ActionKey": "7",
+        "RowIndex": -1,
+        "Enabled": false,
+        "Role": "attack",
+        "Priority": 19,
+        "CooldownSec": 1,
+        "TriggerPercent": 50
+      },
+      {
+        "ActionKey": "8",
+        "RowIndex": -1,
+        "Enabled": false,
+        "Role": "buff",
+        "Priority": 20,
+        "CooldownSec": 10,
+        "TriggerPercent": 50
+      },
+      {
+        "ActionKey": "F1",
+        "RowIndex": -1,
+        "Enabled": false,
+        "Role": "attack",
+        "Priority": 21,
+        "CooldownSec": 1,
+        "TriggerPercent": 50
+      },
+      {
+        "ActionKey": "F2",
+        "RowIndex": -1,
+        "Enabled": false,
+        "Role": "attack",
+        "Priority": 22,
+        "CooldownSec": 1,
+        "TriggerPercent": 50
+      },
+      {
+        "ActionKey": "F3",
+        "RowIndex": -1,
+        "Enabled": false,
+        "Role": "attack",
+        "Priority": 23,
+        "CooldownSec": 1,
+        "TriggerPercent": 50
+      },
+      {
+        "ActionKey": "F4",
+        "RowIndex": -1,
+        "Enabled": false,
+        "Role": "heal",
+        "Priority": 24,
+        "CooldownSec": 1,
+        "TriggerPercent": 80
+      },
+      {
+        "ActionKey": "F5",
+        "RowIndex": -1,
+        "Enabled": false,
+        "Role": "buff",
+        "Priority": 25,
+        "CooldownSec": 1,
+        "TriggerPercent": 50
+      },
+      {
+        "ActionKey": "F6",
+        "RowIndex": -1,
+        "Enabled": false,
+        "Role": "buff",
+        "Priority": 26,
+        "CooldownSec": 1,
+        "TriggerPercent": 50
+      },
+      {
+        "ActionKey": "F7",
+        "RowIndex": -1,
+        "Enabled": false,
+        "Role": "buff",
+        "Priority": 27,
+        "CooldownSec": 1,
+        "TriggerPercent": 50
+      },
+      {
+        "ActionKey": "F8",
+        "RowIndex": -1,
+        "Enabled": false,
+        "Role": "buff",
+        "Priority": 28,
+        "CooldownSec": 1,
+        "TriggerPercent": 50
+      },
+      {
+        "ActionKey": "F9",
+        "RowIndex": -1,
+        "Enabled": false,
+        "Role": "buff",
+        "Priority": 29,
+        "CooldownSec": 1,
+        "TriggerPercent": 50
+      },
+      {
+        "ActionKey": "F10",
+        "RowIndex": -1,
+        "Enabled": false,
+        "Role": "buff",
+        "Priority": 30,
+        "CooldownSec": 1,
+        "TriggerPercent": 50
+      }
+    ]
+  }
+}
