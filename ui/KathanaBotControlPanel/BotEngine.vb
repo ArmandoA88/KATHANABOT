@@ -395,6 +395,19 @@ Public Class BotConfig
     Public Property PixelChangeGateEnabled As Boolean = True
     Public Property CaptureBackendPreference As String = "auto"
     Public Property Actions As List(Of ActionRule) = New List(Of ActionRule)()
+    Public Property QuizAutoAnswerEnabled As Boolean = False
+    Public Property QuizScanIntervalMs As Integer = 1000
+    ' A single area covering the whole quiz popup (question + all answer choices), not a fixed rect
+    ' per answer - the options' on-screen position is read fresh from OCR every time (via
+    ' OcrReader.ReadScreenTextRegionsIsolated's per-line bounding boxes) specifically because answer
+    ' layout is not stable between questions.
+    Public Property QuizAreaRect As RectRegion = New RectRegion(0, 0, 1, 1)
+    ' Not a game-play secret, but still a personal API credential like Discord/ntfy tokens elsewhere
+    ' in this file - never bake a real value into a shipped default.
+    Public Property OpenAiApiKey As String = ""
+    Public Property OpenAiModel As String = "gpt-4o-mini"
+    Public Property QuizAutoDisableEnabled As Boolean = False
+    Public Property QuizAutoDisableMinutes As Integer = 30
 
     Public Function IsCalibrationRegionOverlayEnabled(regionName As String) As Boolean
         If String.IsNullOrWhiteSpace(regionName) Then
@@ -527,6 +540,8 @@ Public Class BotStatus
     Public Property PartyAllAlive As Boolean
     Public Property MobName As String = ""
     Public Property CharacterName As String = ""
+    Public Property QuizStatus As String = ""
+    Public Property QuizLastAnswerText As String = ""
     Public Property TargetValid As Boolean
     Public Property MapCoordinateText As String = ""
     Public Property MapCoordinateX As Integer = -1
@@ -799,6 +814,12 @@ Public Class BotEngine
     Private Const HardcodedVisionStatsIntervalMinutes As Integer = 30
     Private Const TargetNameConfirmMinGapMs As Integer = 120
     Private Const TargetNameConfirmRequiredCount As Integer = 2
+    Private Const QuizConfirmMinGapMs As Integer = 200
+    Private Const QuizConfirmRequiredCount As Integer = 2
+    ' How far below the detected question a line can be and still count as an answer option. Bounds
+    ' unrelated content further down the screen (nameplates, quest tracker, chat) when quiz_area_rect
+    ' covers the whole screen rather than just the popup.
+    Private Const QuizMaxOptionSpanPx As Integer = 350
     Private Const MobNameOcrRetentionMs As Integer = 2400
     Private Const ExpRateSampleMs As Integer = 60000
     Private Const MinValidExpPerHour As Double = 0.0
@@ -1008,6 +1029,20 @@ Public Class BotEngine
     Private _cachedArrowBundleIcon As Bitmap = Nothing
     Private ReadOnly _lastBuffWatchAttemptBySlot As New Dictionary(Of Integer, DateTime)()
     Private ReadOnly _cachedBuffWatchIcons As New Dictionary(Of String, Bitmap)(StringComparer.OrdinalIgnoreCase)
+    Private _lastQuizOcrAt As DateTime = DateTime.MinValue
+    Private _quizConfirmCandidateSignature As String = ""
+    Private _quizConfirmCount As Integer = 0
+    Private _quizConfirmLastSampleAt As DateTime = DateTime.MinValue
+    Private _quizConfirmedSignature As String = ""
+    Private _quizLastAnsweredSignature As String = ""
+    Private _quizAnswerTask As Task(Of Integer) = Nothing
+    Private _quizAnswerTaskGeneration As Long = -1L
+    Private _quizAnswerTaskSignature As String = ""
+    Private _quizAnswerTaskQuestionText As String = ""
+    Private _quizAnswerTaskOptionBounds As New List(Of Rectangle)()
+    Private _quizAnswerTaskOptionTexts As New List(Of String)()
+    Private _quizStatus As String = ""
+    Private _quizLastAnswerDisplay As String = ""
     Private _firstHitPending As Boolean = False
     Private _firstHitTargetSignature As String = ""
     Private _firstHitWindowUntil As DateTime = DateTime.MinValue
@@ -2727,6 +2762,7 @@ Public Class BotEngine
             TryHandleLootPickup(cfg, hwnd, now, actionSent OrElse _firstHitPending)
             TryHandleArrowUnbundle(cfg, hwnd, fullClientWidth, fullClientHeight, now, actionSent OrElse _firstHitPending)
             TryHandleBuffWatch(cfg, hwnd, now)
+            TryHandleQuizAutoAnswer(cfg, hwnd, now)
             UpdateLevelingAgentRuntimeState(cfg, now, hpPct, mpPct, targetWindowVisible, effectiveTargetValid, actionSent, forcedRetarget OrElse unreachableTriggered, unreachableLockActive, reason)
 
             Dim statsOcrDue As Boolean = IsStatsOcrDue(now)
@@ -2760,6 +2796,8 @@ Public Class BotEngine
                           s.NotAttackingReason = If(actionSent, "", reason)
                           s.ErrorMessage = visionWarning
                           s.GameDisconnected = False
+                          s.QuizStatus = _quizStatus
+                          s.QuizLastAnswerText = _quizLastAnswerDisplay
                       End Sub)
             If frame IsNot Nothing Then
                 frame.Dispose()
@@ -7161,6 +7199,430 @@ Public Class BotEngine
         End Using
     End Sub
 
+    Private Shared ReadOnly QuizHttpClient As New System.Net.Http.HttpClient() With {.Timeout = TimeSpan.FromSeconds(20)}
+
+    Private Shared Function IsQuizRegionCalibrated(region As RectRegion) As Boolean
+        Return region IsNot Nothing AndAlso region.W > 1 AndAlso region.H > 1
+    End Function
+
+    Private Shared Function TruncateForLog(text As String, maxLength As Integer) As String
+        If String.IsNullOrEmpty(text) OrElse text.Length <= maxLength Then
+            Return text
+        End If
+        Return text.Substring(0, Math.Max(0, maxLength - 3)) & "..."
+    End Function
+
+    Private Shared Function NormalizeQuizOcrText(raw As String) As String
+        If String.IsNullOrWhiteSpace(raw) Then
+            Return ""
+        End If
+        Return Regex.Replace(raw.Trim(), "\s+", " ")
+    End Function
+
+    ' Captures the whole calibrated quiz area and OCRs it line-by-line (not as one flat string),
+    ' because the answer options' on-screen position is NOT stable between questions - the caller
+    ' needs each line's actual current bounding box to know where to click, not a fixed coordinate.
+    ' Bounds come back already translated to client-area pixel coordinates, ready to click directly:
+    ' first undoing the fixed upscale factor used for OCR accuracy, then offsetting by the
+    ' calibrated area's own client-relative position.
+    Private Function ReadQuizAreaLines(hwnd As IntPtr, region As RectRegion) As List(Of OcrReader.OcrTextRegion)
+        Dim results As New List(Of OcrReader.OcrTextRegion)()
+        If Not IsQuizRegionCalibrated(region) Then
+            Return results
+        End If
+
+        Try
+            Using crop As Bitmap = CaptureClientRegion(hwnd, region)
+                If crop Is Nothing Then
+                    Return results
+                End If
+
+                ' Small calibrated areas benefit from upscaling (matches every other OCR read in this
+                ' file), but quiz_area_rect can legitimately cover the entire game window when the
+                ' popup's position isn't fixed - doubling a full-screen bitmap's pixel count just to
+                ' OCR it is wasted CPU/memory, so skip the upscale once the area is already large.
+                Dim upscale As Integer = If(CLng(crop.Width) * crop.Height > 500000L, 1, 2)
+                Using enlarged As New Bitmap(Math.Max(1, crop.Width * upscale), Math.Max(1, crop.Height * upscale), PixelFormat.Format24bppRgb)
+                    Using g As Graphics = Graphics.FromImage(enlarged)
+                        g.Clear(Color.Black)
+                        g.InterpolationMode = InterpolationMode.NearestNeighbor
+                        g.PixelOffsetMode = PixelOffsetMode.Half
+                        g.DrawImage(crop, New Rectangle(0, 0, enlarged.Width, enlarged.Height), New Rectangle(0, 0, crop.Width, crop.Height), GraphicsUnit.Pixel)
+                    End Using
+
+                    For Each item As OcrReader.OcrTextRegion In OcrReader.ReadScreenTextRegionsIsolated(enlarged)
+                        Dim text As String = NormalizeQuizOcrText(item.Text)
+                        If text = "" Then
+                            Continue For
+                        End If
+
+                        Dim b As Rectangle = item.Bounds
+                        Dim clientRect As New Rectangle(
+                            region.X + (b.X \ upscale),
+                            region.Y + (b.Y \ upscale),
+                            Math.Max(1, b.Width \ upscale),
+                            Math.Max(1, b.Height \ upscale))
+                        results.Add(New OcrReader.OcrTextRegion With {.Text = text, .Bounds = clientRect})
+                    Next
+                End Using
+            End Using
+        Catch
+            Return New List(Of OcrReader.OcrTextRegion)()
+        End Try
+
+        results.Sort(Function(a, b) a.Bounds.Y.CompareTo(b.Bounds.Y))
+        Return results
+    End Function
+
+    ' Asks OpenAI's chat completions API which numbered option answers the given trivia question.
+    ' Returns a 0-based index into `options`, or -1 if the call failed or the response couldn't be
+    ' parsed into a valid option number. This is an instance function (not Shared) specifically so it
+    ' can RaiseEvent LogLine on failure, the same way other background OCR/notification tasks in this
+    ' class log from a thread-pool continuation.
+    Private Async Function AskOpenAiForQuizAnswerAsync(apiKey As String, model As String, question As String, options As List(Of String)) As Task(Of Integer)
+        Try
+            Dim optionLines As New List(Of String)()
+            For i As Integer = 0 To options.Count - 1
+                optionLines.Add($"{i + 1}. {options(i)}")
+            Next
+            Dim optionListText As String = String.Join(Environment.NewLine, optionLines)
+            RaiseEvent LogLine($"Quiz auto-answer: options sent to OpenAI:{Environment.NewLine}{optionListText}")
+            Dim userPrompt As String =
+                $"Question: {question}{Environment.NewLine}Options:{Environment.NewLine}{optionListText}"
+
+            ' A free-text reply ("Reply with only the number") is not reliable to parse: a model
+            ' that hedges or restates the question can produce a reply with an earlier, unrelated
+            ' number in it (e.g. "considering options 1 and 2, I'd guess 3"), and a naive "grab the
+            ' first digit" regex would then click the WRONG option despite the click coordinates
+            ' themselves being correct. Forcing a JSON object response removes that ambiguity - the
+            ' "answer" field is the only number that can ever be extracted.
+            Dim payload = New With {
+                .model = model,
+                .messages = New Object() {
+                    New With {.role = "system", .content = "You answer multiple-choice trivia questions, including ones about niche or game-specific lore you may not be certain of. You must ALWAYS pick exactly one option number - never refuse, never say you don't know, and never leave it ambiguous. If you are not sure of the real answer, make your single best educated guess anyway. Respond with ONLY a JSON object of the exact form {""answer"": <option number>}, where <option number> is the number of your chosen option. No other text."},
+                    New With {.role = "user", .content = userPrompt}
+                },
+                .temperature = 0,
+                .response_format = New With {.type = "json_object"}
+            }
+
+            Using request As New System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, "https://api.openai.com/v1/chat/completions")
+                request.Headers.Authorization = New System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey)
+                request.Content = New System.Net.Http.StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+                Using response As System.Net.Http.HttpResponseMessage = Await QuizHttpClient.SendAsync(request)
+                    Dim responseText As String = Await response.Content.ReadAsStringAsync()
+                    If Not response.IsSuccessStatusCode Then
+                        RaiseEvent LogLine($"Quiz auto-answer: OpenAI API error ({CInt(response.StatusCode)}): {TruncateForLog(responseText, 200)}")
+                        Return -1
+                    End If
+
+                    Using doc As JsonDocument = JsonDocument.Parse(responseText)
+                        Dim content As String = doc.RootElement.GetProperty("choices")(0).GetProperty("message").GetProperty("content").GetString()
+                        RaiseEvent LogLine($"Quiz auto-answer: OpenAI raw reply: {TruncateForLog(content, 200)}")
+
+                        Dim parsedNumber As Integer = -1
+                        Dim gotAnswerField As Boolean = False
+                        Try
+                            Using answerDoc As JsonDocument = JsonDocument.Parse(If(content, ""))
+                                Dim answerProperty As JsonElement = Nothing
+                                If answerDoc.RootElement.TryGetProperty("answer", answerProperty) Then
+                                    gotAnswerField = True
+                                    If answerProperty.ValueKind = JsonValueKind.Number Then
+                                        parsedNumber = answerProperty.GetInt32()
+                                    ElseIf answerProperty.ValueKind = JsonValueKind.String Then
+                                        Integer.TryParse(answerProperty.GetString(), parsedNumber)
+                                    End If
+                                End If
+                            End Using
+                        Catch
+                            ' Fall through to the regex fallback below - the model didn't return valid JSON.
+                        End Try
+
+                        If Not gotAnswerField Then
+                            ' Fallback for a model/response that didn't honor the JSON instruction: take the
+                            ' LAST number in the reply rather than the first, since a model that ignores the
+                            ' format instruction and explains itself typically states its final answer last.
+                            Dim matches As MatchCollection = Regex.Matches(If(content, ""), "\d+")
+                            If matches.Count > 0 Then
+                                Integer.TryParse(matches(matches.Count - 1).Value, parsedNumber)
+                            End If
+                        End If
+
+                        If parsedNumber >= 1 AndAlso parsedNumber <= options.Count Then
+                            Return parsedNumber - 1
+                        End If
+                        RaiseEvent LogLine($"Quiz auto-answer: could not parse a valid option number (1-{options.Count}) from OpenAI's reply.")
+                    End Using
+                End Using
+            End Using
+        Catch ex As Exception
+            RaiseEvent LogLine("Quiz auto-answer: OpenAI request failed: " & ex.Message)
+        End Try
+        Return -1
+    End Function
+
+    ' Detects an on-screen quiz popup within a single calibrated area (question + however many
+    ' answer choices happen to be showing), asks OpenAI which option is correct, and clicks that
+    ' option's CURRENT on-screen position - read fresh from OCR every time, since answer layout is
+    ' NOT stable between questions. The topmost line in the area is treated as the question; every
+    ' line below it (up to 5) is a candidate answer option, in top-to-bottom on-screen order. The
+    ' full set of detected lines must read consistently for QuizConfirmRequiredCount samples before
+    ' an answer is requested, so a half-rendered popup frame can't trigger a wrong click. The OpenAI
+    ' call runs as a background Task tracked across loop ticks (same shape as the mob-name OCR task)
+    ' so a slow API response never blocks the main loop, and the option bounds used for the eventual
+    ' click are captured at the moment the question was asked (not re-read afterward), so the click
+    ' always lands on the option as it was when OpenAI actually evaluated it.
+    ' The post-quiz results/rewards popup keeps showing the original question text (still contains
+    ' "?") above a big grid of winner names, which otherwise looks exactly like a question plus a
+    ' multi-column answer grid to the clustering logic below - so it has to be rejected up front by
+    ' its own distinct markers rather than relying on the option-shape heuristics to notice.
+    Private Shared Function LooksLikeQuizResultsScreen(lines As List(Of OcrReader.OcrTextRegion)) As Boolean
+        If lines Is Nothing OrElse lines.Count = 0 Then
+            Return False
+        End If
+
+        For Each line In lines
+            Dim t As String = If(line.Text, "").ToLowerInvariant()
+            If t.Contains("correct answer") OrElse
+               t.Contains("you won") OrElse
+               t.Contains("reward is in your mailbox") OrElse
+               Regex.IsMatch(t, "\bwinners\s*\(") Then
+                Return True
+            End If
+        Next
+
+        Return False
+    End Function
+
+    Private Shared Function LooksLikeQuizInstructionalText(text As String) As Boolean
+        Dim t As String = If(text, "").ToLowerInvariant()
+        If t = "" Then
+            Return True
+        End If
+        If t.Contains("remaining") OrElse t.Contains("second") OrElse t.Contains("choose") Then
+            Return True
+        End If
+        If Regex.IsMatch(t, "\btop\s+\d+\b") Then
+            Return True
+        End If
+        Return False
+    End Function
+
+    ' Splits the lines detected inside quiz_area_rect into a question and its answer options. The
+    ' area may cover the whole screen (calibrated that way when the popup's position isn't fixed),
+    ' so this has to reject a lot of unrelated on-screen text - party frames, chat, nameplates, the
+    ' action bar - not just parse a clean, isolated popup.
+    '  1. The question is the first line (top to bottom) containing "?" - reliable across
+    '     languages/games since ordinary UI chrome essentially never contains a question mark.
+    '     Falls back to the very first line if no "?" is found anywhere.
+    '  2. Only lines strictly BELOW the question are considered as possible options - this alone
+    '     discards everything above the popup (HP/MP bars, party panel, etc.).
+    '  3. Remaining lines are clustered into on-screen rows by Y-proximity, each row sorted
+    '     left-to-right. Rows with 2+ items (a real multi-column answer grid, e.g. "Nakayudas |
+    '     Banar") are trusted directly. If no such row exists at all (a single-column quiz layout),
+    '     falls back to single-item rows, filtered by LooksLikeQuizInstructionalText and a length
+    '     cap, since instructional lines ("Choose your answer!", "Top 100 players...") and answer
+    '     labels are otherwise hard to tell apart by shape alone.
+    '  4. Rows more than QuizMaxOptionSpanPx below the question are dropped, so unrelated content
+    '     far down the screen (a monster nameplate, the quest tracker, chat) can't get scooped up
+    '     once the real popup has already ended.
+    Private Shared Function ExtractQuizQuestionAndOptions(lines As List(Of OcrReader.OcrTextRegion)) As (QuestionText As String, OptionLines As List(Of OcrReader.OcrTextRegion))
+        Dim empty As (String, List(Of OcrReader.OcrTextRegion)) = ("", New List(Of OcrReader.OcrTextRegion)())
+        If lines Is Nothing OrElse lines.Count = 0 Then
+            Return empty
+        End If
+
+        Dim questionIndex As Integer = lines.FindIndex(Function(l) l.Text.Contains("?"))
+        If questionIndex < 0 Then
+            questionIndex = 0
+        End If
+        Dim questionLine As OcrReader.OcrTextRegion = lines(questionIndex)
+
+        Dim candidates As List(Of OcrReader.OcrTextRegion) =
+            lines.Where(Function(l) l.Bounds.Y > questionLine.Bounds.Y + (questionLine.Bounds.Height \ 2)).ToList()
+        If candidates.Count = 0 Then
+            Return (questionLine.Text, New List(Of OcrReader.OcrTextRegion)())
+        End If
+
+        Dim heights As List(Of Integer) = candidates.Select(Function(l) l.Bounds.Height).OrderBy(Function(h) h).ToList()
+        Dim medianHeight As Integer = heights(heights.Count \ 2)
+        Dim rowThresholdPx As Integer = Math.Max(6, medianHeight \ 2)
+
+        Dim rows As New List(Of List(Of OcrReader.OcrTextRegion))()
+        For Each line As OcrReader.OcrTextRegion In candidates
+            If rows.Count > 0 AndAlso Math.Abs(line.Bounds.Y - rows(rows.Count - 1)(0).Bounds.Y) <= rowThresholdPx Then
+                rows(rows.Count - 1).Add(line)
+            Else
+                rows.Add(New List(Of OcrReader.OcrTextRegion)() From {line})
+            End If
+        Next
+        For Each row As List(Of OcrReader.OcrTextRegion) In rows
+            row.Sort(Function(a, b) a.Bounds.X.CompareTo(b.Bounds.X))
+        Next
+
+        rows = rows.Where(Function(r) r(0).Bounds.Y - questionLine.Bounds.Y <= QuizMaxOptionSpanPx).ToList()
+
+        Dim optionLines As New List(Of OcrReader.OcrTextRegion)()
+        Dim multiItemRows As List(Of List(Of OcrReader.OcrTextRegion)) = rows.Where(Function(r) r.Count >= 2).ToList()
+        If multiItemRows.Count > 0 Then
+            ' A full-screen area can also pick up the action bar (many icons in one horizontal
+            ' strip) as a "multi-item row". The real answer grid is the item-count that repeats
+            ' across the most rows (e.g. three rows of 2 answers each beats one row of 10 hotkeys),
+            ' so keep only rows matching that count instead of trusting every multi-item row.
+            Dim bestRowItemCount As Integer =
+                multiItemRows.GroupBy(Function(r) r.Count).
+                OrderByDescending(Function(g) g.Count()).
+                ThenBy(Function(g) g.Key).
+                First().Key
+            For Each row As List(Of OcrReader.OcrTextRegion) In multiItemRows.Where(Function(r) r.Count = bestRowItemCount)
+                optionLines.AddRange(row)
+            Next
+        Else
+            For Each row As List(Of OcrReader.OcrTextRegion) In rows
+                If row.Count = 1 AndAlso Not LooksLikeQuizInstructionalText(row(0).Text) AndAlso row(0).Text.Length <= 45 Then
+                    optionLines.Add(row(0))
+                End If
+            Next
+        End If
+
+        Return (questionLine.Text, optionLines.Take(8).ToList())
+    End Function
+
+    Private Sub TryHandleQuizAutoAnswer(cfg As BotConfig, hwnd As IntPtr, now As DateTime)
+        If cfg Is Nothing OrElse hwnd = IntPtr.Zero OrElse Not cfg.QuizAutoAnswerEnabled Then
+            _quizStatus = ""
+            Return
+        End If
+
+        Dim apiKey As String = If(cfg.OpenAiApiKey, "").Trim()
+        If apiKey = "" Then
+            _quizStatus = "Quiz auto-answer: waiting for an OpenAI API key (Quiz tab)."
+            Return
+        End If
+
+        ' Harvest a completed answer task first, regardless of the scan-interval gate below, so an
+        ' answer that finished mid-wait gets clicked as soon as possible instead of stalling a cycle.
+        If _quizAnswerTask IsNot Nothing AndAlso _quizAnswerTask.IsCompleted Then
+            Dim taskGeneration As Long = _quizAnswerTaskGeneration
+            Dim isCurrent As Boolean = taskGeneration = _runGeneration
+            Dim answeredSignature As String = _quizAnswerTaskSignature
+            Dim answeredQuestionText As String = _quizAnswerTaskQuestionText
+            Dim answeredOptionBounds As List(Of Rectangle) = _quizAnswerTaskOptionBounds
+            Dim answeredOptionTexts As List(Of String) = _quizAnswerTaskOptionTexts
+            Try
+                Dim optionIndex As Integer = _quizAnswerTask.Result
+                ' Only act if this is still the currently-confirmed quiz snapshot - if the quiz
+                ' changed while the API call was in flight, the answer we just got no longer applies.
+                If isCurrent AndAlso answeredSignature <> "" AndAlso _quizConfirmedSignature.Equals(answeredSignature, StringComparison.OrdinalIgnoreCase) Then
+                    If optionIndex >= 0 AndAlso answeredOptionBounds IsNot Nothing AndAlso optionIndex < answeredOptionBounds.Count Then
+                        Dim targetRect As Rectangle = answeredOptionBounds(optionIndex)
+                        Dim centerX As Integer = targetRect.X + (targetRect.Width \ 2)
+                        Dim centerY As Integer = targetRect.Y + (targetRect.Height \ 2)
+                        Dim answerText As String = If(answeredOptionTexts IsNot Nothing AndAlso optionIndex < answeredOptionTexts.Count, answeredOptionTexts(optionIndex), $"option {optionIndex + 1}")
+                        If ClickClientPoint(hwnd, centerX, centerY) Then
+                            _quizLastAnsweredSignature = answeredSignature
+                            _quizStatus = $"Quiz auto-answer: clicked ""{answerText}"" (option {optionIndex + 1}) at ({centerX},{centerY}) for ""{TruncateForLog(answeredQuestionText, 60)}""."
+                            _quizLastAnswerDisplay = $"Q: {TruncateForLog(answeredQuestionText, 100)}{Environment.NewLine}A: {answerText} (option {optionIndex + 1}), clicked at ({centerX},{centerY})"
+                            SetLastAction($"Quiz answer: {answerText}")
+                            RaiseEvent LogLine(_quizStatus)
+                        Else
+                            _quizStatus = "Quiz auto-answer: click failed."
+                        End If
+                    Else
+                        _quizStatus = "Quiz auto-answer: could not determine an answer from OpenAI's response."
+                    End If
+                End If
+            Catch ex As Exception
+                If isCurrent Then
+                    RaiseEvent LogLine("Quiz auto-answer: answer task failed: " & ex.Message)
+                End If
+            End Try
+            _quizAnswerTask = Nothing
+            _quizAnswerTaskSignature = ""
+            _quizAnswerTaskQuestionText = ""
+            _quizAnswerTaskOptionBounds = New List(Of Rectangle)()
+            _quizAnswerTaskOptionTexts = New List(Of String)()
+        End If
+
+        If _quizAnswerTask IsNot Nothing Then
+            Return
+        End If
+
+        Dim minIntervalMs As Integer = Math.Max(300, cfg.QuizScanIntervalMs)
+        If _lastQuizOcrAt <> DateTime.MinValue AndAlso (now - _lastQuizOcrAt).TotalMilliseconds < minIntervalMs Then
+            Return
+        End If
+        _lastQuizOcrAt = now
+
+        If Not IsQuizRegionCalibrated(cfg.QuizAreaRect) Then
+            _quizStatus = "Quiz auto-answer: calibrate quiz_area_rect in the Vision tab's Regions grid."
+            Return
+        End If
+
+        Dim lines As List(Of OcrReader.OcrTextRegion) = ReadQuizAreaLines(hwnd, cfg.QuizAreaRect)
+
+        If LooksLikeQuizResultsScreen(lines) Then
+            ' The results/winners screen still shows the original question text above a big grid of
+            ' player names, which otherwise looks just like a question-plus-answer-grid to the option
+            ' clustering logic below - clicking a "winner" name instead of an answer. Treat this the
+            ' same as the popup being gone so the next real quiz is still answerable.
+            _quizConfirmCandidateSignature = ""
+            _quizConfirmCount = 0
+            _quizLastAnsweredSignature = ""
+            _quizStatus = "Quiz auto-answer: results/rewards screen showing, waiting for next quiz."
+            Return
+        End If
+
+        Dim parsed = ExtractQuizQuestionAndOptions(lines)
+        Dim questionText As String = parsed.QuestionText
+        Dim optionLines As List(Of OcrReader.OcrTextRegion) = parsed.OptionLines
+        If questionText = "" OrElse optionLines.Count < 2 Then
+            ' Need a question line plus at least 2 answer options to make sense of anything.
+            _quizConfirmCandidateSignature = ""
+            _quizConfirmCount = 0
+            ' Once the popup is confirmed gone, forget which question was last answered - the same
+            ' question text showing up again later is a brand-new quiz instance, not a stale repeat
+            ' of the one still on screen, so it should be eligible to answer again.
+            _quizLastAnsweredSignature = ""
+            _quizStatus = "Quiz auto-answer: no question detected."
+            Return
+        End If
+
+        Dim signature As String = questionText & "|" & String.Join("|", optionLines.Select(Function(l) l.Text))
+
+        If _quizConfirmCandidateSignature.Equals(signature, StringComparison.OrdinalIgnoreCase) Then
+            If _quizConfirmLastSampleAt = DateTime.MinValue OrElse (now - _quizConfirmLastSampleAt).TotalMilliseconds >= QuizConfirmMinGapMs Then
+                _quizConfirmCount += 1
+                _quizConfirmLastSampleAt = now
+            End If
+        Else
+            _quizConfirmCandidateSignature = signature
+            _quizConfirmCount = 1
+            _quizConfirmLastSampleAt = now
+        End If
+
+        If _quizConfirmCount < QuizConfirmRequiredCount Then
+            _quizStatus = $"Quiz auto-answer: confirming question ({_quizConfirmCount}/{QuizConfirmRequiredCount})."
+            Return
+        End If
+
+        _quizConfirmedSignature = signature
+        If _quizLastAnsweredSignature.Equals(signature, StringComparison.OrdinalIgnoreCase) Then
+            _quizStatus = "Quiz auto-answer: already answered this question."
+            Return
+        End If
+
+        _quizStatus = $"Quiz auto-answer: asking OpenAI about ""{TruncateForLog(questionText, 60)}""..."
+        RaiseEvent LogLine(_quizStatus)
+        _quizAnswerTaskGeneration = _runGeneration
+        _quizAnswerTaskSignature = signature
+        _quizAnswerTaskQuestionText = questionText
+        _quizAnswerTaskOptionBounds = optionLines.Select(Function(l) l.Bounds).ToList()
+        _quizAnswerTaskOptionTexts = optionLines.Select(Function(l) l.Text).ToList()
+        Dim modelName As String = If(String.IsNullOrWhiteSpace(cfg.OpenAiModel), "gpt-4o-mini", cfg.OpenAiModel.Trim())
+        _quizAnswerTask = AskOpenAiForQuizAnswerAsync(apiKey, modelName, questionText, _quizAnswerTaskOptionTexts)
+    End Sub
+
     Private Function GetCachedPranaExpPercent() As Double
         If _expOcrTask IsNot Nothing AndAlso _expOcrTask.IsCompleted Then
             Dim taskGeneration As Long = _expOcrTaskGeneration
@@ -10034,6 +10496,8 @@ Public Class BotEngine
             .PerformanceDiagnostics = src.PerformanceDiagnostics,
             .EngineRestartCount = src.EngineRestartCount,
             .EngineLastRestartUtc = src.EngineLastRestartUtc,
+            .QuizStatus = src.QuizStatus,
+            .QuizLastAnswerText = src.QuizLastAnswerText,
             .UpdatedAt = src.UpdatedAt
         }
     End Function

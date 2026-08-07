@@ -44,6 +44,9 @@ patch*.ps1
 patch*.py
 Automatic.exe
 
+# Personal automation script with a hardcoded PIN - never commit
+OpenAllRemoteDesktops.ps1
+
 # Obsolete Python backend
 backend/
 

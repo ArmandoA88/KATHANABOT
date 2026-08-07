@@ -99,6 +99,7 @@ Public Class Form1
     Private _levelingTab As TabPage
     Private _holdPlaceTab As TabPage
     Private _buffWatchTab As TabPage
+    Private _quizTab As TabPage
     Private _diagnosticsTab As TabPage
     Private _updateTab As TabPage
     Private Const HelpScopeAll As String = "all"
@@ -198,6 +199,16 @@ Public Class Form1
     Private lblBuffWatchSelfClickPoint As Label
     Private btnCalibrateBuffArea As Button
     Private lblBuffWatchStatus As Label
+    Private chkQuizAutoAnswer As CheckBox
+    Private txtOpenAiApiKey As TextBox
+    Private txtOpenAiModel As TextBox
+    Private nudQuizScanIntervalMs As NumericUpDown
+    Private lblQuizStatus As Label
+    Private lblQuizLastAnswer As Label
+    Private chkQuizAutoDisableEnabled As CheckBox
+    Private nudQuizAutoDisableMinutes As NumericUpDown
+    Private lblQuizAutoDisableCountdown As Label
+    Private _quizAutoAnswerEnabledAtUtc As DateTime = DateTime.MinValue
 
     Private NotInheritable Class ChatLanguageOption
         Public Property Label As String
@@ -2029,6 +2040,8 @@ Public Class Form1
         _mainTabs.TabPages.Add(_holdPlaceTab)
         _buffWatchTab = BuildBuffWatchTab()
         _mainTabs.TabPages.Add(_buffWatchTab)
+        _quizTab = BuildQuizTab()
+        _mainTabs.TabPages.Add(_quizTab)
         _diagnosticsTab = BuildDiagnosticsTab()
         _mainTabs.TabPages.Add(_diagnosticsTab)
         UpdateDiagnosticsTabVisibility()
@@ -3966,6 +3979,153 @@ Public Class Form1
         Return group
     End Function
 
+    Private Function BuildQuizTab() As TabPage
+        Dim tab As New TabPage("Quiz") With {.BackColor = Color.FromArgb(20, 20, 20)}
+        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 1, .Padding = New Padding(8)}
+        tab.Controls.Add(root)
+
+        Dim group As New GroupBox() With {.Text = "Quiz Auto-Answer (OpenAI)", .Dock = DockStyle.Fill}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 9, .Padding = New Padding(8)}
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 160.0F))
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 24.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 90.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 50.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        group.Controls.Add(layout)
+        root.Controls.Add(group, 0, 0)
+
+        chkQuizAutoAnswer = New CheckBox() With {.Text = "Enable Quiz Auto-Answer", .AutoSize = True, .ForeColor = Color.Gainsboro, .Margin = New Padding(3, 8, 3, 3)}
+        layout.Controls.Add(chkQuizAutoAnswer, 0, 0)
+        layout.SetColumnSpan(chkQuizAutoAnswer, 2)
+
+        layout.Controls.Add(New Label() With {.Text = "OpenAI API Key", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
+        txtOpenAiApiKey = New TextBox() With {.Dock = DockStyle.Fill, .UseSystemPasswordChar = True, .PlaceholderText = "sk-..."}
+        layout.Controls.Add(txtOpenAiApiKey, 1, 1)
+
+        layout.Controls.Add(New Label() With {.Text = "Model", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
+        txtOpenAiModel = New TextBox() With {.Dock = DockStyle.Fill, .Text = "gpt-4o-mini"}
+        layout.Controls.Add(txtOpenAiModel, 1, 2)
+
+        layout.Controls.Add(New Label() With {.Text = "Scan Interval (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 3)
+        nudQuizScanIntervalMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 300, .Maximum = 10000, .Increment = 100, .Value = 1000}
+        layout.Controls.Add(nudQuizScanIntervalMs, 1, 3)
+
+        chkQuizAutoDisableEnabled = New CheckBox() With {.Text = "Auto-disable after (minutes)", .AutoSize = True, .ForeColor = Color.Gainsboro, .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        layout.Controls.Add(chkQuizAutoDisableEnabled, 0, 4)
+        nudQuizAutoDisableMinutes = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 1, .Maximum = 1440, .Increment = 1, .Value = 30}
+        layout.Controls.Add(nudQuizAutoDisableMinutes, 1, 4)
+
+        lblQuizAutoDisableCountdown = New Label() With {
+            .Text = "",
+            .Dock = DockStyle.Fill,
+            .ForeColor = Color.LightSteelBlue,
+            .TextAlign = ContentAlignment.MiddleLeft,
+            .AutoSize = False
+        }
+        layout.Controls.Add(lblQuizAutoDisableCountdown, 0, 5)
+        layout.SetColumnSpan(lblQuizAutoDisableCountdown, 2)
+
+        Dim hint As New Label() With {
+            .Text = "Calibrate ONE region in the Vision tab's Regions grid: quiz_area_rect. Draw it around the whole popup (question and all its answer choices), or the whole screen if the popup's position isn't fixed - answer positions don't need to stay fixed between questions either, since each option's click location is re-read from the screen every time. The topmost line containing '?' is treated as the question; the answer grid below it is detected automatically. Keep the area as tight as you reasonably can to reduce the chance of picking up unrelated text (chat, action bar, nameplates).",
+            .Dock = DockStyle.Fill,
+            .ForeColor = Color.LightSteelBlue,
+            .TextAlign = ContentAlignment.TopLeft,
+            .AutoSize = False
+        }
+        layout.Controls.Add(hint, 0, 6)
+        layout.SetColumnSpan(hint, 2)
+
+        lblQuizLastAnswer = New Label() With {
+            .Text = "Last Answer: (none yet)",
+            .Dock = DockStyle.Fill,
+            .ForeColor = Color.LightGreen,
+            .Font = New Font("Segoe UI", 9.0F, FontStyle.Bold),
+            .TextAlign = ContentAlignment.TopLeft,
+            .AutoSize = False
+        }
+        layout.Controls.Add(lblQuizLastAnswer, 0, 7)
+        layout.SetColumnSpan(lblQuizLastAnswer, 2)
+
+        lblQuizStatus = New Label() With {
+            .Text = "Quiz auto-answer: idle.",
+            .Dock = DockStyle.Fill,
+            .ForeColor = Color.Khaki,
+            .TextAlign = ContentAlignment.TopLeft,
+            .AutoSize = False
+        }
+        layout.Controls.Add(lblQuizStatus, 0, 8)
+        layout.SetColumnSpan(lblQuizStatus, 2)
+
+        AddHandler chkQuizAutoAnswer.CheckedChanged, AddressOf QuizAutoAnswerCheckedChanged
+        AddHandler chkQuizAutoAnswer.CheckedChanged, AddressOf LiveConfigChanged
+        AddHandler chkQuizAutoAnswer.CheckedChanged, AddressOf PersistListSettingsChanged
+        AddHandler txtOpenAiApiKey.TextChanged, AddressOf LiveConfigChanged
+        AddHandler txtOpenAiApiKey.TextChanged, AddressOf PersistListSettingsChanged
+        AddHandler txtOpenAiModel.TextChanged, AddressOf LiveConfigChanged
+        AddHandler txtOpenAiModel.TextChanged, AddressOf PersistListSettingsChanged
+        AddHandler nudQuizScanIntervalMs.ValueChanged, AddressOf LiveConfigChanged
+        AddHandler nudQuizScanIntervalMs.ValueChanged, AddressOf PersistListSettingsChanged
+        AddHandler chkQuizAutoDisableEnabled.CheckedChanged, AddressOf LiveConfigChanged
+        AddHandler chkQuizAutoDisableEnabled.CheckedChanged, AddressOf PersistListSettingsChanged
+        AddHandler nudQuizAutoDisableMinutes.ValueChanged, AddressOf LiveConfigChanged
+        AddHandler nudQuizAutoDisableMinutes.ValueChanged, AddressOf PersistListSettingsChanged
+
+        Return tab
+    End Function
+
+    Private Sub QuizAutoAnswerCheckedChanged(sender As Object, e As EventArgs)
+        If chkQuizAutoAnswer IsNot Nothing AndAlso chkQuizAutoAnswer.Checked Then
+            _quizAutoAnswerEnabledAtUtc = DateTime.UtcNow
+        Else
+            _quizAutoAnswerEnabledAtUtc = DateTime.MinValue
+            If lblQuizAutoDisableCountdown IsNot Nothing Then
+                lblQuizAutoDisableCountdown.Text = ""
+            End If
+        End If
+    End Sub
+
+    Private Sub CheckQuizAutoDisableTimer()
+        If chkQuizAutoAnswer Is Nothing OrElse Not chkQuizAutoAnswer.Checked Then
+            Return
+        End If
+        If chkQuizAutoDisableEnabled Is Nothing OrElse Not chkQuizAutoDisableEnabled.Checked Then
+            If lblQuizAutoDisableCountdown IsNot Nothing Then
+                lblQuizAutoDisableCountdown.Text = ""
+            End If
+            Return
+        End If
+        If _quizAutoAnswerEnabledAtUtc = DateTime.MinValue Then
+            _quizAutoAnswerEnabledAtUtc = DateTime.UtcNow
+        End If
+
+        Dim limitMinutes As Double = If(nudQuizAutoDisableMinutes IsNot Nothing, CDbl(nudQuizAutoDisableMinutes.Value), 30.0)
+        Dim elapsedMinutes As Double = (DateTime.UtcNow - _quizAutoAnswerEnabledAtUtc).TotalMinutes
+        Dim remainingMinutes As Double = Math.Max(0.0, limitMinutes - elapsedMinutes)
+
+        If remainingMinutes <= 0.0 Then
+            _quizAutoAnswerEnabledAtUtc = DateTime.MinValue
+            If lblQuizAutoDisableCountdown IsNot Nothing Then
+                lblQuizAutoDisableCountdown.Text = ""
+            End If
+            If lblQuizStatus IsNot Nothing Then
+                lblQuizStatus.Text = $"Quiz auto-answer: auto-disabled after {CInt(limitMinutes)} minute(s)."
+            End If
+            AppendLog($"[Full] Quiz auto-answer: auto-disabled after {CInt(limitMinutes)} minute(s).")
+            chkQuizAutoAnswer.Checked = False
+        Else
+            If lblQuizAutoDisableCountdown IsNot Nothing Then
+                Dim remainingTs As TimeSpan = TimeSpan.FromMinutes(remainingMinutes)
+                lblQuizAutoDisableCountdown.Text = $"Auto-disables in {remainingTs.Minutes}m {remainingTs.Seconds}s."
+            End If
+        End If
+    End Sub
+
     Private Function BuildDiagnosticsTab() As TabPage
         Dim tab As New TabPage("Diagnostics") With {.BackColor = Color.FromArgb(20, 20, 20)}
         Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
@@ -5385,6 +5545,7 @@ Public Class Form1
         dgvRegions.Rows.Add(True, "map_coordinate_y_rect", defaultMapY.X.ToString(), defaultMapY.Y.ToString(), defaultMapY.W.ToString(), defaultMapY.H.ToString())
         dgvRegions.Rows.Add(True, "chat_rect", "18", "548", "430", "144")
         dgvRegions.Rows.Add(True, "buff_area_rect", "0", "0", "300", "40")
+        dgvRegions.Rows.Add(True, "quiz_area_rect", "0", "0", "1", "1")
         If txtLootScanAreaPoints IsNot Nothing Then
             txtLootScanAreaPoints.Text = FormatLootScanPoints(BotConfig.CreateDefaultLootScanPoints())
         End If
@@ -9974,6 +10135,7 @@ Public Class Form1
         Dim uiWatch As Stopwatch = Stopwatch.StartNew()
         MonitorEngineWorkers()
         PushLiveConfig()
+        CheckQuizAutoDisableTimer()
         Dim st As BotStatus = GetStatusForEdition(_edition)
         HandlePendingLitePointCapture()
         HandlePendingArrowUnbundlePointCapture()
@@ -10237,6 +10399,12 @@ Public Class Form1
             UpdateAttackButtonAppearance(False)
             HandleGameDisconnectedAlert(status)
             UpdateTaskbarStatusIndicator()
+            If lblQuizStatus IsNot Nothing Then
+                lblQuizStatus.Text = If(String.IsNullOrWhiteSpace(status.QuizStatus), "Quiz auto-answer: idle.", status.QuizStatus)
+            End If
+            If lblQuizLastAnswer IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(status.QuizLastAnswerText) Then
+                lblQuizLastAnswer.Text = status.QuizLastAnswerText
+            End If
             Return
         End If
 
@@ -10249,6 +10417,12 @@ Public Class Form1
         lblHp.ForeColor = HpColor(status.HpPercent)
         lblMp.ForeColor = MpColor(status.MpPercent)
         lblMobName.Text = FormatFullMobStatusText(status)
+        If lblQuizStatus IsNot Nothing Then
+            lblQuizStatus.Text = If(String.IsNullOrWhiteSpace(status.QuizStatus), "Quiz auto-answer: idle.", status.QuizStatus)
+        End If
+        If lblQuizLastAnswer IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(status.QuizLastAnswerText) Then
+            lblQuizLastAnswer.Text = status.QuizLastAnswerText
+        End If
         lblExpRate.Text = $"Prana/EXP: {status.ExpPercent:0.00}% | Rate: {If(status.ExpPerHour < 0, "Calculating (1m)", status.ExpPerHour.ToString("0.00") & "%/hr")}"
         lblRupiahsRate.Text = $"Rupiahs: {If(status.RupiahsTotal >= 0, status.RupiahsTotal.ToString("N0"), "n/a")} | Rate: {If(status.RupiahsPerHour < 0, "Calculating (1m)", status.RupiahsPerHour.ToString("N0") & "/hr")}"
         If lblLevelingState IsNot Nothing Then
@@ -12069,6 +12243,14 @@ Public Class Form1
             End If
         End If
 
+        cfg.QuizAutoAnswerEnabled = (chkQuizAutoAnswer IsNot Nothing AndAlso chkQuizAutoAnswer.Checked)
+        cfg.OpenAiApiKey = If(txtOpenAiApiKey IsNot Nothing, txtOpenAiApiKey.Text, "").Trim()
+        cfg.OpenAiModel = If(txtOpenAiModel IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(txtOpenAiModel.Text), txtOpenAiModel.Text.Trim(), "gpt-4o-mini")
+        cfg.QuizScanIntervalMs = CInt(If(nudQuizScanIntervalMs IsNot Nothing, nudQuizScanIntervalMs.Value, 1000D))
+        cfg.QuizAreaRect = BuildRect("quiz_area_rect")
+        cfg.QuizAutoDisableEnabled = (chkQuizAutoDisableEnabled IsNot Nothing AndAlso chkQuizAutoDisableEnabled.Checked)
+        cfg.QuizAutoDisableMinutes = CInt(If(nudQuizAutoDisableMinutes IsNot Nothing, nudQuizAutoDisableMinutes.Value, 30D))
+
         Return cfg
     End Function
 
@@ -12164,6 +12346,13 @@ Public Class Form1
         cfg.AdaptiveSlowConfirmCount = CInt(If(nudAdaptiveSlowConfirm IsNot Nothing, nudAdaptiveSlowConfirm.Value, 5D))
         cfg.AdaptiveRecoveryConfirmCount = CInt(If(nudAdaptiveRecoveryConfirm IsNot Nothing, nudAdaptiveRecoveryConfirm.Value, 14D))
         cfg.CaptureBackendPreference = GetSelectedCaptureBackendCode()
+        cfg.QuizAutoAnswerEnabled = (chkQuizAutoAnswer IsNot Nothing AndAlso chkQuizAutoAnswer.Checked)
+        cfg.OpenAiApiKey = If(txtOpenAiApiKey IsNot Nothing, txtOpenAiApiKey.Text, "").Trim()
+        cfg.OpenAiModel = If(txtOpenAiModel IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(txtOpenAiModel.Text), txtOpenAiModel.Text.Trim(), "gpt-4o-mini")
+        cfg.QuizScanIntervalMs = CInt(If(nudQuizScanIntervalMs IsNot Nothing, nudQuizScanIntervalMs.Value, 1000D))
+        cfg.QuizAreaRect = BuildRect("quiz_area_rect")
+        cfg.QuizAutoDisableEnabled = (chkQuizAutoDisableEnabled IsNot Nothing AndAlso chkQuizAutoDisableEnabled.Checked)
+        cfg.QuizAutoDisableMinutes = CInt(If(nudQuizAutoDisableMinutes IsNot Nothing, nudQuizAutoDisableMinutes.Value, 30D))
         cfg.FullFrameRefreshIntervalMs = CInt(If(nudFullFrameScanMs IsNot Nothing, nudFullFrameScanMs.Value, 500D))
         cfg.LootScannerIntervalMs = CInt(Math.Round(CDbl(If(nudLootScannerSeconds IsNot Nothing, nudLootScannerSeconds.Value, 10D)) * 1000.0R))
         cfg.MapCoordinateScanIntervalMs = CInt(If(nudMapScanMs IsNot Nothing, nudMapScanMs.Value, 900D))
@@ -13811,6 +14000,25 @@ Public Class Form1
         RemoveRegionRow("map_coordinate_rect")
         UpsertRegionRow("chat_rect", cfg.ChatRect)
         UpsertRegionRow("buff_area_rect", If(cfg.BuffAreaRect, New RectRegion(0, 0, 300, 40)))
+        UpsertRegionRow("quiz_area_rect", If(cfg.QuizAreaRect, New RectRegion(0, 0, 1, 1)))
+        If chkQuizAutoAnswer IsNot Nothing Then
+            chkQuizAutoAnswer.Checked = cfg.QuizAutoAnswerEnabled
+        End If
+        If txtOpenAiApiKey IsNot Nothing Then
+            txtOpenAiApiKey.Text = If(cfg.OpenAiApiKey, "").Trim()
+        End If
+        If txtOpenAiModel IsNot Nothing Then
+            txtOpenAiModel.Text = If(String.IsNullOrWhiteSpace(cfg.OpenAiModel), "gpt-4o-mini", cfg.OpenAiModel.Trim())
+        End If
+        If nudQuizScanIntervalMs IsNot Nothing Then
+            SetNumericControlValue(nudQuizScanIntervalMs, CDec(If(cfg.QuizScanIntervalMs > 0, cfg.QuizScanIntervalMs, 1000)))
+        End If
+        If chkQuizAutoDisableEnabled IsNot Nothing Then
+            chkQuizAutoDisableEnabled.Checked = cfg.QuizAutoDisableEnabled
+        End If
+        If nudQuizAutoDisableMinutes IsNot Nothing Then
+            SetNumericControlValue(nudQuizAutoDisableMinutes, CDec(If(cfg.QuizAutoDisableMinutes > 0, cfg.QuizAutoDisableMinutes, 30)))
+        End If
         If chkBuffWatchEnabled IsNot Nothing Then
             chkBuffWatchEnabled.Checked = cfg.BuffWatchEnabled
         End If

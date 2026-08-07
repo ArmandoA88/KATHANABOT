@@ -120,6 +120,7 @@ Public Class CalibrationOverlayForm
         DrawRegion(e.Graphics, "map_coordinate_y_rect", _currentConfig.MapCoordinateYRect, Color.FromArgb(170, 90, 230, 255), "Map Y")
         DrawRegion(e.Graphics, "chat_rect", _currentConfig.ChatRect, Color.FromArgb(170, 255, 200, 110), "Chat")
         DrawRegion(e.Graphics, "buff_area_rect", _currentConfig.BuffAreaRect, Color.FromArgb(170, 150, 255, 150), "Buff Area")
+        DrawRegion(e.Graphics, "quiz_area_rect", _currentConfig.QuizAreaRect, Color.FromArgb(170, 90, 200, 255), "Quiz Area")
 
         Dim tipRect As New Rectangle(8, 8, 520, 20)
         Using b As New SolidBrush(Color.FromArgb(185, 0, 0, 0))
@@ -484,6 +485,8 @@ Public Class CalibrationOverlayForm
                 Return _currentConfig.ChatRect
             Case "buff_area_rect"
                 Return _currentConfig.BuffAreaRect
+            Case "quiz_area_rect"
+                Return _currentConfig.QuizAreaRect
             Case Else
                 Return Nothing
         End Select
@@ -531,6 +534,8 @@ Public Class CalibrationOverlayForm
                 _currentConfig.ChatRect = value
             Case "buff_area_rect"
                 _currentConfig.BuffAreaRect = value
+            Case "quiz_area_rect"
+                _currentConfig.QuizAreaRect = value
         End Select
     End Sub
 
