@@ -2254,7 +2254,7 @@ Public Class BotEngine
             Dim evadeDadatiTarget As Boolean =
                 cfg.EvadeDadatiEnabled AndAlso
                 dadatiNameIsFresh AndAlso
-                IsDadatiMobName(normMobName)
+                (IsDadatiMobName(normMobName) OrElse IsSachiAguaMobName(normMobName))
             Dim listedMonsterTarget As Boolean = IsDeniedMob(mobName, cfg.DeniedMobs, cfg.MobNameMatchThresholdPercent)
             Dim monsterFilterBlockedTarget As Boolean =
                 monsterFilterActive AndAlso
@@ -8786,6 +8786,32 @@ Public Class BotEngine
             ' or vertical bar in Dadati. Fold those glyphs before comparing.
             Dim folded As String = rawToken.Replace("l", "i").Replace("1", "i").Replace("|", "i")
             If folded.Equals("dadati", StringComparison.Ordinal) Then
+                Return True
+            End If
+        Next
+
+        Return False
+    End Function
+
+    ' Matches "Sachi Agua I" and OCR variants like "Sachi Agua 1", "Sach1 Agua l", "SachI Agua I" -
+    ' the "i" in Sachi and the trailing Roman numeral I are both commonly misread as a lowercase L,
+    ' the digit 1, or a vertical bar, so those glyphs are folded the same way as IsDadatiMobName
+    ' before checking for the three-word sequence.
+    Private Shared Function IsSachiAguaMobName(normalizedName As String) As Boolean
+        If String.IsNullOrWhiteSpace(normalizedName) Then
+            Return False
+        End If
+
+        Dim tokens As New List(Of String)
+        For Each rawToken As String In Regex.Split(normalizedName.ToLowerInvariant(), "[^a-z0-9|]+")
+            If String.IsNullOrWhiteSpace(rawToken) Then
+                Continue For
+            End If
+            tokens.Add(rawToken.Replace("l", "i").Replace("1", "i").Replace("|", "i"))
+        Next
+
+        For i As Integer = 0 To tokens.Count - 3
+            If tokens(i) = "sachi" AndAlso tokens(i + 1) = "agua" AndAlso tokens(i + 2) = "i" Then
                 Return True
             End If
         Next

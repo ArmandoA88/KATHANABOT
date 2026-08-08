@@ -366,6 +366,8 @@ Public Class Form1
     Private rtbLog As RichTextBox
     Private dgvKeySummary As DataGridView
     Private lblKeySummaryInfo As Label
+    Private dgvAchievementSummary As DataGridView
+    Private lblAchievementSummaryInfo As Label
     Private txtDiagnostics As TextBox
     Private pnlHealthBanner As Panel
     Private btnProfiles As Button
@@ -563,7 +565,14 @@ Public Class Form1
     Private ReadOnly _gridThemeSnapshots As New Dictionary(Of DataGridView, GridThemeSnapshot)()
     Private ReadOnly _keyActionEvents As New List(Of KeyActionEvent)()
     Private ReadOnly _keyActionEventsSync As New Object()
-    Private Const MaxKeyActionEvents As Integer = 30000
+    Private Const MaxKeyActionEvents As Integer = 150000
+    Private ReadOnly _achievementSamples As New List(Of AchievementSample)()
+    Private ReadOnly _achievementSamplesSync As New Object()
+    Private Const MaxAchievementSamples As Integer = 10000
+    Private Const AchievementSampleMinIntervalSeconds As Integer = 15
+    Private _lastAchievementSampleAt As DateTime = DateTime.MinValue
+    Private _lastAchievementExpPercent As Double = -1
+    Private _cumulativeExpEarned As Double = 0
     Private ReadOnly _lootHistoryEvents As New List(Of LootHistoryEvent)()
     Private ReadOnly _lootHistoryEventsSync As New Object()
     Private Const MaxLootHistoryEvents As Integer = 500
@@ -682,7 +691,18 @@ Public Class Form1
         Public Property Last10Min As Integer
         Public Property Last30Min As Integer
         Public Property Last60Min As Integer
+        Public Property Last24Hours As Integer
         Public Property LastActionText As String = ""
+    End Class
+
+    ' RupiahsTotal/ExpPercent are only recorded when both are valid live readings, so the earned-
+    ' in-window calculation never has to reason about -1 "unknown" sentinel values mixed in.
+    ' CumulativeExpEarned unwraps level-up resets into a monotonically non-decreasing odometer
+    ' (see RecordAchievementSampleIfDue), the same way RupiahsTotal is already a running total.
+    Private Class AchievementSample
+        Public Property TimestampUtc As DateTime
+        Public Property RupiahsTotal As Long
+        Public Property CumulativeExpEarned As Double
     End Class
 
     Private Class LootHistoryEvent
@@ -3171,7 +3191,7 @@ Public Class Form1
         generalLayout.Controls.Add(nudAvoidHighMaxHpThreshold, 3, 5)
 
         chkEvadeDadati = New CheckBox() With {
-            .Text = "Evade Dadati/OCR variants (tap W/S, then retarget; game window must be on)",
+            .Text = "Evade Dadati/Sachi Agua I + OCR variants (tap W/S, then retarget; game window must be on)",
             .Dock = DockStyle.Fill,
             .Checked = False
         }
@@ -5235,11 +5255,14 @@ Public Class Form1
 
         Dim summaryTab As New TabPage("Key Summary")
         summaryTab.Controls.Add(BuildKeySummaryPanel())
+        Dim achievementsTab As New TabPage("Achievements")
+        achievementsTab.Controls.Add(BuildAchievementSummaryPanel())
         Dim lootHistoryTab As New TabPage("Loot History")
         lootHistoryTab.Controls.Add(BuildLootHistoryPanel())
 
         tabs.TabPages.Add(realtimeTab)
         tabs.TabPages.Add(summaryTab)
+        tabs.TabPages.Add(achievementsTab)
         tabs.TabPages.Add(lootHistoryTab)
         layout.Controls.Add(tabs, 0, 0)
         group.Controls.Add(layout)
@@ -5339,6 +5362,7 @@ Public Class Form1
         dgvKeySummary.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Last10Min", .HeaderText = "Last 10m"})
         dgvKeySummary.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Last30Min", .HeaderText = "Last 30m"})
         dgvKeySummary.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Last60Min", .HeaderText = "Last 60m"})
+        dgvKeySummary.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Last24Hours", .HeaderText = "Last 24h"})
         dgvKeySummary.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "LastAction", .HeaderText = "Latest Action"})
         layout.Controls.Add(dgvKeySummary, 0, 1)
 
@@ -5356,6 +5380,59 @@ Public Class Form1
                 RefreshKeyActionSummary()
             End Sub
         layout.Controls.Add(btnResetSummary, 0, 2)
+
+        Return layout
+    End Function
+
+    Private Function BuildAchievementSummaryPanel() As Control
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3, .Padding = New Padding(6)}
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 48.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+
+        lblAchievementSummaryInfo = New Label() With {
+            .Dock = DockStyle.Fill,
+            .TextAlign = ContentAlignment.MiddleLeft,
+            .ForeColor = Color.LightSteelBlue,
+            .Text = "Rupiah earned and EXP gained in rolling windows: 10m / 30m / 60m / 24h."
+        }
+        layout.Controls.Add(lblAchievementSummaryInfo, 0, 0)
+
+        dgvAchievementSummary = New DataGridView() With {
+            .Dock = DockStyle.Fill,
+            .ReadOnly = True,
+            .AllowUserToAddRows = False,
+            .AllowUserToDeleteRows = False,
+            .AllowUserToResizeRows = False,
+            .MultiSelect = False,
+            .SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            .RowHeadersVisible = False,
+            .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
+        }
+        dgvAchievementSummary.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Metric", .HeaderText = "Metric"})
+        dgvAchievementSummary.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Last10Min", .HeaderText = "Last 10m"})
+        dgvAchievementSummary.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Last30Min", .HeaderText = "Last 30m"})
+        dgvAchievementSummary.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Last60Min", .HeaderText = "Last 60m"})
+        dgvAchievementSummary.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Last24Hours", .HeaderText = "Last 24h"})
+        layout.Controls.Add(dgvAchievementSummary, 0, 1)
+
+        Dim btnResetAchievements As New Button() With {
+            .Text = "Reset Achievement Summary",
+            .Dock = DockStyle.Fill,
+            .BackColor = Color.FromArgb(130, 70, 25),
+            .ForeColor = Color.White
+        }
+        AddHandler btnResetAchievements.Click,
+            Sub(_s As Object, _e As EventArgs)
+                SyncLock _achievementSamplesSync
+                    _achievementSamples.Clear()
+                End SyncLock
+                _lastAchievementSampleAt = DateTime.MinValue
+                _lastAchievementExpPercent = -1
+                _cumulativeExpEarned = 0
+                RefreshAchievementSummaryGrid()
+            End Sub
+        layout.Controls.Add(btnResetAchievements, 0, 2)
 
         Return layout
     End Function
@@ -5528,6 +5605,7 @@ Public Class Form1
         ApplyLiteDefaults()
         UpdateLootRejectPointUi()
         RefreshKeyActionSummary()
+        RefreshAchievementSummaryGrid()
         AppendLog("UI loaded. No API required.")
         AppendLog("Shortcut active: Ctrl+Shift toggles pause/resume.")
     End Sub
@@ -9386,7 +9464,7 @@ Public Class Form1
                     "- Automatic Screenshots is beneath Snapshot; choose 1 to 999 minutes, select the destination with Browse, or open it with Open Folder.",
                     "- Use buff key on high max HP mobs plus Max HP >= work together with the high_max_hp combat role.",
                     "- Avoid mobs over max HP plus Avoid Max HP >= skips targets above that detected Max HP and retargets.",
-                    "- Evade Dadatis blocks attacks on a freshly recognized Dadati, taps W and S to shift position, then forces an E retarget.",
+                    "- Evade Dadatis blocks attacks on a freshly recognized Dadati or Sachi Agua I, taps W and S to shift position, then forces an E retarget.",
                     "- Chat translation settings control OCR of the chat box, overlay visibility, target language, scan speed, and number of visible translated lines.",
                     "- Calibration Regions is the editable rectangle list for HP, MP, target name, target HP, map coordinates, chat, and other OCR areas; each On checkbox controls that region's overlay.",
                     "- Map coordinate OCR is split into map_coordinate_x_rect for the 3-digit X axis and map_coordinate_y_rect for the 3-digit Y axis.",
@@ -9524,7 +9602,7 @@ Public Class Form1
                     "- Capture Snapshot captura la imagen actual del cliente.",
                     "- Automatic Screenshots activa capturas programadas; elige de 1 a 999 minutos y la carpeta con Browse.",
                     "- Use buff key on high max HP mobs junto con Max HP >= trabaja con el role high_max_hp.",
-                    "- Evade Dadatis bloquea ataques contra Dadati, pulsa W y S para mover al personaje y luego fuerza un retarget con E.",
+                    "- Evade Dadatis bloquea ataques contra Dadati o Sachi Agua I, pulsa W y S para mover al personaje y luego fuerza un retarget con E.",
                     "- Los controles de chat translation manejan OCR del chat, overlay, idioma destino, velocidad y numero de lineas.",
                     "- Calibration Regions contiene los rectangulos OCR editables, incluidas las coordenadas del mapa; cada checkbox On controla el overlay de esa region.",
                     "- Las coordenadas del mapa se dividen en map_coordinate_x_rect para el eje X de 3 digitos y map_coordinate_y_rect para el eje Y de 3 digitos.",
@@ -9660,7 +9738,7 @@ Public Class Form1
                     "- Capture Snapshot kukuha ng kasalukuyang image ng client.",
                     "- Automatic Screenshots ay timed game captures; pumili ng 1 hanggang 999 minuto at save folder gamit ang Browse.",
                     "- Use buff key on high max HP mobs kasama ng Max HP >= ay para sa high_max_hp combat role.",
-                    "- Evade Dadatis hinaharang ang pag-atake sa Dadati, tina-tap ang W at S para gumalaw, at saka nagfo-force ng E retarget.",
+                    "- Evade Dadatis hinaharang ang pag-atake sa Dadati o Sachi Agua I, tina-tap ang W at S para gumalaw, at saka nagfo-force ng E retarget.",
                     "- Ang chat translation controls ay para sa OCR ng chat, overlay visibility, target language, bilis ng scan, at dami ng visible lines.",
                     "- Calibration Regions ang editable OCR rectangles, kasama ang map coordinates; bawat On checkbox ang control ng overlay ng region.",
                     "- Hiwalay ang map coordinates: map_coordinate_x_rect para sa 3-digit X axis at map_coordinate_y_rect para sa 3-digit Y axis.",
@@ -10130,6 +10208,7 @@ Public Class Form1
              $"Error: {st.ErrorMessage}"
         AddDiagnosticsHistory(txtDiagnostics.Text)
         RefreshKeyActionSummary()
+        RefreshAchievementSummaryGrid()
         RefreshLootHistoryGrid()
         uiWatch.Stop()
         RecordUiTiming(uiWatch.Elapsed.TotalMilliseconds)
@@ -14402,8 +14481,10 @@ Public Class Form1
         Dim cutoff10 As DateTime = nowUtc.AddMinutes(-10)
         Dim cutoff30 As DateTime = nowUtc.AddMinutes(-30)
         Dim cutoff60 As DateTime = nowUtc.AddHours(-1)
+        Dim cutoff24h As DateTime = nowUtc.AddHours(-24)
 
         Dim summaries As New Dictionary(Of String, KeyActionSummaryRow)(StringComparer.OrdinalIgnoreCase)
+        Dim total60Min As Integer = 0
         For Each entry As KeyActionEvent In actionEvents
             Dim row As KeyActionSummaryRow = Nothing
             If Not summaries.TryGetValue(entry.KeyName, row) Then
@@ -14419,6 +14500,10 @@ Public Class Form1
             End If
             If entry.TimestampUtc >= cutoff60 Then
                 row.Last60Min += 1
+                total60Min += 1
+            End If
+            If entry.TimestampUtc >= cutoff24h Then
+                row.Last24Hours += 1
             End If
             row.LastActionText = entry.ActionText
         Next
@@ -14437,7 +14522,7 @@ Public Class Form1
         Try
             dgvKeySummary.Rows.Clear()
             For Each row As KeyActionSummaryRow In ordered
-                dgvKeySummary.Rows.Add(row.KeyName, row.Last10Min, row.Last30Min, row.Last60Min, row.LastActionText)
+                dgvKeySummary.Rows.Add(row.KeyName, row.Last10Min, row.Last30Min, row.Last60Min, row.Last24Hours, row.LastActionText)
             Next
         Finally
             dgvKeySummary.ResumeLayout()
@@ -14453,10 +14538,10 @@ Public Class Form1
         Dim repairText As String = $"Repair OCR: {Math.Max(0, status.RepairConfirmCount)}/{repairRequired} in {repairWindow}m | repair triggers: {Math.Max(0, status.RepairTriggerCount)}"
         Dim runtimeText As String = FormatBotRuntimeSummary()
         If ordered.Count = 0 Then
-            lblKeySummaryInfo.Text = $"No key presses tracked in the last 60 minutes. | {repairText}{Environment.NewLine}{runtimeText}"
+            lblKeySummaryInfo.Text = $"No key presses tracked in the last 24 hours. | {repairText}{Environment.NewLine}{runtimeText}"
         Else
             Dim capText As String = If(actionEvents.Count >= MaxKeyActionEvents, " | capped", "")
-            lblKeySummaryInfo.Text = $"Tracked keys: {ordered.Count} | Total presses (60m): {actionEvents.Count}{capText} | {repairText} | Updated: {DateTime.Now:HH:mm:ss}{Environment.NewLine}{runtimeText}"
+            lblKeySummaryInfo.Text = $"Tracked keys: {ordered.Count} | Total presses (60m): {total60Min} | Total presses (24h): {actionEvents.Count}{capText} | {repairText} | Updated: {DateTime.Now:HH:mm:ss}{Environment.NewLine}{runtimeText}"
         End If
     End Sub
 
@@ -14494,10 +14579,118 @@ Public Class Form1
     End Sub
 
     Private Sub PruneKeyActionEventsLocked(nowUtc As DateTime)
-        Dim cutoff As DateTime = nowUtc.AddHours(-1)
+        Dim cutoff As DateTime = nowUtc.AddHours(-24)
         _keyActionEvents.RemoveAll(Function(x As KeyActionEvent) x.TimestampUtc < cutoff)
         If _keyActionEvents.Count > MaxKeyActionEvents Then
             _keyActionEvents.RemoveRange(0, _keyActionEvents.Count - MaxKeyActionEvents)
+        End If
+    End Sub
+
+    ' Rupiah/EXP are only produced by the Full engine, so this always samples _fullStatus
+    ' regardless of which tab/edition is currently selected in the UI.
+    Private Sub RecordAchievementSampleIfDue()
+        Dim status As BotStatus = _fullStatus
+        If status Is Nothing OrElse Not status.WindowFound OrElse status.RupiahsTotal < 0 OrElse status.ExpPercent < 0 Then
+            Return
+        End If
+
+        Dim nowUtc As DateTime = DateTime.UtcNow
+        If _lastAchievementSampleAt <> DateTime.MinValue AndAlso (nowUtc - _lastAchievementSampleAt).TotalSeconds < AchievementSampleMinIntervalSeconds Then
+            Return
+        End If
+        _lastAchievementSampleAt = nowUtc
+
+        If _lastAchievementExpPercent >= 0 Then
+            Dim delta As Double = status.ExpPercent - _lastAchievementExpPercent
+            If delta < -50.0 Then
+                ' A big drop means the character leveled up and the percent wrapped back to ~0 -
+                ' treat it as still-forward progress (matches UpdateExpRate's own heuristic).
+                delta += 100.0
+            End If
+            If delta > 0 Then
+                _cumulativeExpEarned += delta
+            End If
+        End If
+        _lastAchievementExpPercent = status.ExpPercent
+
+        SyncLock _achievementSamplesSync
+            _achievementSamples.Add(New AchievementSample With {
+                .TimestampUtc = nowUtc,
+                .RupiahsTotal = status.RupiahsTotal,
+                .CumulativeExpEarned = _cumulativeExpEarned
+            })
+            Dim cutoff As DateTime = nowUtc.AddHours(-24)
+            _achievementSamples.RemoveAll(Function(s As AchievementSample) s.TimestampUtc < cutoff)
+            If _achievementSamples.Count > MaxAchievementSamples Then
+                _achievementSamples.RemoveRange(0, _achievementSamples.Count - MaxAchievementSamples)
+            End If
+        End SyncLock
+    End Sub
+
+    ' Earned-in-window = latest sample minus the earliest sample still inside the window (or the
+    ' oldest sample retained at all, if the window is longer than our history so far) - works the
+    ' same way for both metrics since CumulativeExpEarned is a monotonic odometer just like
+    ' RupiahsTotal already is.
+    Private Function GetAchievementEarned(windowMinutes As Double) As (RupiahEarned As Long, ExpEarned As Double, HasData As Boolean)
+        Dim nowUtc As DateTime = DateTime.UtcNow
+        Dim cutoff As DateTime = nowUtc.AddMinutes(-windowMinutes)
+        Dim snapshot As List(Of AchievementSample)
+        SyncLock _achievementSamplesSync
+            snapshot = New List(Of AchievementSample)(_achievementSamples)
+        End SyncLock
+
+        If snapshot.Count = 0 Then
+            Return (0L, 0.0, False)
+        End If
+
+        Dim baseline As AchievementSample = Nothing
+        For Each sample As AchievementSample In snapshot
+            If sample.TimestampUtc >= cutoff Then
+                baseline = sample
+                Exit For
+            End If
+        Next
+        If baseline Is Nothing Then
+            baseline = snapshot(0)
+        End If
+
+        Dim latest As AchievementSample = snapshot(snapshot.Count - 1)
+        Dim rupiahEarned As Long = Math.Max(0L, latest.RupiahsTotal - baseline.RupiahsTotal)
+        Dim expEarned As Double = Math.Max(0.0, latest.CumulativeExpEarned - baseline.CumulativeExpEarned)
+        Return (rupiahEarned, expEarned, True)
+    End Function
+
+    Private Sub RefreshAchievementSummaryGrid()
+        RecordAchievementSampleIfDue()
+
+        If dgvAchievementSummary Is Nothing OrElse dgvAchievementSummary.IsDisposed Then
+            Return
+        End If
+
+        Dim last10 = GetAchievementEarned(10)
+        Dim last30 = GetAchievementEarned(30)
+        Dim last60 = GetAchievementEarned(60)
+        Dim last24h = GetAchievementEarned(24 * 60)
+
+        dgvAchievementSummary.SuspendLayout()
+        Try
+            dgvAchievementSummary.Rows.Clear()
+            If last10.HasData Then
+                dgvAchievementSummary.Rows.Add("Rupiah", last10.RupiahEarned.ToString("N0"), last30.RupiahEarned.ToString("N0"), last60.RupiahEarned.ToString("N0"), last24h.RupiahEarned.ToString("N0"))
+                dgvAchievementSummary.Rows.Add("EXP", $"{last10.ExpEarned:0.00}%", $"{last30.ExpEarned:0.00}%", $"{last60.ExpEarned:0.00}%", $"{last24h.ExpEarned:0.00}%")
+            End If
+        Finally
+            dgvAchievementSummary.ResumeLayout()
+        End Try
+
+        If lblAchievementSummaryInfo Is Nothing OrElse lblAchievementSummaryInfo.IsDisposed Then
+            Return
+        End If
+
+        If Not last10.HasData Then
+            lblAchievementSummaryInfo.Text = "No rupiah/EXP readings tracked yet - needs the Full bot running with prana_exp_rect and rupiahs_rect calibrated."
+        Else
+            lblAchievementSummaryInfo.Text = $"Rupiah earned and EXP gained in rolling windows. Updated: {DateTime.Now:HH:mm:ss}"
         End If
     End Sub
 
