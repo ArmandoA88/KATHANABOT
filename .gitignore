@@ -61,6 +61,10 @@ mscor*.dll
 msquic.dll
 netstandard.dll
 
+# Buff icon library: created next to the exe at runtime, travels with the standalone exe rather
+# than living in source control
+buff_icons/
+
 # Root-level satellite assemblies copied from framework-dependent builds
 cs/
 de/

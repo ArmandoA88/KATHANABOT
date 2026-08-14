@@ -642,15 +642,107 @@ Public NotInheritable Class OcrReader
         End Using
     End Function
 
-    Private Shared Function BuildCandidates(source As Bitmap) As List(Of Bitmap)
+    ' Purpose-built for short dialog button labels ("OK", "Yes", etc.). Unlike mob names/HUD text -
+    ' which BuildNameCandidates is tuned for as light, anti-aliased text on a dark background - a
+    ' dialog button is usually the opposite polarity: dark text on a light/beige button face. It also
+    ' scores candidates by cleanliness/brevity instead of length, since ScoreText's length bonus would
+    ' otherwise let a longer garbage read from one candidate outscore a correct, short "OK" from another.
+    Public Shared Function ReadButtonText(source As Bitmap) As String
+        If source Is Nothing Then
+            Return ""
+        End If
+
+        Dim direct As String = ""
+        Try
+            direct = ReadButtonTextInternal(source)
+            If direct <> "" Then
+                Return direct
+            End If
+        Catch
+        End Try
+
+        Return ReadButtonTextStaFallback(source)
+    End Function
+
+    Private Shared Function ReadButtonTextStaFallback(source As Bitmap) As String
+        Return RunOnStaWorker(Function() ReadButtonTextInternal(source), 1500, "")
+    End Function
+
+    Private Shared Function ReadButtonTextInternal(source As Bitmap) As String
+        Dim engine = GetEngine()
+        If engine Is Nothing Then
+            Return ""
+        End If
+
+        Dim bestText As String = ""
+        Dim bestScore As Integer = -1
+        Dim candidates As List(Of Bitmap) = BuildButtonTextCandidates(source)
+        Try
+            For Each candidate As Bitmap In candidates
+                Dim rawText As String = ReadRawTextAsync(engine, candidate).GetAwaiter().GetResult()
+                Dim cleaned As String = CleanNameText(rawText)
+                Dim score As Integer = ScoreButtonText(cleaned)
+                If score > bestScore Then
+                    bestScore = score
+                    bestText = cleaned
+                End If
+                If score >= 90 Then
+                    Exit For
+                End If
+            Next
+        Finally
+            For Each candidate As Bitmap In candidates
+                candidate.Dispose()
+            Next
+        End Try
+
+        Return bestText
+    End Function
+
+    Private Shared Function BuildButtonTextCandidates(source As Bitmap) As List(Of Bitmap)
         Dim list As New List(Of Bitmap)()
         Dim baseScaled As Bitmap = ScaleBitmap(source, 4)
+        Dim largeScaled As Bitmap = ScaleBitmap(source, 6)
         list.Add(baseScaled)
+        list.Add(largeScaled)
         list.Add(ToGrayHighContrast(baseScaled))
+        ' Dark text on a light/beige button: non-inverted ToBinary maps anything at/above the
+        ' threshold to white and anything below it to black, so a bright button face with darker
+        ' glyph strokes becomes clean black text on white - the polarity most OCR engines expect.
+        list.Add(ToBinary(baseScaled, 120, False))
         list.Add(ToBinary(baseScaled, 150, False))
+        list.Add(ToBinary(baseScaled, 180, False))
+        list.Add(ToBinary(largeScaled, 150, False))
+        ' Light text on a dark button (some UI skins invert this) - kept as a fallback set.
+        list.Add(ToBinary(baseScaled, 120, True))
         list.Add(ToBinary(baseScaled, 150, True))
         list.Add(IsolateLightText(baseScaled))
         Return list
+    End Function
+
+    Private Shared Function ScoreButtonText(text As String) As Integer
+        If String.IsNullOrWhiteSpace(text) Then
+            Return -1
+        End If
+
+        Dim compact As String = Regex.Replace(text.ToUpperInvariant(), "[^A-Z0-9]", "")
+        compact = compact.Replace("0", "O").Replace("Q", "O")
+        If compact = "" Then
+            Return -1
+        End If
+
+        ' Short and clean beats long and noisy: an exact "OK" is the best possible read; anything
+        ' longer is increasingly likely to be surrounding button chrome/artifacts picked up by OCR.
+        If compact = "OK" Then
+            Return 100
+        End If
+        If compact.Contains("OK") AndAlso compact.Length <= 4 Then
+            Return 70
+        End If
+        If compact.Contains("OK") Then
+            Return 40
+        End If
+        Return Math.Max(0, 20 - compact.Length)
     End Function
 
     Private Shared Function BuildNameCandidates(source As Bitmap) As List(Of Bitmap)

@@ -250,7 +250,6 @@ Public Class BotConfig
     Public Property PranaExpRect As RectRegion = New RectRegion(472, 745, 78, 21)
     Public Property RupiahsRect As RectRegion = New RectRegion(560, 745, 110, 21)
     Public Property PartyInviteScanRect As RectRegion = New RectRegion(349, 318, 328, 124)
-    Public Property PartyInviteOkRect As RectRegion = New RectRegion(463, 410, 59, 21)
     ' Auto Resurrect: a dedicated scan region + OK click point, fully separate from the party/ress
     ' auto-accept above, because the resurrection confirmation dialog appears at a different screen
     ' position than party invites in this game and a single shared region can't cover both.
@@ -948,7 +947,12 @@ Public Class BotEngine
     Private Shared ReadOnly _captureMethodByWindow As New Dictionary(Of IntPtr, CaptureClientMethod)()
     Private Shared _captureBackendPreference As String = "auto"
     Private Shared ReadOnly NavigationRouteStorageRoot As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel", "navigation_routes")
-    Public Shared ReadOnly BuffIconLibraryRoot As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel", "buff_icons")
+    ' Lives next to the running exe (not %AppData%) so the library travels with the standalone exe
+    ' when it's copied to a different computer - AppContext.BaseDirectory resolves to the published
+    ' exe's own folder even under single-file self-contained deployment, unlike Assembly.Location
+    ' (empty for single-file apps) or a temp single-file extraction directory.
+    Public Shared ReadOnly BuffIconLibraryRoot As String = Path.Combine(AppContext.BaseDirectory, "buff_icons")
+    Private Shared ReadOnly LegacyBuffIconLibraryRoot As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel", "buff_icons")
     Public Shared ReadOnly SessionHistoryFilePath As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel", "session_history.csv")
     Private Shared ReadOnly _sessionHistorySync As New Object()
     Private Shared ReadOnly NavigationRouteJsonOptions As New JsonSerializerOptions With {.WriteIndented = True}
@@ -1794,13 +1798,12 @@ Public Class BotEngine
                 Dim litePranaExpRegion As New RectRegion(0, 0, 1, 1)
                 Dim liteRupiahsRegion As New RectRegion(0, 0, 1, 1)
                 Dim litePartyInviteScanRegion As New RectRegion(0, 0, 1, 1)
-                Dim litePartyInviteOkRegion As New RectRegion(0, 0, 1, 1)
                 Dim litePartyListRegion As New RectRegion(0, 0, 1, 1)
                 Dim liteDisconnectMessageRegion As New RectRegion(0, 0, 1, 1)
                 Dim liteMapCoordinateXRegion As New RectRegion(0, 0, 1, 1)
                 Dim liteMapCoordinateYRegion As New RectRegion(0, 0, 1, 1)
                 Dim liteChatRegion As New RectRegion(0, 0, 1, 1)
-                ResolveVisionRegions(cfg, clientWidth, clientHeight, liteHpRegion, liteMpRegion, liteMobNameRegion, liteMobHpRegion, liteUnreachableTextRegion, litePranaExpRegion, liteRupiahsRegion, litePartyInviteScanRegion, litePartyInviteOkRegion, litePartyListRegion, liteDisconnectMessageRegion, liteMapCoordinateXRegion, liteMapCoordinateYRegion, liteChatRegion)
+                ResolveVisionRegions(cfg, clientWidth, clientHeight, liteHpRegion, liteMpRegion, liteMobNameRegion, liteMobHpRegion, liteUnreachableTextRegion, litePranaExpRegion, liteRupiahsRegion, litePartyInviteScanRegion, litePartyListRegion, liteDisconnectMessageRegion, liteMapCoordinateXRegion, liteMapCoordinateYRegion, liteChatRegion)
 
                 Dim needsLiteHpScan As Boolean = cfg.Actions.Any(
                     Function(action) action.Enabled AndAlso
@@ -1866,7 +1869,7 @@ Public Class BotEngine
                     liteScanWarning = If(liteScanWarning = "", "Game disconnected from server.", liteScanWarning & " Game disconnected from server.")
                 End If
                 If liteFrame IsNot Nothing Then
-                    liteActionSent = TryHandleAutoAcceptPrompts(cfg, hwnd, liteFrame, now, litePartyInviteScanRegion, litePartyInviteOkRegion)
+                    liteActionSent = TryHandleAutoAcceptPrompts(cfg, hwnd, liteFrame, now, litePartyInviteScanRegion)
                     If liteActionSent Then
                         liteReason = "Auto-accept prompt detected and accepted."
                     End If
@@ -1956,7 +1959,6 @@ Public Class BotEngine
             Dim pranaExpRegion As New RectRegion(0, 0, 1, 1)
             Dim rupiahsRegion As New RectRegion(0, 0, 1, 1)
             Dim partyInviteScanRegion As New RectRegion(0, 0, 1, 1)
-            Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
             Dim partyListRegion As New RectRegion(0, 0, 1, 1)
             Dim disconnectMessageRegion As New RectRegion(0, 0, 1, 1)
             Dim mapCoordinateXRegion As New RectRegion(0, 0, 1, 1)
@@ -1987,7 +1989,7 @@ Public Class BotEngine
 
             Dim fullClientWidth As Integer = Math.Max(1, fullClientRect.Right - fullClientRect.Left)
             Dim fullClientHeight As Integer = Math.Max(1, fullClientRect.Bottom - fullClientRect.Top)
-            ResolveVisionRegions(cfg, fullClientWidth, fullClientHeight, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, partyListRegion, disconnectMessageRegion, mapCoordinateXRegion, mapCoordinateYRegion, chatRegion)
+            ResolveVisionRegions(cfg, fullClientWidth, fullClientHeight, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyListRegion, disconnectMessageRegion, mapCoordinateXRegion, mapCoordinateYRegion, chatRegion)
             Dim mobLifeRegion As RectRegion = ResolveMobLifeRegion(cfg, fullClientWidth, fullClientHeight)
             Dim lootScanPolygon As List(Of DrawingPoint) = ResolveLootScanPolygon(cfg, fullClientWidth, fullClientHeight)
             Dim activeHwnd As IntPtr = NativeMethods.GetForegroundWindow()
@@ -2450,7 +2452,7 @@ Public Class BotEngine
 
             Dim deathPaused As Boolean = TryHandleDeathMessage(cfg, hwnd, frame, now, hpPct)
             Dim reason As String = If(deathPaused, "Character down: combat skills paused until full life. Auto Resurrect still active.", "")
-            Dim actionSent As Boolean = TryHandleAutoAcceptPrompts(cfg, hwnd, frame, now, partyInviteScanRegion, partyInviteOkRegion)
+            Dim actionSent As Boolean = TryHandleAutoAcceptPrompts(cfg, hwnd, frame, now, partyInviteScanRegion)
             If actionSent Then
                 reason = "Auto-accept prompt detected and accepted."
             End If
@@ -6930,6 +6932,36 @@ Public Class BotEngine
         Return cleaned
     End Function
 
+    ' One-time upgrade path for installs whose buff icon library still lives under the old
+    ' %AppData%\KathanaBotControlPanel\buff_icons location (before it moved next to the exe): copies
+    ' any icons found there into the new exe-relative folder so upgrading in place doesn't silently
+    ' lose a user's saved library. Never overwrites/deletes the legacy copy, and any failure here is
+    ' swallowed - a failed migration should not block startup.
+    Public Shared Sub MigrateLegacyBuffIconLibraryIfNeeded()
+        Try
+            If Not Directory.Exists(LegacyBuffIconLibraryRoot) Then
+                Return
+            End If
+            Dim legacyFiles As String() = Directory.GetFiles(LegacyBuffIconLibraryRoot, "*.png", SearchOption.AllDirectories)
+            If legacyFiles.Length = 0 Then
+                Return
+            End If
+            If Directory.Exists(BuffIconLibraryRoot) AndAlso Directory.GetFiles(BuffIconLibraryRoot, "*.png", SearchOption.AllDirectories).Length > 0 Then
+                Return
+            End If
+
+            For Each sourceFile As String In legacyFiles
+                Dim relativePath As String = Path.GetRelativePath(LegacyBuffIconLibraryRoot, sourceFile)
+                Dim destinationFile As String = Path.Combine(BuffIconLibraryRoot, relativePath)
+                Directory.CreateDirectory(Path.GetDirectoryName(destinationFile))
+                If Not File.Exists(destinationFile) Then
+                    File.Copy(sourceFile, destinationFile)
+                End If
+            Next
+        Catch
+        End Try
+    End Sub
+
     ' Walks buff_icons\<category>\*.png on disk (mirrors the navigation_routes folder-per-category
     ' convention) rather than duplicating icon Base64 blobs into the main settings JSON.
     Public Shared Function ScanBuffIconLibrary() As List(Of BuffIconLibraryEntry)
@@ -7395,7 +7427,7 @@ Public Class BotEngine
         Return _lastRupiahsPerHour
     End Function
 
-    Private Function TryHandleAutoAcceptPrompts(cfg As BotConfig, hwnd As IntPtr, frame As Bitmap, now As DateTime, partyInviteScanRegion As RectRegion, partyInviteOkRegion As RectRegion) As Boolean
+    Private Function TryHandleAutoAcceptPrompts(cfg As BotConfig, hwnd As IntPtr, frame As Bitmap, now As DateTime, partyInviteScanRegion As RectRegion) As Boolean
         If cfg Is Nothing OrElse (Not cfg.PartyInviteAutoAcceptEnabled AndAlso Not cfg.PartyRessAutoAcceptEnabled) Then
             _lastPartyInviteCandidate = ""
             Return False
@@ -7434,11 +7466,13 @@ Public Class BotEngine
             (promptKind = "party" AndAlso cfg.PartyInviteAutoAcceptEnabled) OrElse
             (promptKind = "ress" AndAlso cfg.PartyRessAutoAcceptEnabled)
         If promptKind <> "" AndAlso promptKindAllowed Then
-            If ClickClientRegionCenter(hwnd, partyInviteOkRegion, frame.Width, frame.Height) Then
+            ' No calibration needed: this dialog accepts Enter, so there's no OK button position to
+            ' click/miscalibrate across different UI scales or screen resolutions.
+            If SendKey(hwnd, "ENTER", FastKeyPressMs) Then
                 _lastPartyInviteAccept = now
                 Dim promptLabel As String = If(promptKind = "ress", "resurrection prompt", "party invite")
-                SetLastAction($"Click OK ({promptLabel} accepted: {If(String.IsNullOrWhiteSpace(_lastPartyInviteCandidate), "detected", _lastPartyInviteCandidate)})")
-                RaiseEvent LogLine($"{promptLabel} detected and auto-accepted.")
+                SetLastAction($"Enter ({promptLabel} accepted: {If(String.IsNullOrWhiteSpace(_lastPartyInviteCandidate), "detected", _lastPartyInviteCandidate)})")
+                RaiseEvent LogLine($"{promptLabel} detected and auto-accepted (Enter).")
                 If promptKind = "party" Then
                     _partyAskSuppressedInParty = True
                     _partyAskPauseLogged = False
@@ -10349,13 +10383,12 @@ Public Class BotEngine
         Dim pranaExpRegion As New RectRegion(0, 0, 1, 1)
         Dim rupiahsRegion As New RectRegion(0, 0, 1, 1)
         Dim partyInviteScanRegion As New RectRegion(0, 0, 1, 1)
-        Dim partyInviteOkRegion As New RectRegion(0, 0, 1, 1)
         Dim partyListRegion As New RectRegion(0, 0, 1, 1)
         Dim disconnectMessageRegion As New RectRegion(0, 0, 1, 1)
         Dim mapCoordinateXRegion As New RectRegion(0, 0, 1, 1)
         Dim mapCoordinateYRegion As New RectRegion(0, 0, 1, 1)
         Dim chatRegion As New RectRegion(0, 0, 1, 1)
-        ResolveVisionRegions(If(cfg, BotConfig.CreateDefault()), clientWidth, clientHeight, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyInviteOkRegion, partyListRegion, disconnectMessageRegion, mapCoordinateXRegion, mapCoordinateYRegion, chatRegion)
+        ResolveVisionRegions(If(cfg, BotConfig.CreateDefault()), clientWidth, clientHeight, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyListRegion, disconnectMessageRegion, mapCoordinateXRegion, mapCoordinateYRegion, chatRegion)
 
         For i As Integer = 1 To safeIterations
             Dim captureWatch As Stopwatch = Stopwatch.StartNew()
@@ -11013,7 +11046,7 @@ Public Class BotEngine
         Return colored / CDbl(total)
     End Function
 
-    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef unreachableTextRect As RectRegion, ByRef pranaExpRect As RectRegion, ByRef rupiahsRect As RectRegion, ByRef partyInviteScanRect As RectRegion, ByRef partyInviteOkRect As RectRegion, ByRef partyListRect As RectRegion, ByRef disconnectMessageRect As RectRegion, ByRef mapCoordinateXRect As RectRegion, ByRef mapCoordinateYRect As RectRegion, ByRef chatRect As RectRegion)
+    Private Shared Sub ResolveVisionRegions(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer, ByRef hpBar As RectRegion, ByRef mpBar As RectRegion, ByRef mobNameRect As RectRegion, ByRef mobHpRect As RectRegion, ByRef unreachableTextRect As RectRegion, ByRef pranaExpRect As RectRegion, ByRef rupiahsRect As RectRegion, ByRef partyInviteScanRect As RectRegion, ByRef partyListRect As RectRegion, ByRef disconnectMessageRect As RectRegion, ByRef mapCoordinateXRect As RectRegion, ByRef mapCoordinateYRect As RectRegion, ByRef chatRect As RectRegion)
         hpBar = CloneRegion(cfg.HpBar)
         mpBar = CloneRegion(cfg.MpBar)
         mobNameRect = CloneRegion(cfg.MobNameRect)
@@ -11022,7 +11055,6 @@ Public Class BotEngine
         pranaExpRect = CloneRegion(cfg.PranaExpRect)
         rupiahsRect = CloneRegion(cfg.RupiahsRect)
         partyInviteScanRect = CloneRegion(cfg.PartyInviteScanRect)
-        partyInviteOkRect = CloneRegion(cfg.PartyInviteOkRect)
         partyListRect = CloneRegion(cfg.PartyListRect)
         disconnectMessageRect = CloneRegion(cfg.DisconnectMessageRect)
         mapCoordinateXRect = CloneRegion(GetEffectiveMapCoordinateXRect(cfg))
@@ -11050,7 +11082,6 @@ Public Class BotEngine
         pranaExpRect = ScaleRegionLeftTop(cfg.PranaExpRect, sx, sy)
         rupiahsRect = ScaleRegionLeftTop(cfg.RupiahsRect, sx, sy)
         partyInviteScanRect = ScaleRegionLeftTop(cfg.PartyInviteScanRect, sx, sy)
-        partyInviteOkRect = ScaleRegionLeftTop(cfg.PartyInviteOkRect, sx, sy)
         partyListRect = ScaleRegionLeftTop(cfg.PartyListRect, sx, sy)
         disconnectMessageRect = ScaleRegionLeftTop(cfg.DisconnectMessageRect, sx, sy)
         mapCoordinateXRect = ScaleRegionLeftTop(GetEffectiveMapCoordinateXRect(cfg), sx, sy)
@@ -11153,7 +11184,6 @@ Public Class BotEngine
                SameRegion(cfg.PranaExpRect, New RectRegion(472, 745, 78, 21)) AndAlso
                SameRegion(cfg.RupiahsRect, New RectRegion(560, 745, 110, 21)) AndAlso
                SameRegion(cfg.PartyInviteScanRect, New RectRegion(349, 318, 328, 124)) AndAlso
-               SameRegion(cfg.PartyInviteOkRect, New RectRegion(463, 410, 59, 21)) AndAlso
                SameRegion(cfg.PartyListRect, New RectRegion(0, 24, 168, 244)) AndAlso
                SameRegion(cfg.DisconnectMessageRect, BotConfig.DefaultDisconnectMessageRect()) AndAlso
                SameRegion(cfg.DisconnectOkRect, BotConfig.DefaultDisconnectOkRect()) AndAlso

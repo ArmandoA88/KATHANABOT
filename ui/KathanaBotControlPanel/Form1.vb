@@ -893,6 +893,7 @@ Public Class Form1
         SetStyle(ControlStyles.AllPaintingInWmPaint Or ControlStyles.OptimizedDoubleBuffer Or ControlStyles.UserPaint, True)
         UpdateStyles()
         ApplyApplicationIcon()
+        BotEngine.MigrateLegacyBuffIconLibraryIfNeeded()
         BuildUi()
         AddHandler _periodicScreenshotTimer.Tick, AddressOf PeriodicScreenshotTimerTick
         SeedDefaults()
@@ -5448,7 +5449,6 @@ Public Class Form1
         dgvRegions.Rows.Add(True, "prana_exp_rect", "472", "745", "78", "21")
         dgvRegions.Rows.Add(True, "rupiahs_rect", "560", "745", "110", "21")
         dgvRegions.Rows.Add(True, "party_invite_scan_rect", "349", "318", "328", "124")
-        dgvRegions.Rows.Add(True, "party_invite_ok_rect", "463", "410", "59", "21")
         dgvRegions.Rows.Add(True, "resurrect_scan_rect", "349", "318", "328", "124")
         dgvRegions.Rows.Add(True, "death_message_rect", "349", "318", "328", "124")
         dgvRegions.Rows.Add(True, "party_list_rect", "0", "24", "168", "244")
@@ -9107,7 +9107,7 @@ Public Class Form1
             "",
             "7) VISION TAB - CALIBRATION REGIONS",
             "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, mob_life_rect, unreachable_text_rect,",
-            "  prana_exp_rect, rupiahs_rect, party_invite_scan_rect, party_invite_ok_rect, party_list_rect.",
+            "  prana_exp_rect, rupiahs_rect, party_invite_scan_rect, party_list_rect.",
             "- Loot Scan Area uses 4 freeform points: x,y | x,y | x,y | x,y.",
             "- You can edit coordinates directly in grid or through overlay.",
             "",
@@ -9234,7 +9234,7 @@ Public Class Form1
             "",
             "7) REGIONES DE CALIBRACION",
             "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, mob_life_rect, unreachable_text_rect,",
-            "  prana_exp_rect, rupiahs_rect, party_invite_scan_rect, party_invite_ok_rect, party_list_rect.",
+            "  prana_exp_rect, rupiahs_rect, party_invite_scan_rect, party_list_rect.",
             "- Loot Scan Area usa 4 puntos libres: x,y | x,y | x,y | x,y.",
             "- Puedes editar coordenadas en tabla o con overlay.",
             "",
@@ -9355,7 +9355,7 @@ Public Class Form1
             "",
             "7) CALIBRATION REGIONS",
             "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, mob_life_rect, unreachable_text_rect,",
-            "  prana_exp_rect, rupiahs_rect, party_invite_scan_rect, party_invite_ok_rect, party_list_rect.",
+            "  prana_exp_rect, rupiahs_rect, party_invite_scan_rect, party_list_rect.",
             "- Loot Scan Area ay 4 na freeform points: x,y | x,y | x,y | x,y.",
             "- Puwedeng i-edit sa grid o sa overlay.",
             "",
@@ -11780,7 +11780,13 @@ Public Class Form1
                         graphics.DrawImage(crop, New Rectangle(0, 0, enlarged.Width, enlarged.Height))
                     End Using
 
-                    Dim text As String = If(OcrReader.ReadScreenTextIsolated(enlarged), "").Trim()
+                    ' Dialog OK buttons are typically dark text on a light/beige button face - the
+                    ' opposite polarity from HUD text, which ReadScreenTextIsolated/ReadName below are
+                    ' tuned for - so try the purpose-built button reader first.
+                    Dim text As String = If(OcrReader.ReadButtonText(crop), "").Trim()
+                    If text = "" Then
+                        text = If(OcrReader.ReadScreenTextIsolated(enlarged), "").Trim()
+                    End If
                     If text = "" Then
                         text = If(OcrReader.ReadName(enlarged), "").Trim()
                     End If
@@ -12259,7 +12265,6 @@ Public Class Form1
         cfg.PranaExpRect = BuildRect("prana_exp_rect")
         cfg.RupiahsRect = BuildRect("rupiahs_rect")
         cfg.PartyInviteScanRect = BuildRect("party_invite_scan_rect")
-        cfg.PartyInviteOkRect = BuildRect("party_invite_ok_rect")
         cfg.ResurrectDialogScanRect = BuildRect("resurrect_scan_rect")
         cfg.DeathMessageScanRect = BuildRect("death_message_rect")
         cfg.PartyListRect = BuildRect("party_list_rect")
@@ -13873,7 +13878,6 @@ Public Class Form1
         UpsertRegionRow("prana_exp_rect", cfg.PranaExpRect)
         UpsertRegionRow("rupiahs_rect", cfg.RupiahsRect)
         UpsertRegionRow("party_invite_scan_rect", cfg.PartyInviteScanRect)
-        UpsertRegionRow("party_invite_ok_rect", cfg.PartyInviteOkRect)
         UpsertRegionRow("resurrect_scan_rect", If(cfg.ResurrectDialogScanRect, New RectRegion(349, 318, 328, 124)))
         UpsertRegionRow("death_message_rect", If(cfg.DeathMessageScanRect, New RectRegion(349, 318, 328, 124)))
         UpsertRegionRow("party_list_rect", cfg.PartyListRect)

@@ -220,12 +220,6 @@
         "W": 329,
         "H": 121
       },
-      "PartyInviteOkRect": {
-        "X": 639,
-        "Y": 414,
-        "W": 53,
-        "H": 16
-      },
       "ResurrectAutoAcceptEnabled": true,
       "ResurrectDialogScanRect": {
         "X": 522,

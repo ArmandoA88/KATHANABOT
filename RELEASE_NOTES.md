@@ -1,15 +1,13 @@
-# KathanaBot 1.0.109
+# KathanaBot 1.0.112
 
 ## What changed
 
-- **Added an "Achievements" tab** (Bot Debug Log, next to Key Summary and Loot History) showing Rupiah earned and EXP gained in rolling 10m / 30m / 60m / 24h windows - Rupiah as a plain number, EXP as a percentage. EXP tracking correctly handles leveling up mid-window: since the EXP bar resets to ~0% on a level-up, a naive "current % minus % N minutes ago" would show a nonsense negative number right after leveling - instead it tracks a running total that treats a level-up reset as continued forward progress, so a window spanning multiple level-ups still shows the true amount gained.
-- **Key Summary's tracked window widened from 60 minutes to 24 hours**, with a new "Last 24h" column alongside Last 10m/30m/60m.
-- **"Evade Dadati" now also recognizes Sachi Agua I** and its OCR-garbled variants (e.g. "Sachi Agua 1", "Sach1 Agua l", "SachI Agua I"), using the same glyph-folding technique already used for Dadati OCR variants. The checkbox is now labeled "Evade Dadati/Sachi Agua I + OCR variants".
+- **Party invites (and in-party resurrect prompts) are now accepted by pressing Enter** instead of clicking a calibrated "OK" button position. The `party_invite_ok_rect` calibration region has been removed entirely - there's nothing left to calibrate or miscalibrate for this dialog, since Enter accepts it regardless of screen position or resolution.
 
 ## Recent change history - last 5
 
-1. **Added an Achievements tab** tracking Rupiah earned and EXP gained over rolling 10m/30m/60m/24h windows, correctly handling level-ups mid-window.
-2. **Key Summary now tracks a full 24 hours** instead of 60 minutes, with a new "Last 24h" column.
-3. **"Evade Dadati" now also evades Sachi Agua I** and its OCR-misread variants.
-4. **New installs now seed from a calibrated default profile** (timing, regions, combat skills, filters, autopot, vision) instead of bare factory numbers, excluding personal notification credentials.
-5. **Fixed Hold on Place / Navigation interrupting combat to reposition**: movement and attacks can no longer fire in the same tick, and corrections now wait 600ms after the last attack.
+1. **Party invite/ress-prompt auto-accept now presses Enter** instead of clicking a calibrated point; removed the now-unneeded `party_invite_ok_rect` calibration region.
+2. **Fixed disconnect recovery never clicking OK**: the OCR reader used for the dialog's "OK" button was tuned for the wrong text polarity (light-on-dark HUD text vs. the button's dark-on-light face) and its scoring favored longer, noisier reads over a correct short "OK".
+3. **Buff icon library moved to live next to the exe** (was `%AppData%`), so it travels with the standalone exe across computers; existing libraries migrate automatically on first run.
+4. **Added an "Achievements" tab** tracking Rupiah earned and EXP gained over rolling 10m/30m/60m/24h windows, correctly handling level-ups mid-window.
+5. **Key Summary now tracks a full 24 hours** instead of 60 minutes, with a new "Last 24h" column.

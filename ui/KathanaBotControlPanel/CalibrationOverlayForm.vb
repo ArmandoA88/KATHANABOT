@@ -110,7 +110,6 @@ Public Class CalibrationOverlayForm
         DrawRegion(e.Graphics, "prana_exp_rect", _currentConfig.PranaExpRect, Color.FromArgb(170, 160, 220, 90), "Prana/EXP")
         DrawRegion(e.Graphics, "rupiahs_rect", _currentConfig.RupiahsRect, Color.FromArgb(170, 255, 215, 90), "Rupiahs")
         DrawRegion(e.Graphics, "party_invite_scan_rect", _currentConfig.PartyInviteScanRect, Color.FromArgb(170, 180, 120, 240), "Party Scan")
-        DrawRegion(e.Graphics, "party_invite_ok_rect", _currentConfig.PartyInviteOkRect, Color.FromArgb(170, 120, 220, 160), "Party OK")
         DrawRegion(e.Graphics, "resurrect_scan_rect", _currentConfig.ResurrectDialogScanRect, Color.FromArgb(170, 235, 90, 200), "Resurrect Scan")
         DrawRegion(e.Graphics, "death_message_rect", _currentConfig.DeathMessageScanRect, Color.FromArgb(170, 220, 50, 50), "Death Message")
         DrawRegion(e.Graphics, "party_list_rect", _currentConfig.PartyListRect, Color.FromArgb(120, 255, 90, 90), "Party List")
@@ -350,7 +349,7 @@ Public Class CalibrationOverlayForm
     End Sub
 
     Private Function HitTestRegion(pt As System.Drawing.Point) As String
-        Dim keys As String() = {"buff_area_rect", "death_message_rect", "resurrect_scan_rect", "chat_rect", "map_coordinate_y_rect", "map_coordinate_x_rect", "disconnect_ok_rect", "disconnect_message_rect", "party_list_rect", "party_invite_ok_rect", "party_invite_scan_rect", "rupiahs_rect", "prana_exp_rect", "unreachable_text_rect", "mob_life_rect", "mob_hp_rect", "mob_name_rect", "mp_bar", "hp_bar"}
+        Dim keys As String() = {"buff_area_rect", "death_message_rect", "resurrect_scan_rect", "chat_rect", "map_coordinate_y_rect", "map_coordinate_x_rect", "disconnect_ok_rect", "disconnect_message_rect", "party_list_rect", "party_invite_scan_rect", "rupiahs_rect", "prana_exp_rect", "unreachable_text_rect", "mob_life_rect", "mob_hp_rect", "mob_name_rect", "mp_bar", "hp_bar"}
         For Each key In keys
             If Not IsRegionOverlayEnabled(key) Then
                 Continue For
@@ -464,8 +463,6 @@ Public Class CalibrationOverlayForm
                 Return _currentConfig.RupiahsRect
             Case "party_invite_scan_rect"
                 Return _currentConfig.PartyInviteScanRect
-            Case "party_invite_ok_rect"
-                Return _currentConfig.PartyInviteOkRect
             Case "resurrect_scan_rect"
                 Return _currentConfig.ResurrectDialogScanRect
             Case "death_message_rect"
@@ -509,8 +506,6 @@ Public Class CalibrationOverlayForm
                 _currentConfig.RupiahsRect = value
             Case "party_invite_scan_rect"
                 _currentConfig.PartyInviteScanRect = value
-            Case "party_invite_ok_rect"
-                _currentConfig.PartyInviteOkRect = value
             Case "resurrect_scan_rect"
                 _currentConfig.ResurrectDialogScanRect = value
             Case "death_message_rect"
@@ -593,7 +588,6 @@ Public Class CalibrationOverlayForm
         cfg.PranaExpRect = CloneRegion(src.PranaExpRect)
         cfg.RupiahsRect = CloneRegion(src.RupiahsRect)
         cfg.PartyInviteScanRect = CloneRegion(src.PartyInviteScanRect)
-        cfg.PartyInviteOkRect = CloneRegion(src.PartyInviteOkRect)
         cfg.ResurrectDialogScanRect = CloneRegion(src.ResurrectDialogScanRect)
         cfg.DeathMessageScanRect = CloneRegion(src.DeathMessageScanRect)
         cfg.PartyListRect = CloneRegion(src.PartyListRect)
