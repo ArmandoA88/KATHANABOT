@@ -286,16 +286,17 @@ Public Class BotConfig
     Public Property LootPickupEnabled As Boolean = False
     Public Property LootPickupIntervalMs As Integer = 4000
     Public Property LootPickupVerifyDelayMs As Integer = 220
-    Public Property LootNameAutoPickupEnabled As Boolean = False
-    Public Property LootNamePickupOffsetX As Integer = 0
-    Public Property LootNamePickupOffsetY As Integer = 18
-    Public Property LootNamePickupPointX As Integer = -1
-    Public Property LootNamePickupPointY As Integer = -1
-    Public Property LootNamePickupClickDelayMs As Integer = 180
-    Public Property LootNamePickupFPressCount As Integer = 3
-    Public Property LootNamePickupFPressGapMs As Integer = 110
-    Public Property LootNamePickupMouseHoldMs As Integer = 35
-    Public Property LootNamePickupRestoreCursor As Boolean = True
+    ' Auto Party: presses a user-picked hotkey then clicks a fixed calibrated screen point on one
+    ' loop timer (the invite macro), and separately types a user-edited chat message on its own
+    ' loop timer - two independent loops sharing nothing but the Auto-Loot tab UI.
+    Public Property AutoPartyInviteEnabled As Boolean = False
+    Public Property AutoPartyInviteKey As String = "F1"
+    Public Property AutoPartyInvitePointX As Integer = -1
+    Public Property AutoPartyInvitePointY As Integer = -1
+    Public Property AutoPartyInviteIntervalMs As Integer = 30000
+    Public Property AutoPartyMessageEnabled As Boolean = False
+    Public Property AutoPartyMessageText As String = "party pls"
+    Public Property AutoPartyMessageIntervalMs As Integer = 30000
     Public Property LootRejectClickEnabled As Boolean = False
     Public Property LootRejectPointX As Integer = -1
     Public Property LootRejectPointY As Integer = -1
@@ -321,6 +322,10 @@ Public Class BotConfig
     Public Property PartyAskEnabled As Boolean = False
     Public Property PartyAskIntervalMs As Integer = 30000
     Public Property PartyAskText As String = "add"
+    Public Property AskForResurrectEnabled As Boolean = False
+    Public Property AskForResurrectIntervalMs As Integer = 30000
+    Public Property AskForResurrectText As String = "need resu pls"
+    Public Property AskForResurrectIncludeMapCoordinates As Boolean = True
     Public Property LootScannerEnabled As Boolean = True
     Public Property NotificationProvider As String = "ntfy"
     Public Property DiscordWebhookUrl As String = ""
@@ -1030,6 +1035,13 @@ Public Class BotEngine
     Private _partyAskSuppressedInParty As Boolean = False
     Private _partyAskWasEnabled As Boolean = False
     Private _partyAskPauseLogged As Boolean = False
+    Private _lastResurrectAskAt As DateTime = DateTime.MinValue
+    Private _resurrectAskWasEnabled As Boolean = False
+    Private _lastAutoPartyInviteAt As DateTime = DateTime.MinValue
+    Private _autoPartyInviteWasEnabled As Boolean = False
+    Private _lastAutoPartyInviteNoPointWarningAt As DateTime = DateTime.MinValue
+    Private _lastAutoPartyMessageAt As DateTime = DateTime.MinValue
+    Private _autoPartyMessageWasEnabled As Boolean = False
     Private _lastPartyListScanAt As DateTime = DateTime.MinValue
     Private _lastPartySize As Integer = 0
     Private _lastPartyAliveCount As Integer = 0
@@ -1358,6 +1370,13 @@ Public Class BotEngine
             _partyAskSuppressedInParty = False
             _partyAskWasEnabled = False
             _partyAskPauseLogged = False
+            _lastResurrectAskAt = DateTime.MinValue
+            _resurrectAskWasEnabled = False
+            _lastAutoPartyInviteAt = DateTime.MinValue
+            _autoPartyInviteWasEnabled = False
+            _lastAutoPartyInviteNoPointWarningAt = DateTime.MinValue
+            _lastAutoPartyMessageAt = DateTime.MinValue
+            _autoPartyMessageWasEnabled = False
             _lastPartyListScanAt = DateTime.MinValue
             _lastPartySize = 0
             _lastPartyAliveCount = 0
@@ -2468,6 +2487,24 @@ Public Class BotEngine
                     reason = "Party ask command sent."
                 End If
             End If
+            If Not actionSent Then
+                actionSent = TryHandleAskForResurrect(cfg, hwnd, now)
+                If actionSent Then
+                    reason = "Ask-for-resurrection command sent."
+                End If
+            End If
+            If Not actionSent Then
+                actionSent = TryHandleAutoPartyInvite(cfg, hwnd, now)
+                If actionSent Then
+                    reason = "Auto Party invite sent."
+                End If
+            End If
+            If Not actionSent Then
+                actionSent = TryHandleAutoPartyMessage(cfg, hwnd, now)
+                If actionSent Then
+                    reason = "Auto Party message sent."
+                End If
+            End If
             If unreachableTriggered AndAlso Not actionSent Then
                 actionSent = True
                 reason = "Unable to reach target detected. Forced retarget."
@@ -2882,10 +2919,6 @@ Public Class BotEngine
                     If TryFindAllowedLootRegionMatch(ocrRegions, allowedNames, lootMatchThresholdPercent, matchedItem, matchedRegion) OrElse
                        TryFindAllowedLootMatch(ocrText, allowedNames, lootMatchThresholdPercent, matchedItem) Then
                         RaiseEvent LogLine($"LOOT ALARM: Found {matchedItem} (fuzzy {lootMatchThresholdPercent}%).")
-
-                        If cfg.LootNameAutoPickupEnabled Then
-                            TryExecuteLootNameAutoPickup(hwnd, cfg, matchedItem, matchedRegion, lootScanBounds)
-                        End If
 
                         Dim lootNotificationTitle As String = "KathanaBot Loot Finder"
                         Dim lootNotificationCharacterName As String
@@ -7854,6 +7887,68 @@ Public Class BotEngine
         Return False
     End Function
 
+    ' Nags the party for a resurrection on a timer while (and only while) the death-message pause
+    ' is active - it never runs otherwise, and it never fires on the same tick as Auto Resurrect's
+    ' click/Enter or the party/ress toast accept, since the caller only reaches this once those have
+    ' already had first refusal that tick (see the actionSent chain in the main loop). Pause Combat
+    ' On Death is untouched: this reads _combatPausedForDeath, it never sets or clears it.
+    Private Function TryHandleAskForResurrect(cfg As BotConfig, hwnd As IntPtr, now As DateTime) As Boolean
+        If cfg Is Nothing OrElse hwnd = IntPtr.Zero Then
+            Return False
+        End If
+
+        If Not cfg.AskForResurrectEnabled Then
+            _resurrectAskWasEnabled = False
+            Return False
+        End If
+
+        If Not _resurrectAskWasEnabled Then
+            _resurrectAskWasEnabled = True
+            _lastResurrectAskAt = DateTime.MinValue
+        End If
+
+        If Not _combatPausedForDeath Then
+            Return False
+        End If
+
+        Dim intervalMs As Integer = Math.Max(5000, cfg.AskForResurrectIntervalMs)
+        If _lastResurrectAskAt <> DateTime.MinValue AndAlso (now - _lastResurrectAskAt).TotalMilliseconds < intervalMs Then
+            Return False
+        End If
+
+        Dim commandText As String = NormalizePartyAskCommand(cfg.AskForResurrectText)
+        If commandText = "" Then
+            commandText = "need resu pls"
+        End If
+        If cfg.AskForResurrectIncludeMapCoordinates AndAlso _lastMapCoordinateX >= 0 AndAlso _lastMapCoordinateY >= 0 Then
+            commandText &= $" {_lastMapCoordinateX:000}/{_lastMapCoordinateY:000}"
+        End If
+
+        If Not SendKey(hwnd, "ENTER", FastKeyPressMs) Then
+            Return False
+        End If
+        Thread.Sleep(60)
+
+        Dim typedOk As Boolean = SendPartyAskCommand(hwnd, commandText)
+        Thread.Sleep(55)
+
+        Dim sentFinalEnter As Boolean = SendKey(hwnd, "ENTER", FastKeyPressMs)
+        If sentFinalEnter Then
+            _lastResurrectAskAt = now
+            SetLastAction($"ENTER {commandText} ENTER (ask for resurrection)")
+            RaiseEvent LogLine($"Asked party for resurrection: {commandText}")
+            Return True
+        End If
+
+        If typedOk Then
+            SetLastAction($"ENTER {commandText} (ask for resurrection partial)")
+            RaiseEvent LogLine($"Ask-for-resurrection command partially sent: {commandText}")
+            _lastResurrectAskAt = now
+            Return True
+        End If
+        Return False
+    End Function
+
     Private Shared Function NormalizePartyAskCommand(rawText As String) As String
         Dim cleaned As String = If(rawText, "").Replace(vbCr, " ").Replace(vbLf, " ").Trim()
         If cleaned = "" Then
@@ -11685,107 +11780,103 @@ Public Class BotEngine
         End Try
     End Function
 
-    Private Function TryExecuteLootNameAutoPickup(hwnd As IntPtr, cfg As BotConfig, matchedItem As String, matchedRegion As OcrReader.OcrTextRegion, lootScanBounds As Rectangle) As Boolean
-        If hwnd = IntPtr.Zero OrElse cfg Is Nothing OrElse Not cfg.LootNameAutoPickupEnabled Then
+    ' Auto Party Invite: on its own loop timer, presses the user-picked hotkey (e.g. an in-game
+    ' "invite nearby/target" bind) then clicks the calibrated fixed screen point, e.g. to confirm
+    ' whatever the hotkey opened. Fully independent of Auto Party Message's timer below.
+    Private Function TryHandleAutoPartyInvite(cfg As BotConfig, hwnd As IntPtr, now As DateTime) As Boolean
+        If cfg Is Nothing OrElse hwnd = IntPtr.Zero Then
             Return False
         End If
 
-        Dim clientRect As NativeMethods.RECT
-        If Not NativeMethods.GetClientRect(hwnd, clientRect) Then
-            RaiseEvent LogLine("Loot auto-pick skipped: game client rect unavailable.")
+        If Not cfg.AutoPartyInviteEnabled Then
+            _autoPartyInviteWasEnabled = False
             Return False
         End If
 
-        Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
-        Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
-        Dim hasMatchedRegion As Boolean = matchedRegion IsNot Nothing AndAlso matchedRegion.Bounds <> Rectangle.Empty
-        Dim hasFixedFallback As Boolean = cfg.LootNamePickupPointX >= 0 AndAlso cfg.LootNamePickupPointY >= 0
-        If Not hasMatchedRegion AndAlso Not hasFixedFallback Then
-            RaiseEvent LogLine($"Loot auto-pick skipped for {matchedItem}: OCR did not return a loot label position.")
+        If Not _autoPartyInviteWasEnabled Then
+            _autoPartyInviteWasEnabled = True
+            _lastAutoPartyInviteAt = DateTime.MinValue
+        End If
+
+        Dim intervalMs As Integer = Math.Max(1000, cfg.AutoPartyInviteIntervalMs)
+        If _lastAutoPartyInviteAt <> DateTime.MinValue AndAlso (now - _lastAutoPartyInviteAt).TotalMilliseconds < intervalMs Then
             Return False
         End If
 
-        Dim clientX As Integer
-        Dim clientY As Integer
-        Dim pointSource As String
-        If hasMatchedRegion Then
-            clientX = lootScanBounds.X + matchedRegion.Bounds.X + (matchedRegion.Bounds.Width \ 2) + cfg.LootNamePickupOffsetX
-            clientY = lootScanBounds.Y + matchedRegion.Bounds.Y + (matchedRegion.Bounds.Height \ 2) + cfg.LootNamePickupOffsetY
-            pointSource = "matched label"
-        Else
-            clientX = cfg.LootNamePickupPointX + cfg.LootNamePickupOffsetX
-            clientY = cfg.LootNamePickupPointY + cfg.LootNamePickupOffsetY
-            pointSource = "saved fallback point"
-        End If
-        clientX = Math.Max(0, Math.Min(clientWidth - 1, clientX))
-        clientY = Math.Max(0, Math.Min(clientHeight - 1, clientY))
-
-        Dim screenPoint As NativeMethods.POINT
-        If Not TryMapClientPointToScreen(hwnd, clientX, clientY, screenPoint) Then
-            RaiseEvent LogLine($"Loot auto-pick skipped for {matchedItem}: failed to map client point to screen.")
+        Dim keyName As String = If(String.IsNullOrWhiteSpace(cfg.AutoPartyInviteKey), "F1", cfg.AutoPartyInviteKey.Trim())
+        ' forcePhysicalKeyEvent: a plain PostMessage keypress never touches window focus, so if the
+        ' game wasn't already foreground the very next LeftClickVerifiedAtClientPoint call would have
+        ' to foreground it itself, right after this process just posted a message to it in the
+        ' background - flaky in practice. Sending a real keybd_event here foregrounds the game first
+        ' (same as movement/ALT keys already do), so the click 80ms later lands against a window
+        ' that's actually active instead of racing a second, independent foreground switch.
+        If Not SendKey(hwnd, keyName, FastKeyPressMs, forcePhysicalKeyEvent:=True) Then
             Return False
         End If
 
-        Dim hadCursor As Boolean = False
-        Dim previousCursor As NativeMethods.POINT
-        Try
-            hadCursor = NativeMethods.GetCursorPos(previousCursor)
-        Catch
-            hadCursor = False
-        End Try
-
-        Try
-            NativeMethods.SetForegroundWindow(hwnd)
-            Thread.Sleep(ForegroundInputSettleMs)
-
-            If Not NativeMethods.SetCursorPos(screenPoint.X, screenPoint.Y) Then
-                RaiseEvent LogLine($"Loot auto-pick skipped for {matchedItem}: SetCursorPos failed.")
-                Return False
+        If cfg.AutoPartyInvitePointX >= 0 AndAlso cfg.AutoPartyInvitePointY >= 0 Then
+            Thread.Sleep(80)
+            Dim clickDiagnostic As String = ""
+            If Not LeftClickVerifiedAtClientPoint(hwnd, cfg.AutoPartyInvitePointX, cfg.AutoPartyInvitePointY, clickDiagnostic) Then
+                RaiseEvent LogLine($"Auto Party Invite: pressed {keyName} but the click failed: {clickDiagnostic}.")
             End If
+        ElseIf _lastAutoPartyInviteNoPointWarningAt = DateTime.MinValue OrElse (now - _lastAutoPartyInviteNoPointWarningAt).TotalMilliseconds > 30000 Then
+            _lastAutoPartyInviteNoPointWarningAt = now
+            RaiseEvent LogLine("Auto Party Invite: no click point calibrated - set one in the Auto-Loot tab.")
+        End If
 
-            Thread.Sleep(10)
-            ' dx/dy are only meaningful to mouse_event with MOUSEEVENTF_MOVE, which isn't set here,
-            ' so pass 0 instead of the screen point - CUInt(...) on a negative coordinate (a window on
-            ' a monitor left of/above the primary display) throws an OverflowException otherwise.
-            NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTDOWN, 0UI, 0UI, 0UI, UIntPtr.Zero)
-            Thread.Sleep(Math.Max(0, cfg.LootNamePickupMouseHoldMs))
-            NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTUP, 0UI, 0UI, 0UI, UIntPtr.Zero)
+        _lastAutoPartyInviteAt = now
+        SetLastAction($"{keyName} (Auto Party Invite)")
+        RaiseEvent LogLine($"Auto Party Invite: pressed {keyName}.")
+        Return True
+    End Function
 
-            Dim waitBeforeFMs As Integer = Math.Max(0, cfg.LootNamePickupClickDelayMs)
-            If waitBeforeFMs > 0 Then
-                Thread.Sleep(waitBeforeFMs)
-            End If
-
-            Dim fCount As Integer = Math.Max(1, cfg.LootNamePickupFPressCount)
-            Dim gapMs As Integer = Math.Max(0, cfg.LootNamePickupFPressGapMs)
-            Dim sentAny As Boolean = False
-            For pressIndex As Integer = 1 To fCount
-                If SendKey(hwnd, "F", FastKeyPressMs, forcePhysicalKeyEvent:=True) Then
-                    sentAny = True
-                End If
-                If pressIndex < fCount AndAlso gapMs > 0 Then
-                    Thread.Sleep(gapMs)
-                End If
-            Next
-
-            If sentAny Then
-                SetLastAction($"Loot auto-pick ({matchedItem})")
-                RaiseEvent LogLine($"Loot auto-pick clicked {pointSource} '{matchedItem}' at client {clientX},{clientY} -> screen {screenPoint.X},{screenPoint.Y}, then pressed F x{fCount}.")
-            Else
-                RaiseEvent LogLine($"Loot auto-pick click completed for {matchedItem}, but F presses were not sent.")
-            End If
-            Return sentAny
-        Catch ex As Exception
-            RaiseEvent LogLine($"Loot auto-pick failed for {matchedItem}: {ex.Message}")
+    ' Auto Party Message: types the user-edited text into chat (Enter, type, Enter) on its own loop
+    ' timer, the same send pattern as Party Ask / Ask For Resurrection above.
+    Private Function TryHandleAutoPartyMessage(cfg As BotConfig, hwnd As IntPtr, now As DateTime) As Boolean
+        If cfg Is Nothing OrElse hwnd = IntPtr.Zero Then
             Return False
-        Finally
-            If cfg.LootNamePickupRestoreCursor AndAlso hadCursor Then
-                Try
-                    NativeMethods.SetCursorPos(previousCursor.X, previousCursor.Y)
-                Catch
-                End Try
-            End If
-        End Try
+        End If
+
+        If Not cfg.AutoPartyMessageEnabled Then
+            _autoPartyMessageWasEnabled = False
+            Return False
+        End If
+
+        If Not _autoPartyMessageWasEnabled Then
+            _autoPartyMessageWasEnabled = True
+            _lastAutoPartyMessageAt = DateTime.MinValue
+        End If
+
+        Dim intervalMs As Integer = Math.Max(1000, cfg.AutoPartyMessageIntervalMs)
+        If _lastAutoPartyMessageAt <> DateTime.MinValue AndAlso (now - _lastAutoPartyMessageAt).TotalMilliseconds < intervalMs Then
+            Return False
+        End If
+
+        Dim commandText As String = NormalizePartyAskCommand(cfg.AutoPartyMessageText)
+        If Not SendKey(hwnd, "ENTER", FastKeyPressMs) Then
+            Return False
+        End If
+        Thread.Sleep(60)
+
+        Dim typedOk As Boolean = SendPartyAskCommand(hwnd, commandText)
+        Thread.Sleep(55)
+
+        Dim sentFinalEnter As Boolean = SendKey(hwnd, "ENTER", FastKeyPressMs)
+        If sentFinalEnter Then
+            _lastAutoPartyMessageAt = now
+            SetLastAction($"ENTER {commandText} ENTER (Auto Party message)")
+            RaiseEvent LogLine($"Auto Party message sent: {commandText}")
+            Return True
+        End If
+
+        If typedOk Then
+            SetLastAction($"ENTER {commandText} (Auto Party message partial)")
+            RaiseEvent LogLine($"Auto Party message partially sent: {commandText}")
+            _lastAutoPartyMessageAt = now
+            Return True
+        End If
+        Return False
     End Function
 
     Private Shared Function TryMapClientPointToScreen(hwnd As IntPtr, clientX As Integer, clientY As Integer, ByRef screenPoint As NativeMethods.POINT) As Boolean

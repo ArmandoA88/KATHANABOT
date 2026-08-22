@@ -166,9 +166,11 @@ Public Class Form1
     Private btnPickLootRejectPoint As Button
     Private btnClearLootRejectPoint As Button
     Private lblLootRejectPoint As Label
-    Private btnPickLootNamePickupPoint As Button
-    Private btnClearLootNamePickupPoint As Button
-    Private lblLootNamePickupPoint As Label
+    Private btnPickAutoPartyPoint As Button
+    Private btnClearAutoPartyPoint As Button
+    Private lblAutoPartyPoint As Label
+    Private nudAutoPartyPointX As NumericUpDown
+    Private nudAutoPartyPointY As NumericUpDown
     Private btnPickArrowUnbundlePoint As Button
     Private btnRemoveArrowUnbundlePoint As Button
     Private btnClearArrowUnbundlePoints As Button
@@ -185,6 +187,10 @@ Public Class Form1
     Private lblResurrectOkPoint As Label
     Private chkResurrectOverlay As CheckBox
     Private btnDeathMessagePause As Button
+    Private btnAskForResurrect As Button
+    Private nudAskForResurrectSeconds As NumericUpDown
+    Private txtAskForResurrectText As TextBox
+    Private chkAskForResurrectMapCoords As CheckBox
     Private btnHoldToShowGameWindow As Button
     Private cboHoldToShowGameWindowKey As ComboBox
     Private chkBuffWatchEnabled As CheckBox
@@ -220,17 +226,16 @@ Public Class Form1
     Private nudMobNameMatchThreshold As NumericUpDown
     Private ReadOnly _monsterFilterOptionalControls As New List(Of Control)()
     Private chkLootPickup As CheckBox
-    Private chkLootNameAutoPickup As CheckBox
-    Private chkLootNamePickupRestoreCursor As CheckBox
+    Private btnAutoPartyInvite As Button
+    Private cboAutoPartyInviteKey As ComboBox
+    Private nudAutoPartyInviteSeconds As NumericUpDown
+    Private chkAutoPartyOverlay As CheckBox
+    Private btnAutoPartyMessage As Button
+    Private txtAutoPartyMessageText As TextBox
+    Private nudAutoPartyMessageSeconds As NumericUpDown
     Private chkArrowUnbundleEnabled As CheckBox
-    Private nudLootNamePickupOffsetX As NumericUpDown
-    Private nudLootNamePickupOffsetY As NumericUpDown
     Private nudLootPickupSeconds As NumericUpDown
     Private nudLootPickupVerifyMs As NumericUpDown
-    Private nudLootNamePickupClickDelayMs As NumericUpDown
-    Private nudLootNamePickupFPressCount As NumericUpDown
-    Private nudLootNamePickupFPressGapMs As NumericUpDown
-    Private nudLootNamePickupMouseHoldMs As NumericUpDown
     Private nudArrowUnbundleSeconds As NumericUpDown
     Private lstMonsterFilter As ListBox
     Private lstLootFilter As ListBox
@@ -465,7 +470,9 @@ Public Class Form1
     Private _lastAutoRelaunchAttemptUtc As DateTime = DateTime.MinValue
     Private _ctrlShiftWasDown As Boolean = False
     Private _isPickingLootRejectPoint As Boolean = False
-    Private _isPickingLootNamePickupPoint As Boolean = False
+    Private _isPickingAutoPartyPoint As Boolean = False
+    Private _autoPartyPointLeftMouseWasDown As Boolean = False
+    Private _autoPartyPointUiSyncInProgress As Boolean = False
     Private _isPickingArrowUnbundlePoint As Boolean = False
     Private _arrowUnbundleLeftMouseWasDown As Boolean = False
     Private Const ArrowBundleIconCaptureSize As Integer = 36
@@ -480,6 +487,11 @@ Public Class Form1
     Private _resurrectOverlayEnabled As Boolean = False
     Private _resurrectOverlayForm As AutoRelaunchClickOverlayForm
     Private _deathMessagePauseEnabled As Boolean = False
+    Private _askForResurrectEnabled As Boolean = False
+    Private _autoPartyInviteEnabled As Boolean = False
+    Private _autoPartyMessageEnabled As Boolean = False
+    Private _autoPartyOverlayEnabled As Boolean = False
+    Private _autoPartyOverlayForm As AutoRelaunchClickOverlayForm
     Private _buffWatchEnabled As Boolean = False
     Private _buffWatchSlots As New List(Of BuffWatchSlot)()
     Private _buffWatchSelfClickEnabled As Boolean = False
@@ -509,8 +521,8 @@ Public Class Form1
     Private _arrowUnbundleUiSyncInProgress As Boolean = False
     Private _lootRejectPointX As Integer = -1
     Private _lootRejectPointY As Integer = -1
-    Private _lootNamePickupPointX As Integer = -1
-    Private _lootNamePickupPointY As Integer = -1
+    Private _autoPartyPointX As Integer = -1
+    Private _autoPartyPointY As Integer = -1
     Private ReadOnly _arrowUnbundlePoints As New List(Of LootScanPoint)()
     Private _liteAutoPotHpPointX As Integer = -1
     Private _liteAutoPotHpPointY As Integer = -1
@@ -544,6 +556,9 @@ Public Class Form1
     Private Shared ReadOnly BotRunningColor As Color = Color.FromArgb(0, 170, 70)
     Private Const DefaultNtfyTopicName As String = "Katana12345"
     Private Const DefaultPartyAskCommand As String = "add"
+    Private Const DefaultResurrectAskCommand As String = "need resu pls"
+    Private Const DefaultAutoPartyInviteKey As String = "F1"
+    Private Const DefaultAutoPartyMessageText As String = "party pls"
     Private Const DefaultLootNameMatchThresholdPercent As Integer = 80
     Private Const DefaultMobNameMatchThresholdPercent As Integer = 80
     Private Const DefaultMapOpenKey As String = "M"
@@ -762,17 +777,16 @@ Public Class Form1
         Public Property LootPickupEnabled As Boolean = False
         Public Property LootPickupSeconds As Decimal = 4D
         Public Property LootNameMatchThresholdPercent As Decimal = 80D
-        Public Property LootNameAutoPickupEnabled As Boolean = False
-        Public Property LootNamePickupOffsetX As Decimal = 0D
-        Public Property LootNamePickupOffsetY As Decimal = 18D
-        Public Property LootNamePickupPointEnabled As Boolean = False
-        Public Property LootNamePickupPointX As Integer = -1
-        Public Property LootNamePickupPointY As Integer = -1
-        Public Property LootNamePickupClickDelayMs As Decimal = 180D
-        Public Property LootNamePickupFPressCount As Decimal = 3D
-        Public Property LootNamePickupFPressGapMs As Decimal = 110D
-        Public Property LootNamePickupMouseHoldMs As Decimal = 35D
-        Public Property LootNamePickupRestoreCursor As Boolean = True
+        Public Property AutoPartyInviteEnabled As Boolean = False
+        Public Property AutoPartyInviteKey As String = DefaultAutoPartyInviteKey
+        Public Property AutoPartyInviteSeconds As Decimal = 30D
+        Public Property AutoPartyInvitePointEnabled As Boolean = False
+        Public Property AutoPartyInvitePointX As Integer = -1
+        Public Property AutoPartyInvitePointY As Integer = -1
+        Public Property AutoPartyOverlayEnabled As Boolean = False
+        Public Property AutoPartyMessageEnabled As Boolean = False
+        Public Property AutoPartyMessageSeconds As Decimal = 30D
+        Public Property AutoPartyMessageText As String = DefaultAutoPartyMessageText
         Public Property LootRejectPointEnabled As Boolean = False
         Public Property LootRejectPointX As Integer = -1
         Public Property LootRejectPointY As Integer = -1
@@ -800,6 +814,10 @@ Public Class Form1
         Public Property AskForPartyEnabled As Boolean = False
         Public Property AskForPartySeconds As Decimal = 30D
         Public Property AskForPartyText As String
+        Public Property AskForResurrectEnabled As Boolean = False
+        Public Property AskForResurrectSeconds As Decimal = 30D
+        Public Property AskForResurrectText As String
+        Public Property AskForResurrectMapCoordsEnabled As Boolean = True
         Public Property LootScannerEnabled As Boolean = True
         Public Property NotificationProvider As String = NotificationProviderNtfy
         Public Property DiscordWebhookUrl As String = ""
@@ -1186,29 +1204,17 @@ Public Class Form1
         AddHandler chkLootPickup.CheckedChanged, AddressOf LiveConfigChanged
         AddHandler nudLootPickupSeconds.ValueChanged, AddressOf LiveConfigChanged
         AddHandler nudLootPickupVerifyMs.ValueChanged, AddressOf LiveConfigChanged
-        If chkLootNameAutoPickup IsNot Nothing Then
-            AddHandler chkLootNameAutoPickup.CheckedChanged, AddressOf LiveConfigChanged
+        If cboAutoPartyInviteKey IsNot Nothing Then
+            AddHandler cboAutoPartyInviteKey.SelectedIndexChanged, AddressOf LiveConfigChanged
         End If
-        If nudLootNamePickupOffsetX IsNot Nothing Then
-            AddHandler nudLootNamePickupOffsetX.ValueChanged, AddressOf LiveConfigChanged
+        If nudAutoPartyInviteSeconds IsNot Nothing Then
+            AddHandler nudAutoPartyInviteSeconds.ValueChanged, AddressOf LiveConfigChanged
         End If
-        If nudLootNamePickupOffsetY IsNot Nothing Then
-            AddHandler nudLootNamePickupOffsetY.ValueChanged, AddressOf LiveConfigChanged
+        If txtAutoPartyMessageText IsNot Nothing Then
+            AddHandler txtAutoPartyMessageText.TextChanged, AddressOf LiveConfigChanged
         End If
-        If nudLootNamePickupClickDelayMs IsNot Nothing Then
-            AddHandler nudLootNamePickupClickDelayMs.ValueChanged, AddressOf LiveConfigChanged
-        End If
-        If nudLootNamePickupFPressCount IsNot Nothing Then
-            AddHandler nudLootNamePickupFPressCount.ValueChanged, AddressOf LiveConfigChanged
-        End If
-        If nudLootNamePickupFPressGapMs IsNot Nothing Then
-            AddHandler nudLootNamePickupFPressGapMs.ValueChanged, AddressOf LiveConfigChanged
-        End If
-        If nudLootNamePickupMouseHoldMs IsNot Nothing Then
-            AddHandler nudLootNamePickupMouseHoldMs.ValueChanged, AddressOf LiveConfigChanged
-        End If
-        If chkLootNamePickupRestoreCursor IsNot Nothing Then
-            AddHandler chkLootNamePickupRestoreCursor.CheckedChanged, AddressOf LiveConfigChanged
+        If nudAutoPartyMessageSeconds IsNot Nothing Then
+            AddHandler nudAutoPartyMessageSeconds.ValueChanged, AddressOf LiveConfigChanged
         End If
         If chkArrowUnbundleEnabled IsNot Nothing Then
             AddHandler chkArrowUnbundleEnabled.CheckedChanged, AddressOf LiveConfigChanged
@@ -1216,14 +1222,20 @@ Public Class Form1
         If nudArrowUnbundleSeconds IsNot Nothing Then
             AddHandler nudArrowUnbundleSeconds.ValueChanged, AddressOf LiveConfigChanged
         End If
-        If chkArrowUnbundleOverlay IsNot Nothing Then
-            AddHandler chkArrowUnbundleOverlay.CheckedChanged, AddressOf ArrowUnbundleOverlayChanged
-        End If
         If nudPartyAskSeconds IsNot Nothing Then
             AddHandler nudPartyAskSeconds.ValueChanged, AddressOf LiveConfigChanged
         End If
         If txtPartyAskText IsNot Nothing Then
             AddHandler txtPartyAskText.TextChanged, AddressOf LiveConfigChanged
+        End If
+        If nudAskForResurrectSeconds IsNot Nothing Then
+            AddHandler nudAskForResurrectSeconds.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If txtAskForResurrectText IsNot Nothing Then
+            AddHandler txtAskForResurrectText.TextChanged, AddressOf LiveConfigChanged
+        End If
+        If chkAskForResurrectMapCoords IsNot Nothing Then
+            AddHandler chkAskForResurrectMapCoords.CheckedChanged, AddressOf LiveConfigChanged
         End If
         If chkLevelingAgent IsNot Nothing Then
             AddHandler chkLevelingAgent.CheckedChanged, AddressOf LiveConfigChanged
@@ -1424,29 +1436,17 @@ Public Class Form1
         AddHandler chkLootPickup.CheckedChanged, AddressOf PersistListSettingsChanged
         AddHandler nudLootPickupSeconds.ValueChanged, AddressOf PersistListSettingsChanged
         AddHandler nudLootPickupVerifyMs.ValueChanged, AddressOf PersistListSettingsChanged
-        If chkLootNameAutoPickup IsNot Nothing Then
-            AddHandler chkLootNameAutoPickup.CheckedChanged, AddressOf PersistListSettingsChanged
+        If cboAutoPartyInviteKey IsNot Nothing Then
+            AddHandler cboAutoPartyInviteKey.SelectedIndexChanged, AddressOf PersistListSettingsChanged
         End If
-        If nudLootNamePickupOffsetX IsNot Nothing Then
-            AddHandler nudLootNamePickupOffsetX.ValueChanged, AddressOf PersistListSettingsChanged
+        If nudAutoPartyInviteSeconds IsNot Nothing Then
+            AddHandler nudAutoPartyInviteSeconds.ValueChanged, AddressOf PersistListSettingsChanged
         End If
-        If nudLootNamePickupOffsetY IsNot Nothing Then
-            AddHandler nudLootNamePickupOffsetY.ValueChanged, AddressOf PersistListSettingsChanged
+        If txtAutoPartyMessageText IsNot Nothing Then
+            AddHandler txtAutoPartyMessageText.TextChanged, AddressOf PersistListSettingsChanged
         End If
-        If nudLootNamePickupClickDelayMs IsNot Nothing Then
-            AddHandler nudLootNamePickupClickDelayMs.ValueChanged, AddressOf PersistListSettingsChanged
-        End If
-        If nudLootNamePickupFPressCount IsNot Nothing Then
-            AddHandler nudLootNamePickupFPressCount.ValueChanged, AddressOf PersistListSettingsChanged
-        End If
-        If nudLootNamePickupFPressGapMs IsNot Nothing Then
-            AddHandler nudLootNamePickupFPressGapMs.ValueChanged, AddressOf PersistListSettingsChanged
-        End If
-        If nudLootNamePickupMouseHoldMs IsNot Nothing Then
-            AddHandler nudLootNamePickupMouseHoldMs.ValueChanged, AddressOf PersistListSettingsChanged
-        End If
-        If chkLootNamePickupRestoreCursor IsNot Nothing Then
-            AddHandler chkLootNamePickupRestoreCursor.CheckedChanged, AddressOf PersistListSettingsChanged
+        If nudAutoPartyMessageSeconds IsNot Nothing Then
+            AddHandler nudAutoPartyMessageSeconds.ValueChanged, AddressOf PersistListSettingsChanged
         End If
         If chkArrowUnbundleEnabled IsNot Nothing Then
             AddHandler chkArrowUnbundleEnabled.CheckedChanged, AddressOf PersistListSettingsChanged
@@ -1492,6 +1492,15 @@ Public Class Form1
         End If
         If txtPartyAskText IsNot Nothing Then
             AddHandler txtPartyAskText.TextChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudAskForResurrectSeconds IsNot Nothing Then
+            AddHandler nudAskForResurrectSeconds.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If txtAskForResurrectText IsNot Nothing Then
+            AddHandler txtAskForResurrectText.TextChanged, AddressOf PersistListSettingsChanged
+        End If
+        If chkAskForResurrectMapCoords IsNot Nothing Then
+            AddHandler chkAskForResurrectMapCoords.CheckedChanged, AddressOf PersistListSettingsChanged
         End If
         If chkLevelingAgent IsNot Nothing Then
             AddHandler chkLevelingAgent.CheckedChanged, AddressOf PersistListSettingsChanged
@@ -1615,8 +1624,7 @@ Public Class Form1
     End Sub
 
     Private Function IsSnapshotPickActive() As Boolean
-        Return _isPickingLootRejectPoint OrElse
-               _isPickingLootNamePickupPoint
+        Return _isPickingLootRejectPoint
     End Function
 
     Private Sub MonsterFilterOptionChanged(_sender As Object, _e As EventArgs)
@@ -2262,7 +2270,8 @@ Public Class Form1
     Private Function IsAutoLootTabActive() As Boolean
         Return _lootScannerEnabled OrElse
                (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked) OrElse
-               (chkLootNameAutoPickup IsNot Nothing AndAlso chkLootNameAutoPickup.Checked)
+               _autoPartyInviteEnabled OrElse
+               _autoPartyMessageEnabled
     End Function
 
     Private Function IsLevelingTabActive() As Boolean
@@ -3716,7 +3725,10 @@ Public Class Form1
 
     Private Function BuildAutoResurrectGroup() As GroupBox
         Dim group As New GroupBox() With {.Text = "Auto Resurrect", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
-        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 4}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 7}
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
@@ -3756,19 +3768,45 @@ Public Class Form1
         AddHandler btnDeathMessagePause.Click, AddressOf ToggleDeathMessagePauseClicked
         layout.Controls.Add(btnDeathMessagePause, 0, 2)
 
+        Dim askResuRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(0)}
+        askResuRow.Controls.Add(New Label() With {.Text = "Ask Every (sec):", .AutoSize = True, .Height = 30, .Padding = New Padding(0, 6, 6, 0), .ForeColor = Color.White})
+        nudAskForResurrectSeconds = New NumericUpDown() With {.Minimum = 5, .Maximum = 600, .Value = 30, .Width = 60, .Height = 26, .Margin = New Padding(0, 2, 14, 2)}
+        askResuRow.Controls.Add(nudAskForResurrectSeconds)
+        chkAskForResurrectMapCoords = New CheckBox() With {.Text = "Include Map Coords", .AutoSize = True, .Height = 30, .Checked = True, .Padding = New Padding(0, 3, 0, 0), .ForeColor = Color.LightSkyBlue}
+        askResuRow.Controls.Add(chkAskForResurrectMapCoords)
+        layout.Controls.Add(askResuRow, 0, 3)
+
+        Dim askResuTextRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(0)}
+        askResuTextRow.Controls.Add(New Label() With {.Text = "Text:", .AutoSize = True, .Height = 30, .Padding = New Padding(0, 6, 6, 0), .ForeColor = Color.White})
+        txtAskForResurrectText = New TextBox() With {.Text = DefaultResurrectAskCommand, .Width = 220, .Height = 26, .Margin = New Padding(0, 2, 0, 2)}
+        askResuTextRow.Controls.Add(txtAskForResurrectText)
+        layout.Controls.Add(askResuTextRow, 0, 4)
+
+        btnAskForResurrect = New Button() With {
+            .Text = "Ask For Resurrection: OFF",
+            .Dock = DockStyle.Fill,
+            .MinimumSize = New Size(0, 30),
+            .BackColor = Color.FromArgb(110, 45, 45),
+            .ForeColor = Color.White
+        }
+        AddHandler btnAskForResurrect.Click, AddressOf ToggleAskForResurrectClicked
+        layout.Controls.Add(btnAskForResurrect, 0, 5)
+
         Dim note As New Label() With {
             .Text = "Detects a resurrection/revive confirmation dialog (e.g. 'Do you wish to resurrect?') anywhere in the calibrated resurrect_scan_rect region (Vision tab region list) and clicks OK at the point set here. Fully separate from Auto Accept Party/Ress, since this dialog can appear at a different screen position." & Environment.NewLine & Environment.NewLine &
-                    "Pause Combat On Death watches for the death message ('If you click OK, you will respawn at the last saved location.') in the calibrated death_message_rect region. Once confirmed by 3 consecutive reads, every combat-skill row (attack/buff/heal/mana/etc.) is paused - Auto Resurrect above keeps working during the pause - and combat resumes automatically once HP is back to full.",
+                    "Pause Combat On Death watches for the death message ('If you click OK, you will respawn at the last saved location.') in the calibrated death_message_rect region. Once confirmed by 3 consecutive reads, every combat-skill row (attack/buff/heal/mana/etc.) is paused - Auto Resurrect above keeps working during the pause - and combat resumes automatically once HP is back to full." & Environment.NewLine & Environment.NewLine &
+                    "Ask For Resurrection sends the text above to party chat (Enter, type, Enter) on the interval set here, but only while Pause Combat On Death is actively paused - it stops the instant combat resumes, so it never nags after you're back up. It never fires on the same tick as Auto Resurrect's click or the party/ress auto-accept, so it can't interrupt either. When Include Map Coords is checked, the last read map coordinates are appended (e.g. '123/045') if available.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.TopLeft
         }
-        layout.Controls.Add(note, 0, 3)
+        layout.Controls.Add(note, 0, 6)
 
         group.Controls.Add(layout)
         UpdateResurrectAutoAcceptUi()
         UpdateResurrectOkPointUi()
         UpdateDeathMessagePauseUi()
+        UpdateAskForResurrectUi()
         Return group
     End Function
 
@@ -3788,9 +3826,9 @@ Public Class Form1
         Dim right As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
         right.RowStyles.Add(New RowStyle(SizeType.Percent, 62.0F))
         right.RowStyles.Add(New RowStyle(SizeType.Percent, 38.0F))
-        Dim lootNameAutoPickupGroup As GroupBox = BuildLootNameAutoPickupGroup()
-        right.Controls.Add(lootNameAutoPickupGroup, 0, 0)
-        _developerOnlyControls.Add(lootNameAutoPickupGroup)
+        Dim autoPartyGroup As GroupBox = BuildAutoPartyGroup()
+        right.Controls.Add(autoPartyGroup, 0, 0)
+        _developerOnlyControls.Add(autoPartyGroup)
         right.Controls.Add(BuildArrowUnbundleGroup(), 0, 1)
 
         root.Controls.Add(left, 0, 0)
@@ -3831,7 +3869,7 @@ Public Class Form1
         layout.SetColumnSpan(btnLootScanner, 2)
 
         Dim note As New Label() With {
-            .Text = "Loot Scanner (Alt) reads the loot text from the Vision tab scan area. When an allowed loot name matches here, the pickup-by-name sequence can click the game window on a user-selected client point, wait, and then press F multiple times.",
+            .Text = "Loot Scanner (Alt) reads the loot text from the Vision tab scan area and raises a loot alarm/notification when an allowed name matches here.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.TopLeft
@@ -3842,63 +3880,97 @@ Public Class Form1
         Return group
     End Function
 
-    Private Function BuildLootNameAutoPickupGroup() As GroupBox
-        Dim group As New GroupBox() With {.Text = "Pickup By Name (Dynamic Label Click)", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
-        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 9}
-        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 220.0F))
-        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
+    Private Function BuildAutoPartyGroup() As GroupBox
+        Dim group As New GroupBox() With {.Text = "Auto Party", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 8}
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 82.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
 
-        chkLootNameAutoPickup = New CheckBox() With {.Text = "Enable pickup by matched loot name", .Dock = DockStyle.Fill, .Checked = False}
-        layout.Controls.Add(chkLootNameAutoPickup, 0, 0)
-        layout.SetColumnSpan(chkLootNameAutoPickup, 2)
+        Dim inviteKeyRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(0)}
+        inviteKeyRow.Controls.Add(New Label() With {.Text = "Invite Key:", .AutoSize = True, .Height = 30, .Padding = New Padding(0, 6, 6, 0), .ForeColor = Color.White})
+        cboAutoPartyInviteKey = New ComboBox() With {.DropDownStyle = ComboBoxStyle.DropDownList, .Width = 70, .Height = 26, .Margin = New Padding(0, 2, 16, 2)}
+        cboAutoPartyInviteKey.Items.AddRange(PrimaryKeys.Concat(FunctionKeys).ToArray())
+        cboAutoPartyInviteKey.SelectedItem = DefaultAutoPartyInviteKey
+        inviteKeyRow.Controls.Add(cboAutoPartyInviteKey)
+        inviteKeyRow.Controls.Add(New Label() With {.Text = "Every (sec):", .AutoSize = True, .Height = 30, .Padding = New Padding(0, 6, 6, 0), .ForeColor = Color.White})
+        nudAutoPartyInviteSeconds = New NumericUpDown() With {.Minimum = 1, .Maximum = 99, .Value = 30, .Width = 60, .Height = 26, .Margin = New Padding(0, 2, 0, 2)}
+        inviteKeyRow.Controls.Add(nudAutoPartyInviteSeconds)
+        layout.Controls.Add(inviteKeyRow, 0, 0)
 
-        layout.Controls.Add(New Label() With {.Text = "Click Offset X", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
-        nudLootNamePickupOffsetX = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = -300, .Maximum = 300, .Increment = 1, .Value = 0, .Width = 120}
-        layout.Controls.Add(nudLootNamePickupOffsetX, 1, 1)
+        Dim invitePointRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(0)}
+        lblAutoPartyPoint = New Label() With {.Text = "Fixed Click Point: (not set)", .AutoSize = True, .Height = 30, .Padding = New Padding(0, 6, 10, 0), .ForeColor = Color.LightSalmon}
+        btnPickAutoPartyPoint = New Button() With {.Text = "Pick Fixed Point", .Width = 130, .Height = 30, .BackColor = Color.FromArgb(45, 95, 140), .ForeColor = Color.White}
+        AddHandler btnPickAutoPartyPoint.Click, AddressOf PickAutoPartyPointClicked
+        btnClearAutoPartyPoint = New Button() With {.Text = "Clear", .Width = 74, .Height = 30, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
+        AddHandler btnClearAutoPartyPoint.Click, AddressOf ClearAutoPartyPointClicked
+        chkAutoPartyOverlay = New CheckBox() With {.Text = "Show Click Overlay", .AutoSize = True, .Height = 30, .Padding = New Padding(8, 3, 0, 0), .ForeColor = Color.LightSkyBlue}
+        AddHandler chkAutoPartyOverlay.CheckedChanged, AddressOf AutoPartyOverlayChanged
+        invitePointRow.Controls.Add(lblAutoPartyPoint)
+        invitePointRow.Controls.Add(btnPickAutoPartyPoint)
+        invitePointRow.Controls.Add(btnClearAutoPartyPoint)
+        invitePointRow.Controls.Add(chkAutoPartyOverlay)
+        layout.Controls.Add(invitePointRow, 0, 1)
 
-        layout.Controls.Add(New Label() With {.Text = "Click Offset Y", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
-        nudLootNamePickupOffsetY = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = -300, .Maximum = 300, .Increment = 1, .Value = 18, .Width = 120}
-        layout.Controls.Add(nudLootNamePickupOffsetY, 1, 2)
+        Dim pointCoordRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(0)}
+        pointCoordRow.Controls.Add(New Label() With {.Text = "X:", .AutoSize = True, .Height = 26, .Padding = New Padding(0, 5, 4, 0), .ForeColor = Color.White})
+        nudAutoPartyPointX = New NumericUpDown() With {.Minimum = 0, .Maximum = 4096, .Value = 0, .Width = 70, .Height = 26, .Margin = New Padding(0, 2, 14, 2)}
+        AddHandler nudAutoPartyPointX.ValueChanged, AddressOf AutoPartyPointXYChanged
+        pointCoordRow.Controls.Add(nudAutoPartyPointX)
+        pointCoordRow.Controls.Add(New Label() With {.Text = "Y:", .AutoSize = True, .Height = 26, .Padding = New Padding(0, 5, 4, 0), .ForeColor = Color.White})
+        nudAutoPartyPointY = New NumericUpDown() With {.Minimum = 0, .Maximum = 4096, .Value = 0, .Width = 70, .Height = 26, .Margin = New Padding(0, 2, 0, 2)}
+        AddHandler nudAutoPartyPointY.ValueChanged, AddressOf AutoPartyPointXYChanged
+        pointCoordRow.Controls.Add(nudAutoPartyPointY)
+        pointCoordRow.Controls.Add(New Label() With {.Text = "(type exact coordinates here, or use Pick Fixed Point)", .AutoSize = True, .Height = 26, .Padding = New Padding(10, 6, 0, 0), .ForeColor = Color.Gray})
+        layout.Controls.Add(pointCoordRow, 0, 2)
 
-        layout.Controls.Add(New Label() With {.Text = "Wait Before F (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 3)
-        nudLootNamePickupClickDelayMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0, .Maximum = 5000, .Increment = 10, .Value = 180, .Width = 120}
-        layout.Controls.Add(nudLootNamePickupClickDelayMs, 1, 3)
+        btnAutoPartyInvite = New Button() With {
+            .Text = "Auto Party Invite: OFF",
+            .Dock = DockStyle.Fill,
+            .MinimumSize = New Size(0, 34),
+            .BackColor = Color.FromArgb(110, 45, 45),
+            .ForeColor = Color.White
+        }
+        AddHandler btnAutoPartyInvite.Click, AddressOf ToggleAutoPartyInviteClicked
+        layout.Controls.Add(btnAutoPartyInvite, 0, 3)
 
-        layout.Controls.Add(New Label() With {.Text = "Mouse Hold (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 4)
-        nudLootNamePickupMouseHoldMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0, .Maximum = 1000, .Increment = 5, .Value = 35, .Width = 120}
-        layout.Controls.Add(nudLootNamePickupMouseHoldMs, 1, 4)
+        Dim messageRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(0)}
+        messageRow.Controls.Add(New Label() With {.Text = "Message:", .AutoSize = True, .Height = 30, .Padding = New Padding(0, 6, 6, 0), .ForeColor = Color.White})
+        txtAutoPartyMessageText = New TextBox() With {.Text = DefaultAutoPartyMessageText, .Width = 150, .Height = 26, .Margin = New Padding(0, 2, 14, 2)}
+        messageRow.Controls.Add(txtAutoPartyMessageText)
+        messageRow.Controls.Add(New Label() With {.Text = "Every (sec):", .AutoSize = True, .Height = 30, .Padding = New Padding(0, 6, 6, 0), .ForeColor = Color.White})
+        nudAutoPartyMessageSeconds = New NumericUpDown() With {.Minimum = 1, .Maximum = 500, .Value = 30, .Width = 60, .Height = 26, .Margin = New Padding(0, 2, 0, 2)}
+        messageRow.Controls.Add(nudAutoPartyMessageSeconds)
+        layout.Controls.Add(messageRow, 0, 4)
 
-        layout.Controls.Add(New Label() With {.Text = "Press F Count", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 5)
-        nudLootNamePickupFPressCount = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 1, .Maximum = 10, .Value = 3, .Width = 120}
-        layout.Controls.Add(nudLootNamePickupFPressCount, 1, 5)
-
-        layout.Controls.Add(New Label() With {.Text = "F Gap (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 6)
-        nudLootNamePickupFPressGapMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0, .Maximum = 2000, .Increment = 10, .Value = 110, .Width = 120}
-        layout.Controls.Add(nudLootNamePickupFPressGapMs, 1, 6)
-
-        chkLootNamePickupRestoreCursor = New CheckBox() With {.Text = "Restore mouse cursor after click", .Dock = DockStyle.Fill, .Checked = True}
-        layout.Controls.Add(chkLootNamePickupRestoreCursor, 0, 7)
-        layout.SetColumnSpan(chkLootNamePickupRestoreCursor, 2)
+        btnAutoPartyMessage = New Button() With {
+            .Text = "Auto Party Message: OFF",
+            .Dock = DockStyle.Fill,
+            .MinimumSize = New Size(0, 34),
+            .BackColor = Color.FromArgb(110, 45, 45),
+            .ForeColor = Color.White
+        }
+        AddHandler btnAutoPartyMessage.Click, AddressOf ToggleAutoPartyMessageClicked
+        layout.Controls.Add(btnAutoPartyMessage, 0, 5)
 
         Dim note As New Label() With {
-            .Text = "The bot uses the best matched loot label from OCR. It clicks at the label center plus your X/Y offsets, then waits and sends F directly to the foreground game. Use Offset Y to move the click below the text if needed.",
-            .Dock = DockStyle.Bottom,
+            .Text = "Auto Party Invite presses the selected key, then clicks the fixed point above, on its own loop timer - e.g. an in-game invite hotkey followed by a confirm click. Auto Party Message types the text above into chat (Enter, type, Enter) on its own separate loop timer, independent of the invite loop. Show Click Overlay draws a marker over the game window at the calibrated point so you can verify it before enabling the loop.",
+            .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.TopLeft,
             .AutoSize = False,
-            .Height = 68
+            .Height = 82
         }
-        layout.Controls.Add(note, 0, 8)
-        layout.SetColumnSpan(note, 2)
+        layout.Controls.Add(note, 0, 6)
         group.Controls.Add(layout)
+        UpdateAutoPartyPointUi()
+        UpdateAutoPartyInviteUi()
+        UpdateAutoPartyMessageUi()
         Return group
     End Function
 
@@ -3974,6 +4046,7 @@ Public Class Form1
         btnClearArrowUnbundlePoints = New Button() With {.Text = "Clear", .Width = 74, .Height = 30, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
         AddHandler btnClearArrowUnbundlePoints.Click, AddressOf ClearArrowUnbundlePointsClicked
         chkArrowUnbundleOverlay = New CheckBox() With {.Text = "Show Click Overlay", .AutoSize = True, .Height = 30, .Padding = New Padding(8, 3, 0, 0), .ForeColor = Color.LightSkyBlue}
+        AddHandler chkArrowUnbundleOverlay.CheckedChanged, AddressOf ArrowUnbundleOverlayChanged
         buttons.Controls.Add(btnPickArrowUnbundlePoint)
         buttons.Controls.Add(btnRemoveArrowUnbundlePoint)
         buttons.Controls.Add(btnClearArrowUnbundlePoints)
@@ -5492,6 +5565,7 @@ Public Class Form1
         _ressAutoAccept = False
         _partyAskEnabled = False
         _litePartyAskEnabled = False
+        _askForResurrectEnabled = False
         _lootScannerEnabled = False
         UpdateLootScannerButtons()
         For Each key In PrimaryKeys
@@ -5511,29 +5585,23 @@ Public Class Form1
         Next
         chkLootPickup.Checked = False
         nudLootPickupSeconds.Value = 1D
-        If chkLootNameAutoPickup IsNot Nothing Then
-            chkLootNameAutoPickup.Checked = False
+        _autoPartyInviteEnabled = False
+        If cboAutoPartyInviteKey IsNot Nothing Then
+            cboAutoPartyInviteKey.SelectedItem = "F1"
         End If
-        If nudLootNamePickupOffsetX IsNot Nothing Then
-            nudLootNamePickupOffsetX.Value = 0D
+        If nudAutoPartyInviteSeconds IsNot Nothing Then
+            nudAutoPartyInviteSeconds.Value = 30D
         End If
-        If nudLootNamePickupOffsetY IsNot Nothing Then
-            nudLootNamePickupOffsetY.Value = 18D
+        _autoPartyOverlayEnabled = False
+        If chkAutoPartyOverlay IsNot Nothing Then
+            chkAutoPartyOverlay.Checked = False
         End If
-        If nudLootNamePickupClickDelayMs IsNot Nothing Then
-            nudLootNamePickupClickDelayMs.Value = 180D
+        _autoPartyMessageEnabled = False
+        If txtAutoPartyMessageText IsNot Nothing Then
+            txtAutoPartyMessageText.Text = DefaultAutoPartyMessageText
         End If
-        If nudLootNamePickupFPressCount IsNot Nothing Then
-            nudLootNamePickupFPressCount.Value = 3D
-        End If
-        If nudLootNamePickupFPressGapMs IsNot Nothing Then
-            nudLootNamePickupFPressGapMs.Value = 110D
-        End If
-        If nudLootNamePickupMouseHoldMs IsNot Nothing Then
-            nudLootNamePickupMouseHoldMs.Value = 35D
-        End If
-        If chkLootNamePickupRestoreCursor IsNot Nothing Then
-            chkLootNamePickupRestoreCursor.Checked = True
+        If nudAutoPartyMessageSeconds IsNot Nothing Then
+            nudAutoPartyMessageSeconds.Value = 30D
         End If
         If chkArrowUnbundleEnabled IsNot Nothing Then
             chkArrowUnbundleEnabled.Checked = False
@@ -5544,9 +5612,9 @@ Public Class Form1
         If chkArrowUnbundleOverlay IsNot Nothing Then
             chkArrowUnbundleOverlay.Checked = False
         End If
-        _lootNamePickupPointX = -1
-        _lootNamePickupPointY = -1
-        _isPickingLootNamePickupPoint = False
+        _autoPartyPointX = -1
+        _autoPartyPointY = -1
+        _isPickingAutoPartyPoint = False
         _isPickingArrowUnbundlePoint = False
         _arrowUnbundlePoints.Clear()
         _isPickingArrowBundleIcon = False
@@ -5596,7 +5664,7 @@ Public Class Form1
             txtPartyAskText.Text = DefaultPartyAskCommand
         End If
         UpdateAttackButtonAppearance(False)
-        UpdateLootNamePickupPointUi()
+        UpdateAutoPartyPointUi()
         UpdateArrowUnbundleUi()
         UpdateNotificationProviderUi()
         UpdatePartyInviteAutoAcceptButton()
@@ -7153,11 +7221,11 @@ Public Class Form1
 
     Private Sub PickLootRejectPointClicked(sender As Object, e As EventArgs)
         _isPickingLootRejectPoint = True
-        _isPickingLootNamePickupPoint = False
+        _isPickingAutoPartyPoint = False
         _isPickingArrowUnbundlePoint = False
         _isPickingArrowBundleIcon = False
         _isPickingResurrectOkPoint = False
-        UpdateLootNamePickupPointUi()
+        UpdateAutoPartyPointUi()
         UpdateArrowUnbundleUi()
         UpdateArrowBundleIconUi()
         UpdateResurrectOkPointUi()
@@ -7175,8 +7243,15 @@ Public Class Form1
         AppendLog("Loot reject click point cleared.")
     End Sub
 
-    Private Sub PickLootNamePickupPointClicked(sender As Object, e As EventArgs)
-        _isPickingLootNamePickupPoint = True
+    Private Sub PickAutoPartyPointClicked(sender As Object, e As EventArgs)
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+        If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
+            AppendLog("Auto Party: select a Full game process window first.")
+            Return
+        End If
+
+        _isPickingAutoPartyPoint = True
+        _autoPartyPointLeftMouseWasDown = False
         _isPickingLootRejectPoint = False
         _isPickingArrowUnbundlePoint = False
         _isPickingArrowBundleIcon = False
@@ -7185,18 +7260,79 @@ Public Class Form1
         UpdateArrowUnbundleUi()
         UpdateArrowBundleIconUi()
         UpdateResurrectOkPointUi()
-        UpdateLootNamePickupPointUi()
-        FocusVisionSnapshotForPick("Loot pickup-point")
+        UpdateAutoPartyPointUi()
+        AppendLog("Auto Party: left-click the exact spot to invite/confirm at, directly inside the selected game window.")
+        NativeMethods.SetForegroundWindow(selected.MainWindowHandle)
     End Sub
 
-    Private Sub ClearLootNamePickupPointClicked(sender As Object, e As EventArgs)
-        _isPickingLootNamePickupPoint = False
-        _lootNamePickupPointX = -1
-        _lootNamePickupPointY = -1
-        UpdateLootNamePickupPointUi()
+    Private Sub ClearAutoPartyPointClicked(sender As Object, e As EventArgs)
+        _isPickingAutoPartyPoint = False
+        _autoPartyPointLeftMouseWasDown = False
+        _autoPartyPointX = -1
+        _autoPartyPointY = -1
+        UpdateAutoPartyPointUi()
         PushLiveConfig()
         SavePersistedListState(False)
-        AppendLog("Loot name auto-pickup point cleared.")
+        AppendLog("Auto Party click point cleared.")
+    End Sub
+
+    Private Sub HandlePendingAutoPartyPointCapture()
+        Try
+            If Not _isPickingAutoPartyPoint Then
+                Return
+            End If
+
+            Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+            If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
+                Return
+            End If
+
+            Dim leftDown As Boolean = (GetAsyncKeyState(CInt(Keys.LButton)) And &H8000S) <> 0
+            If leftDown AndAlso Not _autoPartyPointLeftMouseWasDown Then
+                Dim screenPoint As NativeMethods.POINT
+                If NativeMethods.GetCursorPos(screenPoint) Then
+                    Dim hoveredWindow As IntPtr = NativeMethods.WindowFromPoint(screenPoint)
+                    Dim hoveredRoot As IntPtr = If(hoveredWindow <> IntPtr.Zero, NativeMethods.GetAncestor(hoveredWindow, NativeMethods.GA_ROOT), IntPtr.Zero)
+                    If hoveredRoot <> selected.MainWindowHandle Then
+                        _autoPartyPointLeftMouseWasDown = leftDown
+                        Return
+                    End If
+
+                    Dim clientPoint As NativeMethods.POINT = screenPoint
+                    If NativeMethods.ScreenToClient(selected.MainWindowHandle, clientPoint) Then
+                        Dim clientRect As NativeMethods.RECT
+                        If Not NativeMethods.GetClientRect(selected.MainWindowHandle, clientRect) Then
+                            _autoPartyPointLeftMouseWasDown = leftDown
+                            Return
+                        End If
+
+                        Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
+                        Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
+                        If clientPoint.X < 0 OrElse clientPoint.Y < 0 OrElse clientPoint.X >= clientWidth OrElse clientPoint.Y >= clientHeight Then
+                            AppendLog("Auto Party: click must be inside the selected game window.")
+                            _autoPartyPointLeftMouseWasDown = leftDown
+                            Return
+                        End If
+
+                        _autoPartyPointX = Math.Max(0, clientPoint.X)
+                        _autoPartyPointY = Math.Max(0, clientPoint.Y)
+                        _isPickingAutoPartyPoint = False
+                        _autoPartyPointLeftMouseWasDown = leftDown
+                        UpdateAutoPartyPointUi()
+                        PushLiveConfig()
+                        SavePersistedListState(False)
+                        AppendLog($"Auto Party click point set: x={_autoPartyPointX}, y={_autoPartyPointY}.")
+                    End If
+                End If
+            End If
+
+            _autoPartyPointLeftMouseWasDown = leftDown
+        Catch ex As Exception
+            _isPickingAutoPartyPoint = False
+            _autoPartyPointLeftMouseWasDown = False
+            UpdateAutoPartyPointUi()
+            AppendLog("Auto Party click point capture failed: " & ex.Message)
+        End Try
     End Sub
 
     Private Sub PickArrowUnbundlePointClicked(sender As Object, e As EventArgs)
@@ -7209,11 +7345,11 @@ Public Class Form1
         _isPickingArrowUnbundlePoint = True
         _arrowUnbundleLeftMouseWasDown = False
         _isPickingLootRejectPoint = False
-        _isPickingLootNamePickupPoint = False
+        _isPickingAutoPartyPoint = False
         _isPickingArrowBundleIcon = False
         _isPickingResurrectOkPoint = False
         UpdateLootRejectPointUi()
-        UpdateLootNamePickupPointUi()
+        UpdateAutoPartyPointUi()
         UpdateArrowUnbundleUi()
         UpdateArrowBundleIconUi()
         UpdateResurrectOkPointUi()
@@ -7314,10 +7450,10 @@ Public Class Form1
         _arrowBundleIconLeftMouseWasDown = False
         _isPickingArrowUnbundlePoint = False
         _isPickingLootRejectPoint = False
-        _isPickingLootNamePickupPoint = False
+        _isPickingAutoPartyPoint = False
         _isPickingResurrectOkPoint = False
         UpdateLootRejectPointUi()
-        UpdateLootNamePickupPointUi()
+        UpdateAutoPartyPointUi()
         UpdateArrowUnbundleUi()
         UpdateArrowBundleIconUi()
         UpdateResurrectOkPointUi()
@@ -7497,14 +7633,6 @@ Public Class Form1
             AppendLog("Auto Resurrect OK point pick canceled from snapshot; use Set OK Point, then click directly inside the game window.")
             Return
         End If
-
-        _lootNamePickupPointX = mapped.X
-        _lootNamePickupPointY = mapped.Y
-        _isPickingLootNamePickupPoint = False
-        UpdateLootNamePickupPointUi()
-        PushLiveConfig()
-        SavePersistedListState(False)
-        AppendLog($"Loot name pickup point set: x={_lootNamePickupPointX}, y={_lootNamePickupPointY}.")
     End Sub
 
     Private Shared Function TryMapPictureBoxPointToImage(picture As PictureBox, clientPoint As System.Drawing.Point, ByRef imagePoint As System.Drawing.Point) As Boolean
@@ -7562,22 +7690,38 @@ Public Class Form1
         End If
     End Sub
 
-    Private Sub UpdateLootNamePickupPointUi()
-        If lblLootNamePickupPoint IsNot Nothing Then
-            If _lootNamePickupPointX >= 0 AndAlso _lootNamePickupPointY >= 0 Then
-                lblLootNamePickupPoint.Text = $"Fixed Click Point: {_lootNamePickupPointX}, {_lootNamePickupPointY}"
+    Private Sub UpdateAutoPartyPointUi()
+        If lblAutoPartyPoint IsNot Nothing Then
+            If _autoPartyPointX >= 0 AndAlso _autoPartyPointY >= 0 Then
+                lblAutoPartyPoint.Text = $"Fixed Click Point: {_autoPartyPointX}, {_autoPartyPointY}"
             Else
-                lblLootNamePickupPoint.Text = "Fixed Click Point: (not set)"
+                lblAutoPartyPoint.Text = "Fixed Click Point: (not set)"
             End If
         End If
 
-        If btnPickLootNamePickupPoint IsNot Nothing Then
-            btnPickLootNamePickupPoint.Text = If(_isPickingLootNamePickupPoint, "Click Snapshot...", "Pick Fixed Point")
-            btnPickLootNamePickupPoint.BackColor = If(_isPickingLootNamePickupPoint, Color.FromArgb(175, 110, 30), Color.FromArgb(45, 95, 140))
+        If btnPickAutoPartyPoint IsNot Nothing Then
+            btnPickAutoPartyPoint.Text = If(_isPickingAutoPartyPoint, "Click Game...", "Pick Fixed Point")
+            btnPickAutoPartyPoint.BackColor = If(_isPickingAutoPartyPoint, Color.FromArgb(175, 110, 30), Color.FromArgb(45, 95, 140))
         End If
 
-        If btnClearLootNamePickupPoint IsNot Nothing Then
-            btnClearLootNamePickupPoint.Enabled = (_lootNamePickupPointX >= 0 AndAlso _lootNamePickupPointY >= 0)
+        If btnClearAutoPartyPoint IsNot Nothing Then
+            btnClearAutoPartyPoint.Enabled = (_autoPartyPointX >= 0 AndAlso _autoPartyPointY >= 0)
+        End If
+
+        If nudAutoPartyPointX IsNot Nothing AndAlso nudAutoPartyPointY IsNot Nothing Then
+            _autoPartyPointUiSyncInProgress = True
+            Try
+                Dim boundedX As Decimal = Math.Max(nudAutoPartyPointX.Minimum, Math.Min(nudAutoPartyPointX.Maximum, CDec(Math.Max(0, _autoPartyPointX))))
+                If nudAutoPartyPointX.Value <> boundedX Then
+                    nudAutoPartyPointX.Value = boundedX
+                End If
+                Dim boundedY As Decimal = Math.Max(nudAutoPartyPointY.Minimum, Math.Min(nudAutoPartyPointY.Maximum, CDec(Math.Max(0, _autoPartyPointY))))
+                If nudAutoPartyPointY.Value <> boundedY Then
+                    nudAutoPartyPointY.Value = boundedY
+                End If
+            Finally
+                _autoPartyPointUiSyncInProgress = False
+            End Try
         End If
 
         If picSnapshot IsNot Nothing Then
@@ -7585,8 +7729,124 @@ Public Class Form1
         End If
     End Sub
 
+    Private Sub AutoPartyPointXYChanged(sender As Object, e As EventArgs)
+        If _autoPartyPointUiSyncInProgress Then
+            Return
+        End If
+        If nudAutoPartyPointX Is Nothing OrElse nudAutoPartyPointY Is Nothing Then
+            Return
+        End If
+
+        _autoPartyPointX = CInt(nudAutoPartyPointX.Value)
+        _autoPartyPointY = CInt(nudAutoPartyPointY.Value)
+        _isPickingAutoPartyPoint = False
+        UpdateAutoPartyPointUi()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        AppendLog($"Auto Party click point set: x={_autoPartyPointX}, y={_autoPartyPointY}.")
+    End Sub
+
+    Private Sub ToggleAutoPartyInviteClicked(sender As Object, e As EventArgs)
+        _autoPartyInviteEnabled = Not _autoPartyInviteEnabled
+        UpdateAutoPartyInviteUi()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        AppendLog(If(_autoPartyInviteEnabled,
+                     "Auto Party Invite enabled: will press the selected key and click the fixed point on the interval set.",
+                     "Auto Party Invite disabled."))
+    End Sub
+
+    Private Sub UpdateAutoPartyInviteUi()
+        If btnAutoPartyInvite Is Nothing Then
+            Return
+        End If
+        btnAutoPartyInvite.Text = If(_autoPartyInviteEnabled, "Auto Party Invite: ON", "Auto Party Invite: OFF")
+        btnAutoPartyInvite.BackColor = If(_autoPartyInviteEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+    End Sub
+
+    Private Sub ToggleAutoPartyMessageClicked(sender As Object, e As EventArgs)
+        _autoPartyMessageEnabled = Not _autoPartyMessageEnabled
+        UpdateAutoPartyMessageUi()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        AppendLog(If(_autoPartyMessageEnabled,
+                     "Auto Party Message enabled: will type the message text into chat on the interval set.",
+                     "Auto Party Message disabled."))
+    End Sub
+
+    Private Sub UpdateAutoPartyMessageUi()
+        If btnAutoPartyMessage Is Nothing Then
+            Return
+        End If
+        btnAutoPartyMessage.Text = If(_autoPartyMessageEnabled, "Auto Party Message: ON", "Auto Party Message: OFF")
+        btnAutoPartyMessage.BackColor = If(_autoPartyMessageEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+    End Sub
+
+    Private Function GetAutoPartyMessageCommandText() As String
+        Dim rawText As String = If(txtAutoPartyMessageText IsNot Nothing, txtAutoPartyMessageText.Text, DefaultAutoPartyMessageText)
+        rawText = If(rawText, "").Replace(vbCr, " ").Replace(vbLf, " ").Trim()
+        Return If(rawText = "", DefaultAutoPartyMessageText, rawText)
+    End Function
+
+    Private Sub AutoPartyOverlayChanged(sender As Object, e As EventArgs)
+        _autoPartyOverlayEnabled = (chkAutoPartyOverlay IsNot Nothing AndAlso chkAutoPartyOverlay.Checked)
+        If _autoPartyOverlayEnabled AndAlso (_autoPartyPointX < 0 OrElse _autoPartyPointY < 0) Then
+            AppendLog("Auto Party overlay: no click point set yet - use Pick Fixed Point first, or the overlay has nothing to draw.")
+        End If
+        SetAutoPartyOverlayVisible(_autoPartyOverlayEnabled)
+        PushLiveConfig()
+        SavePersistedListState(False)
+    End Sub
+
+    Private Sub SetAutoPartyOverlayVisible(visible As Boolean)
+        If Not visible Then
+            If _autoPartyOverlayForm IsNot Nothing AndAlso Not _autoPartyOverlayForm.IsDisposed Then
+                _autoPartyOverlayForm.Close()
+            End If
+            _autoPartyOverlayForm = Nothing
+            Return
+        End If
+
+        If _autoPartyOverlayForm IsNot Nothing AndAlso Not _autoPartyOverlayForm.IsDisposed Then
+            Return
+        End If
+
+        _autoPartyOverlayForm = New AutoRelaunchClickOverlayForm(
+            Function() ResolveAutoRelaunchClickWindow(IntPtr.Zero, ""),
+            Function() GetAutoPartyOverlaySteps())
+        AddHandler _autoPartyOverlayForm.FormClosed,
+            Sub(_s As Object, _e As FormClosedEventArgs)
+                _autoPartyOverlayForm = Nothing
+            End Sub
+        ' Not owned by Me (Form1): Windows hides an owned window whenever its owner is minimized,
+        ' which is exactly when someone running the bot wants this marker visible over the game.
+        _autoPartyOverlayForm.Show()
+    End Sub
+
+    Private Function GetAutoPartyOverlaySteps() As List(Of AutoRelaunchOverlayStep)
+        Dim overlaySteps As New List(Of AutoRelaunchOverlayStep)()
+        If _autoPartyPointX >= 0 AndAlso _autoPartyPointY >= 0 Then
+            Dim keyName As String = If(cboAutoPartyInviteKey IsNot Nothing AndAlso cboAutoPartyInviteKey.SelectedItem IsNot Nothing, cboAutoPartyInviteKey.SelectedItem.ToString(), DefaultAutoPartyInviteKey)
+            Dim intervalSeconds As Decimal = If(nudAutoPartyInviteSeconds IsNot Nothing, nudAutoPartyInviteSeconds.Value, 30D)
+            overlaySteps.Add(New AutoRelaunchOverlayStep With {
+                .StepNumber = 1,
+                .X = _autoPartyPointX,
+                .Y = _autoPartyPointY,
+                .DelaySeconds = intervalSeconds,
+                .TimingLabel = $"every {intervalSeconds:0.###}s",
+                .Description = $"press {keyName}, then click",
+                .MarkerColor = Color.FromArgb(235, 20, 125, 205)
+            })
+        End If
+        Return overlaySteps
+    End Function
+
     Private Sub ArrowUnbundleOverlayChanged(sender As Object, e As EventArgs)
-        SetArrowUnbundleOverlayVisible(chkArrowUnbundleOverlay IsNot Nothing AndAlso chkArrowUnbundleOverlay.Checked)
+        Dim visible As Boolean = chkArrowUnbundleOverlay IsNot Nothing AndAlso chkArrowUnbundleOverlay.Checked
+        If visible AndAlso _arrowUnbundlePoints.Count = 0 Then
+            AppendLog("Arrow unbundle overlay: no points added yet - use Add Point first, or the overlay has nothing to draw.")
+        End If
+        SetArrowUnbundleOverlayVisible(visible)
     End Sub
 
     Private Sub SetArrowUnbundleOverlayVisible(visible As Boolean)
@@ -7609,7 +7869,8 @@ Public Class Form1
             Sub(_s As Object, _e As FormClosedEventArgs)
                 _arrowUnbundleOverlayForm = Nothing
             End Sub
-        _arrowUnbundleOverlayForm.Show(Me)
+        ' Not owned by Me: see the comment in SetAutoPartyOverlayVisible.
+        _arrowUnbundleOverlayForm.Show()
     End Sub
 
     Private Function GetArrowUnbundleOverlaySteps() As List(Of AutoRelaunchOverlayStep)
@@ -7664,6 +7925,24 @@ Public Class Form1
         End If
         btnDeathMessagePause.Text = If(_deathMessagePauseEnabled, "Pause Combat On Death: ON", "Pause Combat On Death: OFF")
         btnDeathMessagePause.BackColor = If(_deathMessagePauseEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+    End Sub
+
+    Private Sub ToggleAskForResurrectClicked(sender As Object, e As EventArgs)
+        _askForResurrectEnabled = Not _askForResurrectEnabled
+        UpdateAskForResurrectUi()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        AppendLog(If(_askForResurrectEnabled,
+                     "Ask For Resurrection enabled: will nag party chat on the interval set while Pause Combat On Death is active.",
+                     "Ask For Resurrection disabled."))
+    End Sub
+
+    Private Sub UpdateAskForResurrectUi()
+        If btnAskForResurrect Is Nothing Then
+            Return
+        End If
+        btnAskForResurrect.Text = If(_askForResurrectEnabled, "Ask For Resurrection: ON", "Ask For Resurrection: OFF")
+        btnAskForResurrect.BackColor = If(_askForResurrectEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
     End Sub
 
     Private Shared Function HoldToShowGameWindowKeyOptions() As String()
@@ -7946,9 +8225,9 @@ Public Class Form1
         _isPickingArrowUnbundlePoint = False
         _isPickingArrowBundleIcon = False
         _isPickingLootRejectPoint = False
-        _isPickingLootNamePickupPoint = False
+        _isPickingAutoPartyPoint = False
         UpdateLootRejectPointUi()
-        UpdateLootNamePickupPointUi()
+        UpdateAutoPartyPointUi()
         UpdateArrowUnbundleUi()
         UpdateArrowBundleIconUi()
         UpdateResurrectOkPointUi()
@@ -8055,10 +8334,10 @@ Public Class Form1
         _isPickingArrowUnbundlePoint = False
         _isPickingArrowBundleIcon = False
         _isPickingLootRejectPoint = False
-        _isPickingLootNamePickupPoint = False
+        _isPickingAutoPartyPoint = False
         _isPickingResurrectOkPoint = False
         UpdateLootRejectPointUi()
-        UpdateLootNamePickupPointUi()
+        UpdateAutoPartyPointUi()
         UpdateArrowUnbundleUi()
         UpdateArrowBundleIconUi()
         UpdateResurrectOkPointUi()
@@ -8181,7 +8460,8 @@ Public Class Form1
             Sub(_s As Object, _e As FormClosedEventArgs)
                 _resurrectOverlayForm = Nothing
             End Sub
-        _resurrectOverlayForm.Show(Me)
+        ' Not owned by Me: see the comment in SetAutoPartyOverlayVisible.
+        _resurrectOverlayForm.Show()
     End Sub
 
     Private Function GetResurrectOverlaySteps() As List(Of AutoRelaunchOverlayStep)
@@ -8925,6 +9205,12 @@ Public Class Form1
         Return NormalizePartyAskUiText(rawText)
     End Function
 
+    Private Function GetAskForResurrectCommandText() As String
+        Dim rawText As String = If(txtAskForResurrectText IsNot Nothing, txtAskForResurrectText.Text, DefaultResurrectAskCommand)
+        rawText = If(rawText, "").Replace(vbCr, " ").Replace(vbLf, " ").Trim()
+        Return If(rawText = "", DefaultResurrectAskCommand, rawText)
+    End Function
+
     Private Shared Function NormalizePartyAskUiText(rawText As String) As String
         rawText = If(rawText, "").Replace(vbCr, " ").Replace(vbLf, " ").Trim()
         If rawText = "" Then
@@ -9161,7 +9447,8 @@ Public Class Form1
             "- OCR based repair warning detection from unreachable_text_rect with 5-read / 10-minute rolling confirmation.",
             "- Party invite / resurrection prompt OCR and auto accept click.",
             "- Party ask command automation with cooldown and in-party suppression.",
-            "- Loot scan with fuzzy OCR allow-list matching (Loot Name Match %), dynamic label clicking, and reject handling by click point or fallback key.",
+            "- Loot scan with fuzzy OCR allow-list matching (Loot Name Match %) and reject handling by click point or fallback key.",
+            "- Auto Party Invite (key + fixed click point) and Auto Party Message (chat text), each on its own loop timer.",
             "- Periodic snapshot save every ~15 minutes to Pictures/KathanaBot.",
             "- Prana/EXP OCR reading and hourly rate calculation.",
             "",
@@ -9405,7 +9692,8 @@ Public Class Form1
             "- OCR para sa repair warning sa unreachable_text_rect na may 5-read / 10-minute rolling confirmation.",
             "- OCR party/ress detection at auto accept click.",
             "- Auto add party command na may cooldown at suppression kapag nasa party na.",
-            "- Loot scan with configurable fuzzy OCR allow-list matching (Loot Name Match %), dynamic label clicking, at reject handling (click point/fallback key).",
+            "- Loot scan with configurable fuzzy OCR allow-list matching (Loot Name Match %) at reject handling (click point/fallback key).",
+            "- Auto Party Invite (key + fixed click point) at Auto Party Message (chat text), bawat isa may sariling loop timer.",
             "- Periodic snapshot save bawat ~15 minuto.",
             "- Prana/EXP OCR at hourly rate calculation.",
             "",
@@ -9503,10 +9791,8 @@ Public Class Form1
                     "- Loot Name Match % is the fuzzy OCR threshold used to decide whether text matches an allowed loot name.",
                     "- Loot Scan Area comes from the Vision tab.",
                     "- Loot Scanner (Alt) toggles the OCR-based loot scanner.",
-                    "- Enable pickup by matched loot name turns on the dynamic label click flow.",
-                    "- Click Offset X and Y move the click relative to the matched loot label.",
-                    "- Wait Before F, Mouse Hold, Press F Count, and F Gap tune the pickup sequence after the click.",
-                    "- Restore mouse cursor after click returns the mouse to the previous position."
+                    "- Auto Party Invite presses the selected key (1-0 or F1-F10) then clicks the fixed point below, on its own loop timer.",
+                    "- Auto Party Message types the text above into chat (Enter, type, Enter) on its own separate loop timer."
                 })
             Case HelpScopeLeveling
                 Return String.Join(Environment.NewLine, New String() {
@@ -9641,10 +9927,8 @@ Public Class Form1
                     "- Loot Name Match % es el umbral de OCR difuso para aceptar coincidencias.",
                     "- Loot Scan Area se configura en Vision.",
                     "- Loot Scanner (Alt) activa el scanner OCR.",
-                    "- Enable pickup by matched loot name activa el click dinamico sobre la etiqueta detectada.",
-                    "- Click Offset X/Y mueve el punto de click.",
-                    "- Wait Before F, Mouse Hold, Press F Count y F Gap ajustan la secuencia de pickup.",
-                    "- Restore mouse cursor after click devuelve el mouse a su posicion anterior."
+                    "- Auto Party Invite presiona la tecla elegida (1-0 o F1-F10) y luego hace click en el punto fijo, en su propio temporizador.",
+                    "- Auto Party Message escribe el texto en el chat (Enter, escribir, Enter) en su propio temporizador independiente."
                 })
             Case HelpScopeLeveling
                 Return String.Join(Environment.NewLine, New String() {
@@ -9777,10 +10061,8 @@ Public Class Form1
                     "- Loot Name Match % ang fuzzy OCR threshold para sa loot text.",
                     "- Sa Vision tine-setup ang Loot Scan Area.",
                     "- Loot Scanner (Alt) ang OCR scanner flow.",
-                    "- Enable pickup by matched loot name ang dynamic label click system.",
-                    "- Click Offset X/Y ina-adjust ang click point mula sa matched label.",
-                    "- Wait Before F, Mouse Hold, Press F Count, at F Gap ang pickup timing controls.",
-                    "- Restore mouse cursor after click ibinabalik ang dating pwesto ng mouse."
+                    "- Auto Party Invite pinipindot ang piniling key (1-0 o F1-F10) tapos nagki-click sa fixed point, sa sarili nitong loop timer.",
+                    "- Auto Party Message tine-type ang text sa chat (Enter, type, Enter) sa hiwalay nitong loop timer."
                 })
             Case HelpScopeLeveling
                 Return String.Join(Environment.NewLine, New String() {
@@ -10057,6 +10339,7 @@ Public Class Form1
         HandlePendingArrowUnbundlePointCapture()
         HandlePendingArrowBundleIconCapture()
         HandlePendingResurrectOkPointCapture()
+        HandlePendingAutoPartyPointCapture()
         HandlePendingAutoRelaunchClickCapture()
         HandlePendingBuffWatchSelfClickPointCapture()
         If _fullEngine.IsRunning() Then
@@ -10146,8 +10429,10 @@ Public Class Form1
             $"LootPickupEnabled: {If(chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked, "True", "False")}{Environment.NewLine}" &
             $"LootPickupIntervalSec: {If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value.ToString(), "4")}{Environment.NewLine}" &
             $"LootPickupVerifyMs: {If(nudLootPickupVerifyMs IsNot Nothing, nudLootPickupVerifyMs.Value.ToString(), "220")}{Environment.NewLine}" &
-            $"LootNameAutoPickupEnabled: {If(chkLootNameAutoPickup IsNot Nothing AndAlso chkLootNameAutoPickup.Checked, "True", "False")}{Environment.NewLine}" &
-            $"LootNamePickupPoint: {If(_lootNamePickupPointX >= 0 AndAlso _lootNamePickupPointY >= 0, _lootNamePickupPointX.ToString() & "," & _lootNamePickupPointY.ToString(), "not set")}{Environment.NewLine}" &
+            $"AutoPartyInviteEnabled: {_autoPartyInviteEnabled}{Environment.NewLine}" &
+            $"AutoPartyInviteKey: {If(cboAutoPartyInviteKey IsNot Nothing AndAlso cboAutoPartyInviteKey.SelectedItem IsNot Nothing, cboAutoPartyInviteKey.SelectedItem.ToString(), DefaultAutoPartyInviteKey)}{Environment.NewLine}" &
+            $"AutoPartyPoint: {If(_autoPartyPointX >= 0 AndAlso _autoPartyPointY >= 0, _autoPartyPointX.ToString() & "," & _autoPartyPointY.ToString(), "not set")}{Environment.NewLine}" &
+            $"AutoPartyMessageEnabled: {_autoPartyMessageEnabled}{Environment.NewLine}" &
             $"LootNameMatchThreshold%: {If(nudLootNameMatchThreshold IsNot Nothing, nudLootNameMatchThreshold.Value.ToString(), DefaultLootNameMatchThresholdPercent.ToString())}{Environment.NewLine}" &
             $"LootRejectPoint: {If(_lootRejectPointX >= 0 AndAlso _lootRejectPointY >= 0, _lootRejectPointX.ToString() & "," & _lootRejectPointY.ToString(), "not set")}{Environment.NewLine}" &
             $"ArrowUnbundleEnabled: {If(chkArrowUnbundleEnabled IsNot Nothing AndAlso chkArrowUnbundleEnabled.Checked, "True", "False")}{Environment.NewLine}" &
@@ -10236,6 +10521,7 @@ Public Class Form1
         HandlePendingArrowUnbundlePointCapture()
         HandlePendingArrowBundleIconCapture()
         HandlePendingResurrectOkPointCapture()
+        HandlePendingAutoPartyPointCapture()
         HandlePendingAutoRelaunchClickCapture()
         HandlePendingBuffWatchSelfClickPointCapture()
     End Sub
@@ -11197,7 +11483,8 @@ Public Class Form1
             Sub(_s As Object, _e As FormClosedEventArgs)
                 _autoRelaunchClickOverlayForm = Nothing
             End Sub
-        _autoRelaunchClickOverlayForm.Show(Me)
+        ' Not owned by Me: see the comment in SetAutoPartyOverlayVisible.
+        _autoRelaunchClickOverlayForm.Show()
     End Sub
 
     Private Function GetAutoRelaunchOverlaySteps() As List(Of AutoRelaunchOverlayStep)
@@ -12183,6 +12470,10 @@ Public Class Form1
         cfg.PartyAskEnabled = _partyAskEnabled
         cfg.PartyAskIntervalMs = CInt(Math.Round(CDbl(If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D)) * 1000.0))
         cfg.PartyAskText = GetPartyAskCommandText()
+        cfg.AskForResurrectEnabled = _askForResurrectEnabled
+        cfg.AskForResurrectIntervalMs = CInt(Math.Round(CDbl(If(nudAskForResurrectSeconds IsNot Nothing, nudAskForResurrectSeconds.Value, 30D)) * 1000.0))
+        cfg.AskForResurrectText = GetAskForResurrectCommandText()
+        cfg.AskForResurrectIncludeMapCoordinates = (chkAskForResurrectMapCoords IsNot Nothing AndAlso chkAskForResurrectMapCoords.Checked)
         cfg.LootScannerEnabled = _lootScannerEnabled
         cfg.NotificationProvider = GetNotificationProviderName()
         cfg.DiscordWebhookUrl = GetDiscordWebhookUrl()
@@ -12287,16 +12578,14 @@ Public Class Form1
         cfg.LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked)
         cfg.LootPickupIntervalMs = CInt(Math.Round(CDbl(If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value, 4D)) * 1000.0))
         cfg.LootNameMatchThresholdPercent = CInt(If(nudLootNameMatchThreshold IsNot Nothing, nudLootNameMatchThreshold.Value, CDec(DefaultLootNameMatchThresholdPercent)))
-        cfg.LootNameAutoPickupEnabled = (chkLootNameAutoPickup IsNot Nothing AndAlso chkLootNameAutoPickup.Checked)
-        cfg.LootNamePickupOffsetX = CInt(If(nudLootNamePickupOffsetX IsNot Nothing, nudLootNamePickupOffsetX.Value, 0D))
-        cfg.LootNamePickupOffsetY = CInt(If(nudLootNamePickupOffsetY IsNot Nothing, nudLootNamePickupOffsetY.Value, 18D))
-        cfg.LootNamePickupPointX = _lootNamePickupPointX
-        cfg.LootNamePickupPointY = _lootNamePickupPointY
-        cfg.LootNamePickupClickDelayMs = CInt(If(nudLootNamePickupClickDelayMs IsNot Nothing, nudLootNamePickupClickDelayMs.Value, 180D))
-        cfg.LootNamePickupFPressCount = CInt(If(nudLootNamePickupFPressCount IsNot Nothing, nudLootNamePickupFPressCount.Value, 3D))
-        cfg.LootNamePickupFPressGapMs = CInt(If(nudLootNamePickupFPressGapMs IsNot Nothing, nudLootNamePickupFPressGapMs.Value, 110D))
-        cfg.LootNamePickupMouseHoldMs = CInt(If(nudLootNamePickupMouseHoldMs IsNot Nothing, nudLootNamePickupMouseHoldMs.Value, 35D))
-        cfg.LootNamePickupRestoreCursor = (chkLootNamePickupRestoreCursor Is Nothing OrElse chkLootNamePickupRestoreCursor.Checked)
+        cfg.AutoPartyInviteEnabled = _autoPartyInviteEnabled
+        cfg.AutoPartyInviteKey = If(cboAutoPartyInviteKey IsNot Nothing AndAlso cboAutoPartyInviteKey.SelectedItem IsNot Nothing, cboAutoPartyInviteKey.SelectedItem.ToString(), DefaultAutoPartyInviteKey)
+        cfg.AutoPartyInviteIntervalMs = CInt(Math.Round(CDbl(If(nudAutoPartyInviteSeconds IsNot Nothing, nudAutoPartyInviteSeconds.Value, 30D)) * 1000.0))
+        cfg.AutoPartyInvitePointX = _autoPartyPointX
+        cfg.AutoPartyInvitePointY = _autoPartyPointY
+        cfg.AutoPartyMessageEnabled = _autoPartyMessageEnabled
+        cfg.AutoPartyMessageText = GetAutoPartyMessageCommandText()
+        cfg.AutoPartyMessageIntervalMs = CInt(Math.Round(CDbl(If(nudAutoPartyMessageSeconds IsNot Nothing, nudAutoPartyMessageSeconds.Value, 30D)) * 1000.0))
         cfg.LootPickupVerifyDelayMs = CInt(If(nudLootPickupVerifyMs IsNot Nothing, nudLootPickupVerifyMs.Value, 220D))
         cfg.LootRejectClickEnabled = (_lootRejectPointX >= 0 AndAlso _lootRejectPointY >= 0)
         cfg.LootRejectPointX = _lootRejectPointX
@@ -13170,37 +13459,35 @@ Public Class Form1
                 Dim boundedLootMatch As Decimal = Math.Max(nudLootNameMatchThreshold.Minimum, Math.Min(nudLootNameMatchThreshold.Maximum, state.LootNameMatchThresholdPercent))
                 nudLootNameMatchThreshold.Value = boundedLootMatch
             End If
-            If chkLootNameAutoPickup IsNot Nothing Then
-                chkLootNameAutoPickup.Checked = state.LootNameAutoPickupEnabled
+            _autoPartyInviteEnabled = state.AutoPartyInviteEnabled
+            If cboAutoPartyInviteKey IsNot Nothing Then
+                cboAutoPartyInviteKey.SelectedItem = If(String.IsNullOrWhiteSpace(state.AutoPartyInviteKey), DefaultAutoPartyInviteKey, state.AutoPartyInviteKey.Trim())
             End If
-            If state.LootNamePickupPointEnabled Then
-                _lootNamePickupPointX = Math.Max(0, state.LootNamePickupPointX)
-                _lootNamePickupPointY = Math.Max(0, state.LootNamePickupPointY)
+            If nudAutoPartyInviteSeconds IsNot Nothing Then
+                Dim boundedInviteSeconds As Decimal = Math.Max(nudAutoPartyInviteSeconds.Minimum, Math.Min(nudAutoPartyInviteSeconds.Maximum, If(state.AutoPartyInviteSeconds > 0, state.AutoPartyInviteSeconds, 30D)))
+                nudAutoPartyInviteSeconds.Value = boundedInviteSeconds
+            End If
+            If state.AutoPartyInvitePointEnabled Then
+                _autoPartyPointX = Math.Max(0, state.AutoPartyInvitePointX)
+                _autoPartyPointY = Math.Max(0, state.AutoPartyInvitePointY)
             Else
-                _lootNamePickupPointX = -1
-                _lootNamePickupPointY = -1
+                _autoPartyPointX = -1
+                _autoPartyPointY = -1
             End If
-            If nudLootNamePickupOffsetX IsNot Nothing Then
-                nudLootNamePickupOffsetX.Value = Math.Max(nudLootNamePickupOffsetX.Minimum, Math.Min(nudLootNamePickupOffsetX.Maximum, state.LootNamePickupOffsetX))
+            _autoPartyOverlayEnabled = state.AutoPartyOverlayEnabled
+            If chkAutoPartyOverlay IsNot Nothing Then
+                chkAutoPartyOverlay.Checked = _autoPartyOverlayEnabled
             End If
-            If nudLootNamePickupOffsetY IsNot Nothing Then
-                nudLootNamePickupOffsetY.Value = Math.Max(nudLootNamePickupOffsetY.Minimum, Math.Min(nudLootNamePickupOffsetY.Maximum, state.LootNamePickupOffsetY))
+            _autoPartyMessageEnabled = state.AutoPartyMessageEnabled
+            If txtAutoPartyMessageText IsNot Nothing Then
+                txtAutoPartyMessageText.Text = If(String.IsNullOrWhiteSpace(state.AutoPartyMessageText), DefaultAutoPartyMessageText, state.AutoPartyMessageText.Trim())
             End If
-            If nudLootNamePickupClickDelayMs IsNot Nothing Then
-                nudLootNamePickupClickDelayMs.Value = Math.Max(nudLootNamePickupClickDelayMs.Minimum, Math.Min(nudLootNamePickupClickDelayMs.Maximum, state.LootNamePickupClickDelayMs))
+            If nudAutoPartyMessageSeconds IsNot Nothing Then
+                Dim boundedMessageSeconds As Decimal = Math.Max(nudAutoPartyMessageSeconds.Minimum, Math.Min(nudAutoPartyMessageSeconds.Maximum, If(state.AutoPartyMessageSeconds > 0, state.AutoPartyMessageSeconds, 30D)))
+                nudAutoPartyMessageSeconds.Value = boundedMessageSeconds
             End If
-            If nudLootNamePickupFPressCount IsNot Nothing Then
-                nudLootNamePickupFPressCount.Value = Math.Max(nudLootNamePickupFPressCount.Minimum, Math.Min(nudLootNamePickupFPressCount.Maximum, state.LootNamePickupFPressCount))
-            End If
-            If nudLootNamePickupFPressGapMs IsNot Nothing Then
-                nudLootNamePickupFPressGapMs.Value = Math.Max(nudLootNamePickupFPressGapMs.Minimum, Math.Min(nudLootNamePickupFPressGapMs.Maximum, state.LootNamePickupFPressGapMs))
-            End If
-            If nudLootNamePickupMouseHoldMs IsNot Nothing Then
-                nudLootNamePickupMouseHoldMs.Value = Math.Max(nudLootNamePickupMouseHoldMs.Minimum, Math.Min(nudLootNamePickupMouseHoldMs.Maximum, state.LootNamePickupMouseHoldMs))
-            End If
-            If chkLootNamePickupRestoreCursor IsNot Nothing Then
-                chkLootNamePickupRestoreCursor.Checked = state.LootNamePickupRestoreCursor
-            End If
+            UpdateAutoPartyInviteUi()
+            UpdateAutoPartyMessageUi()
             If state.LootRejectPointEnabled Then
                 _lootRejectPointX = Math.Max(0, state.LootRejectPointX)
                 _lootRejectPointY = Math.Max(0, state.LootRejectPointY)
@@ -13231,12 +13518,12 @@ Public Class Form1
                 chkResurrectOverlay.Checked = _resurrectOverlayEnabled
             End If
             _isPickingLootRejectPoint = False
-            _isPickingLootNamePickupPoint = False
+            _isPickingAutoPartyPoint = False
             _isPickingArrowUnbundlePoint = False
             _isPickingArrowBundleIcon = False
             _isPickingResurrectOkPoint = False
             UpdateLootRejectPointUi()
-            UpdateLootNamePickupPointUi()
+            UpdateAutoPartyPointUi()
             UpdateArrowUnbundleUi()
             UpdateArrowBundleIconUi()
             UpdateResurrectAutoAcceptUi()
@@ -13276,6 +13563,19 @@ Public Class Form1
                 txtPartyAskText.Text = If(String.IsNullOrWhiteSpace(state.AskForPartyText), DefaultPartyAskCommand, state.AskForPartyText.Trim())
             End If
             UpdatePartyAskButton()
+
+            _askForResurrectEnabled = state.AskForResurrectEnabled
+            If nudAskForResurrectSeconds IsNot Nothing Then
+                Dim boundedResuAskSeconds As Decimal = Math.Max(nudAskForResurrectSeconds.Minimum, Math.Min(nudAskForResurrectSeconds.Maximum, If(state.AskForResurrectSeconds > 0, state.AskForResurrectSeconds, 30D)))
+                nudAskForResurrectSeconds.Value = boundedResuAskSeconds
+            End If
+            If txtAskForResurrectText IsNot Nothing Then
+                txtAskForResurrectText.Text = If(String.IsNullOrWhiteSpace(state.AskForResurrectText), DefaultResurrectAskCommand, state.AskForResurrectText.Trim())
+            End If
+            If chkAskForResurrectMapCoords IsNot Nothing Then
+                chkAskForResurrectMapCoords.Checked = state.AskForResurrectMapCoordsEnabled
+            End If
+            UpdateAskForResurrectUi()
 
             _lootScannerEnabled = state.LootScannerEnabled
             UpdateLootScannerButtons()
@@ -13383,17 +13683,16 @@ Public Class Form1
                 .LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked),
                 .LootPickupSeconds = If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value, 4D),
                 .LootNameMatchThresholdPercent = If(nudLootNameMatchThreshold IsNot Nothing, nudLootNameMatchThreshold.Value, CDec(DefaultLootNameMatchThresholdPercent)),
-                .LootNameAutoPickupEnabled = (chkLootNameAutoPickup IsNot Nothing AndAlso chkLootNameAutoPickup.Checked),
-                .LootNamePickupOffsetX = If(nudLootNamePickupOffsetX IsNot Nothing, nudLootNamePickupOffsetX.Value, 0D),
-                .LootNamePickupOffsetY = If(nudLootNamePickupOffsetY IsNot Nothing, nudLootNamePickupOffsetY.Value, 18D),
-                .LootNamePickupPointEnabled = (_lootNamePickupPointX >= 0 AndAlso _lootNamePickupPointY >= 0),
-                .LootNamePickupPointX = _lootNamePickupPointX,
-                .LootNamePickupPointY = _lootNamePickupPointY,
-                .LootNamePickupClickDelayMs = If(nudLootNamePickupClickDelayMs IsNot Nothing, nudLootNamePickupClickDelayMs.Value, 180D),
-                .LootNamePickupFPressCount = If(nudLootNamePickupFPressCount IsNot Nothing, nudLootNamePickupFPressCount.Value, 3D),
-                .LootNamePickupFPressGapMs = If(nudLootNamePickupFPressGapMs IsNot Nothing, nudLootNamePickupFPressGapMs.Value, 110D),
-                .LootNamePickupMouseHoldMs = If(nudLootNamePickupMouseHoldMs IsNot Nothing, nudLootNamePickupMouseHoldMs.Value, 35D),
-                .LootNamePickupRestoreCursor = (chkLootNamePickupRestoreCursor Is Nothing OrElse chkLootNamePickupRestoreCursor.Checked),
+                .AutoPartyInviteEnabled = _autoPartyInviteEnabled,
+                .AutoPartyInviteKey = If(cboAutoPartyInviteKey IsNot Nothing AndAlso cboAutoPartyInviteKey.SelectedItem IsNot Nothing, cboAutoPartyInviteKey.SelectedItem.ToString(), DefaultAutoPartyInviteKey),
+                .AutoPartyInviteSeconds = If(nudAutoPartyInviteSeconds IsNot Nothing, nudAutoPartyInviteSeconds.Value, 30D),
+                .AutoPartyInvitePointEnabled = (_autoPartyPointX >= 0 AndAlso _autoPartyPointY >= 0),
+                .AutoPartyInvitePointX = _autoPartyPointX,
+                .AutoPartyInvitePointY = _autoPartyPointY,
+                .AutoPartyOverlayEnabled = _autoPartyOverlayEnabled,
+                .AutoPartyMessageEnabled = _autoPartyMessageEnabled,
+                .AutoPartyMessageSeconds = If(nudAutoPartyMessageSeconds IsNot Nothing, nudAutoPartyMessageSeconds.Value, 30D),
+                .AutoPartyMessageText = GetAutoPartyMessageCommandText(),
                 .LootRejectPointEnabled = (_lootRejectPointX >= 0 AndAlso _lootRejectPointY >= 0),
                 .LootRejectPointX = _lootRejectPointX,
                 .LootRejectPointY = _lootRejectPointY,
@@ -13421,6 +13720,10 @@ Public Class Form1
                 .AskForPartyEnabled = _partyAskEnabled,
                 .AskForPartySeconds = If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D),
                                 .AskForPartyText = GetPartyAskCommandText(),
+                .AskForResurrectEnabled = _askForResurrectEnabled,
+                .AskForResurrectSeconds = If(nudAskForResurrectSeconds IsNot Nothing, nudAskForResurrectSeconds.Value, 30D),
+                .AskForResurrectText = GetAskForResurrectCommandText(),
+                .AskForResurrectMapCoordsEnabled = (chkAskForResurrectMapCoords IsNot Nothing AndAlso chkAskForResurrectMapCoords.Checked),
                 .LootScannerEnabled = _lootScannerEnabled,
                 .NotificationProvider = GetNotificationProviderName(),
                 .DiscordWebhookUrl = GetDiscordWebhookUrl(),
@@ -13651,6 +13954,16 @@ Public Class Form1
         End If
         UpdatePartyAskButton()
 
+        _askForResurrectEnabled = cfg.AskForResurrectEnabled
+        SetNumericControlValue(nudAskForResurrectSeconds, CDec(Math.Max(1, cfg.AskForResurrectIntervalMs) / 1000.0))
+        If txtAskForResurrectText IsNot Nothing Then
+            txtAskForResurrectText.Text = If(String.IsNullOrWhiteSpace(cfg.AskForResurrectText), DefaultResurrectAskCommand, cfg.AskForResurrectText.Trim())
+        End If
+        If chkAskForResurrectMapCoords IsNot Nothing Then
+            chkAskForResurrectMapCoords.Checked = cfg.AskForResurrectIncludeMapCoordinates
+        End If
+        UpdateAskForResurrectUi()
+
         _lootScannerEnabled = cfg.LootScannerEnabled
         UpdateLootScannerButtons()
         If cboNotificationProvider IsNot Nothing Then
@@ -13817,27 +14130,27 @@ Public Class Form1
         SetNumericControlValue(nudLootPickupSeconds, CDec(Math.Max(100, cfg.LootPickupIntervalMs) / 1000.0))
         SetNumericControlValue(nudLootPickupVerifyMs, CDec(Math.Max(80, cfg.LootPickupVerifyDelayMs)))
         SetNumericControlValue(nudLootNameMatchThreshold, CDec(cfg.LootNameMatchThresholdPercent))
-        If chkLootNameAutoPickup IsNot Nothing Then
-            chkLootNameAutoPickup.Checked = cfg.LootNameAutoPickupEnabled
+        _autoPartyInviteEnabled = cfg.AutoPartyInviteEnabled
+        If cboAutoPartyInviteKey IsNot Nothing Then
+            cboAutoPartyInviteKey.SelectedItem = If(String.IsNullOrWhiteSpace(cfg.AutoPartyInviteKey), DefaultAutoPartyInviteKey, cfg.AutoPartyInviteKey.Trim())
         End If
-        SetNumericControlValue(nudLootNamePickupOffsetX, CDec(cfg.LootNamePickupOffsetX))
-        SetNumericControlValue(nudLootNamePickupOffsetY, CDec(cfg.LootNamePickupOffsetY))
-        If cfg.LootNamePickupPointX >= 0 AndAlso cfg.LootNamePickupPointY >= 0 Then
-            _lootNamePickupPointX = cfg.LootNamePickupPointX
-            _lootNamePickupPointY = cfg.LootNamePickupPointY
+        SetNumericControlValue(nudAutoPartyInviteSeconds, CDec(Math.Max(1, cfg.AutoPartyInviteIntervalMs) / 1000.0))
+        If cfg.AutoPartyInvitePointX >= 0 AndAlso cfg.AutoPartyInvitePointY >= 0 Then
+            _autoPartyPointX = cfg.AutoPartyInvitePointX
+            _autoPartyPointY = cfg.AutoPartyInvitePointY
         Else
-            _lootNamePickupPointX = -1
-            _lootNamePickupPointY = -1
+            _autoPartyPointX = -1
+            _autoPartyPointY = -1
         End If
-        _isPickingLootNamePickupPoint = False
-        SetNumericControlValue(nudLootNamePickupClickDelayMs, CDec(Math.Max(0, cfg.LootNamePickupClickDelayMs)))
-        SetNumericControlValue(nudLootNamePickupFPressCount, CDec(Math.Max(1, cfg.LootNamePickupFPressCount)))
-        SetNumericControlValue(nudLootNamePickupFPressGapMs, CDec(Math.Max(0, cfg.LootNamePickupFPressGapMs)))
-        SetNumericControlValue(nudLootNamePickupMouseHoldMs, CDec(Math.Max(0, cfg.LootNamePickupMouseHoldMs)))
-        If chkLootNamePickupRestoreCursor IsNot Nothing Then
-            chkLootNamePickupRestoreCursor.Checked = cfg.LootNamePickupRestoreCursor
+        _isPickingAutoPartyPoint = False
+        _autoPartyMessageEnabled = cfg.AutoPartyMessageEnabled
+        If txtAutoPartyMessageText IsNot Nothing Then
+            txtAutoPartyMessageText.Text = If(String.IsNullOrWhiteSpace(cfg.AutoPartyMessageText), DefaultAutoPartyMessageText, cfg.AutoPartyMessageText.Trim())
         End If
-        UpdateLootNamePickupPointUi()
+        SetNumericControlValue(nudAutoPartyMessageSeconds, CDec(Math.Max(1, cfg.AutoPartyMessageIntervalMs) / 1000.0))
+        UpdateAutoPartyPointUi()
+        UpdateAutoPartyInviteUi()
+        UpdateAutoPartyMessageUi()
 
         If cfg.LootRejectClickEnabled AndAlso cfg.LootRejectPointX >= 0 AndAlso cfg.LootRejectPointY >= 0 Then
             _lootRejectPointX = cfg.LootRejectPointX
@@ -15976,6 +16289,9 @@ Public Class Form1
         End If
         If _resurrectOverlayForm IsNot Nothing AndAlso Not _resurrectOverlayForm.IsDisposed Then
             _resurrectOverlayForm.Close()
+        End If
+        If _autoPartyOverlayForm IsNot Nothing AndAlso Not _autoPartyOverlayForm.IsDisposed Then
+            _autoPartyOverlayForm.Close()
         End If
         If _inGameBotToggleForm IsNot Nothing AndAlso Not _inGameBotToggleForm.IsDisposed Then
             RemoveHandler _inGameBotToggleForm.ToggleRequested, AddressOf InGameBotToggleRequested

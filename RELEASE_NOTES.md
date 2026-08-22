@@ -1,13 +1,13 @@
-# KathanaBot 1.0.112
+# KathanaBot 1.0.113
 
 ## What changed
 
-- **Party invites (and in-party resurrect prompts) are now accepted by pressing Enter** instead of clicking a calibrated "OK" button position. The `party_invite_ok_rect` calibration region has been removed entirely - there's nothing left to calibrate or miscalibrate for this dialog, since Enter accepts it regardless of screen position or resolution.
+- **Added "Auto Party"** on the Auto-Loot tab, hidden behind Developer Mode since it's still being finished: an invite loop that presses a user-picked key (1-0 or F1-F10) then clicks a calibrated fixed point (pickable by clicking directly in the game window, or typed in as exact X/Y), and a separate chat-message loop - each on its own interval, with an optional click overlay to preview the invite point. Replaces the old "Pickup By Name (Dynamic Label Click)" box. Along the way, fixed the invite key's click not actually landing (the key press wasn't foregrounding the game before the click) and fixed click overlays (Arrow Unbundle, Auto Resurrect, Auto Party, Auto Relaunch) disappearing whenever the control panel window is minimized.
 
 ## Recent change history - last 5
 
-1. **Party invite/ress-prompt auto-accept now presses Enter** instead of clicking a calibrated point; removed the now-unneeded `party_invite_ok_rect` calibration region.
-2. **Fixed disconnect recovery never clicking OK**: the OCR reader used for the dialog's "OK" button was tuned for the wrong text polarity (light-on-dark HUD text vs. the button's dark-on-light face) and its scoring favored longer, noisier reads over a correct short "OK".
-3. **Buff icon library moved to live next to the exe** (was `%AppData%`), so it travels with the standalone exe across computers; existing libraries migrate automatically on first run.
-4. **Added an "Achievements" tab** tracking Rupiah earned and EXP gained over rolling 10m/30m/60m/24h windows, correctly handling level-ups mid-window.
-5. **Key Summary now tracks a full 24 hours** instead of 60 minutes, with a new "Last 24h" column.
+1. **Added "Auto Party"** (hidden behind Developer Mode, still being finished): key+click invite loop plus a separate chat-message loop, each with its own interval and a typeable/pickable click point.
+2. **Fixed click overlays disappearing whenever the control panel window is minimized**, and fixed the Auto Party invite key's click not landing (key press now foregrounds the game before the click).
+3. **Added "Ask For Resurrection"**: nags party chat for a resurrection on a timer while death-paused, with optional map coordinates, without interrupting Auto Resurrect or Pause Combat On Death.
+4. **Party invite/ress-prompt auto-accept now presses Enter** instead of clicking a calibrated point; removed the now-unneeded `party_invite_ok_rect` calibration region.
+5. **Fixed disconnect recovery never clicking OK**: the OCR reader used for the dialog's "OK" button was tuned for the wrong text polarity (light-on-dark HUD text vs. the button's dark-on-light face) and its scoring favored longer, noisier reads over a correct short "OK".
