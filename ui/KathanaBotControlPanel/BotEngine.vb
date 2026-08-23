@@ -885,6 +885,7 @@ Public Class BotEngine
     Private Const DisconnectConfirmRequiredCount As Integer = 2
     Private Const DeathMessageConfirmWindowMs As Integer = 6000
     Private Const DeathMessageConfirmRequiredCount As Integer = 3
+    Private Const DeathMessageClearRequiredCount As Integer = 3
     Private Const DeathFullLifeThresholdPercent As Double = 98.0
     Private Const UnreachableConfirmWindowMs As Integer = 900
     Private Const UnreachableConfirmRequiredCount As Integer = 2
@@ -1117,6 +1118,7 @@ Public Class BotEngine
     Private _deathMessageOcrTaskGeneration As Long = -1L
     Private _lastDeathMessageCandidate As String = ""
     Private _deathMessageConfirmCount As Integer = 0
+    Private _deathMessageClearCount As Integer = 0
     Private _lastDeathMessageMatchAt As DateTime = DateTime.MinValue
     Private _combatPausedForDeath As Boolean = False
     Private _repairConfirmCount As Integer = 0
@@ -1450,6 +1452,7 @@ Public Class BotEngine
             _deathMessageOcrTask = Nothing
             _lastDeathMessageCandidate = ""
             _deathMessageConfirmCount = 0
+            _deathMessageClearCount = 0
             _lastDeathMessageMatchAt = DateTime.MinValue
             _combatPausedForDeath = False
             _repairConfirmCount = 0
@@ -2214,15 +2217,20 @@ Public Class BotEngine
                 frame IsNot Nothing OrElse
                 targetWindowSignalNoName OrElse
                 (mobHpPct >= Math.Max(0.6, cfg.MobHpPresenceThreshold * 0.7))
+            ' Refresh the Home current-target card and target filters at twice the configured
+            ' Mob OCR frequency. Keep a small floor so OCR cannot spin continuously.
+            Dim targetNameScanIntervalMs As Integer =
+                Math.Max(60, CInt(Math.Ceiling(Math.Max(1, cfg.MobNameScanIntervalMs) / 2.0R)))
+            Dim forcedTargetNameRefreshMs As Integer = Math.Max(60, Math.Min(90, targetNameScanIntervalMs))
             Dim forceMobNameRefresh As Boolean =
                 (monsterFilterActive OrElse cfg.EvadeDadatiEnabled) AndAlso
                 targetWindowSignalNoName AndAlso
-                ((now - _lastMobNameRead).TotalMilliseconds >= 180)
+                ((now - _lastMobNameRead).TotalMilliseconds >= forcedTargetNameRefreshMs)
             Dim mobName As String
             If shouldReadMobName Then
                 mobName = If(frame IsNot Nothing,
-                             ReadMobNameIfNeeded(frame, mobNameRegion, now, forceMobNameRefresh, cfg.MobNameScanIntervalMs),
-                             ReadMobNameFromClientRegionIfNeeded(hwnd, mobNameRegion, now, forceMobNameRefresh, cfg.MobNameScanIntervalMs))
+                             ReadMobNameIfNeeded(frame, mobNameRegion, now, forceMobNameRefresh, targetNameScanIntervalMs),
+                             ReadMobNameFromClientRegionIfNeeded(hwnd, mobNameRegion, now, forceMobNameRefresh, targetNameScanIntervalMs))
             Else
                 ' Avoid stale-name attacks after target switches.
                 _cachedMobName = ""
@@ -2317,7 +2325,7 @@ Public Class BotEngine
             Dim normMobName As String = NormalizeMobName(mobName)
             Dim dadatiNameIsFresh As Boolean =
                 _lastMobNameDetectedAt <> DateTime.MinValue AndAlso
-                (now - _lastMobNameDetectedAt).TotalMilliseconds <= Math.Max(750, cfg.MobNameScanIntervalMs * 2)
+                (now - _lastMobNameDetectedAt).TotalMilliseconds <= Math.Max(750, targetNameScanIntervalMs * 2)
             Dim evadeDadatiTarget As Boolean =
                 cfg.EvadeDadatiEnabled AndAlso
                 dadatiNameIsFresh AndAlso
@@ -2504,19 +2512,30 @@ Public Class BotEngine
             TrackMobHpMovement(targetValid, mobHpPct, now)
             TryHandleLootAfterKill(cfg, hwnd, targetHasHpSignal, now)
 
+            ' Death/capture uncertainty must be established before evaluating leveling guardrails.
+            ' Otherwise a dead character (no target, depleted bars) or one bad frame can promote a
+            ' temporary pause into a leveling guardrail. Guardrails now pause input and recover
+            ' automatically instead of cancelling the whole engine.
+            Dim deathPaused As Boolean = TryHandleDeathMessage(cfg, hwnd, frame, now, hpPct)
+            Dim guardrailTelemetryReliable As Boolean =
+                Not captureGlitch AndAlso
+                fullHpScanOk AndAlso
+                fullMpScanOk
             Dim guardrailReason As String = ""
-            If ShouldTriggerLevelingGuardrail(cfg, hpPct, mpPct, expPerHour, now, targetWindowVisible, guardrailReason) Then
+            If ShouldTriggerLevelingGuardrail(cfg, hpPct, mpPct, expPerHour, now, targetWindowVisible, guardrailTelemetryReliable, deathPaused, guardrailReason) Then
                 If frame IsNot Nothing Then
                     frame.Dispose()
                 End If
                 If mobHpRegionFrame IsNot Nothing Then
                     mobHpRegionFrame.Dispose()
                 End If
-                TriggerLevelingGuardrailStop(cfg, guardrailReason)
-                Exit While
+                TriggerLevelingGuardrailPause(cfg, guardrailReason)
+                RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
+                Await Task.Delay(loopDelayMs, token)
+                Continue While
             End If
+            ClearLevelingGuardrailPauseIfRecovered(cfg)
 
-            Dim deathPaused As Boolean = TryHandleDeathMessage(cfg, hwnd, frame, now, hpPct)
             Dim reason As String = If(deathPaused, "Character down: combat skills paused until full life. Auto Resurrect still active.", "")
             Dim actionSent As Boolean = TryHandleAutoAcceptPrompts(cfg, hwnd, frame, now, partyInviteScanRegion)
             If actionSent Then
@@ -3334,15 +3353,20 @@ Public Class BotEngine
         End SyncLock
     End Sub
 
-    Private Function ShouldTriggerLevelingGuardrail(cfg As BotConfig, hpPct As Double, mpPct As Double, expPerHour As Double, now As DateTime, targetWindowVisible As Boolean, ByRef guardrailReason As String) As Boolean
+    Private Function ShouldTriggerLevelingGuardrail(cfg As BotConfig, hpPct As Double, mpPct As Double, expPerHour As Double, now As DateTime, targetWindowVisible As Boolean, telemetryReliable As Boolean, deathPaused As Boolean, ByRef guardrailReason As String) As Boolean
         guardrailReason = ""
         If cfg Is Nothing OrElse Not cfg.LevelingAgentEnabled Then
             Return False
         End If
 
-        ' Intentionally does not stop on low/zero HP: the HP-bar read can be a false positive
-        ' (OCR/pixel misread), and a false stop is worse than continuing - Auto-Pot/heal keys and
-        ' the HP=0 alarm/notification already handle the real-HP-loss case without halting the agent.
+        ' Never turn a death pause or uncertain screen read into a permanent engine stop. HP near
+        ' zero also suppresses every guardrail (not only the HP rule): while dead, MP/no-target/EXP
+        ' readings are expected to look bad, and when the reading is false they are untrustworthy.
+        ' The loop remains alive so Auto Resurrect can work and ordinary processing resumes as soon
+        ' as reliable, recovered frames return.
+        If Not telemetryReliable OrElse deathPaused OrElse hpPct <= 2.0R Then
+            Return False
+        End If
 
         If cfg.LevelingStopMpEnabled AndAlso mpPct <= Math.Max(1, cfg.LevelingStopMpPercent) Then
             guardrailReason = $"MP reached leveling stop threshold ({mpPct:0.0}% <= {cfg.LevelingStopMpPercent}%)."
@@ -3369,13 +3393,15 @@ Public Class BotEngine
         Return False
     End Function
 
-    Private Sub TriggerLevelingGuardrailStop(cfg As BotConfig, reason As String)
-        Dim snapshot As BotStatus
+    Private Sub TriggerLevelingGuardrailPause(cfg As BotConfig, reason As String)
+        Dim snapshot As BotStatus = Nothing
+        Dim stateChanged As Boolean = False
         SyncLock _sync
+            Dim normalizedReason As String = If(reason, "").Trim()
+            stateChanged = Not _agentGuardrailTriggered OrElse Not String.Equals(_agentReason, normalizedReason, StringComparison.Ordinal)
             _agentState = LevelingAgentState.GuardedStop
-            _agentReason = If(reason, "").Trim()
+            _agentReason = normalizedReason
             _agentGuardrailTriggered = True
-            _status.Running = False
             _status.NotAttackingReason = _agentReason
             _status.ErrorMessage = ""
             _status.UpdatedAt = DateTime.UtcNow
@@ -3383,13 +3409,38 @@ Public Class BotEngine
             _status.AgentState = _agentState.ToString()
             _status.AgentReason = _agentReason
             _status.AgentGuardrailTriggered = True
-            snapshot = CloneStatus(_status)
-            If _cts IsNot Nothing AndAlso Not _cts.IsCancellationRequested Then
-                _cts.Cancel()
+            If stateChanged Then
+                snapshot = CloneStatus(_status)
             End If
         End SyncLock
 
-        RaiseEvent LogLine("Leveling agent guardrail stop: " & reason)
+        If stateChanged AndAlso snapshot IsNot Nothing Then
+            RaiseEvent LogLine("Leveling agent guardrail pause (engine remains running): " & reason)
+            RaiseEvent StatusUpdated(snapshot)
+        End If
+    End Sub
+
+    Private Sub ClearLevelingGuardrailPauseIfRecovered(cfg As BotConfig)
+        Dim snapshot As BotStatus = Nothing
+        SyncLock _sync
+            If Not _agentGuardrailTriggered Then
+                Return
+            End If
+
+            _agentGuardrailTriggered = False
+            _agentState = If(cfg IsNot Nothing AndAlso cfg.LevelingAgentEnabled, LevelingAgentState.Searching, LevelingAgentState.Disabled)
+            _agentReason = If(_agentState = LevelingAgentState.Searching, "Guardrail condition cleared; resuming automatically.", "")
+            _status.NotAttackingReason = _agentReason
+            _status.ErrorMessage = ""
+            _status.UpdatedAt = DateTime.UtcNow
+            _status.AgentEnabled = cfg IsNot Nothing AndAlso cfg.LevelingAgentEnabled
+            _status.AgentState = _agentState.ToString()
+            _status.AgentReason = _agentReason
+            _status.AgentGuardrailTriggered = False
+            snapshot = CloneStatus(_status)
+        End SyncLock
+
+        RaiseEvent LogLine("Leveling agent guardrail cleared; bot resumed automatically.")
         RaiseEvent StatusUpdated(snapshot)
     End Sub
 
@@ -6547,7 +6598,7 @@ Public Class BotEngine
             Return _cachedMobName
         End If
 
-        Dim effectiveMinIntervalMs As Integer = Math.Max(120, minIntervalMs)
+        Dim effectiveMinIntervalMs As Integer = Math.Max(60, minIntervalMs)
         If (Not forceRefresh) AndAlso _mobNameOcrStartedAt <> DateTime.MinValue AndAlso (now - _mobNameOcrStartedAt).TotalMilliseconds < effectiveMinIntervalMs Then
             Return _cachedMobName
         End If
@@ -7759,14 +7810,16 @@ Public Class BotEngine
     ''' Detects the death message ("If you click 'OK', you will respawn at the last saved
     ''' location.") and, once confirmed by 3 consecutive OCR reads (a single stray misread should
     ''' not pause combat), pauses every combat-skill row (attack/buff/heal/mana/max_health/special)
-    ''' until HP is back to near-full. This function never clicks anything - Auto Resurrect and every
-    ''' other system keep running normally during the pause; only the Actions list is suppressed by
-    ''' the caller checking this function's return value.
+    ''' until HP is back to near-full or the prompt is absent for 3 consecutive reads. Rechecking the
+    ''' prompt while paused prevents a false OCR confirmation from sticking forever. This function
+    ''' never clicks anything - Auto Resurrect and every other system keep running normally during
+    ''' the pause; only the Actions list is suppressed by the caller checking this function's return.
     ''' </summary>
     Private Function TryHandleDeathMessage(cfg As BotConfig, hwnd As IntPtr, frame As Bitmap, now As DateTime, hpPct As Double) As Boolean
         If cfg Is Nothing OrElse Not cfg.DeathMessagePauseEnabled Then
             _combatPausedForDeath = False
             _deathMessageConfirmCount = 0
+            _deathMessageClearCount = 0
             _lastDeathMessageCandidate = ""
             Return False
         End If
@@ -7775,15 +7828,15 @@ Public Class BotEngine
             If hpPct >= DeathFullLifeThresholdPercent Then
                 _combatPausedForDeath = False
                 _deathMessageConfirmCount = 0
+                _deathMessageClearCount = 0
                 _lastDeathMessageMatchAt = DateTime.MinValue
                 RaiseEvent LogLine("Full life detected. Resuming combat skills.")
                 Return False
             End If
-            Return True
         End If
 
         If hwnd = IntPtr.Zero OrElse frame Is Nothing Then
-            Return False
+            Return _combatPausedForDeath
         End If
 
         If _deathMessageOcrTask IsNot Nothing AndAlso _deathMessageOcrTask.IsCompleted Then
@@ -7806,23 +7859,19 @@ Public Class BotEngine
             End If
         End If
 
-        If _combatPausedForDeath Then
-            Return True
-        End If
-
         If _deathMessageOcrTask IsNot Nothing Then
-            Return False
+            Return _combatPausedForDeath
         End If
 
         Const scanIntervalMs As Integer = 700
         If _lastDeathMessageScan <> DateTime.MinValue AndAlso (now - _lastDeathMessageScan).TotalMilliseconds < scanIntervalMs Then
-            Return False
+            Return _combatPausedForDeath
         End If
 
         Dim region As RectRegion = If(cfg.DeathMessageScanRect, New RectRegion(349, 318, 328, 124))
         Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
         If rect.Width <= 1 OrElse rect.Height <= 1 Then
-            Return False
+            Return _combatPausedForDeath
         End If
 
         Dim crop As New Bitmap(rect.Width, rect.Height, PixelFormat.Format24bppRgb)
@@ -7857,12 +7906,13 @@ Public Class BotEngine
             crop.Dispose()
         End Try
 
-        Return False
+        Return _combatPausedForDeath
     End Function
 
     Private Sub ProcessDeathMessageOcrResult(rawText As String, now As DateTime)
         Dim matched As Boolean = IsDeathMessagePrompt(rawText)
         If matched Then
+            _deathMessageClearCount = 0
             If _lastDeathMessageMatchAt = DateTime.MinValue OrElse (now - _lastDeathMessageMatchAt).TotalMilliseconds > DeathMessageConfirmWindowMs Then
                 _deathMessageConfirmCount = 1
             Else
@@ -7878,6 +7928,16 @@ Public Class BotEngine
             Return
         End If
 
+        If _combatPausedForDeath Then
+            _deathMessageClearCount += 1
+            If _deathMessageClearCount >= DeathMessageClearRequiredCount Then
+                _combatPausedForDeath = False
+                _deathMessageClearCount = 0
+                RaiseEvent LogLine("Death prompt cleared on 3 consecutive reads. Resuming combat automatically without waiting for full HP.")
+            End If
+        Else
+            _deathMessageClearCount = 0
+        End If
         _deathMessageConfirmCount = 0
         _lastDeathMessageMatchAt = DateTime.MinValue
         _lastDeathMessageCandidate = ""
@@ -9129,9 +9189,11 @@ Public Class BotEngine
                 Continue For
             End If
 
-            ' OCR commonly confuses the final lowercase L, uppercase I, digit 1,
-            ' or vertical bar in Dadati. Fold those glyphs before comparing.
-            Dim folded As String = rawToken.Replace("l", "i").Replace("1", "i").Replace("|", "i")
+            ' OCR can render either "d" as the two-glyph sequence "cl", and commonly
+            ' confuses the final i with l, 1, or |. Folding in this order covers every
+            ' combination (for example cladati, daclati, claclati, and cladat1) while
+            ' retaining an exact final comparison so unrelated names are not avoided.
+            Dim folded As String = rawToken.Replace("cl", "d").Replace("l", "i").Replace("1", "i").Replace("|", "i")
             If folded.Equals("dadati", StringComparison.Ordinal) Then
                 Return True
             End If
