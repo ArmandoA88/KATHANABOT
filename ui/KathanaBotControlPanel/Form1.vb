@@ -333,6 +333,7 @@ Public Class Form1
     Private btnStopBot As Button
     Private btnFullSupport As Button
     Private btnBypassStuck As Button
+    Private btnLootAfterKill As Button
     Private btnPartyInviteAutoAccept As Button
     Private btnRessAutoAccept As Button
     Private btnPartyAsk As Button
@@ -429,6 +430,7 @@ Public Class Form1
     Private _lastRouteRecordingSavedPath As String = ""
     Private _fullSupportModeEnabled As Boolean = False
     Private _bypassStuckTarget As Boolean = True
+    Private _lootAfterKillEnabled As Boolean = False
     Private _partyInviteAutoAccept As Boolean = True
     Private _ressAutoAccept As Boolean = True
     Private _partyAskEnabled As Boolean = False
@@ -809,6 +811,7 @@ Public Class Form1
         Public Property DeveloperModeEnabled As Boolean = False
         Public Property HoldToShowGameWindowEnabled As Boolean = False
         Public Property HoldToShowGameWindowKey As String = "F10"
+        Public Property LootAfterKillEnabled As Boolean = False
         Public Property PartyInviteAutoAcceptEnabled As Boolean = True
         Public Property PartyRessAutoAcceptEnabled As Boolean = True
         Public Property AskForPartyEnabled As Boolean = False
@@ -5048,7 +5051,7 @@ Public Class Form1
             .AutoSize = True,
             .AutoSizeMode = AutoSizeMode.GrowAndShrink,
             .ColumnCount = 1,
-            .RowCount = 25,
+            .RowCount = 26,
             .GrowStyle = TableLayoutPanelGrowStyle.FixedSize,
             .Margin = New Padding(0),
             .Padding = New Padding(4)
@@ -5106,6 +5109,14 @@ Public Class Form1
             .BackColor = If(_bypassStuckTarget, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
             .ForeColor = Color.White
         }
+        btnLootAfterKill = New Button() With {
+            .Text = If(_lootAfterKillEnabled, "Loot After Kill: ON", "Loot After Kill: OFF"),
+            .Dock = DockStyle.Fill,
+            .MinimumSize = New Size(0, 38),
+            .Margin = New Padding(3, 3, 3, 3),
+            .BackColor = If(_lootAfterKillEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
+            .ForeColor = Color.White
+        }
         btnPartyInviteAutoAccept = New Button() With {
             .Text = If(_partyInviteAutoAccept, "Auto Accept Party: ON", "Auto Accept Party: OFF"),
             .Dock = DockStyle.Fill,
@@ -5158,6 +5169,7 @@ Public Class Form1
         AddHandler btnStopBot.Click, AddressOf StopClicked
         AddHandler btnFullSupport.Click, AddressOf ToggleFullSupportClicked
         AddHandler btnBypassStuck.Click, AddressOf ToggleStuckTargetBypassClicked
+        AddHandler btnLootAfterKill.Click, AddressOf ToggleLootAfterKillClicked
         AddHandler btnPartyInviteAutoAccept.Click, AddressOf TogglePartyInviteAutoAcceptClicked
         AddHandler btnRessAutoAccept.Click, AddressOf ToggleRessAutoAcceptClicked
         AddHandler btnPartyAsk.Click, AddressOf TogglePartyAskClicked
@@ -5235,7 +5247,7 @@ Public Class Form1
         Dim controls As Control() = {
             lblFullEdition, lblRunState, lblShortcutHint, lblState, lblSystem, hpMpLayout,
             lblMobName, lblExpRate, lblRupiahsRate, runRow, btnSaveSettings, btnStopBot,
-            btnFullSupport, btnBypassStuck, btnPartyInviteAutoAccept, btnRessAutoAccept,
+            btnFullSupport, btnBypassStuck, btnLootAfterKill, btnPartyInviteAutoAccept, btnRessAutoAccept,
             lblPartyAskEvery, nudPartyAskSeconds, lblPartyAskText, txtPartyAskText, btnPartyAsk, btnProfiles, btnHelp,
             holdToShowGameWindowRow, chkDeveloperMode
         }
@@ -9080,6 +9092,24 @@ Public Class Form1
         AppendLog(If(_bypassStuckTarget, "Auto-retarget for stuck targets enabled.", "Auto-retarget for stuck targets disabled."))
     End Sub
 
+    Private Sub ToggleLootAfterKillClicked(sender As Object, e As EventArgs)
+        _lootAfterKillEnabled = Not _lootAfterKillEnabled
+        UpdateLootAfterKillButton()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        AppendLog(If(_lootAfterKillEnabled,
+                     "Loot After Kill enabled: pressing F the instant a target's life hits 0.",
+                     "Loot After Kill disabled."))
+    End Sub
+
+    Private Sub UpdateLootAfterKillButton()
+        If btnLootAfterKill Is Nothing Then
+            Return
+        End If
+        btnLootAfterKill.Text = If(_lootAfterKillEnabled, "Loot After Kill: ON", "Loot After Kill: OFF")
+        btnLootAfterKill.BackColor = If(_lootAfterKillEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+    End Sub
+
     Private Sub TogglePartyAutoAcceptClicked(sender As Object, e As EventArgs)
         _litePartyAutoAccept = Not _litePartyAutoAccept
         UpdateLitePromptAutoAcceptButton()
@@ -9376,6 +9406,7 @@ Public Class Form1
             "- Stop Bot: sends hard stop macro then stops engine.",
             "- FS (Full Support): a support-only role that never presses E - normal retargeting, forced retargeting, manual Retarget Now, and Dadati evade are all disabled, so the character never selects or changes a target.",
             "- Auto Retarget If Stuck: allows stuck-target bypass logic. Disabled while FS is on.",
+            "- Loot After Kill: presses F immediately the instant the current target's life reads 0, instead of waiting on Loot Pickup's timer.",
             "- Retarget Now (E): manual retarget key.",
             "- Auto Accept Party/Ress: toggle OCR prompt auto accept.",
             "- Ask Party Every (sec) + Auto Ask Party Text + Auto Ask Party: periodic custom command.",
@@ -9508,6 +9539,7 @@ Public Class Form1
             "- Attack, Save Settings, Stop Bot.",
             "- FS (Full Support): rol de soporte puro que nunca presiona E - retarget normal, forzado, manual (Retarget Now) y la evasion de Dadati quedan deshabilitados; el personaje nunca selecciona ni cambia de objetivo.",
             "- Auto Retarget If Stuck: recuperacion por objetivo atascado. Deshabilitado mientras FS esta activo.",
+            "- Loot After Kill: presiona F apenas la vida del objetivo actual llega a 0, sin esperar el temporizador de Loot Pickup.",
             "- Retarget Now (E): retarget manual.",
             "- Auto Accept Party/Ress: aceptar prompts por OCR.",
             "- Ask Party Every (sec) + Auto Ask Party Text + Auto Ask Party: comando periodico personalizable.",
@@ -9629,6 +9661,7 @@ Public Class Form1
             "- Attack, Save Settings, Stop Bot.",
             "- FS (Full Support): support-only role na hindi kailanman pumipindot ng E - naka-disable ang normal retarget, forced retarget, manual Retarget Now, at Dadati evade, kaya hindi kailanman mag-target o magpalit ng target ang character.",
             "- Auto Retarget If Stuck: auto recover kapag stuck ang target. Naka-disable habang naka-on ang FS.",
+            "- Loot After Kill: pinipindot ang F agad pagka-0 na ng life ng kasalukuyang target, hindi na hinihintay ang timer ng Loot Pickup.",
             "- Retarget Now (E): manual retarget.",
             "- Auto Accept Party/Ress: auto accept prompts gamit OCR.",
             "- Ask Party Every (sec) + Auto Ask Party Text + Auto Ask Party: periodic custom command.",
@@ -10349,6 +10382,7 @@ Public Class Form1
             $"Running: {st.Running}{Environment.NewLine}" &
             $"FullSupportModeEnabled: {_fullSupportModeEnabled}{Environment.NewLine}" &
             $"BypassStuckTarget: {_bypassStuckTarget}{Environment.NewLine}" &
+            $"LootAfterKillEnabled: {_lootAfterKillEnabled}{Environment.NewLine}" &
             $"PromptAutoAccept (Party): {_partyInviteAutoAccept}{Environment.NewLine}" &
             $"PromptAutoAccept (Ress): {_ressAutoAccept}{Environment.NewLine}" &
             $"AutoAskPartyEnabled: {_partyAskEnabled}{Environment.NewLine}" &
@@ -12465,6 +12499,7 @@ Public Class Form1
         cfg.EvadeDadatiEnabled = (chkEvadeDadati IsNot Nothing AndAlso chkEvadeDadati.Checked)
         cfg.FullSupportModeEnabled = _fullSupportModeEnabled
         cfg.BypassStuckTarget = _bypassStuckTarget
+        cfg.LootAfterKillEnabled = _lootAfterKillEnabled
         cfg.PartyInviteAutoAcceptEnabled = _partyInviteAutoAccept
         cfg.PartyRessAutoAcceptEnabled = _ressAutoAccept
         cfg.PartyAskEnabled = _partyAskEnabled
@@ -13550,6 +13585,8 @@ Public Class Form1
             Dim parsedHoldToShowKey As Keys
             _holdToShowGameWindowKey = If([Enum].TryParse(Of Keys)(state.HoldToShowGameWindowKey, parsedHoldToShowKey), parsedHoldToShowKey, Keys.F10)
             UpdateHoldToShowGameWindowUi()
+            _lootAfterKillEnabled = state.LootAfterKillEnabled
+            UpdateLootAfterKillButton()
             _partyInviteAutoAccept = state.PartyInviteAutoAcceptEnabled
             _ressAutoAccept = state.PartyRessAutoAcceptEnabled
             UpdatePartyInviteAutoAcceptButton()
@@ -13715,6 +13752,7 @@ Public Class Form1
                 .DeveloperModeEnabled = _developerModeEnabled,
                 .HoldToShowGameWindowEnabled = _holdToShowGameWindowEnabled,
                 .HoldToShowGameWindowKey = _holdToShowGameWindowKey.ToString(),
+                .LootAfterKillEnabled = _lootAfterKillEnabled,
                 .PartyInviteAutoAcceptEnabled = _partyInviteAutoAccept,
                 .PartyRessAutoAcceptEnabled = _ressAutoAccept,
                 .AskForPartyEnabled = _partyAskEnabled,
@@ -13942,6 +13980,9 @@ Public Class Form1
             btnBypassStuck.Text = If(_bypassStuckTarget, "Auto Retarget If Stuck: ON", "Auto Retarget If Stuck: OFF")
             btnBypassStuck.BackColor = If(_bypassStuckTarget, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
         End If
+
+        _lootAfterKillEnabled = cfg.LootAfterKillEnabled
+        UpdateLootAfterKillButton()
 
         _partyInviteAutoAccept = cfg.PartyInviteAutoAcceptEnabled
         _ressAutoAccept = cfg.PartyRessAutoAcceptEnabled

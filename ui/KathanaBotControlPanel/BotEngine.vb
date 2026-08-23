@@ -286,6 +286,9 @@ Public Class BotConfig
     Public Property LootPickupEnabled As Boolean = False
     Public Property LootPickupIntervalMs As Integer = 4000
     Public Property LootPickupVerifyDelayMs As Integer = 220
+    ' Loot After Kill: watches the current target's HP reading and presses F the instant it drops
+    ' to 0, instead of waiting on LootPickupIntervalMs's timer - a separate, immediate trigger.
+    Public Property LootAfterKillEnabled As Boolean = False
     ' Auto Party: presses a user-picked hotkey then clicks a fixed calibrated screen point on one
     ' loop timer (the invite macro), and separately types a user-edited chat message on its own
     ' loop timer - two independent loops sharing nothing but the Auto-Loot tab UI.
@@ -680,6 +683,47 @@ Friend Module NativeMethods
     Friend Sub keybd_event(bVk As Byte, bScan As Byte, dwFlags As UInteger, dwExtraInfo As UIntPtr)
     End Sub
 
+    ' Raw Win32 clipboard access instead of System.Windows.Forms.Clipboard: the bot's tick loop runs
+    ' on a Task.Run thread-pool thread (MTA), and Clipboard's OLE calls throw outside an STA thread.
+    Friend Const CF_UNICODETEXT As UInteger = 13UI
+    Friend Const GMEM_MOVEABLE As UInteger = &H2UI
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function OpenClipboard(hWndNewOwner As IntPtr) As Boolean
+    End Function
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function CloseClipboard() As Boolean
+    End Function
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function EmptyClipboard() As Boolean
+    End Function
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function SetClipboardData(uFormat As UInteger, hMem As IntPtr) As IntPtr
+    End Function
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function GetClipboardData(uFormat As UInteger) As IntPtr
+    End Function
+
+    <DllImport("kernel32.dll", SetLastError:=True)>
+    Friend Function GlobalAlloc(uFlags As UInteger, dwBytes As UIntPtr) As IntPtr
+    End Function
+
+    <DllImport("kernel32.dll", SetLastError:=True)>
+    Friend Function GlobalLock(hMem As IntPtr) As IntPtr
+    End Function
+
+    <DllImport("kernel32.dll", SetLastError:=True)>
+    Friend Function GlobalUnlock(hMem As IntPtr) As Boolean
+    End Function
+
+    <DllImport("kernel32.dll", SetLastError:=True)>
+    Friend Function GlobalFree(hMem As IntPtr) As IntPtr
+    End Function
+
     Friend Const SPI_GETFOREGROUNDLOCKTIMEOUT As UInteger = &H2000UI
     Friend Const SPI_SETFOREGROUNDLOCKTIMEOUT As UInteger = &H2001UI
 
@@ -1011,6 +1055,7 @@ Public Class BotEngine
     Private _lastFullFrameCaptureAttemptAt As DateTime = DateTime.MinValue
     Private _lastLootPickup As DateTime = DateTime.MinValue
     Private _pendingLootPickupVerifyAt As DateTime = DateTime.MinValue
+    Private _lootAfterKillArmed As Boolean = False
     Private _lastArrowUnbundleAt As DateTime = DateTime.MinValue
     Private _arrowUnbundleNextIndex As Integer = 0
     Private _cachedArrowBundleIconBase64 As String = ""
@@ -1347,6 +1392,7 @@ Public Class BotEngine
             _lastCharacterNameOcrAt = DateTime.MinValue
             _lastLootPickup = DateTime.MinValue
             _pendingLootPickupVerifyAt = DateTime.MinValue
+            _lootAfterKillArmed = False
             _lastArrowUnbundleAt = DateTime.MinValue
             _arrowUnbundleNextIndex = 0
             _firstHitPending = False
@@ -2456,6 +2502,7 @@ Public Class BotEngine
             End If
             Dim effectiveTargetValid As Boolean = targetValid OrElse targetSignalHoldActive OrElse ((Not nameOnlyNonMobTarget) AndAlso combatLockActive AndAlso Not targetActionBlocked)
             TrackMobHpMovement(targetValid, mobHpPct, now)
+            TryHandleLootAfterKill(cfg, hwnd, targetHasHpSignal, now)
 
             Dim guardrailReason As String = ""
             If ShouldTriggerLevelingGuardrail(cfg, hpPct, mpPct, expPerHour, now, targetWindowVisible, guardrailReason) Then
@@ -6807,6 +6854,40 @@ Public Class BotEngine
         _pendingLootPickupVerifyAt = now.AddMilliseconds(Math.Max(120, cfg.LootPickupVerifyDelayMs))
     End Sub
 
+    ' Loot After Kill: independent of the interval-based Loot Pickup (F) above - this presses F the
+    ' moment the current target disappears right after we were actively attacking it, rather than
+    ' waiting on a timer.
+    '
+    ' This used to wait for the target's HP reading to hit (or come near) 0 before treating a vanish
+    ' as a kill, but HasTargetWindowSignal (what targetHasHpSignal is built from) requires either a
+    ' non-trivial amount of the HP bar's own color still on screen, or mobHpPct > 0.0 outright - so
+    ' the instant a mob's bar actually empties, the rest of the targeting logic already stops
+    ' reporting a target at all, and no HP-based threshold on the way down ever reliably matched what
+    ' was on screen right before the vanish. Since pressing F when there's nothing to loot is a no-op,
+    ' there's no need to be clever about confirming a kill specifically: any target that disappears
+    ' within a couple seconds of our last attack is worth trying to loot for.
+    Private Sub TryHandleLootAfterKill(cfg As BotConfig, hwnd As IntPtr, targetHasHpSignal As Boolean, now As DateTime)
+        If cfg Is Nothing OrElse Not cfg.LootAfterKillEnabled OrElse hwnd = IntPtr.Zero Then
+            _lootAfterKillArmed = False
+            Return
+        End If
+
+        If targetHasHpSignal Then
+            _lootAfterKillArmed = True
+            Return
+        End If
+
+        Const recentAttackWindowMs As Double = 3000.0
+        If _lootAfterKillArmed AndAlso _lastAttackAction <> DateTime.MinValue AndAlso (now - _lastAttackAction).TotalMilliseconds <= recentAttackWindowMs Then
+            If SendKey(hwnd, "F", FastKeyPressMs) Then
+                SetLastAction("F (Loot After Kill)")
+                RaiseEvent LogLine("Loot After Kill: target gone right after combat, pressed F.")
+            End If
+        End If
+
+        _lootAfterKillArmed = False
+    End Sub
+
     Private Sub TryHandleArrowUnbundle(cfg As BotConfig, hwnd As IntPtr, clientWidth As Integer, clientHeight As Integer, now As DateTime, actionSent As Boolean)
         If cfg Is Nothing OrElse hwnd = IntPtr.Zero OrElse Not cfg.ArrowUnbundleEnabled Then
             Return
@@ -7957,8 +8038,145 @@ Public Class BotEngine
         Return cleaned
     End Function
 
+    ' Sets the Windows clipboard to plain Unicode text via raw Win32 calls (not
+    ' System.Windows.Forms.Clipboard, which needs an STA thread this engine loop doesn't run on).
+    ' On success, the OS owns hGlobal from SetClipboardData onward - it must not be freed here.
+    Private Shared Function SetClipboardText(text As String) As Boolean
+        Dim bytes As Byte() = Encoding.Unicode.GetBytes(If(text, "") & ChrW(0))
+
+        Dim hGlobal As IntPtr = NativeMethods.GlobalAlloc(NativeMethods.GMEM_MOVEABLE, New UIntPtr(CUInt(bytes.Length)))
+        If hGlobal = IntPtr.Zero Then
+            Return False
+        End If
+
+        Dim locked As IntPtr = NativeMethods.GlobalLock(hGlobal)
+        If locked = IntPtr.Zero Then
+            NativeMethods.GlobalFree(hGlobal)
+            Return False
+        End If
+        Try
+            Marshal.Copy(bytes, 0, locked, bytes.Length)
+        Finally
+            NativeMethods.GlobalUnlock(hGlobal)
+        End Try
+
+        Dim opened As Boolean = False
+        For attempt As Integer = 1 To 5
+            If NativeMethods.OpenClipboard(IntPtr.Zero) Then
+                opened = True
+                Exit For
+            End If
+            Thread.Sleep(20)
+        Next
+        If Not opened Then
+            NativeMethods.GlobalFree(hGlobal)
+            Return False
+        End If
+
+        Try
+            NativeMethods.EmptyClipboard()
+            If NativeMethods.SetClipboardData(NativeMethods.CF_UNICODETEXT, hGlobal) = IntPtr.Zero Then
+                NativeMethods.GlobalFree(hGlobal)
+                Return False
+            End If
+            Return True
+        Finally
+            NativeMethods.CloseClipboard()
+        End Try
+    End Function
+
+    ' Reads back plain Unicode text currently on the clipboard, or Nothing if there isn't any (or it
+    ' isn't text) - used to save whatever the user had copied before SendPartyAskCommand borrows the
+    ' clipboard for a paste, so it can be put back afterward instead of silently overwritten.
+    Private Shared Function GetClipboardText() As String
+        Dim opened As Boolean = False
+        For attempt As Integer = 1 To 5
+            If NativeMethods.OpenClipboard(IntPtr.Zero) Then
+                opened = True
+                Exit For
+            End If
+            Thread.Sleep(20)
+        Next
+        If Not opened Then
+            Return Nothing
+        End If
+
+        Try
+            Dim handle As IntPtr = NativeMethods.GetClipboardData(NativeMethods.CF_UNICODETEXT)
+            If handle = IntPtr.Zero Then
+                Return Nothing
+            End If
+            Dim locked As IntPtr = NativeMethods.GlobalLock(handle)
+            If locked = IntPtr.Zero Then
+                Return Nothing
+            End If
+            Try
+                Return Marshal.PtrToStringUni(locked)
+            Finally
+                NativeMethods.GlobalUnlock(handle)
+            End Try
+        Catch
+            Return Nothing
+        Finally
+            NativeMethods.CloseClipboard()
+        End Try
+    End Function
+
+    ' Posts a Ctrl+V key combo directly to hwnd the same way SendKey posts single keys (no real
+    ' hardware event, no foreground requirement) - consistent with how this window already accepts
+    ' posted per-character keystrokes for chat, so the game's own paste handling should see it the
+    ' same way it already sees typed characters.
+    Private Shared Function SendCtrlVPaste(hwnd As IntPtr) As Boolean
+        If hwnd = IntPtr.Zero Then
+            Return False
+        End If
+
+        Const VK_CONTROL As Integer = &H11
+        Const VK_V As Integer = &H56
+        Dim scanCtrl As UInteger = NativeMethods.MapVirtualKey(CUInt(VK_CONTROL), 0UI)
+        Dim scanV As UInteger = NativeMethods.MapVirtualKey(CUInt(VK_V), 0UI)
+        Dim lparamCtrlDown As Integer = 1 Or (CInt(scanCtrl) << 16)
+        Dim lparamCtrlUp As Integer = lparamCtrlDown Or (1 << 30) Or (1 << 31)
+        Dim lparamVDown As Integer = 1 Or (CInt(scanV) << 16)
+        Dim lparamVUp As Integer = lparamVDown Or (1 << 30) Or (1 << 31)
+
+        Try
+            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_KEYDOWN), New IntPtr(VK_CONTROL), New IntPtr(lparamCtrlDown))
+            Thread.Sleep(15)
+            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_KEYDOWN), New IntPtr(VK_V), New IntPtr(lparamVDown))
+            Thread.Sleep(20)
+            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_KEYUP), New IntPtr(VK_V), New IntPtr(lparamVUp))
+            Thread.Sleep(15)
+            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_KEYUP), New IntPtr(VK_CONTROL), New IntPtr(lparamCtrlUp))
+            Return True
+        Catch
+            Return False
+        End Try
+    End Function
+
+    ' Pasting is one clipboard write + one Ctrl+V instead of a posted keystroke (with a settle
+    ' delay) per character, and it carries any character through untouched instead of silently
+    ' dropping whatever PartyAskCharToKeyName doesn't map (e.g. "!", "?", accented letters). Falls
+    ' back to the old per-character typing if the clipboard couldn't be claimed (e.g. another app
+    ' holding it right at that moment), so this can never regress to typing nothing at all.
     Private Shared Function SendPartyAskCommand(hwnd As IntPtr, rawText As String) As Boolean
         Dim commandText As String = NormalizePartyAskCommand(rawText)
+
+        Dim previousClipboardText As String = GetClipboardText()
+        If SetClipboardText(commandText) Then
+            Dim pasted As Boolean = SendCtrlVPaste(hwnd)
+            ' Give the game a moment to actually process the posted Ctrl+V and read the clipboard
+            ' before putting the user's own content back - PostMessage only queues the keystrokes,
+            ' it doesn't wait for the target window to have handled them yet.
+            Thread.Sleep(150)
+            If previousClipboardText IsNot Nothing Then
+                SetClipboardText(previousClipboardText)
+            End If
+            If pasted Then
+                Return True
+            End If
+        End If
+
         Dim typedAny As Boolean = False
         For Each ch As Char In commandText
             Dim keyName As String = PartyAskCharToKeyName(ch)
@@ -11664,29 +11882,41 @@ Public Class BotEngine
             End Try
         End If
 
-        ' Verification is a single, immediate readback right after SetCursorPos with generous
-        ' tolerance - no sleep-and-retry loop. An earlier version retried with a short sleep in
-        ' between, but that sleep only widens the window for the user's own real mouse movement
-        ' (or any other transient cursor activity) to shift the position before the readback,
-        ' which was rejecting perfectly good attempts and silently disabling arrow unbundle
-        ' entirely. SetCursorPos's own success/failure is the primary signal; this readback only
-        ' guards against something actively fighting the cursor (e.g. a game confining it to a
-        ' different region), which shows up as a large, persistent offset - not a few pixels.
-        Const cursorPositionTolerancePixels As Integer = 8
-        If Not NativeMethods.SetCursorPos(state.ScreenPoint.X, state.ScreenPoint.Y) Then
-            diagnostic = $"SetCursorPos failed (target screen {state.ScreenPoint.X},{state.ScreenPoint.Y})"
-            Return False
-        End If
+        ' A generous (8px) one-shot tolerance used to live here, on the theory that a sleep-and-retry
+        ' loop would only widen the window for the user's own real mouse movement to shift the
+        ' position before the readback. But that generosity was the bug: some games resolve a click's
+        ' position from GetCursorPos rather than the coordinates carried in the click message (see
+        ' LeftClickVerifiedAtClientPoint's own remark on this), so "close" reads as a click a few
+        ' pixels off the intended point - on a small enough target (a party-invite hotspot, say) that
+        ' can miss the UI entirely and land on open game world, which some games read as "move here."
+        ' Retrying immediately (no Thread.Sleep - each attempt is two syscalls, microseconds apart)
+        ' recovers from a single-tick jitter read without materially widening any interference window,
+        ' while a tight tolerance means a persistent few-pixel drift now correctly fails closed instead
+        ' of silently clicking wherever the cursor actually landed.
+        Const cursorPositionTolerancePixels As Integer = 2
+        Const maxSetCursorAttempts As Integer = 5
+        Dim confirmedPos As NativeMethods.POINT = Nothing
+        Dim positionConfirmed As Boolean = False
+        For attempt As Integer = 1 To maxSetCursorAttempts
+            If Not NativeMethods.SetCursorPos(state.ScreenPoint.X, state.ScreenPoint.Y) Then
+                diagnostic = $"SetCursorPos failed (target screen {state.ScreenPoint.X},{state.ScreenPoint.Y})"
+                Return False
+            End If
 
-        Dim confirmedPos As NativeMethods.POINT
-        If Not NativeMethods.GetCursorPos(confirmedPos) Then
-            diagnostic = "GetCursorPos failed after SetCursorPos"
-            Return False
-        End If
+            If Not NativeMethods.GetCursorPos(confirmedPos) Then
+                diagnostic = "GetCursorPos failed after SetCursorPos"
+                Return False
+            End If
 
-        If Math.Abs(confirmedPos.X - state.ScreenPoint.X) > cursorPositionTolerancePixels OrElse
-           Math.Abs(confirmedPos.Y - state.ScreenPoint.Y) > cursorPositionTolerancePixels Then
-            diagnostic = $"target screen {state.ScreenPoint.X},{state.ScreenPoint.Y} but cursor read back at {confirmedPos.X},{confirmedPos.Y}"
+            If Math.Abs(confirmedPos.X - state.ScreenPoint.X) <= cursorPositionTolerancePixels AndAlso
+               Math.Abs(confirmedPos.Y - state.ScreenPoint.Y) <= cursorPositionTolerancePixels Then
+                positionConfirmed = True
+                Exit For
+            End If
+        Next
+
+        If Not positionConfirmed Then
+            diagnostic = $"target screen {state.ScreenPoint.X},{state.ScreenPoint.Y} but cursor kept reading back at {confirmedPos.X},{confirmedPos.Y} after {maxSetCursorAttempts} attempts"
             Return False
         End If
 
