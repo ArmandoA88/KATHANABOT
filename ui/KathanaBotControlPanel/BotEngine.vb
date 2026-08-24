@@ -529,6 +529,7 @@ Public Class BotStatus
     Public Property ExpPerHour As Double = -1
     Public Property RupiahsTotal As Long = -1
     Public Property RupiahsPerHour As Double = -1
+    Public Property SessionKilledMobs As Integer
     Public Property PartySize As Integer
     Public Property PartyAliveCount As Integer
     Public Property PartyAllAlive As Boolean
@@ -1260,6 +1261,9 @@ Public Class BotEngine
     Private _lootScannerCaptureRequestedAt As DateTime = DateTime.MinValue
     Private _lootScannerAltHeld As Boolean = False
     Private _lootScannerProcessingTask As Task = Nothing
+    Private _sessionKilledMobs As Integer = 0
+    Private _sessionKillTrackingArmed As Boolean = False
+    Private _sessionKillMissingSignalCount As Integer = 0
     Private _engineRestartCount As Integer = 0
     Private _engineLastRestartUtc As DateTime = DateTime.MinValue
     Private _agentState As LevelingAgentState = LevelingAgentState.Disabled
@@ -1564,6 +1568,11 @@ Public Class BotEngine
             _lootScannerCaptureRequestedAt = DateTime.MinValue
             _lootScannerAltHeld = False
             _lootScannerProcessingTask = Nothing
+            ' The kill total belongs to the lifetime of this engine/application instance, so a
+            ' Stop -> Start cycle must not clear it. The field starts at zero only when the EXE
+            ' creates a fresh BotEngine.
+            _sessionKillTrackingArmed = False
+            _sessionKillMissingSignalCount = 0
             _lastFullFrameCaptureAttemptAt = DateTime.MinValue
             _lastActionTick.Clear()
             _lastStatusRaisedAt = DateTime.MinValue
@@ -2416,6 +2425,7 @@ Public Class BotEngine
             Dim nameOnlyNonMobTarget As Boolean = normMobName <> "" AndAlso (Not targetHasHpSignal) AndAlso mobMaxHp <= 0
             If nameOnlyNonMobTarget Then
                 ClearCombatLock()
+                DisarmSessionKillTracking()
                 _firstHitPending = False
                 _firstHitTargetSignature = ""
                 _firstHitWindowUntil = DateTime.MinValue
@@ -2443,6 +2453,7 @@ Public Class BotEngine
                     If(neverSeenTargetWindow, 0.0, (now - _lastTargetWindowSeen).TotalSeconds)
                 If neverSeenTargetWindow OrElse sinceLastRealTargetSeconds >= StuckCombatLockForceReleaseSeconds Then
                     ClearCombatLock()
+                    DisarmSessionKillTracking()
                     combatLockActive = False
                     _lastTargetValidAt = DateTime.MinValue
                     _lastLivingTargetSignalAt = DateTime.MinValue
@@ -2509,6 +2520,7 @@ Public Class BotEngine
                 targetSignalHoldActive = False
             End If
             Dim effectiveTargetValid As Boolean = targetValid OrElse targetSignalHoldActive OrElse ((Not nameOnlyNonMobTarget) AndAlso combatLockActive AndAlso Not targetActionBlocked)
+            TrackSessionKill(targetHasHpSignal, (Not captureGlitch) AndAlso mobHpScanOk, now)
             TrackMobHpMovement(targetValid, mobHpPct, now)
             TryHandleLootAfterKill(cfg, hwnd, targetHasHpSignal, now)
 
@@ -2724,6 +2736,8 @@ Public Class BotEngine
                         ' refresh the very lock that permitted it, sustaining it forever.
                         If targetValid Then
                             BeginCombatLock(targetSignature, DateTime.UtcNow)
+                            _sessionKillTrackingArmed = True
+                            _sessionKillMissingSignalCount = 0
                         End If
                         _firstHitPending = False
                         _firstHitWindowUntil = DateTime.MinValue
@@ -6905,6 +6919,43 @@ Public Class BotEngine
         _pendingLootPickupVerifyAt = now.AddMilliseconds(Math.Max(120, cfg.LootPickupVerifyDelayMs))
     End Sub
 
+    ' Counts one session kill only after this engine actually attacked a valid living target and
+    ' that target then remained absent for consecutive reliable frames. Bot-driven retargets and
+    ' avoid/filter paths explicitly disarm this state so they cannot inflate the counter.
+    Private Sub TrackSessionKill(targetHasHpSignal As Boolean, telemetryReliable As Boolean, now As DateTime)
+        If targetHasHpSignal Then
+            _sessionKillMissingSignalCount = 0
+            Return
+        End If
+        If Not _sessionKillTrackingArmed Then
+            Return
+        End If
+        If Not telemetryReliable Then
+            _sessionKillMissingSignalCount = 0
+            Return
+        End If
+
+        Const recentAttackWindowMs As Double = 4000.0
+        If _lastAttackAction = DateTime.MinValue OrElse (now - _lastAttackAction).TotalMilliseconds > recentAttackWindowMs Then
+            DisarmSessionKillTracking()
+            Return
+        End If
+
+        _sessionKillMissingSignalCount += 1
+        If _sessionKillMissingSignalCount < CombatLockLostTargetConfirmFrames Then
+            Return
+        End If
+
+        _sessionKilledMobs += 1
+        RaiseEvent LogLine($"Application-session kill confirmed. Mobs killed: {_sessionKilledMobs:N0}.")
+        DisarmSessionKillTracking()
+    End Sub
+
+    Private Sub DisarmSessionKillTracking()
+        _sessionKillTrackingArmed = False
+        _sessionKillMissingSignalCount = 0
+    End Sub
+
     ' Loot After Kill: independent of the interval-based Loot Pickup (F) above - this presses F the
     ' moment the current target disappears right after we were actively attacking it, rather than
     ' waiting on a timer.
@@ -9360,6 +9411,7 @@ Public Class BotEngine
             _lastNormalRetarget = now
         End If
         If SendKey(hwnd, "E", FastKeyPressMs) Then
+            DisarmSessionKillTracking()
             ClearCombatLock()
             ClearMobMaxHpTracking()
             ResetMobNameTrackingAfterRetarget()
@@ -10353,6 +10405,7 @@ Public Class BotEngine
             _status.PartySize = _lastPartySize
             _status.PartyAliveCount = _lastPartyAliveCount
             _status.PartyAllAlive = _lastPartyAllAlive
+            _status.SessionKilledMobs = _sessionKilledMobs
             _status.CharacterName = _lastCharacterName
             PruneRepairMatchTimes(DateTime.UtcNow)
             _repairConfirmCount = _repairMatchTimes.Count
@@ -10387,7 +10440,7 @@ Public Class BotEngine
             Return ""
         End If
 
-        Return $"{status.Running}|{status.RunStartedAtUtc:O}|{status.WindowFound}|{status.NotAttackingReason}|{status.ErrorMessage}|{status.GameDisconnected}|{status.AgentState}|{status.AgentReason}|{status.AgentGuardrailTriggered}|{status.TargetValid}|{status.MobName}|{status.MobHpText}|{status.MapCoordinateText}|{status.MapCoordinateX}|{status.MapCoordinateY}|{status.MapCoordinateConfidence}|{status.MapCoordinateDebugLog}|{status.HoldPlaceActive}|{status.HoldPlaceReason}|{status.HoldPlaceDistance:0.0}|{status.RepairConfirmCount}|{status.RepairTriggerCount}"
+        Return $"{status.Running}|{status.RunStartedAtUtc:O}|{status.WindowFound}|{status.NotAttackingReason}|{status.ErrorMessage}|{status.GameDisconnected}|{status.AgentState}|{status.AgentReason}|{status.AgentGuardrailTriggered}|{status.TargetValid}|{status.MobName}|{status.MobHpText}|{status.SessionKilledMobs}|{status.MapCoordinateText}|{status.MapCoordinateX}|{status.MapCoordinateY}|{status.MapCoordinateConfidence}|{status.MapCoordinateDebugLog}|{status.HoldPlaceActive}|{status.HoldPlaceReason}|{status.HoldPlaceDistance:0.0}|{status.RepairConfirmCount}|{status.RepairTriggerCount}"
     End Function
 
     Private Function CloneStatus(src As BotStatus) As BotStatus
@@ -10404,6 +10457,7 @@ Public Class BotEngine
             .ExpPerHour = src.ExpPerHour,
             .RupiahsTotal = src.RupiahsTotal,
             .RupiahsPerHour = src.RupiahsPerHour,
+            .SessionKilledMobs = src.SessionKilledMobs,
             .PartySize = src.PartySize,
             .PartyAliveCount = src.PartyAliveCount,
             .PartyAllAlive = src.PartyAllAlive,

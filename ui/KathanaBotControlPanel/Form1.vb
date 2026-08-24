@@ -340,6 +340,181 @@ Public Class Form1
         End Sub
     End Class
 
+    ' Compact animated meter used by the target and progression cards. Keeping it as a child
+    ' control lets DashboardCard reserve real layout space for the bar instead of painting behind
+    ' its text labels, which avoids overlap at smaller window sizes.
+    Private NotInheritable Class DashboardProgressMeter
+        Inherits Control
+
+        Private ReadOnly _valueTimer As New System.Windows.Forms.Timer() With {.Interval = 16}
+        Private _displayPercent As Double = 0.0
+        Private _targetPercent As Double = 0.0
+        Private _fillColor As Color = ThemeAccent
+
+        Public Sub New()
+            Dock = DockStyle.Bottom
+            Height = 12
+            Visible = False
+            SetStyle(ControlStyles.AllPaintingInWmPaint Or
+                     ControlStyles.OptimizedDoubleBuffer Or
+                     ControlStyles.UserPaint Or
+                     ControlStyles.ResizeRedraw Or
+                     ControlStyles.SupportsTransparentBackColor, True)
+            BackColor = Color.Transparent
+            AddHandler _valueTimer.Tick, AddressOf ValueTimerTick
+        End Sub
+
+        Public Sub SetProgress(percent As Double, color As Color, showMeter As Boolean)
+            _fillColor = color
+            If Not showMeter Then
+                _valueTimer.Stop()
+                _targetPercent = 0.0
+                _displayPercent = 0.0
+                Visible = False
+                Invalidate()
+                Return
+            End If
+
+            _targetPercent = Math.Max(0.0, Math.Min(100.0, percent))
+            Visible = True
+            If Math.Abs(_targetPercent - _displayPercent) < 0.08 Then
+                _displayPercent = _targetPercent
+                Invalidate()
+            ElseIf Not _valueTimer.Enabled Then
+                _valueTimer.Start()
+            End If
+        End Sub
+
+        Private Sub ValueTimerTick(sender As Object, e As EventArgs)
+            _displayPercent += (_targetPercent - _displayPercent) * 0.2
+            If Math.Abs(_targetPercent - _displayPercent) < 0.08 Then
+                _displayPercent = _targetPercent
+                _valueTimer.Stop()
+            End If
+            Invalidate()
+        End Sub
+
+        Protected Overrides Sub OnPaint(e As PaintEventArgs)
+            MyBase.OnPaint(e)
+            If Width <= 1 OrElse Height <= 1 Then
+                Return
+            End If
+
+            e.Graphics.SmoothingMode = Drawing2D.SmoothingMode.AntiAlias
+            Const trackHeight As Integer = 8
+            Dim trackRect As New Rectangle(0, (Height - trackHeight) \ 2, Width, trackHeight)
+            Using trackPath As Drawing2D.GraphicsPath = RoundedRectPath(trackRect, trackHeight \ 2),
+                  trackBrush As New SolidBrush(Color.FromArgb(115, 4, 10, 20))
+                e.Graphics.FillPath(trackBrush, trackPath)
+            End Using
+
+            Dim fillWidth As Integer = CInt(Math.Round(Width * (_displayPercent / 100.0)))
+            If fillWidth <= 0 Then
+                Return
+            End If
+            fillWidth = Math.Max(Math.Min(trackHeight, Width), Math.Min(Width, fillWidth))
+            Dim fillRect As New Rectangle(trackRect.X, trackRect.Y, fillWidth, trackRect.Height)
+            Using fillPath As Drawing2D.GraphicsPath = RoundedRectPath(fillRect, trackHeight \ 2),
+                  fillBrush As New Drawing2D.LinearGradientBrush(fillRect, BlendColors(_fillColor, Color.White, 0.18), _fillColor, Drawing2D.LinearGradientMode.Horizontal)
+                e.Graphics.FillPath(fillBrush, fillPath)
+            End Using
+        End Sub
+
+        Protected Overrides Sub Dispose(disposing As Boolean)
+            If disposing Then
+                _valueTimer.Stop()
+                _valueTimer.Dispose()
+            End If
+            MyBase.Dispose(disposing)
+        End Sub
+    End Class
+
+    Private NotInheritable Class DashboardSparkline
+        Inherits Control
+
+        Private _samples As New List(Of Double)()
+        Private _lineColor As Color = Color.FromArgb(170, 135, 255)
+
+        Public Sub New()
+            Dock = DockStyle.Bottom
+            Height = 34
+            Visible = False
+            SetStyle(ControlStyles.AllPaintingInWmPaint Or
+                     ControlStyles.OptimizedDoubleBuffer Or
+                     ControlStyles.UserPaint Or
+                     ControlStyles.ResizeRedraw Or
+                     ControlStyles.SupportsTransparentBackColor, True)
+            BackColor = Color.Transparent
+        End Sub
+
+        Public Sub SetSamples(samples As IEnumerable(Of Double), color As Color, showGraph As Boolean)
+            _lineColor = color
+            Dim valid As List(Of Double) = If(samples, Enumerable.Empty(Of Double)()).
+                Where(Function(value) Not Double.IsNaN(value) AndAlso Not Double.IsInfinity(value) AndAlso value >= 0.0).
+                ToList()
+            If valid.Count > 60 Then
+                valid.RemoveRange(0, valid.Count - 60)
+            End If
+            _samples = valid
+            Visible = showGraph AndAlso _samples.Count > 0
+            Invalidate()
+        End Sub
+
+        Protected Overrides Sub OnPaint(e As PaintEventArgs)
+            MyBase.OnPaint(e)
+            If _samples.Count = 0 OrElse Width < 4 OrElse Height < 4 Then
+                Return
+            End If
+
+            e.Graphics.SmoothingMode = Drawing2D.SmoothingMode.AntiAlias
+            Dim graphRect As New RectangleF(1.0F, 3.0F, Math.Max(1.0F, Width - 3.0F), Math.Max(1.0F, Height - 7.0F))
+            Dim minimum As Double = _samples.Min()
+            Dim maximum As Double = _samples.Max()
+            If maximum - minimum < 0.05 Then
+                Dim padding As Double = Math.Max(0.25, maximum * 0.04)
+                minimum = Math.Max(0.0, minimum - padding)
+                maximum += padding
+            Else
+                Dim padding As Double = (maximum - minimum) * 0.12
+                minimum = Math.Max(0.0, minimum - padding)
+                maximum += padding
+            End If
+            Dim valueRange As Double = Math.Max(0.01, maximum - minimum)
+
+            Dim points As New List(Of PointF)(_samples.Count)
+            For index As Integer = 0 To _samples.Count - 1
+                Dim x As Single = If(_samples.Count = 1, graphRect.Right, CSng(graphRect.Left + ((graphRect.Width * index) / (_samples.Count - 1.0))))
+                Dim normalized As Double = (_samples(index) - minimum) / valueRange
+                Dim y As Single = CSng(graphRect.Bottom - (graphRect.Height * normalized))
+                points.Add(New PointF(x, y))
+            Next
+
+            Using baselinePen As New Pen(Color.FromArgb(42, 145, 160, 190), 1.0F)
+                e.Graphics.DrawLine(baselinePen, graphRect.Left, graphRect.Bottom, graphRect.Right, graphRect.Bottom)
+            End Using
+            If points.Count > 1 Then
+                Using areaPath As New Drawing2D.GraphicsPath()
+                    areaPath.AddLines(points.ToArray())
+                    areaPath.AddLine(points(points.Count - 1), New PointF(graphRect.Right, graphRect.Bottom))
+                    areaPath.AddLine(New PointF(graphRect.Right, graphRect.Bottom), New PointF(graphRect.Left, graphRect.Bottom))
+                    areaPath.CloseFigure()
+                    Using areaBrush As New Drawing2D.LinearGradientBrush(graphRect, Color.FromArgb(72, _lineColor), Color.FromArgb(4, _lineColor), Drawing2D.LinearGradientMode.Vertical)
+                        e.Graphics.FillPath(areaBrush, areaPath)
+                    End Using
+                End Using
+                Using linePen As New Pen(_lineColor, 1.8F)
+                    linePen.LineJoin = Drawing2D.LineJoin.Round
+                    e.Graphics.DrawLines(linePen, points.ToArray())
+                End Using
+            End If
+
+            Dim latest As PointF = points(points.Count - 1)
+            Using dotBrush As New SolidBrush(BlendColors(_lineColor, Color.White, 0.2))
+                e.Graphics.FillEllipse(dotBrush, latest.X - 2.5F, latest.Y - 2.5F, 5.0F, 5.0F)
+            End Using
+        End Sub
+    End Class
+
     ' A small self-contained "at a glance" tile for the Dashboard tab: a rounded card with a dim
     ' caption on top and a large value line below. Custom-painted (not a GroupBox) because WinForms
     ' has no built-in rounded-panel control.
@@ -349,6 +524,8 @@ Public Class Form1
         Private ReadOnly _lblCaption As New Label()
         Private ReadOnly _lblValue As New Label()
         Private ReadOnly _lblSecondary As New Label()
+        Private ReadOnly _progressMeter As New DashboardProgressMeter()
+        Private ReadOnly _sparkline As New DashboardSparkline()
         Private ReadOnly _hoverTimer As New System.Windows.Forms.Timer() With {.Interval = 16}
         Private _accentColor As Color = ThemeAccent
         Private _hovered As Boolean = False
@@ -384,6 +561,8 @@ Public Class Form1
 
             Controls.Add(_lblValue)
             Controls.Add(_lblSecondary)
+            Controls.Add(_sparkline)
+            Controls.Add(_progressMeter)
             Controls.Add(_lblCaption)
 
             AddHandler MouseEnter, Sub() SetHovered(True)
@@ -431,6 +610,14 @@ Public Class Form1
             If _lblSecondary.ForeColor <> desiredColor Then
                 _lblSecondary.ForeColor = desiredColor
             End If
+        End Sub
+
+        Public Sub SetProgress(percent As Double, color As Color, Optional showMeter As Boolean = True)
+            _progressMeter.SetProgress(percent, color, showMeter)
+        End Sub
+
+        Public Sub SetRateHistory(samples As IEnumerable(Of Double), color As Color, Optional showGraph As Boolean = True)
+            _sparkline.SetSamples(samples, color, showGraph)
         End Sub
 
         Private Sub SetHovered(value As Boolean)
@@ -1064,8 +1251,8 @@ Public Class Form1
     Private _inGameBotToggleForm As InGameBotToggleForm
     Private _inGameBotToggleX As Integer = -1
     Private _inGameBotToggleY As Integer = 10
-    Private _inGameBotToggleWidth As Integer = 104
-    Private _inGameBotToggleHeight As Integer = 38
+    Private _inGameBotToggleWidth As Integer = 220
+    Private _inGameBotToggleHeight As Integer = 76
     Private _inGameBotToggleEdition As BotEdition = BotEdition.Full
     Private _autoStarted As Boolean = False
     Private Const AlarmVolumePercent As Integer = 85
@@ -1209,6 +1396,15 @@ Public Class Form1
     Private _lastAchievementSampleAt As DateTime = DateTime.MinValue
     Private _lastAchievementExpPercent As Double = -1
     Private _cumulativeExpEarned As Double = 0
+    Private _dashboardSessionRunStartedAtUtc As DateTime = DateTime.MinValue
+    Private _dashboardSessionStartRupiahs As Long = -1
+    Private _dashboardSessionRupiahsEarned As Long = 0
+    Private _dashboardSessionLastExpPercent As Double = -1
+    Private _dashboardSessionExpEarned As Double = 0.0
+    Private _dashboardLastRateSampleAtUtc As DateTime = DateTime.MinValue
+    Private ReadOnly _dashboardExpRateHistory As New List(Of Double)()
+    Private Const DashboardRateHistoryIntervalSeconds As Integer = 5
+    Private Const DashboardRateHistoryMaxSamples As Integer = 60
     Private ReadOnly _lootHistoryEvents As New List(Of LootHistoryEvent)()
     Private ReadOnly _lootHistoryEventsSync As New Object()
     Private Const MaxLootHistoryEvents As Integer = 500
@@ -1381,8 +1577,8 @@ Public Class Form1
         Public Property PeriodicScreenshotDirectory As String = ""
         Public Property InGameBotToggleX As Integer = -1
         Public Property InGameBotToggleY As Integer = 10
-        Public Property InGameBotToggleWidth As Integer = 104
-        Public Property InGameBotToggleHeight As Integer = 38
+        Public Property InGameBotToggleWidth As Integer = 220
+        Public Property InGameBotToggleHeight As Integer = 76
         Public Property UpdateRepositoryUrl As String = DefaultUpdateRepositoryUrl
         Public Property UpdateCheckAtStartup As Boolean = True
         Public Property UpdateIncludePrereleases As Boolean = False
@@ -2817,16 +3013,16 @@ Public Class Form1
         _dashboardCardHost.SetColumnSpan(cardDashTarget, 2)
 
         cardDashRate = New DashboardCard() With {.Dock = DockStyle.Fill, .Margin = New Padding(10), .AccentColor = Color.FromArgb(170, 135, 255)}
-        cardDashRate.SetCaption("PROGRESS")
+        cardDashRate.SetCaption("EXP PROGRESS")
         cardDashRate.SetValue("Calculating", ThemeTextSecondary)
-        cardDashRate.SetSecondary("EXP and Rupiah rates appear while running.")
+        cardDashRate.SetSecondary("ETA, session gain, and recent rate appear while running.")
         _dashboardCardHost.Controls.Add(cardDashRate, 2, 1)
         _dashboardCardHost.SetColumnSpan(cardDashRate, 2)
 
-        cardDashSession = New DashboardCard() With {.Dock = DockStyle.Fill, .Margin = New Padding(10), .AccentColor = ThemeAccent}
-        cardDashSession.SetCaption("SESSION & CLIENT")
-        cardDashSession.SetValue("Waiting for client", ThemeTextSecondary)
-        cardDashSession.SetSecondary("Session time and party health appear here.")
+        cardDashSession = New DashboardCard() With {.Dock = DockStyle.Fill, .Margin = New Padding(10), .AccentColor = Color.FromArgb(245, 195, 85)}
+        cardDashSession.SetCaption("RUPIAH")
+        cardDashSession.SetValue("Waiting for reading", ThemeTextSecondary)
+        cardDashSession.SetSecondary("Wallet, session earnings, and hourly rate appear here.")
         _dashboardCardHost.Controls.Add(cardDashSession, 4, 1)
         _dashboardCardHost.SetColumnSpan(cardDashSession, 2)
 
@@ -2850,8 +3046,12 @@ Public Class Form1
         End If
 
         Dim runtime As String = FormatDashboardDuration(status.RunStartedAtUtc, status.Running)
+        UpdateDashboardSessionMetrics(status, edition)
         Dim statusColor As Color = If(status.Running, ThemeGood, ThemeTextSecondary)
-        Dim statusValue As String = If(status.Running, "Active", "Ready")
+        Dim statusValue As String =
+            If(status.Running,
+               $"Active  |  {status.SessionKilledMobs:N0} killed",
+               If(status.SessionKilledMobs > 0, $"Ready  |  {status.SessionKilledMobs:N0} killed this app session", "Ready"))
         Dim statusDetail As String = "Bot is paused. Settings are ready to edit."
         If status.Running Then
             statusDetail = If(String.IsNullOrWhiteSpace(status.LastAction), "Monitoring the game and looking for work.", status.LastAction)
@@ -2881,39 +3081,42 @@ Public Class Form1
                 targetDetail &= $"  •  {status.MobHpText}"
             End If
             cardDashTarget.SetSecondary(targetDetail)
+            Dim targetHpColor As Color = If(status.MobHpPercent <= 20.0, ThemeWarn, If(status.MobHpPercent <= 50.0, Color.FromArgb(255, 184, 92), Color.FromArgb(124, 177, 255)))
+            cardDashTarget.SetProgress(status.MobHpPercent, targetHpColor)
         Else
             cardDashTarget.SetValue(If(status.Running, "Searching", "No target"), ThemeTextSecondary)
             cardDashTarget.SetSecondary(If(status.Running, "Scanning for the next valid target.", "Target details appear while the bot is active."))
+            cardDashTarget.SetProgress(0.0, Color.FromArgb(124, 177, 255), False)
         End If
 
-        cardDashRate.SetValue(If(status.ExpPerHour < 0, "Calculating", $"{status.ExpPerHour:0.00}% / hour"), If(status.ExpPerHour < 0, ThemeTextSecondary, ThemeTextPrimary))
-        Dim progressDetail As String = $"EXP {status.ExpPercent:0.00}%"
-        If status.RupiahsPerHour >= 0 Then
-            progressDetail &= $"  •  {status.RupiahsPerHour:N0} Rupiah/hr"
-        ElseIf status.RupiahsTotal >= 0 Then
-            progressDetail &= $"  •  {status.RupiahsTotal:N0} Rupiah"
-        End If
-        cardDashRate.SetSecondary(progressDetail)
-
-        Dim clientValue As String
-        Dim clientColor As Color
-        If status.GameDisconnected Then
-            clientValue = "Disconnected"
-            clientColor = ThemeWarn
-        ElseIf status.WindowFound Then
-            clientValue = "Client online"
-            clientColor = ThemeGood
+        Dim expAccent As Color = Color.FromArgb(170, 135, 255)
+        If edition = BotEdition.Full Then
+            Dim etaText As String = FormatExpEta(status.ExpPercent, status.ExpPerHour)
+            cardDashRate.SetValue(If(etaText = "", "Calculating ETA", $"ETA {etaText}"), If(etaText = "", ThemeTextSecondary, ThemeTextPrimary))
+            Dim rateText As String = If(status.ExpPerHour < 0, "rate calculating", $"{status.ExpPerHour:0.00}%/hr")
+            cardDashRate.SetSecondary($"EXP {status.ExpPercent:0.00}%  |  +{_dashboardSessionExpEarned:0.00}% session  |  {rateText}")
+            cardDashRate.SetProgress(status.ExpPercent, expAccent)
+            cardDashRate.SetRateHistory(_dashboardExpRateHistory, expAccent, _dashboardExpRateHistory.Count > 0)
         Else
-            clientValue = "Waiting for client"
-            clientColor = ThemeTextSecondary
+            cardDashRate.SetValue("Full mode only", ThemeTextSecondary)
+            cardDashRate.SetSecondary("EXP progress telemetry is unavailable in Lite mode.")
+            cardDashRate.SetProgress(0.0, expAccent, False)
+            cardDashRate.SetRateHistory(Array.Empty(Of Double)(), expAccent, False)
         End If
-        Dim sessionDetail As String = If(status.Running, $"Session {runtime}", "No active session")
-        If status.PartySize > 0 Then
-            sessionDetail &= $"  •  Party {status.PartyAliveCount}/{status.PartySize} alive"
+
+        Dim rupiahAccent As Color = Color.FromArgb(245, 195, 85)
+        cardDashSession.AccentColor = rupiahAccent
+        If edition = BotEdition.Full AndAlso status.RupiahsTotal >= 0 Then
+            cardDashSession.SetValue($"{status.RupiahsTotal:N0}", rupiahAccent)
+            Dim rupiahRateText As String = If(status.RupiahsPerHour < 0, "rate calculating", $"{status.RupiahsPerHour:N0}/hr")
+            cardDashSession.SetSecondary($"Wallet  |  +{_dashboardSessionRupiahsEarned:N0} session  |  {rupiahRateText}  |  {runtime}")
+        ElseIf edition <> BotEdition.Full Then
+            cardDashSession.SetValue("Full mode only", ThemeTextSecondary)
+            cardDashSession.SetSecondary("Rupiah telemetry is unavailable in Lite mode.")
+        Else
+            cardDashSession.SetValue("Reading wallet", ThemeTextSecondary)
+            cardDashSession.SetSecondary(If(status.Running, $"Waiting for rupiahs_rect OCR  |  Session {runtime}", "Start Full mode to track earnings."))
         End If
-        cardDashSession.AccentColor = clientColor
-        cardDashSession.SetValue(clientValue, clientColor)
-        cardDashSession.SetSecondary(sessionDetail)
 
         If btnDashPlayPause IsNot Nothing Then
             btnDashPlayPause.IsPlaying = status.Running
@@ -2921,9 +3124,79 @@ Public Class Form1
 
         If lblDashSubtitle IsNot Nothing Then
             Dim characterName As String = If(String.IsNullOrWhiteSpace(status.CharacterName), "Waiting for character", status.CharacterName)
-            lblDashSubtitle.Text = $"{characterName}  •  {edition} mode"
+            Dim clientState As String = If(status.GameDisconnected, "Disconnected", If(status.WindowFound, "Client online", "Waiting for client"))
+            lblDashSubtitle.Text = $"{characterName}  |  {edition} mode  |  {clientState}"
         End If
     End Sub
+
+    Private Sub UpdateDashboardSessionMetrics(status As BotStatus, edition As BotEdition)
+        If edition <> BotEdition.Full OrElse status Is Nothing Then
+            Return
+        End If
+
+        Dim runStartedAt As DateTime = status.RunStartedAtUtc
+        If runStartedAt <> DateTime.MinValue AndAlso runStartedAt <> _dashboardSessionRunStartedAtUtc Then
+            _dashboardSessionRunStartedAtUtc = runStartedAt
+            _dashboardSessionStartRupiahs = If(status.RupiahsTotal >= 0, status.RupiahsTotal, -1)
+            _dashboardSessionRupiahsEarned = 0
+            _dashboardSessionLastExpPercent = If(status.ExpPercent >= 0, status.ExpPercent, -1)
+            _dashboardSessionExpEarned = 0.0
+            _dashboardLastRateSampleAtUtc = DateTime.MinValue
+            _dashboardExpRateHistory.Clear()
+        End If
+
+        If status.RupiahsTotal >= 0 Then
+            If _dashboardSessionStartRupiahs < 0 Then
+                _dashboardSessionStartRupiahs = status.RupiahsTotal
+            End If
+            _dashboardSessionRupiahsEarned = Math.Max(0L, status.RupiahsTotal - _dashboardSessionStartRupiahs)
+        End If
+
+        If status.ExpPercent >= 0 Then
+            If _dashboardSessionLastExpPercent >= 0 Then
+                Dim delta As Double = status.ExpPercent - _dashboardSessionLastExpPercent
+                If delta < -50.0 Then
+                    delta += 100.0
+                End If
+                If delta > 0.0 AndAlso delta <= 100.0 Then
+                    _dashboardSessionExpEarned += delta
+                End If
+            End If
+            _dashboardSessionLastExpPercent = status.ExpPercent
+        End If
+
+        Dim nowUtc As DateTime = DateTime.UtcNow
+        If status.Running AndAlso status.ExpPerHour >= 0.0 AndAlso
+           (_dashboardLastRateSampleAtUtc = DateTime.MinValue OrElse (nowUtc - _dashboardLastRateSampleAtUtc).TotalSeconds >= DashboardRateHistoryIntervalSeconds) Then
+            _dashboardLastRateSampleAtUtc = nowUtc
+            _dashboardExpRateHistory.Add(status.ExpPerHour)
+            If _dashboardExpRateHistory.Count > DashboardRateHistoryMaxSamples Then
+                _dashboardExpRateHistory.RemoveRange(0, _dashboardExpRateHistory.Count - DashboardRateHistoryMaxSamples)
+            End If
+        End If
+    End Sub
+
+    Private Shared Function FormatExpEta(expPercent As Double, expPerHour As Double) As String
+        If expPerHour <= 0.0001 OrElse expPercent < 0.0 Then
+            Return ""
+        End If
+
+        Dim remainingPercent As Double = Math.Max(0.0, 100.0 - Math.Min(100.0, expPercent))
+        If remainingPercent <= 0.01 Then
+            Return "level imminent"
+        End If
+        Dim remaining As TimeSpan = TimeSpan.FromHours(remainingPercent / expPerHour)
+        If remaining.TotalMinutes < 1.0 Then
+            Return "<1m"
+        End If
+        If remaining.TotalHours < 1.0 Then
+            Return $"{Math.Max(1, CInt(Math.Ceiling(remaining.TotalMinutes)))}m"
+        End If
+        If remaining.TotalDays < 1.0 Then
+            Return $"{CInt(Math.Floor(remaining.TotalHours))}h {remaining.Minutes}m"
+        End If
+        Return $"{CInt(Math.Floor(remaining.TotalDays))}d {remaining.Hours}h"
+    End Function
 
     Private Shared Function FormatDashboardDuration(startedAtUtc As DateTime, running As Boolean) As String
         If Not running OrElse startedAtUtc = DateTime.MinValue Then
@@ -6785,6 +7058,7 @@ Public Class Form1
             AddressOf GetInGameBotToggleWindowHandle,
             AddressOf ResolveInGameBotToggleEdition,
             AddressOf IsEditionRunning,
+            AddressOf GetStatusForEdition,
             _inGameBotToggleX,
             _inGameBotToggleY,
             _inGameBotToggleWidth,
@@ -6823,8 +7097,8 @@ Public Class Form1
     Private Sub InGameBotToggleLayoutChanged(clientX As Integer, clientY As Integer, overlayWidth As Integer, overlayHeight As Integer)
         _inGameBotToggleX = Math.Max(0, clientX)
         _inGameBotToggleY = Math.Max(0, clientY)
-        _inGameBotToggleWidth = Math.Max(80, Math.Min(320, overlayWidth))
-        _inGameBotToggleHeight = Math.Max(30, Math.Min(120, overlayHeight))
+        _inGameBotToggleWidth = Math.Max(188, Math.Min(360, overlayWidth))
+        _inGameBotToggleHeight = Math.Max(68, Math.Min(140, overlayHeight))
         SavePersistedListState(False)
     End Sub
 
@@ -10462,7 +10736,7 @@ Public Class Form1
             "- Show Overlay: live region calibration overlay.",
             "- Capture Snapshot: captures current client image.",
             "- Automatic Screenshots: beneath Snapshot, enable timed game captures, choose 1 to 999 minutes, select the save folder, or open it in File Explorer.",
-            "- In-game BOT ON/OFF button: click to toggle, drag to move, or drag its bottom-right grip to resize; its game-relative layout is saved.",
+            "- In-game bot HUD: shows bot state, HP, MP, EXP/hour, and current target; click to toggle, drag to move, or drag its bottom-right grip to resize. Its game-relative layout is saved.",
             "",
             "7) VISION TAB - CALIBRATION REGIONS",
             "- hp_bar, mp_bar, mob_name_rect, mob_hp_rect, mob_life_rect, unreachable_text_rect,",
@@ -14519,8 +14793,8 @@ Public Class Form1
             Dim savedToggleX As Integer = If(appState IsNot Nothing, appState.InGameBotToggleX, -1)
             _inGameBotToggleX = If(savedToggleX < 0, -1, savedToggleX)
             _inGameBotToggleY = Math.Max(0, If(appState IsNot Nothing, appState.InGameBotToggleY, 10))
-            _inGameBotToggleWidth = Math.Max(80, Math.Min(320, If(appState IsNot Nothing, appState.InGameBotToggleWidth, 104)))
-            _inGameBotToggleHeight = Math.Max(30, Math.Min(120, If(appState IsNot Nothing, appState.InGameBotToggleHeight, 38)))
+            _inGameBotToggleWidth = Math.Max(188, Math.Min(360, If(appState IsNot Nothing, appState.InGameBotToggleWidth, 220)))
+            _inGameBotToggleHeight = Math.Max(68, Math.Min(140, If(appState IsNot Nothing, appState.InGameBotToggleHeight, 76)))
             If _inGameBotToggleForm IsNot Nothing AndAlso Not _inGameBotToggleForm.IsDisposed Then
                 _inGameBotToggleForm.ApplyLayout(_inGameBotToggleX, _inGameBotToggleY, _inGameBotToggleWidth, _inGameBotToggleHeight)
             End If
