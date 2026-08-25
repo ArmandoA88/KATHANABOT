@@ -104,6 +104,7 @@ Public Class Form1
     Private txtLitePartyAskText As TextBox
     Private txtLiteAutoPotHelp As TextBox
     Private _mainTabs As SidebarTabControl
+    Private _sidebarRailOverlay As SidebarRailControl
     Private _tabIndicatorBar As Panel
     Private _tabIndicatorTargetTop As Integer = 0
     Private _tabIndicatorPlaced As Boolean = False
@@ -327,9 +328,9 @@ Public Class Form1
                 ' Do not let the native TabControl erase the strip with the Windows theme color
                 ' first. Painting our final background and reporting the erase as handled prevents
                 ' an intermediate light frame from ever reaching the screen.
-                Dim stripRect As New Rectangle(0, 0, ItemSize.Height, ClientRectangle.Height)
+                Dim stripRect As New Rectangle(0, 0, Math.Min(ClientRectangle.Width, ItemSize.Height + 4), ClientRectangle.Height)
                 Using g As Graphics = Graphics.FromHdc(m.WParam)
-                    Using brush As New SolidBrush(ThemeBg)
+                    Using brush As New SolidBrush(ThemeSurface)
                         g.FillRectangle(brush, stripRect)
                     End Using
                 End Using
@@ -337,6 +338,174 @@ Public Class Form1
                 Return
             End If
             MyBase.WndProc(m)
+        End Sub
+    End Class
+
+    ' A fully custom layer placed over the native left-hand tab strip. The underlying TabControl
+    ' continues to own and switch the real pages, but none of its Windows-themed tab chrome is
+    ' visible, which guarantees there are no white bevels regardless of the OS theme.
+    Private NotInheritable Class SidebarRailControl
+        Inherits Control
+
+        Private _targetTabs As TabControl
+        Private _hoverIndex As Integer = -1
+
+        <System.ComponentModel.Browsable(False)>
+        <System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)>
+        Public Property ActiveEvaluator As Func(Of TabPage, Boolean)
+
+        <System.ComponentModel.Browsable(False)>
+        <System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)>
+        Public Property ForeColorEvaluator As Func(Of TabPage, Boolean, Boolean, Color)
+
+        Public Sub New()
+            BackColor = ThemeSurface
+            Font = New Font("Segoe UI Semibold", 10.0F, FontStyle.Bold)
+            Cursor = Cursors.Hand
+            TabStop = False
+            SetStyle(ControlStyles.AllPaintingInWmPaint Or
+                     ControlStyles.OptimizedDoubleBuffer Or
+                     ControlStyles.UserPaint Or
+                     ControlStyles.ResizeRedraw, True)
+        End Sub
+
+        <System.ComponentModel.Browsable(False)>
+        <System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)>
+        Public Property TargetTabs As TabControl
+            Get
+                Return _targetTabs
+            End Get
+            Set(value As TabControl)
+                If _targetTabs Is value Then
+                    Return
+                End If
+                If _targetTabs IsNot Nothing Then
+                    RemoveHandler _targetTabs.SelectedIndexChanged, AddressOf TargetSelectionChanged
+                End If
+                _targetTabs = value
+                If _targetTabs IsNot Nothing Then
+                    AddHandler _targetTabs.SelectedIndexChanged, AddressOf TargetSelectionChanged
+                End If
+                Invalidate()
+            End Set
+        End Property
+
+        Private Sub TargetSelectionChanged(sender As Object, e As EventArgs)
+            Invalidate()
+        End Sub
+
+        Private Function RowBounds(index As Integer) As Rectangle
+            If _targetTabs Is Nothing OrElse _targetTabs.TabCount <= 0 Then
+                Return Rectangle.Empty
+            End If
+            Dim top As Integer = CInt(Math.Floor(index * (Height / CDbl(_targetTabs.TabCount))))
+            Dim bottom As Integer = CInt(Math.Floor((index + 1) * (Height / CDbl(_targetTabs.TabCount))))
+            Return New Rectangle(0, top, Width, Math.Max(1, bottom - top))
+        End Function
+
+        Private Function IndexAt(y As Integer) As Integer
+            If _targetTabs Is Nothing OrElse _targetTabs.TabCount <= 0 OrElse Height <= 0 Then
+                Return -1
+            End If
+            Return Math.Max(0, Math.Min(_targetTabs.TabCount - 1, CInt(Math.Floor((Math.Max(0, Math.Min(Height - 1, y)) / CDbl(Height)) * _targetTabs.TabCount))))
+        End Function
+
+        Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
+            MyBase.OnMouseMove(e)
+            Dim nextHover As Integer = IndexAt(e.Y)
+            If nextHover <> _hoverIndex Then
+                Dim oldHover As Integer = _hoverIndex
+                _hoverIndex = nextHover
+                If oldHover >= 0 Then Invalidate(RowBounds(oldHover))
+                If nextHover >= 0 Then Invalidate(RowBounds(nextHover))
+            End If
+        End Sub
+
+        Protected Overrides Sub OnMouseLeave(e As EventArgs)
+            MyBase.OnMouseLeave(e)
+            If _hoverIndex >= 0 Then
+                Dim oldHover As Integer = _hoverIndex
+                _hoverIndex = -1
+                Invalidate(RowBounds(oldHover))
+            End If
+        End Sub
+
+        Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
+            MyBase.OnMouseDown(e)
+            If e.Button <> MouseButtons.Left OrElse _targetTabs Is Nothing Then
+                Return
+            End If
+            Dim index As Integer = IndexAt(e.Y)
+            If index >= 0 AndAlso index < _targetTabs.TabCount Then
+                _targetTabs.SelectedIndex = index
+            End If
+        End Sub
+
+        Protected Overrides Sub OnPaint(e As PaintEventArgs)
+            MyBase.OnPaint(e)
+            e.Graphics.Clear(ThemeSurface)
+            If _targetTabs Is Nothing OrElse _targetTabs.TabCount <= 0 Then
+                Return
+            End If
+
+            e.Graphics.SmoothingMode = Drawing2D.SmoothingMode.AntiAlias
+            For index As Integer = 0 To _targetTabs.TabCount - 1
+                Dim page As TabPage = _targetTabs.TabPages(index)
+                Dim isSelected As Boolean = index = _targetTabs.SelectedIndex
+                Dim isActive As Boolean = ActiveEvaluator IsNot Nothing AndAlso ActiveEvaluator(page)
+                Dim row As Rectangle = RowBounds(index)
+                Dim tile As Rectangle = Rectangle.Inflate(row, -7, -5)
+                If tile.Width <= 2 OrElse tile.Height <= 2 Then
+                    Continue For
+                End If
+
+                If isSelected Then
+                    Using tilePath As Drawing2D.GraphicsPath = RoundedRectPath(tile, 14),
+                          selectedBrush As New Drawing2D.LinearGradientBrush(tile, Color.FromArgb(31, 47, 76), Color.FromArgb(23, 35, 59), Drawing2D.LinearGradientMode.Vertical)
+                        e.Graphics.FillPath(selectedBrush, tilePath)
+                    End Using
+                    Dim indicatorRect As New Rectangle(tile.Left + 1, tile.Top + Math.Max(8, tile.Height \ 4), 4, Math.Max(18, tile.Height \ 2))
+                    Using indicatorPath As Drawing2D.GraphicsPath = RoundedRectPath(indicatorRect, 2),
+                          indicatorBrush As New SolidBrush(BlendColors(ThemeAccent, ThemeGood, 0.18R))
+                        e.Graphics.FillPath(indicatorBrush, indicatorPath)
+                    End Using
+                ElseIf index = _hoverIndex Then
+                    Using hoverPath As Drawing2D.GraphicsPath = RoundedRectPath(tile, 14),
+                          hoverBrush As New SolidBrush(Color.FromArgb(24, ThemeAccent))
+                        e.Graphics.FillPath(hoverBrush, hoverPath)
+                    End Using
+                ElseIf isActive Then
+                    Using activePath As Drawing2D.GraphicsPath = RoundedRectPath(tile, 14),
+                          activeBrush As New SolidBrush(Color.FromArgb(12, ThemeGood))
+                        e.Graphics.FillPath(activeBrush, activePath)
+                    End Using
+                End If
+
+                Dim textColor As Color = If(ForeColorEvaluator IsNot Nothing,
+                    ForeColorEvaluator(page, isSelected, isActive),
+                    If(isSelected, Color.White, If(isActive, ThemeGood, ThemeTextSecondary)))
+                Dim textBounds As Rectangle = Rectangle.Inflate(tile, -12, -8)
+                TextRenderer.DrawText(e.Graphics, page.Text, Font, textBounds, textColor,
+                                      TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.WordBreak)
+
+                If isActive Then
+                    Dim dotSize As Integer = 7
+                    Dim dotRect As New Rectangle(tile.Right - dotSize - 9, tile.Top + 9, dotSize, dotSize)
+                    Using glowBrush As New SolidBrush(Color.FromArgb(45, ThemeGood))
+                        e.Graphics.FillEllipse(glowBrush, Rectangle.Inflate(dotRect, 3, 3))
+                    End Using
+                    Using dotBrush As New SolidBrush(ThemeGood)
+                        e.Graphics.FillEllipse(dotBrush, dotRect)
+                    End Using
+                End If
+            Next
+        End Sub
+
+        Protected Overrides Sub Dispose(disposing As Boolean)
+            If disposing AndAlso _targetTabs IsNot Nothing Then
+                RemoveHandler _targetTabs.SelectedIndexChanged, AddressOf TargetSelectionChanged
+            End If
+            MyBase.Dispose(disposing)
         End Sub
     End Class
 
@@ -349,7 +518,10 @@ Public Class Form1
         Private ReadOnly _valueTimer As New System.Windows.Forms.Timer() With {.Interval = 16}
         Private _displayPercent As Double = 0.0
         Private _targetPercent As Double = 0.0
+        Private _animationStartPercent As Double = 0.0
+        Private _animationStartedAt As DateTime = DateTime.MinValue
         Private _fillColor As Color = ThemeAccent
+        Private Const AnimationDurationMs As Double = 200.0
 
         Public Sub New()
             Dock = DockStyle.Bottom
@@ -375,19 +547,26 @@ Public Class Form1
                 Return
             End If
 
-            _targetPercent = Math.Max(0.0, Math.Min(100.0, percent))
+            Dim nextTarget As Double = Math.Max(0.0, Math.Min(100.0, percent))
             Visible = True
-            If Math.Abs(_targetPercent - _displayPercent) < 0.08 Then
-                _displayPercent = _targetPercent
+            If Math.Abs(nextTarget - _displayPercent) < 0.08 Then
+                _targetPercent = nextTarget
+                _displayPercent = nextTarget
                 Invalidate()
-            ElseIf Not _valueTimer.Enabled Then
+            ElseIf Math.Abs(nextTarget - _targetPercent) >= 0.02 OrElse Not _valueTimer.Enabled Then
+                _animationStartPercent = _displayPercent
+                _animationStartedAt = DateTime.UtcNow
+                _targetPercent = nextTarget
                 _valueTimer.Start()
             End If
         End Sub
 
         Private Sub ValueTimerTick(sender As Object, e As EventArgs)
-            _displayPercent += (_targetPercent - _displayPercent) * 0.2
-            If Math.Abs(_targetPercent - _displayPercent) < 0.08 Then
+            Dim elapsedMs As Double = Math.Max(0.0, (DateTime.UtcNow - _animationStartedAt).TotalMilliseconds)
+            Dim progress As Double = Math.Min(1.0, elapsedMs / AnimationDurationMs)
+            Dim eased As Double = 1.0 - Math.Pow(1.0 - progress, 3.0)
+            _displayPercent = _animationStartPercent + ((_targetPercent - _animationStartPercent) * eased)
+            If progress >= 1.0 Then
                 _displayPercent = _targetPercent
                 _valueTimer.Stop()
             End If
@@ -434,10 +613,14 @@ Public Class Form1
 
         Private _samples As New List(Of Double)()
         Private _lineColor As Color = Color.FromArgb(170, 135, 255)
+        Private _hoverIndex As Integer = -1
+        Private _hoverValueFormat As String = "0.##"
+        Private _hoverValueSuffix As String = ""
+        Private _sampleIntervalSeconds As Integer = DashboardRateHistoryIntervalSeconds
 
         Public Sub New()
             Dock = DockStyle.Bottom
-            Height = 34
+            Height = 58
             Visible = False
             SetStyle(ControlStyles.AllPaintingInWmPaint Or
                      ControlStyles.OptimizedDoubleBuffer Or
@@ -445,19 +628,34 @@ Public Class Form1
                      ControlStyles.ResizeRedraw Or
                      ControlStyles.SupportsTransparentBackColor, True)
             BackColor = Color.Transparent
+            Cursor = Cursors.Cross
+            TabStop = False
         End Sub
 
-        Public Sub SetSamples(samples As IEnumerable(Of Double), color As Color, showGraph As Boolean)
+        Public Sub SetSamples(samples As IEnumerable(Of Double), color As Color, showGraph As Boolean,
+                              Optional hoverValueFormat As String = "0.##",
+                              Optional hoverValueSuffix As String = "",
+                              Optional sampleIntervalSeconds As Integer = DashboardRateHistoryIntervalSeconds)
             _lineColor = color
+            _hoverValueFormat = If(String.IsNullOrWhiteSpace(hoverValueFormat), "0.##", hoverValueFormat)
+            _hoverValueSuffix = If(hoverValueSuffix, "")
+            _sampleIntervalSeconds = Math.Max(1, sampleIntervalSeconds)
             Dim valid As List(Of Double) = If(samples, Enumerable.Empty(Of Double)()).
                 Where(Function(value) Not Double.IsNaN(value) AndAlso Not Double.IsInfinity(value) AndAlso value >= 0.0).
                 ToList()
-            If valid.Count > 60 Then
-                valid.RemoveRange(0, valid.Count - 60)
+            If valid.Count > 180 Then
+                valid.RemoveRange(0, valid.Count - 180)
             End If
             _samples = valid
             Visible = showGraph AndAlso _samples.Count > 0
+            If _hoverIndex >= _samples.Count Then
+                _hoverIndex = _samples.Count - 1
+            End If
             Invalidate()
+        End Sub
+
+        Public Sub SetGraphHeight(value As Integer)
+            Height = Math.Max(30, Math.Min(90, value))
         End Sub
 
         Protected Overrides Sub OnPaint(e As PaintEventArgs)
@@ -512,6 +710,90 @@ Public Class Form1
             Using dotBrush As New SolidBrush(BlendColors(_lineColor, Color.White, 0.2))
                 e.Graphics.FillEllipse(dotBrush, latest.X - 2.5F, latest.Y - 2.5F, 5.0F, 5.0F)
             End Using
+
+            If _hoverIndex >= 0 AndAlso _hoverIndex < points.Count Then
+                DrawHoverReadout(e.Graphics, graphRect, points(_hoverIndex), _hoverIndex, minimum, valueRange)
+            End If
+        End Sub
+
+        Private Sub DrawHoverReadout(graphics As Graphics, graphRect As RectangleF, selectedPoint As PointF, sampleIndex As Integer,
+                                     minimum As Double, valueRange As Double)
+            Dim averageValue As Double = _samples.Average()
+            Dim averageNormalized As Double = Math.Max(0.0R, Math.Min(1.0R, (averageValue - minimum) / Math.Max(0.01R, valueRange)))
+            Dim averageY As Single = CSng(graphRect.Bottom - (graphRect.Height * averageNormalized))
+            Using averagePen As New Pen(Color.FromArgb(205, BlendColors(_lineColor, Color.White, 0.45R)), 1.25F)
+                averagePen.DashStyle = Drawing2D.DashStyle.Dot
+                graphics.DrawLine(averagePen, graphRect.Left, averageY, graphRect.Right, averageY)
+            End Using
+
+            Using guidePen As New Pen(Color.FromArgb(150, _lineColor), 1.0F)
+                guidePen.DashStyle = Drawing2D.DashStyle.Dot
+                graphics.DrawLine(guidePen, selectedPoint.X, graphRect.Top, selectedPoint.X, graphRect.Bottom)
+            End Using
+            Using outerBrush As New SolidBrush(Color.FromArgb(230, 8, 13, 24)),
+                  pointBrush As New SolidBrush(BlendColors(_lineColor, Color.White, 0.3)),
+                  ringPen As New Pen(Color.White, 1.4F)
+                graphics.FillEllipse(outerBrush, selectedPoint.X - 5.0F, selectedPoint.Y - 5.0F, 10.0F, 10.0F)
+                graphics.FillEllipse(pointBrush, selectedPoint.X - 3.5F, selectedPoint.Y - 3.5F, 7.0F, 7.0F)
+                graphics.DrawEllipse(ringPen, selectedPoint.X - 4.0F, selectedPoint.Y - 4.0F, 8.0F, 8.0F)
+            End Using
+
+            Dim secondsAgo As Integer = Math.Max(0, (_samples.Count - 1 - sampleIndex) * _sampleIntervalSeconds)
+            Dim ageText As String
+            If secondsAgo = 0 Then
+                ageText = "latest"
+            ElseIf secondsAgo < 60 Then
+                ageText = $"{secondsAgo}s ago"
+            Else
+                ageText = $"{secondsAgo \ 60}m {secondsAgo Mod 60}s ago"
+            End If
+            Dim valueText As String = _samples(sampleIndex).ToString(_hoverValueFormat) & _hoverValueSuffix
+            Dim averageText As String = averageValue.ToString(_hoverValueFormat) & _hoverValueSuffix
+            Dim readoutText As String = $"15m AVG {averageText}  ·  Point {valueText}  ·  {ageText}"
+            Dim textSize As Size = TextRenderer.MeasureText(readoutText, Font, New Size(Integer.MaxValue, 24), TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
+            Dim boxWidth As Integer = Math.Min(Math.Max(90, textSize.Width + 16), Math.Max(90, Width - 4))
+            Dim boxHeight As Integer = 24
+            Dim boxX As Integer = CInt(Math.Round(selectedPoint.X - (boxWidth / 2.0F)))
+            boxX = Math.Max(2, Math.Min(Math.Max(2, Width - boxWidth - 2), boxX))
+            Dim boxY As Integer = 1
+            Dim boxRect As New Rectangle(boxX, boxY, boxWidth, boxHeight)
+            Using boxPath As Drawing2D.GraphicsPath = RoundedRectPath(boxRect, 7),
+                  boxBrush As New SolidBrush(Color.FromArgb(246, 10, 16, 29)),
+                  borderPen As New Pen(Color.FromArgb(220, _lineColor), 1.0F)
+                graphics.FillPath(boxBrush, boxPath)
+                graphics.DrawPath(borderPen, boxPath)
+            End Using
+            TextRenderer.DrawText(
+                graphics,
+                readoutText,
+                Font,
+                New Rectangle(boxRect.X + 8, boxRect.Y, boxRect.Width - 16, boxRect.Height),
+                Color.White,
+                TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.EndEllipsis)
+        End Sub
+
+        Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
+            MyBase.OnMouseMove(e)
+            If _samples.Count = 0 OrElse Width < 4 Then
+                Return
+            End If
+
+            Dim graphLeft As Double = 1.0R
+            Dim graphWidth As Double = Math.Max(1.0R, Width - 3.0R)
+            Dim ratio As Double = Math.Max(0.0R, Math.Min(1.0R, (e.X - graphLeft) / graphWidth))
+            Dim nextIndex As Integer = If(_samples.Count = 1, 0, CInt(Math.Round(ratio * (_samples.Count - 1))))
+            If nextIndex <> _hoverIndex Then
+                _hoverIndex = nextIndex
+                Invalidate()
+            End If
+        End Sub
+
+        Protected Overrides Sub OnMouseLeave(e As EventArgs)
+            MyBase.OnMouseLeave(e)
+            If _hoverIndex >= 0 Then
+                _hoverIndex = -1
+                Invalidate()
+            End If
         End Sub
     End Class
 
@@ -524,6 +806,7 @@ Public Class Form1
         Private ReadOnly _lblCaption As New Label()
         Private ReadOnly _lblValue As New Label()
         Private ReadOnly _lblSecondary As New Label()
+        Private ReadOnly _lblBadge As New Label()
         Private ReadOnly _progressMeter As New DashboardProgressMeter()
         Private ReadOnly _sparkline As New DashboardSparkline()
         Private ReadOnly _hoverTimer As New System.Windows.Forms.Timer() With {.Interval = 16}
@@ -535,13 +818,13 @@ Public Class Form1
             DoubleBuffered = True
             ResizeRedraw = True
             BackColor = ThemeCard
-            Padding = New Padding(24, 20, 24, 18)
+            Padding = New Padding(22, 18, 22, 16)
 
             _lblCaption.Dock = DockStyle.Top
-            _lblCaption.Height = 24
+            _lblCaption.Height = 26
             _lblCaption.ForeColor = ThemeTextSecondary
             _lblCaption.BackColor = Color.Transparent
-            _lblCaption.Font = New Font("Segoe UI Semibold", 9.0F, FontStyle.Bold)
+            _lblCaption.Font = New Font("Segoe UI Semibold", 9.5F, FontStyle.Bold)
             _lblCaption.TextAlign = ContentAlignment.MiddleLeft
 
             _lblValue.Dock = DockStyle.Fill
@@ -552,18 +835,27 @@ Public Class Form1
             _lblValue.AutoEllipsis = True
 
             _lblSecondary.Dock = DockStyle.Bottom
-            _lblSecondary.Height = 28
+            _lblSecondary.Height = 46
             _lblSecondary.ForeColor = ThemeTextSecondary
             _lblSecondary.BackColor = Color.Transparent
             _lblSecondary.Font = New Font("Segoe UI", 9.5F, FontStyle.Regular)
             _lblSecondary.TextAlign = ContentAlignment.MiddleLeft
             _lblSecondary.AutoEllipsis = True
 
+            _lblBadge.Visible = False
+            _lblBadge.Size = New Size(112, 24)
+            _lblBadge.Font = New Font("Segoe UI Semibold", 8.0F, FontStyle.Bold)
+            _lblBadge.TextAlign = ContentAlignment.MiddleCenter
+            _lblBadge.BackColor = BlendColors(ThemeCard, ThemeGood, 0.18)
+            _lblBadge.ForeColor = ThemeGood
+
             Controls.Add(_lblValue)
             Controls.Add(_lblSecondary)
             Controls.Add(_sparkline)
             Controls.Add(_progressMeter)
             Controls.Add(_lblCaption)
+            Controls.Add(_lblBadge)
+            _lblBadge.BringToFront()
 
             AddHandler MouseEnter, Sub() SetHovered(True)
             AddHandler MouseLeave, Sub() SetHovered(False)
@@ -616,8 +908,35 @@ Public Class Form1
             _progressMeter.SetProgress(percent, color, showMeter)
         End Sub
 
-        Public Sub SetRateHistory(samples As IEnumerable(Of Double), color As Color, Optional showGraph As Boolean = True)
-            _sparkline.SetSamples(samples, color, showGraph)
+        Public Sub SetRateHistory(samples As IEnumerable(Of Double), color As Color, Optional showGraph As Boolean = True,
+                                  Optional hoverValueFormat As String = "0.##",
+                                  Optional hoverValueSuffix As String = "",
+                                  Optional sampleIntervalSeconds As Integer = DashboardRateHistoryIntervalSeconds)
+            _sparkline.SetSamples(samples, color, showGraph, hoverValueFormat, hoverValueSuffix, sampleIntervalSeconds)
+        End Sub
+
+        Public Sub SetGraphHeight(value As Integer)
+            _sparkline.SetGraphHeight(value)
+        End Sub
+
+        Public Sub SetValueFont(size As Single, Optional style As FontStyle = FontStyle.Bold)
+            _lblValue.Font = New Font("Segoe UI Semibold", Math.Max(8.0F, size), style)
+        End Sub
+
+        Public Sub SetSecondaryHeight(value As Integer)
+            _lblSecondary.Height = Math.Max(24, Math.Min(72, value))
+        End Sub
+
+        Public Sub SetBadge(text As String, color As Color)
+            _lblBadge.Text = If(text, "").Trim().ToUpperInvariant()
+            _lblBadge.Visible = _lblBadge.Text <> ""
+            _lblBadge.ForeColor = color
+            _lblBadge.BackColor = BlendColors(ThemeCard, color, 0.18)
+            PositionBadge()
+        End Sub
+
+        Private Sub PositionBadge()
+            _lblBadge.Location = New System.Drawing.Point(Math.Max(Padding.Left, Width - Padding.Right - _lblBadge.Width), Padding.Top)
         End Sub
 
         Private Sub SetHovered(value As Boolean)
@@ -639,6 +958,7 @@ Public Class Form1
 
         Protected Overrides Sub OnResize(e As EventArgs)
             MyBase.OnResize(e)
+            PositionBadge()
             If Width <= 1 OrElse Height <= 1 Then
                 Return
             End If
@@ -693,6 +1013,110 @@ Public Class Form1
         End Sub
     End Class
 
+    Private NotInheritable Class DashboardSummaryBar
+        Inherits Panel
+
+        Private ReadOnly _titleLabels As New List(Of Label)()
+        Private ReadOnly _valueLabels As New List(Of Label)()
+        Private Shared ReadOnly MetricTitles As String() = {
+            "◷  RUNTIME", "✦  MOBS KILLED", "↗  KILLS / HOUR", "◆  EXP GAINED", "$  RUPIAH EARNED", "◇  ITEMS WON"
+        }
+
+        Public Sub New()
+            DoubleBuffered = True
+            ResizeRedraw = True
+            BackColor = ThemeCard
+            Padding = New Padding(14, 8, 14, 10)
+
+            Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = MetricTitles.Length, .RowCount = 1, .BackColor = ThemeCard, .Margin = New Padding(0)}
+            layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+            For index As Integer = 0 To MetricTitles.Length - 1
+                layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, CSng(100.0 / MetricTitles.Length)))
+                Dim cell As New TableLayoutPanel() With {
+                    .Dock = DockStyle.Fill,
+                    .ColumnCount = 1,
+                    .RowCount = 2,
+                    .Margin = New Padding(2, 0, 2, 0),
+                    .Padding = New Padding(0),
+                    .BackColor = ThemeCard
+                }
+                cell.RowStyles.Add(New RowStyle(SizeType.Absolute, 25.0F))
+                cell.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+                Dim title As New Label() With {
+                    .Text = MetricTitles(index),
+                    .Dock = DockStyle.Fill,
+                    .Margin = New Padding(0),
+                    .Font = New Font("Segoe UI Semibold", 8.0F, FontStyle.Bold),
+                    .ForeColor = ThemeTextSecondary,
+                    .TextAlign = ContentAlignment.MiddleCenter,
+                    .AutoEllipsis = True
+                }
+                Dim value As New Label() With {
+                    .Text = "—",
+                    .Dock = DockStyle.Fill,
+                    .Margin = New Padding(0),
+                    .Font = New Font("Segoe UI Semibold", 13.0F, FontStyle.Bold),
+                    .ForeColor = ThemeTextPrimary,
+                    .TextAlign = ContentAlignment.MiddleCenter,
+                    .AutoEllipsis = True
+                }
+                cell.Controls.Add(title, 0, 0)
+                cell.Controls.Add(value, 0, 1)
+                layout.Controls.Add(cell, index, 0)
+                _titleLabels.Add(title)
+                _valueLabels.Add(value)
+            Next
+            Controls.Add(layout)
+        End Sub
+
+        Public Sub SetMetric(index As Integer, text As String, Optional color As Color? = Nothing)
+            If index < 0 OrElse index >= _valueLabels.Count Then
+                Return
+            End If
+            _valueLabels(index).Text = If(text, "—")
+            _valueLabels(index).ForeColor = If(color.HasValue, color.Value, ThemeTextPrimary)
+        End Sub
+
+        Protected Overrides Sub OnResize(e As EventArgs)
+            MyBase.OnResize(e)
+            If Width <= 1 OrElse Height <= 1 Then
+                Return
+            End If
+            Dim cellWidth As Double = Math.Max(1.0, (Width - Padding.Horizontal) / CDbl(Math.Max(1, MetricTitles.Length)))
+            Dim titleSize As Single = If(cellWidth < 150.0, 7.0F, If(cellWidth < 190.0, 7.5F, 8.0F))
+            Dim valueSize As Single = If(cellWidth < 150.0, 10.0F, If(cellWidth < 190.0, 11.5F, 13.0F))
+            For Each label As Label In _titleLabels
+                If Math.Abs(label.Font.Size - titleSize) > 0.1F Then
+                    label.Font = New Font("Segoe UI Semibold", titleSize, FontStyle.Bold)
+                End If
+            Next
+            For Each label As Label In _valueLabels
+                If Math.Abs(label.Font.Size - valueSize) > 0.1F Then
+                    label.Font = New Font("Segoe UI Semibold", valueSize, FontStyle.Bold)
+                End If
+            Next
+            Using path As Drawing2D.GraphicsPath = RoundedRectPath(New Rectangle(0, 0, Width, Height), 20)
+                Dim oldRegion As Region = Region
+                Region = New Region(path)
+                If oldRegion IsNot Nothing Then
+                    oldRegion.Dispose()
+                End If
+            End Using
+        End Sub
+
+        Protected Overrides Sub OnPaint(e As PaintEventArgs)
+            MyBase.OnPaint(e)
+            If Width <= 2 OrElse Height <= 2 Then
+                Return
+            End If
+            e.Graphics.SmoothingMode = Drawing2D.SmoothingMode.AntiAlias
+            Using path As Drawing2D.GraphicsPath = RoundedRectPath(New Rectangle(1, 1, Width - 3, Height - 3), 18),
+                  borderPen As New Pen(Color.FromArgb(42, ThemeAccent), 1.0F)
+                e.Graphics.DrawPath(borderPen, path)
+            End Using
+        End Sub
+    End Class
+
     Private NotInheritable Class BufferedTableLayoutPanel
         Inherits TableLayoutPanel
 
@@ -716,7 +1140,10 @@ Public Class Form1
         Private ReadOnly _valueAnimTimer As New System.Windows.Forms.Timer() With {.Interval = 16}
         Private _displayPercent As Double = 0.0
         Private _targetPercent As Double = 0.0
+        Private _animationStartPercent As Double = 0.0
+        Private _animationStartedAt As DateTime = DateTime.MinValue
         Private _barColor As Color = ThemeAccent
+        Private Const AnimationDurationMs As Double = 200.0
 
         Public Sub New(labelText As String)
             BackColor = ThemeCard
@@ -749,21 +1176,28 @@ Public Class Form1
         End Sub
 
         Public Sub SetPercent(percent As Double, color As Color)
-            _targetPercent = Math.Max(0.0, Math.Min(100.0, percent))
+            Dim nextTarget As Double = Math.Max(0.0, Math.Min(100.0, percent))
             _barColor = color
             _lblPercent.ForeColor = color
-            If Math.Abs(_targetPercent - _displayPercent) < 0.1 Then
-                _displayPercent = _targetPercent
+            If Math.Abs(nextTarget - _displayPercent) < 0.1 Then
+                _targetPercent = nextTarget
+                _displayPercent = nextTarget
                 _lblPercent.Text = $"{_displayPercent:0}%"
                 Invalidate()
-            ElseIf Not _valueAnimTimer.Enabled Then
+            ElseIf Math.Abs(nextTarget - _targetPercent) >= 0.02 OrElse Not _valueAnimTimer.Enabled Then
+                _animationStartPercent = _displayPercent
+                _animationStartedAt = DateTime.UtcNow
+                _targetPercent = nextTarget
                 _valueAnimTimer.Start()
             End If
         End Sub
 
         Private Sub ValueAnimTimerTick(sender As Object, e As EventArgs)
-            _displayPercent += (_targetPercent - _displayPercent) * 0.22
-            If Math.Abs(_targetPercent - _displayPercent) < 0.1 Then
+            Dim elapsedMs As Double = Math.Max(0.0, (DateTime.UtcNow - _animationStartedAt).TotalMilliseconds)
+            Dim progress As Double = Math.Min(1.0, elapsedMs / AnimationDurationMs)
+            Dim eased As Double = 1.0 - Math.Pow(1.0 - progress, 3.0)
+            _displayPercent = _animationStartPercent + ((_targetPercent - _animationStartPercent) * eased)
+            If progress >= 1.0 Then
                 _displayPercent = _targetPercent
                 _valueAnimTimer.Stop()
             End If
@@ -819,15 +1253,15 @@ Public Class Form1
             DoubleBuffered = True
             ResizeRedraw = True
             BackColor = ThemeCard
-            Padding = New Padding(24, 20, 24, 20)
+            Padding = New Padding(22, 18, 22, 16)
 
             _lblCaption.Dock = DockStyle.Top
-            _lblCaption.Height = 22
+            _lblCaption.Height = 26
             _lblCaption.ForeColor = ThemeTextSecondary
             _lblCaption.BackColor = Color.Transparent
-            _lblCaption.Font = New Font("Segoe UI Semibold", 9.0F, FontStyle.Bold)
+            _lblCaption.Font = New Font("Segoe UI Semibold", 9.5F, FontStyle.Bold)
             _lblCaption.TextAlign = ContentAlignment.MiddleLeft
-            _lblCaption.Text = "HP / MP"
+            _lblCaption.Text = "♥  HP / MP"
 
             Dim body As New Panel() With {.Dock = DockStyle.Fill, .BackColor = ThemeCard}
             body.Controls.Add(_mpRow)
@@ -886,15 +1320,185 @@ Public Class Form1
         End Sub
     End Class
 
-    ' The circular play/pause control at the center of the Dashboard's card grid. Region is set to
-    ' an ellipse so clicks outside the circle (but inside the bounding square) don't register. Glow
-    ' rings + a radial gradient fill + hand-drawn play/pause glyphs (not text glyphs, which render
-    ' inconsistently across fonts and never sit quite centered) instead of the earlier flat circle.
+    Private NotInheritable Class DashboardModeSelector
+        Inherits Control
+
+        Private Shared ReadOnly ModeNames As String() = {"Compact", "Standard", "Detailed"}
+        Private ReadOnly _animationTimer As New System.Windows.Forms.Timer() With {.Interval = 16}
+        Private _selectedIndex As Integer = 0
+        Private _hoverIndex As Integer = -1
+        Private _selectionPosition As Double = 0.0R
+
+        Public Event SelectedModeChanged As EventHandler
+
+        Public Sub New()
+            Height = 34
+            MinimumSize = New Size(228, 34)
+            BackColor = ThemeBg
+            ForeColor = ThemeTextPrimary
+            Font = New Font("Segoe UI Semibold", 8.5F, FontStyle.Bold)
+            Cursor = Cursors.Hand
+            TabStop = True
+            SetStyle(ControlStyles.AllPaintingInWmPaint Or
+                     ControlStyles.OptimizedDoubleBuffer Or
+                     ControlStyles.UserPaint Or
+                     ControlStyles.ResizeRedraw Or
+                     ControlStyles.Selectable, True)
+            AddHandler _animationTimer.Tick, AddressOf AnimationTimerTick
+        End Sub
+
+        <System.ComponentModel.Browsable(False)>
+        <System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)>
+        Public Property SelectedMode As String
+            Get
+                Return ModeNames(_selectedIndex)
+            End Get
+            Set(value As String)
+                Dim nextIndex As Integer = Array.FindIndex(ModeNames, Function(mode) mode.Equals(If(value, ""), StringComparison.OrdinalIgnoreCase))
+                If nextIndex < 0 OrElse nextIndex = _selectedIndex Then
+                    Return
+                End If
+                _selectedIndex = nextIndex
+                _animationTimer.Start()
+                RaiseEvent SelectedModeChanged(Me, EventArgs.Empty)
+                Invalidate()
+            End Set
+        End Property
+
+        Private Function SegmentAt(x As Integer) As Integer
+            If Width <= 0 Then
+                Return -1
+            End If
+            Return Math.Max(0, Math.Min(ModeNames.Length - 1, CInt(Math.Floor((Math.Max(0, Math.Min(Width - 1, x)) / CDbl(Width)) * ModeNames.Length))))
+        End Function
+
+        Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
+            MyBase.OnMouseMove(e)
+            Dim nextHover As Integer = SegmentAt(e.X)
+            If nextHover <> _hoverIndex Then
+                _hoverIndex = nextHover
+                Invalidate()
+            End If
+        End Sub
+
+        Protected Overrides Sub OnMouseLeave(e As EventArgs)
+            MyBase.OnMouseLeave(e)
+            _hoverIndex = -1
+            Invalidate()
+        End Sub
+
+        Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
+            MyBase.OnMouseDown(e)
+            If e.Button = MouseButtons.Left Then
+                Focus()
+                Dim index As Integer = SegmentAt(e.X)
+                If index >= 0 Then
+                    SelectedMode = ModeNames(index)
+                End If
+            End If
+        End Sub
+
+        Protected Overrides Sub OnKeyDown(e As KeyEventArgs)
+            MyBase.OnKeyDown(e)
+            If e.KeyCode = Keys.Left Then
+                SelectedMode = ModeNames(Math.Max(0, _selectedIndex - 1))
+                e.Handled = True
+            ElseIf e.KeyCode = Keys.Right Then
+                SelectedMode = ModeNames(Math.Min(ModeNames.Length - 1, _selectedIndex + 1))
+                e.Handled = True
+            ElseIf e.KeyCode = Keys.Home Then
+                SelectedMode = ModeNames(0)
+                e.Handled = True
+            ElseIf e.KeyCode = Keys.End Then
+                SelectedMode = ModeNames(ModeNames.Length - 1)
+                e.Handled = True
+            End If
+        End Sub
+
+        Private Sub AnimationTimerTick(sender As Object, e As EventArgs)
+            _selectionPosition += (_selectedIndex - _selectionPosition) * 0.28R
+            If Math.Abs(_selectedIndex - _selectionPosition) < 0.01R Then
+                _selectionPosition = _selectedIndex
+                _animationTimer.Stop()
+            End If
+            Invalidate()
+        End Sub
+
+        Protected Overrides Sub OnPaint(e As PaintEventArgs)
+            MyBase.OnPaint(e)
+            If Width <= 3 OrElse Height <= 3 Then
+                Return
+            End If
+
+            e.Graphics.SmoothingMode = Drawing2D.SmoothingMode.AntiAlias
+            Dim outerRect As New Rectangle(0, 0, Width - 1, Height - 1)
+            Using outerPath As Drawing2D.GraphicsPath = RoundedRectPath(outerRect, 11),
+                  backgroundBrush As New SolidBrush(Color.FromArgb(18, 27, 47)),
+                  borderPen As New Pen(Color.FromArgb(72, ThemeCardBorder), 1.0F)
+                e.Graphics.FillPath(backgroundBrush, outerPath)
+                e.Graphics.DrawPath(borderPen, outerPath)
+            End Using
+
+            Dim innerLeft As Integer = 3
+            Dim innerTop As Integer = 3
+            Dim innerHeight As Integer = Height - 7
+            Dim segmentWidth As Double = (Width - 6.0R) / ModeNames.Length
+            Dim selectedRect As New Rectangle(
+                CInt(Math.Round(innerLeft + (_selectionPosition * segmentWidth))),
+                innerTop,
+                Math.Max(1, CInt(Math.Ceiling(segmentWidth))),
+                Math.Max(1, innerHeight))
+            selectedRect.Width = Math.Min(selectedRect.Width, Math.Max(1, Width - 3 - selectedRect.X))
+            Using selectedPath As Drawing2D.GraphicsPath = RoundedRectPath(selectedRect, 8),
+                  selectedBrush As New Drawing2D.LinearGradientBrush(selectedRect, Color.FromArgb(54, 112, 158), Color.FromArgb(31, 70, 112), Drawing2D.LinearGradientMode.Vertical),
+                  selectedBorder As New Pen(Color.FromArgb(185, ThemeAccent), 1.0F)
+                e.Graphics.FillPath(selectedBrush, selectedPath)
+                e.Graphics.DrawPath(selectedBorder, selectedPath)
+            End Using
+
+            For index As Integer = 0 To ModeNames.Length - 1
+                Dim segmentRect As New Rectangle(
+                    CInt(Math.Round(index * (Width / CDbl(ModeNames.Length)))),
+                    0,
+                    CInt(Math.Ceiling(Width / CDbl(ModeNames.Length))),
+                    Height)
+                If index = _hoverIndex AndAlso index <> _selectedIndex Then
+                    Dim hoverRect As Rectangle = Rectangle.Inflate(segmentRect, -4, -5)
+                    Using hoverPath As Drawing2D.GraphicsPath = RoundedRectPath(hoverRect, 7),
+                          hoverBrush As New SolidBrush(Color.FromArgb(32, ThemeAccent))
+                        e.Graphics.FillPath(hoverBrush, hoverPath)
+                    End Using
+                End If
+                Dim textColor As Color = If(index = _selectedIndex, Color.White, If(index = _hoverIndex, ThemeTextPrimary, ThemeTextSecondary))
+                TextRenderer.DrawText(e.Graphics, ModeNames(index), Font, segmentRect, textColor,
+                                      TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
+            Next
+
+            If Focused Then
+                Dim focusRect As Rectangle = Rectangle.Inflate(outerRect, -2, -2)
+                ControlPaint.DrawFocusRectangle(e.Graphics, focusRect, Color.FromArgb(180, ThemeAccent), Color.Transparent)
+            End If
+        End Sub
+
+        Protected Overrides Sub Dispose(disposing As Boolean)
+            If disposing Then
+                _animationTimer.Stop()
+                _animationTimer.Dispose()
+            End If
+            MyBase.Dispose(disposing)
+        End Sub
+    End Class
+
+    ' The header action shows the action that a click will perform: play while stopped and a
+    ' rounded stop square while running. Both glyphs are vector-painted for crisp DPI scaling.
     Private NotInheritable Class CircleButton
         Inherits Button
 
         Private _isPlaying As Boolean = False
         Private _isHovered As Boolean = False
+        Private ReadOnly _hoverTimer As New System.Windows.Forms.Timer() With {.Interval = 16}
+        Private ReadOnly _toolTip As New ToolTip() With {.InitialDelay = 250, .ReshowDelay = 100, .AutoPopDelay = 5000}
+        Private _hoverAmount As Double = 0.0R
 
         Public Sub New()
             FlatStyle = FlatStyle.Flat
@@ -903,6 +1507,9 @@ Public Class Form1
             ForeColor = Color.White
             TabStop = False
             Cursor = Cursors.Hand
+            _toolTip.SetToolTip(Me, "Start bot")
+            AccessibleName = "Start bot"
+            AddHandler _hoverTimer.Tick, AddressOf HoverTimerTick
         End Sub
 
         <System.ComponentModel.Browsable(False)>
@@ -914,6 +1521,9 @@ Public Class Form1
             Set(value As Boolean)
                 If _isPlaying <> value Then
                     _isPlaying = value
+                    Dim actionText As String = If(_isPlaying, "Stop bot", "Start bot")
+                    _toolTip.SetToolTip(Me, actionText)
+                    AccessibleName = actionText
                     Invalidate()
                 End If
             End Set
@@ -922,12 +1532,22 @@ Public Class Form1
         Protected Overrides Sub OnMouseEnter(e As EventArgs)
             MyBase.OnMouseEnter(e)
             _isHovered = True
-            Invalidate()
+            _hoverTimer.Start()
         End Sub
 
         Protected Overrides Sub OnMouseLeave(e As EventArgs)
             MyBase.OnMouseLeave(e)
             _isHovered = False
+            _hoverTimer.Start()
+        End Sub
+
+        Private Sub HoverTimerTick(sender As Object, e As EventArgs)
+            Dim target As Double = If(_isHovered, 1.0R, 0.0R)
+            _hoverAmount += (target - _hoverAmount) * 0.3R
+            If Math.Abs(target - _hoverAmount) < 0.01R Then
+                _hoverAmount = target
+                _hoverTimer.Stop()
+            End If
             Invalidate()
         End Sub
 
@@ -936,7 +1556,12 @@ Public Class Form1
             If Width > 1 AndAlso Height > 1 Then
                 Dim path As New Drawing2D.GraphicsPath()
                 path.AddEllipse(0, 0, Width - 1, Height - 1)
+                Dim oldRegion As Region = Region
                 Region = New Region(path)
+                If oldRegion IsNot Nothing Then
+                    oldRegion.Dispose()
+                End If
+                path.Dispose()
             End If
         End Sub
 
@@ -946,12 +1571,11 @@ Public Class Form1
             End If
             e.Graphics.SmoothingMode = Drawing2D.SmoothingMode.AntiAlias
 
-            ' Soft outer glow: a handful of progressively larger, fainter rings fake a blur GDI+
-            ' can't do natively. Brighter/wider while running or hovered.
-            Dim glowBaseAlpha As Integer = If(_isPlaying, 70, If(_isHovered, 55, 34))
-            Dim glowColor As Color = If(_isPlaying, ThemeGood, ThemeAccent)
+            Dim actionColor As Color = If(_isPlaying, ThemeWarn, ThemeGood)
+            Dim glowBaseAlpha As Integer = CInt(32 + (_hoverAmount * 48))
+            Dim glowColor As Color = actionColor
             For ring As Integer = 4 To 1 Step -1
-                Dim expand As Integer = ring * 3
+                Dim expand As Integer = ring * 2
                 Dim alpha As Integer = Math.Max(0, glowBaseAlpha - (ring * 12))
                 Using glowBrush As New SolidBrush(Color.FromArgb(alpha, glowColor))
                     e.Graphics.FillEllipse(glowBrush, -expand, -expand, Width - 1 + expand * 2, Height - 1 + expand * 2)
@@ -959,11 +1583,14 @@ Public Class Form1
             Next
 
             Dim rect As New Rectangle(0, 0, Width - 1, Height - 1)
-            Dim topColor As Color = If(_isHovered, ControlPaint.Light(ThemeCard, 0.15F), ThemeCard)
-            Using fillBrush As New Drawing2D.LinearGradientBrush(rect, topColor, ThemeBg, Drawing2D.LinearGradientMode.ForwardDiagonal)
+            Dim topColor As Color = BlendColors(ThemeCard, actionColor, 0.1R + (_hoverAmount * 0.12R))
+            Using fillBrush As New Drawing2D.LinearGradientBrush(rect, topColor, ThemeBg, Drawing2D.LinearGradientMode.Vertical)
                 e.Graphics.FillEllipse(fillBrush, rect)
             End Using
-            Using borderPen As New Pen(If(_isPlaying, ThemeGood, ThemeAccent), 2.5F)
+            Using innerBrush As New SolidBrush(Color.FromArgb(CInt(18 + (_hoverAmount * 18)), actionColor))
+                e.Graphics.FillEllipse(innerBrush, Rectangle.Inflate(rect, -6, -6))
+            End Using
+            Using borderPen As New Pen(BlendColors(actionColor, Color.White, _hoverAmount * 0.14R), CSng(2.0R + (_hoverAmount * 0.8R)))
                 e.Graphics.DrawEllipse(borderPen, Rectangle.Inflate(rect, -1, -1))
             End Using
 
@@ -972,18 +1599,13 @@ Public Class Form1
             Dim glyphColor As Color = Color.White
             Using glyphBrush As New SolidBrush(glyphColor)
                 If _isPlaying Then
-                    Dim barWidth As Single = Width * 0.09F
-                    Dim barHeight As Single = Height * 0.34F
-                    Dim gap As Single = Width * 0.08F
-                    Dim barTop As Single = cy - barHeight / 2.0F
-                    Using barPath1 As Drawing2D.GraphicsPath = RoundedRectPath(New Rectangle(CInt(cx - gap - barWidth), CInt(barTop), CInt(barWidth), CInt(barHeight)), CInt(barWidth / 2.0F))
-                        e.Graphics.FillPath(glyphBrush, barPath1)
-                    End Using
-                    Using barPath2 As Drawing2D.GraphicsPath = RoundedRectPath(New Rectangle(CInt(cx + gap), CInt(barTop), CInt(barWidth), CInt(barHeight)), CInt(barWidth / 2.0F))
-                        e.Graphics.FillPath(glyphBrush, barPath2)
+                    Dim stopSize As Integer = Math.Max(12, CInt(Math.Round(Height * 0.27R)))
+                    Dim stopRect As New Rectangle(CInt(Math.Round(cx - stopSize / 2.0R)), CInt(Math.Round(cy - stopSize / 2.0R)), stopSize, stopSize)
+                    Using stopPath As Drawing2D.GraphicsPath = RoundedRectPath(stopRect, Math.Max(3, stopSize \ 5))
+                        e.Graphics.FillPath(glyphBrush, stopPath)
                     End Using
                 Else
-                    Dim triSize As Single = Height * 0.32F
+                    Dim triSize As Single = Height * 0.35F
                     Dim offsetX As Single = triSize * 0.12F
                     Dim points As System.Drawing.PointF() = {
                         New System.Drawing.PointF(cx - triSize / 2.0F + offsetX, cy - triSize * 0.62F),
@@ -993,6 +1615,15 @@ Public Class Form1
                     e.Graphics.FillPolygon(glyphBrush, points)
                 End If
             End Using
+        End Sub
+
+        Protected Overrides Sub Dispose(disposing As Boolean)
+            If disposing Then
+                _hoverTimer.Stop()
+                _hoverTimer.Dispose()
+                _toolTip.Dispose()
+            End If
+            MyBase.Dispose(disposing)
         End Sub
     End Class
 
@@ -1027,6 +1658,12 @@ Public Class Form1
     Private nudAutoPartyInviteSeconds As NumericUpDown
     Private chkAutoPartyOverlay As CheckBox
     Private btnAutoPartyMessage As Button
+    Private dgvItemAwards As DataGridView
+    Private lblItemAwardsSummary As Label
+    Private btnClearItemAwards As Button
+    Private txtItemAwardPlayerFilter As TextBox
+    Private txtItemAwardItemFilter As TextBox
+    Private txtItemAwardSkipTerms As TextBox
     Private txtAutoPartyMessageText As TextBox
     Private nudAutoPartyMessageSeconds As NumericUpDown
     Private chkArrowUnbundleEnabled As CheckBox
@@ -1130,10 +1767,16 @@ Public Class Form1
     Private cardDashTarget As DashboardCard
     Private cardDashRate As DashboardCard
     Private cardDashSession As DashboardCard
+    Private cardDashEfficiency As DashboardCard
+    Private cardDashRecent As DashboardCard
+    Private dashboardSummary As DashboardSummaryBar
+    Private _dashboardModeSelectorControl As DashboardModeSelector
     Private btnDashPlayPause As CircleButton
     Private _dashboardCardHost As BufferedTableLayoutPanel
     Private ReadOnly _dashboardEntranceTimer As New System.Windows.Forms.Timer() With {.Interval = 16}
     Private _dashboardEntranceFrame As Integer = 0
+    Private _dashboardMode As DashboardDisplayMode = DashboardDisplayMode.Compact
+    Private _dashboardModeLoading As Boolean = False
     Private btnAttack As Button
     Private btnSaveSettings As Button
     Private btnStopBot As Button
@@ -1367,6 +2010,7 @@ Public Class Form1
     Private Const DefaultResurrectAskCommand As String = "need resu pls"
     Private Const DefaultAutoPartyInviteKey As String = "F1"
     Private Const DefaultAutoPartyMessageText As String = "party pls"
+    Private Const DefaultLootAwardSkipTermsText As String = "Rupiah"
     Private Const DefaultLootNameMatchThresholdPercent As Integer = 80
     Private Const DefaultMobNameMatchThresholdPercent As Integer = 80
     Private Const DefaultMapOpenKey As String = "M"
@@ -1396,6 +2040,7 @@ Public Class Form1
     Private _lastAchievementSampleAt As DateTime = DateTime.MinValue
     Private _lastAchievementExpPercent As Double = -1
     Private _cumulativeExpEarned As Double = 0
+    Private ReadOnly _applicationSessionStartedAtUtc As DateTime = DateTime.UtcNow
     Private _dashboardSessionRunStartedAtUtc As DateTime = DateTime.MinValue
     Private _dashboardSessionStartRupiahs As Long = -1
     Private _dashboardSessionRupiahsEarned As Long = 0
@@ -1403,13 +2048,30 @@ Public Class Form1
     Private _dashboardSessionExpEarned As Double = 0.0
     Private _dashboardLastRateSampleAtUtc As DateTime = DateTime.MinValue
     Private ReadOnly _dashboardExpRateHistory As New List(Of Double)()
+    Private ReadOnly _dashboardRupiahRateHistory As New List(Of Double)()
     Private Const DashboardRateHistoryIntervalSeconds As Integer = 5
-    Private Const DashboardRateHistoryMaxSamples As Integer = 60
+    Private Const DashboardRateHistoryMaxSamples As Integer = 180
+    Private _dashboardTargetSignature As String = ""
+    Private _dashboardTargetStartedAtUtc As DateTime = DateTime.MinValue
+    Private _dashboardTargetStartHpPercent As Double = -1.0
+    Private _dashboardTargetWasValid As Boolean = False
+    Private _dashboardLastKillCount As Integer = 0
+    Private _dashboardKillCounterInitialized As Boolean = False
+    Private _dashboardKillDurationTotalSeconds As Double = 0.0
+    Private _dashboardTrackedKillDurations As Integer = 0
+    Private _dashboardSearchStartedAtUtc As DateTime = DateTime.MinValue
+    Private _dashboardSearchDurationTotalSeconds As Double = 0.0
+    Private _dashboardCompletedSearches As Integer = 0
+    Private _dashboardLastRecordedAction As String = ""
+    Private ReadOnly _dashboardRecentEvents As New Queue(Of String)()
+    Private Const DashboardRecentEventLimit As Integer = 20
     Private ReadOnly _lootHistoryEvents As New List(Of LootHistoryEvent)()
     Private ReadOnly _lootHistoryEventsSync As New Object()
     Private Const MaxLootHistoryEvents As Integer = 500
     Private _lootHistoryVersion As Long = 0
     Private _lastLootHistoryRenderedVersion As Long = -1
+    Private ReadOnly _itemAwardReads As New List(Of LootAwardRead)()
+    Private Const MaxItemAwardReads As Integer = 500
     Private _lastEngineKeyActionLogUtc As DateTime = DateTime.MinValue
     Private _suppressedEngineKeyActionLogCount As Integer = 0
     Private _lastStateLogUtc As DateTime = DateTime.MinValue
@@ -1570,6 +2232,12 @@ Public Class Form1
         [Error]
     End Enum
 
+    Private Enum DashboardDisplayMode
+        Compact
+        Standard
+        Detailed
+    End Enum
+
     Private Class PersistedAppState
         Public Property WindowTitle As String = DefaultGameWindowTitle
         Public Property PeriodicScreenshotsEnabled As Boolean = False
@@ -1582,6 +2250,7 @@ Public Class Form1
         Public Property UpdateRepositoryUrl As String = DefaultUpdateRepositoryUrl
         Public Property UpdateCheckAtStartup As Boolean = True
         Public Property UpdateIncludePrereleases As Boolean = False
+        Public Property DashboardMode As String = "Compact"
         Public Property Full As PersistedListState = New PersistedListState()
         Public Property Lite As PersistedLiteState = New PersistedLiteState()
     End Class
@@ -1604,6 +2273,7 @@ Public Class Form1
         Public Property AutoPartyMessageEnabled As Boolean = False
         Public Property AutoPartyMessageSeconds As Decimal = 30D
         Public Property AutoPartyMessageText As String = DefaultAutoPartyMessageText
+        Public Property LootAwardSkipTerms As String = DefaultLootAwardSkipTermsText
         Public Property LootRejectPointEnabled As Boolean = False
         Public Property LootRejectPointX As Integer = -1
         Public Property LootRejectPointY As Integer = -1
@@ -1752,6 +2422,7 @@ Public Class Form1
         AddHandler _liteEngine.StatusUpdated, Sub(status As BotStatus) OnEngineStatusUpdated(BotEdition.Lite, status)
         AddHandler _fullEngine.LogLine, Sub(line As String) OnEngineLogLine(BotEdition.Full, line)
         AddHandler _liteEngine.LogLine, Sub(line As String) OnEngineLogLine(BotEdition.Lite, line)
+        AddHandler _fullEngine.LootAwardDetected, AddressOf OnLootAwardDetected
         InitializeInGameBotToggle()
 
         _uiTimer.Interval = 1000
@@ -2265,6 +2936,10 @@ Public Class Form1
         End If
         If txtAutoPartyMessageText IsNot Nothing Then
             AddHandler txtAutoPartyMessageText.TextChanged, AddressOf PersistListSettingsChanged
+        End If
+        If txtItemAwardSkipTerms IsNot Nothing Then
+            AddHandler txtItemAwardSkipTerms.TextChanged, AddressOf LiveConfigChanged
+            AddHandler txtItemAwardSkipTerms.TextChanged, AddressOf PersistListSettingsChanged
         End If
         If nudAutoPartyMessageSeconds IsNot Nothing Then
             AddHandler nudAutoPartyMessageSeconds.ValueChanged, AddressOf PersistListSettingsChanged
@@ -2853,11 +3528,16 @@ Public Class Form1
             .Font = New Font("Segoe UI", 9.0F, FontStyle.Bold),
             .DrawMode = TabDrawMode.OwnerDrawFixed,
             .SizeMode = TabSizeMode.Fixed,
-            .ItemSize = New Size(70, 92)
+            .ItemSize = New Size(70, 122)
         }
         AddHandler _mainTabs.DrawItem, AddressOf MainTabsDrawItem
         AddHandler _mainTabs.SelectedIndexChanged, AddressOf MainTabsSelectedIndexChanged
-        AddHandler _mainTabs.Resize, Sub(s As Object, ev As EventArgs) UpdateTabIndicatorTarget()
+        AddHandler _mainTabs.Resize,
+            Sub(s As Object, ev As EventArgs)
+                UpdateTabIndicatorTarget()
+                SyncSidebarRailOverlayBounds()
+            End Sub
+        AddHandler _mainTabs.LocationChanged, Sub(s As Object, ev As EventArgs) SyncSidebarRailOverlayBounds()
         pnlWindowFrame.Controls.Add(_mainTabs)
 
         ' A separate overlay control (not drawn by the TabControl itself) sliding to the selected
@@ -2868,12 +3548,22 @@ Public Class Form1
         ' it invalidates old and new spots correctly on its own, and it's a separate HWND, so the
         ' tab strip repainting itself (e.g. the once-a-second status tick) never touches it.
         _tabIndicatorBar = New Panel() With {
-            .BackColor = ThemeAccent,
-            .Size = New Size(3, _mainTabs.ItemSize.Width)
+            .BackColor = BlendColors(ThemeAccent, ThemeGood, 0.18R),
+            .Size = New Size(4, Math.Max(12, _mainTabs.ItemSize.Width - 12)),
+            .Visible = False
         }
         pnlWindowFrame.Controls.Add(_tabIndicatorBar)
         _tabIndicatorBar.BringToFront()
         AddHandler _tabIndicatorAnimTimer.Tick, AddressOf TabIndicatorAnimTimerTick
+
+        _sidebarRailOverlay = New SidebarRailControl() With {
+            .TargetTabs = _mainTabs,
+            .ActiveEvaluator = AddressOf IsMainTabActive,
+            .ForeColorEvaluator = AddressOf GetSidebarRailForeColor
+        }
+        pnlWindowFrame.Controls.Add(_sidebarRailOverlay)
+        SyncSidebarRailOverlayBounds()
+        _sidebarRailOverlay.BringToFront()
 
         pnlHealthBanner = New Panel() With {
             .Dock = DockStyle.Top,
@@ -2917,21 +3607,23 @@ Public Class Form1
     ' and how the current session is progressing without making the user open Diagnostics.
     Private Function BuildDashboardTab() As TabPage
         Dim tab As New TabPage("Home") With {.BackColor = ThemeBg}
-        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2, .BackColor = ThemeBg, .Tag = "dashboard-scope"}
-        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 94.0F))
+        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3, .BackColor = ThemeBg, .Tag = "dashboard-scope"}
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 86.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 108.0F))
         root.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         tab.Controls.Add(root)
 
         Dim header As New TableLayoutPanel() With {
             .Dock = DockStyle.Fill,
             .BackColor = ThemeBg,
-            .Padding = New Padding(40, 14, 40, 8),
-            .ColumnCount = 3,
+            .Padding = New Padding(40, 10, 40, 6),
+            .ColumnCount = 4,
             .RowCount = 1
         }
         header.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
-        header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 350.0F))
-        header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 70.0F))
+        header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 260.0F))
+        header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 258.0F))
+        header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 82.0F))
 
         Dim titleStack As New Panel() With {.Dock = DockStyle.Fill, .BackColor = ThemeBg}
         Dim lblTitle As New Label() With {
@@ -2960,8 +3652,25 @@ Public Class Form1
             .TextAlign = ContentAlignment.MiddleRight
         }
 
+        Dim modeHost As New Panel() With {.Dock = DockStyle.Fill, .BackColor = ThemeBg, .Padding = New Padding(10, 6, 4, 8)}
+        Dim modeCaption As New Label() With {
+            .Text = "DASHBOARD VIEW",
+            .Dock = DockStyle.Top,
+            .Height = 17,
+            .Font = New Font("Segoe UI Semibold", 7.5F, FontStyle.Bold),
+            .ForeColor = ThemeTextSecondary,
+            .TextAlign = ContentAlignment.MiddleLeft
+        }
+        _dashboardModeSelectorControl = New DashboardModeSelector() With {
+            .Dock = DockStyle.Fill,
+            .SelectedMode = "Compact"
+        }
+        AddHandler _dashboardModeSelectorControl.SelectedModeChanged, AddressOf DashboardModeChanged
+        modeHost.Controls.Add(_dashboardModeSelectorControl)
+        modeHost.Controls.Add(modeCaption)
+
         Dim actionHost As New Panel() With {.Dock = DockStyle.Fill, .BackColor = ThemeBg}
-        btnDashPlayPause = New CircleButton() With {.Size = New Size(58, 58)}
+        btnDashPlayPause = New CircleButton() With {.Size = New Size(62, 62)}
         AddHandler btnDashPlayPause.Click, AddressOf DashboardPlayPauseClicked
         actionHost.Controls.Add(btnDashPlayPause)
         Dim centerHeaderAction As Action =
@@ -2974,28 +3683,33 @@ Public Class Form1
 
         header.Controls.Add(titleStack, 0, 0)
         header.Controls.Add(lblDashSubtitle, 1, 0)
-        header.Controls.Add(actionHost, 2, 0)
+        header.Controls.Add(modeHost, 2, 0)
+        header.Controls.Add(actionHost, 3, 0)
         root.Controls.Add(header, 0, 0)
 
+        dashboardSummary = New DashboardSummaryBar() With {.Dock = DockStyle.Fill, .Margin = New Padding(48, 6, 48, 6), .MinimumSize = New Size(0, 88)}
+        root.Controls.Add(dashboardSummary, 0, 1)
+
         Dim stage As New Panel() With {.Dock = DockStyle.Fill, .BackColor = ThemeBg}
-        root.Controls.Add(stage, 0, 1)
+        root.Controls.Add(stage, 0, 2)
 
         _dashboardCardHost = New BufferedTableLayoutPanel() With {
             .Dock = DockStyle.Fill,
             .ColumnCount = 6,
-            .RowCount = 2,
-            .Padding = New Padding(48, 24, 48, 38),
+            .RowCount = 3,
+            .Padding = New Padding(48, 10, 48, 22),
             .BackColor = ThemeBg
         }
         For columnIndex As Integer = 0 To 5
             _dashboardCardHost.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 16.6667F))
         Next
-        _dashboardCardHost.RowStyles.Add(New RowStyle(SizeType.Percent, 52.0F))
-        _dashboardCardHost.RowStyles.Add(New RowStyle(SizeType.Percent, 48.0F))
+        _dashboardCardHost.RowStyles.Add(New RowStyle(SizeType.Percent, 25.0F))
+        _dashboardCardHost.RowStyles.Add(New RowStyle(SizeType.Percent, 44.0F))
+        _dashboardCardHost.RowStyles.Add(New RowStyle(SizeType.Percent, 31.0F))
         stage.Controls.Add(_dashboardCardHost)
 
         cardDashStatus = New DashboardCard() With {.Dock = DockStyle.Fill, .Margin = New Padding(10), .AccentColor = ThemeGood}
-        cardDashStatus.SetCaption("BOT STATUS")
+        cardDashStatus.SetCaption("●  BOT STATUS")
         cardDashStatus.SetValue("Ready", ThemeTextSecondary)
         cardDashStatus.SetSecondary("Start the bot when your game client is ready.")
         _dashboardCardHost.Controls.Add(cardDashStatus, 0, 0)
@@ -3006,27 +3720,49 @@ Public Class Form1
         _dashboardCardHost.SetColumnSpan(cardDashVitals, 3)
 
         cardDashTarget = New DashboardCard() With {.Dock = DockStyle.Fill, .Margin = New Padding(10), .AccentColor = Color.FromArgb(124, 177, 255)}
-        cardDashTarget.SetCaption("CURRENT TARGET")
+        cardDashTarget.SetCaption("◎  CURRENT TARGET")
         cardDashTarget.SetValue("No target", ThemeTextSecondary)
         cardDashTarget.SetSecondary("Waiting for a valid target.")
+        cardDashTarget.SetSecondaryHeight(52)
         _dashboardCardHost.Controls.Add(cardDashTarget, 0, 1)
         _dashboardCardHost.SetColumnSpan(cardDashTarget, 2)
 
         cardDashRate = New DashboardCard() With {.Dock = DockStyle.Fill, .Margin = New Padding(10), .AccentColor = Color.FromArgb(170, 135, 255)}
-        cardDashRate.SetCaption("EXP PROGRESS")
+        cardDashRate.SetCaption("↗  EXP PROGRESS")
         cardDashRate.SetValue("Calculating", ThemeTextSecondary)
         cardDashRate.SetSecondary("ETA, session gain, and recent rate appear while running.")
+        cardDashRate.SetGraphHeight(64)
         _dashboardCardHost.Controls.Add(cardDashRate, 2, 1)
         _dashboardCardHost.SetColumnSpan(cardDashRate, 2)
 
         cardDashSession = New DashboardCard() With {.Dock = DockStyle.Fill, .Margin = New Padding(10), .AccentColor = Color.FromArgb(245, 195, 85)}
-        cardDashSession.SetCaption("RUPIAH")
+        cardDashSession.SetCaption("$  RUPIAH")
         cardDashSession.SetValue("Waiting for reading", ThemeTextSecondary)
         cardDashSession.SetSecondary("Wallet, session earnings, and hourly rate appear here.")
+        cardDashSession.SetGraphHeight(64)
         _dashboardCardHost.Controls.Add(cardDashSession, 4, 1)
         _dashboardCardHost.SetColumnSpan(cardDashSession, 2)
 
+        cardDashEfficiency = New DashboardCard() With {.Dock = DockStyle.Fill, .Margin = New Padding(10), .AccentColor = Color.FromArgb(255, 155, 92)}
+        cardDashEfficiency.SetCaption("⚡  EFFICIENCY")
+        cardDashEfficiency.SetValue("Collecting session data", ThemeTextSecondary)
+        cardDashEfficiency.SetValueFont(11.5F, FontStyle.Bold)
+        cardDashEfficiency.SetSecondary("Kills, combat timing, search timing, and loot yield.")
+        cardDashEfficiency.SetSecondaryHeight(30)
+        _dashboardCardHost.Controls.Add(cardDashEfficiency, 0, 2)
+        _dashboardCardHost.SetColumnSpan(cardDashEfficiency, 3)
+
+        cardDashRecent = New DashboardCard() With {.Dock = DockStyle.Fill, .Margin = New Padding(10), .AccentColor = Color.FromArgb(80, 200, 190)}
+        cardDashRecent.SetCaption("≡  RECENT EVENTS")
+        cardDashRecent.SetValue("No activity yet", ThemeTextSecondary)
+        cardDashRecent.SetValueFont(9.5F, FontStyle.Regular)
+        cardDashRecent.SetSecondary("Latest app-session activity appears here.")
+        cardDashRecent.SetSecondaryHeight(30)
+        _dashboardCardHost.Controls.Add(cardDashRecent, 3, 2)
+        _dashboardCardHost.SetColumnSpan(cardDashRecent, 3)
+
         AddHandler _dashboardEntranceTimer.Tick, AddressOf DashboardEntranceTimerTick
+        ApplyDashboardModeLayout()
         centerHeaderAction()
 
         Return tab
@@ -3040,18 +3776,110 @@ Public Class Form1
         End If
     End Sub
 
+    Private Sub DashboardModeChanged(sender As Object, e As EventArgs)
+        If _dashboardModeSelectorControl Is Nothing Then
+            Return
+        End If
+        Dim parsedMode As DashboardDisplayMode
+        If Not [Enum].TryParse(_dashboardModeSelectorControl.SelectedMode, True, parsedMode) Then
+            parsedMode = DashboardDisplayMode.Compact
+        End If
+        _dashboardMode = parsedMode
+        ApplyDashboardModeLayout()
+        If Not _dashboardModeLoading Then
+            SavePersistedListState(False)
+        End If
+    End Sub
+
+    Private Sub ApplyDashboardModeLayout()
+        If _dashboardCardHost Is Nothing OrElse _dashboardCardHost.RowStyles.Count < 3 Then
+            Return
+        End If
+
+        Dim showAnalyticsRow As Boolean = _dashboardMode <> DashboardDisplayMode.Compact
+        If cardDashEfficiency IsNot Nothing Then
+            cardDashEfficiency.Visible = showAnalyticsRow
+        End If
+        If cardDashRecent IsNot Nothing Then
+            cardDashRecent.Visible = showAnalyticsRow
+        End If
+
+        _dashboardCardHost.SuspendLayout()
+        Try
+            Select Case _dashboardMode
+                Case DashboardDisplayMode.Compact
+                    SetDashboardCardLayout(cardDashStatus, 0, 0, 2)
+                    SetDashboardCardLayout(cardDashVitals, 2, 0, 2)
+                    SetDashboardCardLayout(cardDashTarget, 4, 0, 2)
+                    SetDashboardCardLayout(cardDashRate, 0, 1, 3)
+                    SetDashboardCardLayout(cardDashSession, 3, 1, 3)
+                    SetDashboardRowStyle(0, SizeType.Percent, 50.0F)
+                    SetDashboardRowStyle(1, SizeType.Percent, 50.0F)
+                    SetDashboardRowStyle(2, SizeType.Absolute, 0.0F)
+                    _dashboardCardHost.Padding = New Padding(48, 8, 48, 18)
+                    cardDashRate.SetGraphHeight(50)
+                    cardDashSession.SetGraphHeight(50)
+                Case DashboardDisplayMode.Detailed
+                    RestoreExpandedDashboardCardLayout()
+                    SetDashboardRowStyle(0, SizeType.Percent, 26.0F)
+                    SetDashboardRowStyle(1, SizeType.Percent, 39.0F)
+                    SetDashboardRowStyle(2, SizeType.Percent, 35.0F)
+                    _dashboardCardHost.Padding = New Padding(48, 8, 48, 22)
+                    cardDashRate.SetGraphHeight(74)
+                    cardDashSession.SetGraphHeight(74)
+                Case Else
+                    RestoreExpandedDashboardCardLayout()
+                    SetDashboardRowStyle(0, SizeType.Percent, 25.0F)
+                    SetDashboardRowStyle(1, SizeType.Percent, 44.0F)
+                    SetDashboardRowStyle(2, SizeType.Percent, 31.0F)
+                    _dashboardCardHost.Padding = New Padding(48, 8, 48, 22)
+                    cardDashRate.SetGraphHeight(64)
+                    cardDashSession.SetGraphHeight(64)
+            End Select
+        Finally
+            _dashboardCardHost.ResumeLayout(True)
+        End Try
+        _dashboardCardHost.PerformLayout()
+        _dashboardCardHost.Invalidate(True)
+    End Sub
+
+    Private Sub RestoreExpandedDashboardCardLayout()
+        SetDashboardCardLayout(cardDashStatus, 0, 0, 3)
+        SetDashboardCardLayout(cardDashVitals, 3, 0, 3)
+        SetDashboardCardLayout(cardDashTarget, 0, 1, 2)
+        SetDashboardCardLayout(cardDashRate, 2, 1, 2)
+        SetDashboardCardLayout(cardDashSession, 4, 1, 2)
+        SetDashboardCardLayout(cardDashEfficiency, 0, 2, 3)
+        SetDashboardCardLayout(cardDashRecent, 3, 2, 3)
+    End Sub
+
+    Private Sub SetDashboardCardLayout(card As Control, column As Integer, row As Integer, columnSpan As Integer)
+        If _dashboardCardHost Is Nothing OrElse card Is Nothing Then
+            Return
+        End If
+        _dashboardCardHost.SetCellPosition(card, New TableLayoutPanelCellPosition(column, row))
+        _dashboardCardHost.SetColumnSpan(card, Math.Max(1, columnSpan))
+    End Sub
+
+    Private Sub SetDashboardRowStyle(index As Integer, sizeType As SizeType, value As Single)
+        If _dashboardCardHost Is Nothing OrElse index < 0 OrElse index >= _dashboardCardHost.RowStyles.Count Then
+            Return
+        End If
+        _dashboardCardHost.RowStyles(index).SizeType = sizeType
+        _dashboardCardHost.RowStyles(index).Height = value
+    End Sub
+
     Private Sub UpdateDashboardUi(status As BotStatus, Optional edition As BotEdition = BotEdition.Full)
         If cardDashStatus Is Nothing OrElse cardDashSession Is Nothing OrElse status Is Nothing Then
             Return
         End If
 
-        Dim runtime As String = FormatDashboardDuration(status.RunStartedAtUtc, status.Running)
         UpdateDashboardSessionMetrics(status, edition)
+        Dim runtime As String = FormatDashboardDuration(_applicationSessionStartedAtUtc)
+        Dim appElapsedHours As Double = Math.Max(1.0 / 3600.0, (DateTime.UtcNow - _applicationSessionStartedAtUtc).TotalHours)
+        Dim killsPerHour As Double = status.SessionKilledMobs / appElapsedHours
         Dim statusColor As Color = If(status.Running, ThemeGood, ThemeTextSecondary)
-        Dim statusValue As String =
-            If(status.Running,
-               $"Active  |  {status.SessionKilledMobs:N0} killed",
-               If(status.SessionKilledMobs > 0, $"Ready  |  {status.SessionKilledMobs:N0} killed this app session", "Ready"))
+        Dim statusValue As String = If(status.Running, $"Active  |  {status.SessionKilledMobs:N0} killed", If(status.SessionKilledMobs > 0, $"Ready  |  {status.SessionKilledMobs:N0} killed", "Ready"))
         Dim statusDetail As String = "Bot is paused. Settings are ready to edit."
         If status.Running Then
             statusDetail = If(String.IsNullOrWhiteSpace(status.LastAction), "Monitoring the game and looking for work.", status.LastAction)
@@ -3072,31 +3900,55 @@ Public Class Form1
         cardDashStatus.SetSecondary(statusDetail)
         cardDashVitals.SetVitals(status.HpPercent, status.MpPercent, HpColor(status.HpPercent), MpColor(status.MpPercent))
 
-        If status.TargetValid AndAlso Not String.IsNullOrWhiteSpace(status.MobName) Then
-            cardDashTarget.SetValue(status.MobName)
-            Dim targetDetail As String = $"HP {status.MobHpPercent:0}%"
-            If status.MobMaxHp > 0 Then
-                targetDetail &= $"  •  Max HP {status.MobMaxHp:N0}"
-            ElseIf Not String.IsNullOrWhiteSpace(status.MobHpText) Then
-                targetDetail &= $"  •  {status.MobHpText}"
+        If status.TargetValid Then
+            Dim targetName As String = If(String.IsNullOrWhiteSpace(status.MobName), "Detected target", status.MobName.Trim())
+            cardDashTarget.SetValue(targetName)
+            Dim currentHp As Long = -1
+            Dim maxHp As Long = If(status.MobMaxHp > 0, CLng(status.MobMaxHp), -1L)
+            TryParseMobHpFraction(status.MobHpText, currentHp, maxHp)
+            If currentHp < 0 AndAlso maxHp > 0 Then
+                currentHp = CLng(Math.Round(maxHp * (Math.Max(0.0, Math.Min(100.0, status.MobHpPercent)) / 100.0)))
             End If
-            cardDashTarget.SetSecondary(targetDetail)
+
+            Dim hpLine As String = $"HP {status.MobHpPercent:0.0}%"
+            If currentHp >= 0 AndAlso maxHp > 0 Then
+                hpLine = $"HP {currentHp:N0} / {maxHp:N0} ({status.MobHpPercent:0.0}%)  ·  Max {maxHp:N0}"
+            ElseIf maxHp > 0 Then
+                hpLine &= $"  ·  Max {maxHp:N0}"
+            ElseIf Not String.IsNullOrWhiteSpace(status.MobHpText) Then
+                hpLine &= $"  ·  {status.MobHpText.Trim()}"
+            End If
+
+            Dim fightSeconds As Double = If(_dashboardTargetStartedAtUtc = DateTime.MinValue, 0.0, Math.Max(0.0, (DateTime.UtcNow - _dashboardTargetStartedAtUtc).TotalSeconds))
+            Dim damagePercentPerSecond As Double = 0.0
+            If fightSeconds >= 0.5 AndAlso _dashboardTargetStartHpPercent >= 0.0 Then
+                damagePercentPerSecond = Math.Max(0.0, (_dashboardTargetStartHpPercent - status.MobHpPercent) / fightSeconds)
+            End If
+            Dim damageText As String = If(damagePercentPerSecond > 0.001, $"{damagePercentPerSecond:0.00}%/s", "calculating")
+            If maxHp > 0 AndAlso damagePercentPerSecond > 0.001 Then
+                damageText = $"{(maxHp * damagePercentPerSecond / 100.0):N0} HP/s  ·  {damagePercentPerSecond:0.00}%/s"
+            End If
+            cardDashTarget.SetSecondary($"{hpLine}{Environment.NewLine}Fight {FormatShortDuration(fightSeconds)}  ·  Damage {damageText}")
+            Dim targetBadge As (Text As String, Color As Color) = GetDashboardTargetBadge(targetName)
+            cardDashTarget.SetBadge(targetBadge.Text, targetBadge.Color)
             Dim targetHpColor As Color = If(status.MobHpPercent <= 20.0, ThemeWarn, If(status.MobHpPercent <= 50.0, Color.FromArgb(255, 184, 92), Color.FromArgb(124, 177, 255)))
             cardDashTarget.SetProgress(status.MobHpPercent, targetHpColor)
         Else
             cardDashTarget.SetValue(If(status.Running, "Searching", "No target"), ThemeTextSecondary)
-            cardDashTarget.SetSecondary(If(status.Running, "Scanning for the next valid target.", "Target details appear while the bot is active."))
+            Dim searchTime As String = If(_dashboardSearchStartedAtUtc = DateTime.MinValue, "0s", FormatShortDuration((DateTime.UtcNow - _dashboardSearchStartedAtUtc).TotalSeconds))
+            cardDashTarget.SetSecondary(If(status.Running, $"Scanning for the next valid target.{Environment.NewLine}Current search {searchTime}", "Target details appear while the bot is active."))
+            cardDashTarget.SetBadge("", ThemeTextSecondary)
             cardDashTarget.SetProgress(0.0, Color.FromArgb(124, 177, 255), False)
         End If
 
         Dim expAccent As Color = Color.FromArgb(170, 135, 255)
         If edition = BotEdition.Full Then
             Dim etaText As String = FormatExpEta(status.ExpPercent, status.ExpPerHour)
-            cardDashRate.SetValue(If(etaText = "", "Calculating ETA", $"ETA {etaText}"), If(etaText = "", ThemeTextSecondary, ThemeTextPrimary))
+            cardDashRate.SetValue(If(etaText = "", $"{status.ExpPercent:0.00}% · ETA calculating", $"{status.ExpPercent:0.00}% · ETA {etaText}"), If(etaText = "", ThemeTextSecondary, ThemeTextPrimary))
             Dim rateText As String = If(status.ExpPerHour < 0, "rate calculating", $"{status.ExpPerHour:0.00}%/hr")
-            cardDashRate.SetSecondary($"EXP {status.ExpPercent:0.00}%  |  +{_dashboardSessionExpEarned:0.00}% session  |  {rateText}")
+            cardDashRate.SetSecondary($"Current level {status.ExpPercent:0.00}%  ·  +{_dashboardSessionExpEarned:0.00}% EXE session{Environment.NewLine}{rateText}  ·  15-minute rate trend")
             cardDashRate.SetProgress(status.ExpPercent, expAccent)
-            cardDashRate.SetRateHistory(_dashboardExpRateHistory, expAccent, _dashboardExpRateHistory.Count > 0)
+            cardDashRate.SetRateHistory(_dashboardExpRateHistory, expAccent, _dashboardExpRateHistory.Count > 0, "0.00", "% EXP/hr", DashboardRateHistoryIntervalSeconds)
         Else
             cardDashRate.SetValue("Full mode only", ThemeTextSecondary)
             cardDashRate.SetSecondary("EXP progress telemetry is unavailable in Lite mode.")
@@ -3107,21 +3959,33 @@ Public Class Form1
         Dim rupiahAccent As Color = Color.FromArgb(245, 195, 85)
         cardDashSession.AccentColor = rupiahAccent
         If edition = BotEdition.Full AndAlso status.RupiahsTotal >= 0 Then
-            cardDashSession.SetValue($"{status.RupiahsTotal:N0}", rupiahAccent)
-            Dim rupiahRateText As String = If(status.RupiahsPerHour < 0, "rate calculating", $"{status.RupiahsPerHour:N0}/hr")
-            cardDashSession.SetSecondary($"Wallet  |  +{_dashboardSessionRupiahsEarned:N0} session  |  {rupiahRateText}  |  {runtime}")
+            cardDashSession.SetValue($"{status.RupiahsTotal:N0} wallet", rupiahAccent)
+            Dim projectionText As String = If(status.RupiahsPerHour < 0, "projection calculating", $"Projected {status.RupiahsPerHour:N0}/hr  ·  {(status.RupiahsPerHour * 24.0):N0}/day")
+            cardDashSession.SetSecondary($"+{_dashboardSessionRupiahsEarned:N0} EXE session{Environment.NewLine}{projectionText}  ·  15-minute earnings trend")
+            cardDashSession.SetRateHistory(_dashboardRupiahRateHistory, rupiahAccent, _dashboardRupiahRateHistory.Count > 0, "N0", " Rupiah/hr", DashboardRateHistoryIntervalSeconds)
         ElseIf edition <> BotEdition.Full Then
             cardDashSession.SetValue("Full mode only", ThemeTextSecondary)
             cardDashSession.SetSecondary("Rupiah telemetry is unavailable in Lite mode.")
+            cardDashSession.SetRateHistory(Array.Empty(Of Double)(), rupiahAccent, False)
         Else
             cardDashSession.SetValue("Reading wallet", ThemeTextSecondary)
-            cardDashSession.SetSecondary(If(status.Running, $"Waiting for rupiahs_rect OCR  |  Session {runtime}", "Start Full mode to track earnings."))
+            cardDashSession.SetSecondary(If(status.Running, $"Waiting for rupiahs_rect OCR  ·  EXE session {runtime}", "Start Full mode to track earnings."))
+            cardDashSession.SetRateHistory(Array.Empty(Of Double)(), rupiahAccent, False)
         End If
+
+        If dashboardSummary IsNot Nothing Then
+            dashboardSummary.SetMetric(0, runtime, ThemeAccent)
+            dashboardSummary.SetMetric(1, status.SessionKilledMobs.ToString("N0"), ThemeGood)
+            dashboardSummary.SetMetric(2, killsPerHour.ToString("0.0"))
+            dashboardSummary.SetMetric(3, $"+{_dashboardSessionExpEarned:0.00}%", expAccent)
+            dashboardSummary.SetMetric(4, $"+{_dashboardSessionRupiahsEarned:N0}", rupiahAccent)
+            dashboardSummary.SetMetric(5, _itemAwardReads.Count.ToString("N0"), Color.FromArgb(80, 200, 190))
+        End If
+        UpdateDashboardAnalyticsCards(status, killsPerHour)
 
         If btnDashPlayPause IsNot Nothing Then
             btnDashPlayPause.IsPlaying = status.Running
         End If
-
         If lblDashSubtitle IsNot Nothing Then
             Dim characterName As String = If(String.IsNullOrWhiteSpace(status.CharacterName), "Waiting for character", status.CharacterName)
             Dim clientState As String = If(status.GameDisconnected, "Disconnected", If(status.WindowFound, "Client online", "Waiting for client"))
@@ -3137,22 +4001,16 @@ Public Class Form1
         Dim runStartedAt As DateTime = status.RunStartedAtUtc
         If runStartedAt <> DateTime.MinValue AndAlso runStartedAt <> _dashboardSessionRunStartedAtUtc Then
             _dashboardSessionRunStartedAtUtc = runStartedAt
-            _dashboardSessionStartRupiahs = If(status.RupiahsTotal >= 0, status.RupiahsTotal, -1)
-            _dashboardSessionRupiahsEarned = 0
-            _dashboardSessionLastExpPercent = If(status.ExpPercent >= 0, status.ExpPercent, -1)
-            _dashboardSessionExpEarned = 0.0
-            _dashboardLastRateSampleAtUtc = DateTime.MinValue
-            _dashboardExpRateHistory.Clear()
         End If
 
-        If status.RupiahsTotal >= 0 Then
+        If status.Running AndAlso status.WindowFound AndAlso status.RupiahsTotal >= 0 Then
             If _dashboardSessionStartRupiahs < 0 Then
                 _dashboardSessionStartRupiahs = status.RupiahsTotal
             End If
             _dashboardSessionRupiahsEarned = Math.Max(0L, status.RupiahsTotal - _dashboardSessionStartRupiahs)
         End If
 
-        If status.ExpPercent >= 0 Then
+        If status.Running AndAlso status.WindowFound AndAlso status.ExpPercent >= 0 Then
             If _dashboardSessionLastExpPercent >= 0 Then
                 Dim delta As Double = status.ExpPercent - _dashboardSessionLastExpPercent
                 If delta < -50.0 Then
@@ -3166,15 +4024,156 @@ Public Class Form1
         End If
 
         Dim nowUtc As DateTime = DateTime.UtcNow
-        If status.Running AndAlso status.ExpPerHour >= 0.0 AndAlso
+        If status.Running AndAlso
            (_dashboardLastRateSampleAtUtc = DateTime.MinValue OrElse (nowUtc - _dashboardLastRateSampleAtUtc).TotalSeconds >= DashboardRateHistoryIntervalSeconds) Then
             _dashboardLastRateSampleAtUtc = nowUtc
-            _dashboardExpRateHistory.Add(status.ExpPerHour)
-            If _dashboardExpRateHistory.Count > DashboardRateHistoryMaxSamples Then
-                _dashboardExpRateHistory.RemoveRange(0, _dashboardExpRateHistory.Count - DashboardRateHistoryMaxSamples)
+            If status.ExpPerHour >= 0.0 Then
+                _dashboardExpRateHistory.Add(status.ExpPerHour)
+                TrimDashboardHistory(_dashboardExpRateHistory)
+            End If
+            If status.RupiahsPerHour >= 0.0 Then
+                _dashboardRupiahRateHistory.Add(status.RupiahsPerHour)
+                TrimDashboardHistory(_dashboardRupiahRateHistory)
             End If
         End If
+        UpdateDashboardCombatTracking(status, nowUtc)
+        If status.Running AndAlso Not String.IsNullOrWhiteSpace(status.LastAction) AndAlso
+           Not String.Equals(status.LastAction, _dashboardLastRecordedAction, StringComparison.Ordinal) Then
+            _dashboardLastRecordedAction = status.LastAction
+            AddDashboardRecentEvent(status.LastAction)
+        End If
     End Sub
+
+    Private Shared Sub TrimDashboardHistory(history As List(Of Double))
+        If history IsNot Nothing AndAlso history.Count > DashboardRateHistoryMaxSamples Then
+            history.RemoveRange(0, history.Count - DashboardRateHistoryMaxSamples)
+        End If
+    End Sub
+
+    Private Sub UpdateDashboardCombatTracking(status As BotStatus, nowUtc As DateTime)
+        If Not _dashboardKillCounterInitialized Then
+            _dashboardLastKillCount = Math.Max(0, status.SessionKilledMobs)
+            _dashboardKillCounterInitialized = True
+        ElseIf status.SessionKilledMobs > _dashboardLastKillCount Then
+            Dim newKills As Integer = status.SessionKilledMobs - _dashboardLastKillCount
+            If _dashboardTargetStartedAtUtc <> DateTime.MinValue Then
+                Dim trackedSeconds As Double = Math.Max(0.0, (nowUtc - _dashboardTargetStartedAtUtc).TotalSeconds)
+                _dashboardKillDurationTotalSeconds += trackedSeconds
+                _dashboardTrackedKillDurations += newKills
+            End If
+            AddDashboardRecentEvent($"{newKills:N0} mob{If(newKills = 1, "", "s")} killed · total {status.SessionKilledMobs:N0}")
+            _dashboardLastKillCount = status.SessionKilledMobs
+            _dashboardTargetStartedAtUtc = nowUtc
+            _dashboardTargetStartHpPercent = status.MobHpPercent
+        End If
+
+        Dim targetIsValid As Boolean = status.Running AndAlso status.TargetValid
+        Dim targetName As String = If(status.MobName, "").Trim()
+        Dim signature As String = If(targetName = "", "detected-target", targetName.ToLowerInvariant())
+        If targetIsValid Then
+            If Not _dashboardTargetWasValid OrElse Not String.Equals(signature, _dashboardTargetSignature, StringComparison.Ordinal) Then
+                _dashboardTargetSignature = signature
+                _dashboardTargetStartedAtUtc = nowUtc
+                _dashboardTargetStartHpPercent = status.MobHpPercent
+            End If
+            If _dashboardSearchStartedAtUtc <> DateTime.MinValue Then
+                _dashboardSearchDurationTotalSeconds += Math.Max(0.0, (nowUtc - _dashboardSearchStartedAtUtc).TotalSeconds)
+                _dashboardCompletedSearches += 1
+                _dashboardSearchStartedAtUtc = DateTime.MinValue
+            End If
+        Else
+            If status.Running AndAlso _dashboardSearchStartedAtUtc = DateTime.MinValue Then
+                _dashboardSearchStartedAtUtc = nowUtc
+            ElseIf Not status.Running Then
+                _dashboardSearchStartedAtUtc = DateTime.MinValue
+            End If
+            If _dashboardTargetWasValid Then
+                _dashboardTargetSignature = ""
+                _dashboardTargetStartedAtUtc = DateTime.MinValue
+                _dashboardTargetStartHpPercent = -1.0
+            End If
+        End If
+        _dashboardTargetWasValid = targetIsValid
+    End Sub
+
+    Private Sub UpdateDashboardAnalyticsCards(status As BotStatus, killsPerHour As Double)
+        If cardDashEfficiency IsNot Nothing Then
+            Dim averageKill As String = If(_dashboardTrackedKillDurations > 0, FormatShortDuration(_dashboardKillDurationTotalSeconds / _dashboardTrackedKillDurations), "—")
+            Dim averageSearch As String = If(_dashboardCompletedSearches > 0, FormatShortDuration(_dashboardSearchDurationTotalSeconds / _dashboardCompletedSearches), "—")
+            Dim lootPerKill As String = If(status.SessionKilledMobs > 0, (_itemAwardReads.Count / CDbl(status.SessionKilledMobs)).ToString("0.00"), "0.00")
+            cardDashEfficiency.SetValue($"{killsPerHour:0.0} kills/hr     {averageKill} avg kill{Environment.NewLine}{averageSearch} avg search     {lootPerKill} loots/kill")
+            cardDashEfficiency.SetSecondary($"{status.SessionKilledMobs:N0} kills and {_itemAwardReads.Count:N0} item awards tracked for this EXE session.")
+        End If
+
+        If cardDashRecent IsNot Nothing Then
+            Dim lineLimit As Integer = If(_dashboardMode = DashboardDisplayMode.Detailed, 6, 3)
+            Dim lines As List(Of String) = _dashboardRecentEvents.Reverse().Take(lineLimit).ToList()
+            cardDashRecent.SetValue(If(lines.Count = 0, "No activity yet", String.Join(Environment.NewLine, lines)), If(lines.Count = 0, ThemeTextSecondary, ThemeTextPrimary))
+            cardDashRecent.SetSecondary(If(_dashboardMode = DashboardDisplayMode.Detailed, "Detailed view · latest six events", "Latest app-session activity"))
+        End If
+    End Sub
+
+    Private Sub AddDashboardRecentEvent(text As String)
+        Dim cleaned As String = Regex.Replace(If(text, "").Trim(), "\s+", " ")
+        If cleaned = "" Then
+            Return
+        End If
+        Dim entry As String = $"{DateTime.Now:HH:mm:ss}  {cleaned}"
+        If _dashboardRecentEvents.Count > 0 AndAlso String.Equals(_dashboardRecentEvents.Last(), entry, StringComparison.Ordinal) Then
+            Return
+        End If
+        _dashboardRecentEvents.Enqueue(entry)
+        While _dashboardRecentEvents.Count > DashboardRecentEventLimit
+            _dashboardRecentEvents.Dequeue()
+        End While
+    End Sub
+
+    Private Function GetDashboardTargetBadge(targetName As String) As (Text As String, Color As Color)
+        Dim normalizedTarget As String = NormalizeDashboardName(targetName)
+        Dim preferred As Boolean = ParseCommaSeparatedList(If(txtLevelingPreferredMobs IsNot Nothing, txtLevelingPreferredMobs.Text, "")).
+            Any(Function(name) NormalizeDashboardName(name).Equals(normalizedTarget, StringComparison.OrdinalIgnoreCase))
+        If preferred Then
+            Return ("Preferred", ThemeGood)
+        End If
+        If chkMonsterFilter Is Nothing OrElse Not chkMonsterFilter.Checked Then
+            Return ("Allowed", ThemeAccent)
+        End If
+        If GetMonsterFilterMode().Equals("whitelist", StringComparison.OrdinalIgnoreCase) Then
+            Return ("Whitelist", ThemeGood)
+        End If
+        Return ("Allowed", ThemeAccent)
+    End Function
+
+    Private Shared Function NormalizeDashboardName(value As String) As String
+        Return Regex.Replace(If(value, "").ToLowerInvariant(), "[^a-z0-9]+", " ").Trim()
+    End Function
+
+    Private Shared Sub TryParseMobHpFraction(rawText As String, ByRef currentHp As Long, ByRef maxHp As Long)
+        Dim normalized As String = If(rawText, "").Replace(",", "")
+        Dim fraction As Match = Regex.Match(normalized, "(\d{2,12})\s*/\s*(\d{2,12})")
+        If Not fraction.Success Then
+            Return
+        End If
+        Dim parsedCurrent As Long
+        Dim parsedMax As Long
+        If Long.TryParse(fraction.Groups(1).Value, parsedCurrent) AndAlso parsedCurrent >= 0 Then
+            currentHp = parsedCurrent
+        End If
+        If Long.TryParse(fraction.Groups(2).Value, parsedMax) AndAlso parsedMax > 0 Then
+            maxHp = parsedMax
+        End If
+    End Sub
+
+    Private Shared Function FormatShortDuration(totalSeconds As Double) As String
+        Dim seconds As Integer = Math.Max(0, CInt(Math.Round(totalSeconds)))
+        If seconds < 60 Then
+            Return $"{seconds}s"
+        End If
+        If seconds < 3600 Then
+            Return $"{seconds \ 60}m {seconds Mod 60}s"
+        End If
+        Return $"{seconds \ 3600}h {(seconds Mod 3600) \ 60}m"
+    End Function
 
     Private Shared Function FormatExpEta(expPercent As Double, expPerHour As Double) As String
         If expPerHour <= 0.0001 OrElse expPercent < 0.0 Then
@@ -3198,9 +4197,9 @@ Public Class Form1
         Return $"{CInt(Math.Floor(remaining.TotalDays))}d {remaining.Hours}h"
     End Function
 
-    Private Shared Function FormatDashboardDuration(startedAtUtc As DateTime, running As Boolean) As String
-        If Not running OrElse startedAtUtc = DateTime.MinValue Then
-            Return "0m"
+    Private Shared Function FormatDashboardDuration(startedAtUtc As DateTime) As String
+        If startedAtUtc = DateTime.MinValue Then
+            Return "00:00"
         End If
         Dim elapsed As TimeSpan = DateTime.UtcNow - startedAtUtc
         If elapsed.TotalSeconds < 0 Then
@@ -3212,7 +4211,7 @@ Public Class Form1
         If elapsed.TotalHours >= 1 Then
             Return $"{CInt(Math.Floor(elapsed.TotalHours))}h {elapsed.Minutes}m"
         End If
-        Return $"{Math.Max(0, elapsed.Minutes)}m"
+        Return $"{Math.Max(0, elapsed.Minutes):00}:{Math.Max(0, elapsed.Seconds):00}"
     End Function
 
     Private Sub StartDashboardEntranceTransition()
@@ -3221,7 +4220,8 @@ Public Class Form1
         End If
         _dashboardEntranceTimer.Stop()
         _dashboardEntranceFrame = 0
-        _dashboardCardHost.Padding = New Padding(48, 42, 48, 20)
+        Dim targetBottom As Integer = If(_dashboardMode = DashboardDisplayMode.Compact, 18, 22)
+        _dashboardCardHost.Padding = New Padding(48, 26, 48, Math.Max(6, targetBottom - 10))
         _dashboardEntranceTimer.Start()
     End Sub
 
@@ -3234,8 +4234,10 @@ Public Class Form1
         Const frameCount As Integer = 15
         Dim progress As Double = Math.Min(1.0, _dashboardEntranceFrame / CDbl(frameCount))
         Dim eased As Double = 1.0 - Math.Pow(1.0 - progress, 3.0)
-        Dim topPadding As Integer = CInt(Math.Round(24 + ((42 - 24) * (1.0 - eased))))
-        Dim bottomPadding As Integer = CInt(Math.Round(38 - ((38 - 20) * (1.0 - eased))))
+        Dim targetTop As Integer = 8
+        Dim targetBottom As Integer = If(_dashboardMode = DashboardDisplayMode.Compact, 18, 22)
+        Dim topPadding As Integer = CInt(Math.Round(targetTop + (18 * (1.0 - eased))))
+        Dim bottomPadding As Integer = CInt(Math.Round(targetBottom - (10 * (1.0 - eased))))
         _dashboardCardHost.Padding = New Padding(48, topPadding, 48, bottomPadding)
         If progress >= 1.0 Then
             _dashboardEntranceTimer.Stop()
@@ -3297,6 +4299,33 @@ Public Class Form1
         End If
     End Sub
 
+    Private Sub SyncSidebarRailOverlayBounds()
+        If _mainTabs Is Nothing OrElse _sidebarRailOverlay Is Nothing OrElse _sidebarRailOverlay.IsDisposed Then
+            Return
+        End If
+        _sidebarRailOverlay.Bounds = New Rectangle(
+            _mainTabs.Left,
+            _mainTabs.Top,
+            Math.Min(_mainTabs.Width, _mainTabs.ItemSize.Height + 4),
+            _mainTabs.Height)
+    End Sub
+
+    Private Function GetSidebarRailForeColor(tab As TabPage, isSelected As Boolean, isActive As Boolean) As Color
+        If tab Is _updateTab Then
+            Select Case _updateTabState
+                Case UpdateTabState.Latest
+                    Return If(isSelected, Color.White, ThemeGood)
+                Case UpdateTabState.Available
+                    Return Color.Gold
+                Case UpdateTabState.Checking
+                    Return ThemeAccent
+                Case UpdateTabState.Error
+                    Return ThemeWarn
+            End Select
+        End If
+        Return If(isSelected, Color.White, If(isActive, ThemeGood, ThemeTextSecondary))
+    End Function
+
     ' Points the sliding accent bar at the row for whichever tab is selected right now. The first
     ' call ever (nothing meaningful to animate from before the strip has a real selection) snaps
     ' straight there instead of sliding in from wherever the panel's default Location happened to be.
@@ -3304,12 +4333,19 @@ Public Class Form1
         If _mainTabs Is Nothing OrElse _tabIndicatorBar Is Nothing OrElse _mainTabs.SelectedIndex < 0 Then
             Return
         End If
-        _tabIndicatorBar.Left = _mainTabs.Left
+        _tabIndicatorBar.Left = _mainTabs.Left + 5
         ' ItemSize.Width, not .Height, is the per-row height for a TabAlignment.Left strip - see the
         ' comment on SidebarTabControl.FitTabsToHeight.
-        _tabIndicatorBar.Height = _mainTabs.ItemSize.Width
+        _tabIndicatorBar.Height = Math.Max(12, _mainTabs.ItemSize.Width - 12)
+        Using indicatorPath As Drawing2D.GraphicsPath = RoundedRectPath(New Rectangle(0, 0, _tabIndicatorBar.Width, _tabIndicatorBar.Height), 2)
+            Dim oldRegion As Region = _tabIndicatorBar.Region
+            _tabIndicatorBar.Region = New Region(indicatorPath)
+            If oldRegion IsNot Nothing Then
+                oldRegion.Dispose()
+            End If
+        End Using
         _tabIndicatorBar.BringToFront()
-        _tabIndicatorTargetTop = _mainTabs.Top + _mainTabs.SelectedIndex * _mainTabs.ItemSize.Width
+        _tabIndicatorTargetTop = _mainTabs.Top + _mainTabs.SelectedIndex * _mainTabs.ItemSize.Width + 6
         If Not _tabIndicatorPlaced Then
             _tabIndicatorPlaced = True
             _tabIndicatorBar.Top = _tabIndicatorTargetTop
@@ -3396,25 +4432,63 @@ Public Class Form1
             End Select
         End If
         Dim bounds As Rectangle = e.Bounds
+        Dim stripWidth As Integer = Math.Max(1, _mainTabs.ItemSize.Height)
+        Dim graphicsState As Drawing2D.GraphicsState = e.Graphics.Save()
+        Try
+            ' Replace the native per-tab clip so the owner draw also covers the 1-2 pixel themed
+            ' bevel that Windows places just outside e.Bounds. This is the source of the white
+            ' frames that appeared around every sidebar item.
+            e.Graphics.SetClip(New Rectangle(0, 0, Math.Min(_mainTabs.ClientSize.Width, stripWidth + 3), _mainTabs.ClientSize.Height), Drawing2D.CombineMode.Replace)
+            e.Graphics.SmoothingMode = Drawing2D.SmoothingMode.AntiAlias
 
-        Using backgroundBrush As New SolidBrush(backColor)
-            e.Graphics.FillRectangle(backgroundBrush, bounds)
-        End Using
-
-        Using borderPen As New Pen(ThemeBg)
-            e.Graphics.DrawLine(borderPen, bounds.X, bounds.Bottom - 1, bounds.Right, bounds.Bottom - 1)
-        End Using
-
-        Dim textBounds As Rectangle = Rectangle.Inflate(bounds, -6, -3)
-        TextRenderer.DrawText(e.Graphics, tab.Text, e.Font, textBounds, foreColor, TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.WordBreak)
-
-        If isActive Then
-            Dim dotSize As Integer = 7
-            Dim dotRect As New Rectangle(bounds.Right - dotSize - 6, bounds.Y + 6, dotSize, dotSize)
-            Using dotBrush As New SolidBrush(ThemeGood)
-                e.Graphics.FillEllipse(dotBrush, dotRect)
+            Dim rowBounds As New Rectangle(0, bounds.Top, stripWidth + 3, bounds.Height + 1)
+            Using railBrush As New SolidBrush(ThemeSurface)
+                e.Graphics.FillRectangle(railBrush, rowBounds)
             End Using
-        End If
+
+            Dim surfaceBounds As New Rectangle(8, bounds.Top + 5, Math.Max(12, stripWidth - 15), Math.Max(12, bounds.Height - 10))
+            If isSelected Then
+                Dim selectedTop As Color = BlendColors(backColor, ThemeAccent, 0.1R)
+                Dim selectedBottom As Color = BlendColors(backColor, ThemeBg, 0.12R)
+                Using surfacePath As Drawing2D.GraphicsPath = RoundedRectPath(surfaceBounds, 12),
+                      selectedBrush As New Drawing2D.LinearGradientBrush(surfaceBounds, selectedTop, selectedBottom, Drawing2D.LinearGradientMode.Vertical),
+                      selectedBorder As New Pen(Color.FromArgb(155, ThemeCardBorder), 1.2F)
+                    e.Graphics.FillPath(selectedBrush, surfacePath)
+                    e.Graphics.DrawPath(selectedBorder, surfacePath)
+                End Using
+            ElseIf isActive Then
+                Using activePath As Drawing2D.GraphicsPath = RoundedRectPath(surfaceBounds, 12),
+                      activeBrush As New SolidBrush(BlendColors(ThemeSurface, ThemeGood, 0.045R)),
+                      activeBorder As New Pen(Color.FromArgb(65, ThemeGood), 1.0F)
+                    e.Graphics.FillPath(activeBrush, activePath)
+                    e.Graphics.DrawPath(activeBorder, activePath)
+                End Using
+            End If
+
+            Using separatorPen As New Pen(Color.FromArgb(48, ThemeCardBorder), 1.0F)
+                e.Graphics.DrawLine(separatorPen, 15, bounds.Bottom - 1, Math.Max(15, stripWidth - 13), bounds.Bottom - 1)
+            End Using
+            Using railEdgePen As New Pen(Color.FromArgb(82, ThemeCardBorder), 1.0F)
+                e.Graphics.DrawLine(railEdgePen, stripWidth + 1, bounds.Top, stripWidth + 1, bounds.Bottom)
+            End Using
+
+            Dim textBounds As Rectangle = Rectangle.Inflate(surfaceBounds, -7, -4)
+            TextRenderer.DrawText(e.Graphics, tab.Text, e.Font, textBounds, foreColor,
+                                  TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.WordBreak)
+
+            If isActive Then
+                Dim dotSize As Integer = 6
+                Dim dotRect As New Rectangle(surfaceBounds.Right - dotSize - 6, surfaceBounds.Top + 6, dotSize, dotSize)
+                Using glowBrush As New SolidBrush(Color.FromArgb(48, ThemeGood))
+                    e.Graphics.FillEllipse(glowBrush, Rectangle.Inflate(dotRect, 3, 3))
+                End Using
+                Using dotBrush As New SolidBrush(ThemeGood)
+                    e.Graphics.FillEllipse(dotBrush, dotRect)
+                End Using
+            End If
+        Finally
+            e.Graphics.Restore(graphicsState)
+        End Try
     End Sub
 
     Private Function GetMainTabBackColor(isActive As Boolean, isSelected As Boolean) As Color
@@ -3433,9 +4507,11 @@ Public Class Form1
         ' Engine status arrives as often as every 200 ms. Most updates do not change anything in
         ' the sidebar, so invalidating the whole native TabControl on each one repeatedly exposed its
         ' erase-before-owner-draw frame. Repaint only rows whose visible state actually changed.
+        Dim railChanged As Boolean = False
         Dim visibleTabs As New HashSet(Of TabPage)(_mainTabs.TabPages.Cast(Of TabPage)())
         For Each staleTab As TabPage In _mainTabVisualState.Keys.Where(Function(tab) Not visibleTabs.Contains(tab)).ToList()
             _mainTabVisualState.Remove(staleTab)
+            railChanged = True
         Next
 
         For index As Integer = 0 To _mainTabs.TabPages.Count - 1
@@ -3452,8 +4528,12 @@ Public Class Form1
                Not String.Equals(previousState, visualState, StringComparison.Ordinal) Then
                 _mainTabVisualState(tab) = visualState
                 _mainTabs.Invalidate(_mainTabs.GetTabRect(index), False)
+                railChanged = True
             End If
         Next
+        If railChanged AndAlso _sidebarRailOverlay IsNot Nothing AndAlso Not _sidebarRailOverlay.IsDisposed Then
+            _sidebarRailOverlay.Invalidate()
+        End If
     End Sub
 
     Private Function IsMainTabActive(tab As TabPage) As Boolean
@@ -5224,11 +6304,154 @@ Public Class Form1
             .Height = 82
         }
         layout.Controls.Add(note, 0, 6)
+        layout.Controls.Add(BuildItemAwardsPanel(), 0, 7)
         group.Controls.Add(layout)
         UpdateAutoPartyPointUi()
         UpdateAutoPartyInviteUi()
         UpdateAutoPartyMessageUi()
         Return group
+    End Function
+
+    Private Function BuildItemAwardsPanel() As Control
+        Dim container As New Panel() With {
+            .Dock = DockStyle.Fill,
+            .Padding = New Padding(0, 4, 0, 0),
+            .BackColor = Color.FromArgb(10, 16, 29)
+        }
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3, .Margin = New Padding(0)}
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 58.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+
+        Dim header As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 1, .Margin = New Padding(0)}
+        header.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 240.0F))
+        header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 78.0F))
+        Dim title As New Label() With {
+            .Text = "ITEMS WON · UNREACHABLE TEXT OCR",
+            .Dock = DockStyle.Fill,
+            .TextAlign = ContentAlignment.MiddleLeft,
+            .ForeColor = Color.FromArgb(95, 224, 184),
+            .Font = New Font(Font.FontFamily, 8.5F, FontStyle.Bold)
+        }
+        lblItemAwardsSummary = New Label() With {
+            .Text = "0 awards · Rupiah skipped",
+            .Dock = DockStyle.Fill,
+            .TextAlign = ContentAlignment.MiddleRight,
+            .ForeColor = Color.LightSteelBlue
+        }
+        btnClearItemAwards = New Button() With {
+            .Text = "Clear",
+            .Dock = DockStyle.Fill,
+            .Margin = New Padding(6, 3, 0, 3),
+            .BackColor = Color.FromArgb(54, 67, 92),
+            .ForeColor = Color.White
+        }
+        AddHandler btnClearItemAwards.Click, AddressOf ClearItemAwardsClicked
+        header.Controls.Add(title, 0, 0)
+        header.Controls.Add(lblItemAwardsSummary, 1, 0)
+        header.Controls.Add(btnClearItemAwards, 2, 0)
+        layout.Controls.Add(header, 0, 0)
+
+        Dim filters As New TableLayoutPanel() With {
+            .Dock = DockStyle.Fill,
+            .ColumnCount = 6,
+            .RowCount = 1,
+            .Margin = New Padding(0),
+            .Padding = New Padding(0, 5, 0, 7)
+        }
+        filters.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 52.0F))
+        filters.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 25.0F))
+        filters.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 44.0F))
+        filters.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 25.0F))
+        filters.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 116.0F))
+        filters.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
+
+        Dim playerFilterLabel As New Label() With {
+            .Text = "Player",
+            .Dock = DockStyle.Fill,
+            .TextAlign = ContentAlignment.MiddleLeft,
+            .ForeColor = Color.LightSteelBlue
+        }
+        txtItemAwardPlayerFilter = New TextBox() With {
+            .Dock = DockStyle.Fill,
+            .PlaceholderText = "Search players...",
+            .Margin = New Padding(0, 5, 10, 5)
+        }
+        Dim itemFilterLabel As New Label() With {
+            .Text = "Item",
+            .Dock = DockStyle.Fill,
+            .TextAlign = ContentAlignment.MiddleLeft,
+            .ForeColor = Color.LightSteelBlue
+        }
+        txtItemAwardItemFilter = New TextBox() With {
+            .Dock = DockStyle.Fill,
+            .PlaceholderText = "Search items...",
+            .Margin = New Padding(0, 5, 10, 5)
+        }
+        Dim skipTermsLabel As New Label() With {
+            .Text = "Skip item terms",
+            .Dock = DockStyle.Fill,
+            .TextAlign = ContentAlignment.MiddleLeft,
+            .ForeColor = Color.LightSteelBlue
+        }
+        txtItemAwardSkipTerms = New TextBox() With {
+            .Dock = DockStyle.Fill,
+            .Text = DefaultLootAwardSkipTermsText,
+            .PlaceholderText = "Comma-separated, e.g. Rupiah, Prana",
+            .Margin = New Padding(0, 5, 0, 5)
+        }
+        AddHandler txtItemAwardPlayerFilter.TextChanged, AddressOf ItemAwardFilterChanged
+        AddHandler txtItemAwardItemFilter.TextChanged, AddressOf ItemAwardFilterChanged
+        AddHandler txtItemAwardSkipTerms.TextChanged, AddressOf ItemAwardSkipTermsChanged
+        filters.Controls.Add(playerFilterLabel, 0, 0)
+        filters.Controls.Add(txtItemAwardPlayerFilter, 1, 0)
+        filters.Controls.Add(itemFilterLabel, 2, 0)
+        filters.Controls.Add(txtItemAwardItemFilter, 3, 0)
+        filters.Controls.Add(skipTermsLabel, 4, 0)
+        filters.Controls.Add(txtItemAwardSkipTerms, 5, 0)
+        layout.Controls.Add(filters, 0, 1)
+
+        dgvItemAwards = New DataGridView() With {
+            .Dock = DockStyle.Fill,
+            .ReadOnly = True,
+            .AllowUserToAddRows = False,
+            .AllowUserToDeleteRows = False,
+            .AllowUserToResizeRows = False,
+            .MultiSelect = False,
+            .SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            .RowHeadersVisible = False,
+            .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+            .BorderStyle = BorderStyle.FixedSingle,
+            .BackgroundColor = Color.FromArgb(8, 13, 24)
+        }
+        dgvItemAwards.Columns.Add(New DataGridViewTextBoxColumn() With {
+            .Name = "AwardPlayer",
+            .HeaderText = "Player",
+            .FillWeight = 105.0F,
+            .MinimumWidth = 100
+        })
+        dgvItemAwards.Columns.Add(New DataGridViewTextBoxColumn() With {
+            .Name = "AwardItem",
+            .HeaderText = "Item won",
+            .FillWeight = 130.0F,
+            .MinimumWidth = 120
+        })
+        dgvItemAwards.Columns.Add(New DataGridViewTextBoxColumn() With {
+            .Name = "ReadTime",
+            .HeaderText = "Time",
+            .FillWeight = 58.0F,
+            .MinimumWidth = 68
+        })
+        dgvItemAwards.Columns.Add(New DataGridViewTextBoxColumn() With {
+            .Name = "AwardRawOcr",
+            .HeaderText = "Text read",
+            .FillWeight = 230.0F,
+            .MinimumWidth = 180
+        })
+        layout.Controls.Add(dgvItemAwards, 0, 2)
+        container.Controls.Add(layout)
+        Return container
     End Function
 
     Private Function BuildArrowUnbundleGroup() As GroupBox
@@ -11141,7 +12364,8 @@ Public Class Form1
                     "- Loot Scan Area comes from the Vision tab.",
                     "- Loot Scanner (Alt) toggles the OCR-based loot scanner.",
                     "- Auto Party Invite presses the selected key (1-0 or F1-F10) then clicks the fixed point below, on its own loop timer.",
-                    "- Auto Party Message types the text above into chat (Enter, type, Enter) on its own separate loop timer."
+                    "- Auto Party Message types the text above into chat (Enter, type, Enter) on its own separate loop timer.",
+                    "- Items Won reads Auto Division awards from unreachable_text_rect, lists player + item + raw OCR text, normalizes Forb/Kanada OCR variants, and skips Rupiah entries."
                 })
             Case HelpScopeLeveling
                 Return String.Join(Environment.NewLine, New String() {
@@ -11277,7 +12501,8 @@ Public Class Form1
                     "- Loot Scan Area se configura en Vision.",
                     "- Loot Scanner (Alt) activa el scanner OCR.",
                     "- Auto Party Invite presiona la tecla elegida (1-0 o F1-F10) y luego hace click en el punto fijo, en su propio temporizador.",
-                    "- Auto Party Message escribe el texto en el chat (Enter, escribir, Enter) en su propio temporizador independiente."
+                    "- Auto Party Message escribe el texto en el chat (Enter, escribir, Enter) en su propio temporizador independiente.",
+                    "- Items Won lee premios de Auto Division desde unreachable_text_rect, muestra jugador + objeto + OCR original, corrige variantes Forb/Kanada y omite Rupiah."
                 })
             Case HelpScopeLeveling
                 Return String.Join(Environment.NewLine, New String() {
@@ -11411,7 +12636,8 @@ Public Class Form1
                     "- Sa Vision tine-setup ang Loot Scan Area.",
                     "- Loot Scanner (Alt) ang OCR scanner flow.",
                     "- Auto Party Invite pinipindot ang piniling key (1-0 o F1-F10) tapos nagki-click sa fixed point, sa sarili nitong loop timer.",
-                    "- Auto Party Message tine-type ang text sa chat (Enter, type, Enter) sa hiwalay nitong loop timer."
+                    "- Auto Party Message tine-type ang text sa chat (Enter, type, Enter) sa hiwalay nitong loop timer.",
+                    "- Binabasa ng Items Won ang Auto Division awards mula sa unreachable_text_rect, inililista ang player + item + raw OCR, inaayos ang Forb/Kanada variants, at nilalaktawan ang Rupiah."
                 })
             Case HelpScopeLeveling
                 Return String.Join(Environment.NewLine, New String() {
@@ -11684,6 +12910,7 @@ Public Class Form1
         MonitorEngineWorkers()
         PushLiveConfig()
         Dim st As BotStatus = GetStatusForEdition(_edition)
+        UpdateDashboardUi(st, _edition)
         HandlePendingLitePointCapture()
         HandlePendingArrowUnbundlePointCapture()
         HandlePendingArrowBundleIconCapture()
@@ -13609,6 +14836,100 @@ Public Class Form1
         AppendLog(prefixed)
     End Sub
 
+    Private Sub OnLootAwardDetected(award As LootAwardRead)
+        If award Is Nothing Then
+            Return
+        End If
+        If InvokeRequired Then
+            BeginInvoke(New Action(Of LootAwardRead)(AddressOf OnLootAwardDetected), award)
+            Return
+        End If
+
+        Dim storedAward As New LootAwardRead With {
+            .PlayerName = If(award.PlayerName, "").Trim(),
+            .ItemName = If(award.ItemName, "").Trim(),
+            .RawText = If(award.RawText, "").Trim(),
+            .DetectedAtUtc = If(award.DetectedAtUtc = DateTime.MinValue, DateTime.UtcNow, award.DetectedAtUtc)
+        }
+        _itemAwardReads.Insert(0, storedAward)
+        If _itemAwardReads.Count > MaxItemAwardReads Then
+            _itemAwardReads.RemoveRange(MaxItemAwardReads, _itemAwardReads.Count - MaxItemAwardReads)
+        End If
+
+        RefreshItemAwardsGrid()
+        AddDashboardRecentEvent($"{storedAward.PlayerName} won {storedAward.ItemName}")
+        If _edition = BotEdition.Full Then
+            UpdateDashboardUi(_fullStatus, BotEdition.Full)
+        End If
+    End Sub
+
+    Private Sub ClearItemAwardsClicked(sender As Object, e As EventArgs)
+        _itemAwardReads.Clear()
+        RefreshItemAwardsGrid()
+        If _edition = BotEdition.Full Then
+            UpdateDashboardUi(_fullStatus, BotEdition.Full)
+        End If
+        AppendLog("Item-award OCR history cleared.")
+    End Sub
+
+    Private Sub ItemAwardFilterChanged(sender As Object, e As EventArgs)
+        RefreshItemAwardsGrid()
+    End Sub
+
+    Private Sub ItemAwardSkipTermsChanged(sender As Object, e As EventArgs)
+        UpdateItemAwardsSummary(If(dgvItemAwards IsNot Nothing AndAlso Not dgvItemAwards.IsDisposed, dgvItemAwards.Rows.Count, 0))
+    End Sub
+
+    Private Sub RefreshItemAwardsGrid()
+        If dgvItemAwards Is Nothing OrElse dgvItemAwards.IsDisposed Then
+            Return
+        End If
+
+        Dim playerFilter As String = If(txtItemAwardPlayerFilter IsNot Nothing, txtItemAwardPlayerFilter.Text.Trim(), "")
+        Dim itemFilter As String = If(txtItemAwardItemFilter IsNot Nothing, txtItemAwardItemFilter.Text.Trim(), "")
+        Dim visibleCount As Integer = 0
+        dgvItemAwards.SuspendLayout()
+        Try
+            dgvItemAwards.Rows.Clear()
+            For Each award As LootAwardRead In _itemAwardReads
+                If playerFilter <> "" AndAlso If(award.PlayerName, "").IndexOf(playerFilter, StringComparison.OrdinalIgnoreCase) < 0 Then
+                    Continue For
+                End If
+                If itemFilter <> "" AndAlso If(award.ItemName, "").IndexOf(itemFilter, StringComparison.OrdinalIgnoreCase) < 0 Then
+                    Continue For
+                End If
+
+                Dim detectedLocal As DateTime = award.DetectedAtUtc.ToLocalTime()
+                dgvItemAwards.Rows.Add(award.PlayerName, award.ItemName, detectedLocal.ToString("HH:mm:ss"), award.RawText)
+                visibleCount += 1
+            Next
+        Finally
+            dgvItemAwards.ResumeLayout()
+        End Try
+        UpdateItemAwardsSummary(visibleCount)
+    End Sub
+
+    Private Function GetLootAwardSkipTerms() As List(Of String)
+        Dim raw As String = If(txtItemAwardSkipTerms IsNot Nothing, txtItemAwardSkipTerms.Text, DefaultLootAwardSkipTermsText)
+        Dim values As IEnumerable(Of String) = Regex.Split(raw, "[,;\r\n]+")
+        Return values.Select(Function(value) value.Trim()).Where(Function(value) value <> "").Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+    End Function
+
+    Private Sub UpdateItemAwardsSummary(Optional visibleCount As Integer = -1)
+        If lblItemAwardsSummary Is Nothing OrElse lblItemAwardsSummary.IsDisposed Then
+            Return
+        End If
+        If visibleCount < 0 Then
+            visibleCount = If(dgvItemAwards IsNot Nothing AndAlso Not dgvItemAwards.IsDisposed, dgvItemAwards.Rows.Count, _itemAwardReads.Count)
+        End If
+
+        Dim noun As String = If(_itemAwardReads.Count = 1, "award", "awards")
+        Dim shownText As String = If(visibleCount = _itemAwardReads.Count, $"{_itemAwardReads.Count} {noun}", $"{visibleCount}/{_itemAwardReads.Count} {noun}")
+        Dim skipCount As Integer = GetLootAwardSkipTerms().Count
+        Dim skipNoun As String = If(skipCount = 1, "term", "terms")
+        lblItemAwardsSummary.Text = $"{shownText} - skipping {skipCount} {skipNoun}"
+    End Sub
+
     Private Sub AddMonsterClicked(sender As Object, e As EventArgs)
         Dim names As List(Of String) = ParseBulkFilterNames(If(txtMonsterName IsNot Nothing, txtMonsterName.Text, ""))
         If names.Count = 0 Then
@@ -13944,6 +15265,7 @@ Public Class Form1
         cfg.BuffWatchSelfClickY = _buffWatchSelfClickY
         cfg.LootScanPoints = BuildLootScanPoints()
         cfg.LootScanRect = BuildLootScanBoundingRect(cfg.LootScanPoints)
+        cfg.LootAwardSkipTerms = GetLootAwardSkipTerms()
         cfg.LootPickupEnabled = (chkLootPickup IsNot Nothing AndAlso chkLootPickup.Checked)
         cfg.LootPickupIntervalMs = CInt(Math.Round(CDbl(If(nudLootPickupSeconds IsNot Nothing, nudLootPickupSeconds.Value, 4D)) * 1000.0))
         cfg.LootNameMatchThresholdPercent = CInt(If(nudLootNameMatchThreshold IsNot Nothing, nudLootNameMatchThreshold.Value, CDec(DefaultLootNameMatchThresholdPercent)))
@@ -14756,6 +16078,22 @@ Public Class Form1
                 Return
             End If
 
+            _dashboardModeLoading = True
+            Try
+                Dim savedDashboardMode As String = If(appState IsNot Nothing, appState.DashboardMode, "Compact")
+                Dim parsedDashboardMode As DashboardDisplayMode
+                If Not [Enum].TryParse(savedDashboardMode, True, parsedDashboardMode) Then
+                    parsedDashboardMode = DashboardDisplayMode.Compact
+                End If
+                _dashboardMode = parsedDashboardMode
+                If _dashboardModeSelectorControl IsNot Nothing Then
+                    _dashboardModeSelectorControl.SelectedMode = parsedDashboardMode.ToString()
+                End If
+                ApplyDashboardModeLayout()
+            Finally
+                _dashboardModeLoading = False
+            End Try
+
             _periodicScreenshotSettingsLoading = True
             Try
                 If chkPeriodicScreenshots IsNot Nothing Then
@@ -14850,6 +16188,9 @@ Public Class Form1
             _autoPartyMessageEnabled = state.AutoPartyMessageEnabled
             If txtAutoPartyMessageText IsNot Nothing Then
                 txtAutoPartyMessageText.Text = If(String.IsNullOrWhiteSpace(state.AutoPartyMessageText), DefaultAutoPartyMessageText, state.AutoPartyMessageText.Trim())
+            End If
+            If txtItemAwardSkipTerms IsNot Nothing Then
+                txtItemAwardSkipTerms.Text = If(state.LootAwardSkipTerms, DefaultLootAwardSkipTermsText)
             End If
             If nudAutoPartyMessageSeconds IsNot Nothing Then
                 Dim boundedMessageSeconds As Decimal = Math.Max(nudAutoPartyMessageSeconds.Minimum, Math.Min(nudAutoPartyMessageSeconds.Maximum, If(state.AutoPartyMessageSeconds > 0, state.AutoPartyMessageSeconds, 30D)))
@@ -15064,6 +16405,7 @@ Public Class Form1
                 .AutoPartyMessageEnabled = _autoPartyMessageEnabled,
                 .AutoPartyMessageSeconds = If(nudAutoPartyMessageSeconds IsNot Nothing, nudAutoPartyMessageSeconds.Value, 30D),
                 .AutoPartyMessageText = GetAutoPartyMessageCommandText(),
+                .LootAwardSkipTerms = If(txtItemAwardSkipTerms IsNot Nothing, txtItemAwardSkipTerms.Text.Trim(), DefaultLootAwardSkipTermsText),
                 .LootRejectPointEnabled = (_lootRejectPointX >= 0 AndAlso _lootRejectPointY >= 0),
                 .LootRejectPointX = _lootRejectPointX,
                 .LootRejectPointY = _lootRejectPointY,
@@ -15153,6 +16495,7 @@ Public Class Form1
                 .UpdateRepositoryUrl = GetUpdateRepositoryUrl(),
                 .UpdateCheckAtStartup = (chkUpdateCheckAtStartup IsNot Nothing AndAlso chkUpdateCheckAtStartup.Checked),
                 .UpdateIncludePrereleases = (chkUpdateIncludePrereleases IsNot Nothing AndAlso chkUpdateIncludePrereleases.Checked),
+                .DashboardMode = _dashboardMode.ToString(),
                 .Full = fullState,
                 .Lite = liteState
             }
@@ -15521,6 +16864,10 @@ Public Class Form1
         _autoPartyMessageEnabled = cfg.AutoPartyMessageEnabled
         If txtAutoPartyMessageText IsNot Nothing Then
             txtAutoPartyMessageText.Text = If(String.IsNullOrWhiteSpace(cfg.AutoPartyMessageText), DefaultAutoPartyMessageText, cfg.AutoPartyMessageText.Trim())
+        End If
+        If txtItemAwardSkipTerms IsNot Nothing Then
+            Dim savedSkipTerms As IEnumerable(Of String) = If(cfg.LootAwardSkipTerms, New List(Of String) From {DefaultLootAwardSkipTermsText})
+            txtItemAwardSkipTerms.Text = String.Join(", ", savedSkipTerms.Where(Function(value) Not String.IsNullOrWhiteSpace(value)).Select(Function(value) value.Trim()))
         End If
         SetNumericControlValue(nudAutoPartyMessageSeconds, CDec(Math.Max(1, cfg.AutoPartyMessageIntervalMs) / 1000.0))
         UpdateAutoPartyPointUi()
@@ -17623,6 +18970,8 @@ Public Class Form1
         ' silently recoloring it to the same dark ThemeSurface as every other panel, making it
         ' invisible against the sidebar background.
         If TypeOf control Is DashboardCard OrElse TypeOf control Is CircleButton OrElse
+           TypeOf control Is DashboardModeSelector OrElse
+           TypeOf control Is SidebarRailControl OrElse
            TypeOf control Is VitalsCard OrElse TypeOf control Is VitalBarRow OrElse
            control Is _tabIndicatorBar Then
             Return
@@ -17710,6 +19059,7 @@ Public Class Form1
             RemoveHandler _inGameBotToggleForm.OverlayLayoutChanged, AddressOf InGameBotToggleLayoutChanged
             _inGameBotToggleForm.Close()
         End If
+        RemoveHandler _fullEngine.LootAwardDetected, AddressOf OnLootAwardDetected
         _fullEngine.Stop()
         _liteEngine.Stop()
         MyBase.OnFormClosing(e)

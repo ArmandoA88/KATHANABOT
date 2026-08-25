@@ -319,6 +319,7 @@ Public Class BotConfig
     Public Property BuffWatchSelfClickX As Integer = -1
     Public Property BuffWatchSelfClickY As Integer = -1
     Public Property LootAllowedNames As List(Of String) = New List(Of String)()
+    Public Property LootAwardSkipTerms As List(Of String) = New List(Of String) From {"Rupiah"}
     Public Property LootNameMatchThresholdPercent As Integer = 80
     Public Property PartyInviteAutoAcceptEnabled As Boolean = True
     Public Property PartyRessAutoAcceptEnabled As Boolean = True
@@ -599,6 +600,13 @@ Public Class BotStatus
     Public Property UpdatedAt As DateTime = DateTime.UtcNow
 End Class
 
+Public Class LootAwardRead
+    Public Property PlayerName As String = ""
+    Public Property ItemName As String = ""
+    Public Property RawText As String = ""
+    Public Property DetectedAtUtc As DateTime = DateTime.MinValue
+End Class
+
 Friend Module NativeMethods
     Friend Const PW_CLIENTONLY As UInteger = 1UI
     Friend Const PW_RENDERFULLCONTENT As UInteger = 2UI
@@ -839,6 +847,7 @@ End Module
 Public Class BotEngine
     Public Event StatusUpdated(status As BotStatus)
     Public Event LogLine(line As String)
+    Public Event LootAwardDetected(award As LootAwardRead)
     Private Const NotificationProviderNtfy As String = "ntfy"
     Private Const NotificationProviderDiscord As String = "discord"
     Private Const AllowBlindAttackWhenTargetMissing As Boolean = False
@@ -1106,6 +1115,8 @@ Public Class BotEngine
     Private _lastUnreachableTrigger As DateTime = DateTime.MinValue
     Private _unreachableLatched As Boolean = False
     Private _unreachableClearCount As Integer = 0
+    Private ReadOnly _visibleLootAwardSignatures As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+    Private ReadOnly _recentLootAwardSignatures As New Dictionary(Of String, DateTime)(StringComparer.OrdinalIgnoreCase)
     Private _lastDisconnectScan As DateTime = DateTime.MinValue
     Private _disconnectOcrTask As Task(Of String) = Nothing
     Private _disconnectOcrTaskGeneration As Long = -1L
@@ -1264,6 +1275,7 @@ Public Class BotEngine
     Private _sessionKilledMobs As Integer = 0
     Private _sessionKillTrackingArmed As Boolean = False
     Private _sessionKillMissingSignalCount As Integer = 0
+    Private _sessionKillLastLivingSignalAt As DateTime = DateTime.MinValue
     Private _engineRestartCount As Integer = 0
     Private _engineLastRestartUtc As DateTime = DateTime.MinValue
     Private _agentState As LevelingAgentState = LevelingAgentState.Disabled
@@ -1573,6 +1585,7 @@ Public Class BotEngine
             ' creates a fresh BotEngine.
             _sessionKillTrackingArmed = False
             _sessionKillMissingSignalCount = 0
+            _sessionKillLastLivingSignalAt = DateTime.MinValue
             _lastFullFrameCaptureAttemptAt = DateTime.MinValue
             _lastActionTick.Clear()
             _lastStatusRaisedAt = DateTime.MinValue
@@ -2422,7 +2435,14 @@ Public Class BotEngine
                     targetHasHpSignal = False
                 End If
             End If
-            Dim nameOnlyNonMobTarget As Boolean = normMobName <> "" AndAlso (Not targetHasHpSignal) AndAlso mobMaxHp <= 0
+            ' A dying mob can leave its cached OCR name visible briefly after its HP bar disappears.
+            ' Preserve an armed kill confirmation through that transition instead of classifying the
+            ' cached name as a non-mob and disarming before the second missing-target frame.
+            Dim nameOnlyNonMobTarget As Boolean =
+                normMobName <> "" AndAlso
+                (Not targetHasHpSignal) AndAlso
+                mobMaxHp <= 0 AndAlso
+                Not IsSessionKillConfirmationPending(now)
             If nameOnlyNonMobTarget Then
                 ClearCombatLock()
                 DisarmSessionKillTracking()
@@ -2734,10 +2754,11 @@ Public Class BotEngine
                         ' target-alive signal, not merely by an already-stale hold/lock that let
                         ' effectiveTargetValid through - otherwise every permitted attack would
                         ' refresh the very lock that permitted it, sustaining it forever.
-                        If targetValid Then
+                        If targetHasHpSignal Then
                             BeginCombatLock(targetSignature, DateTime.UtcNow)
                             _sessionKillTrackingArmed = True
                             _sessionKillMissingSignalCount = 0
+                            _sessionKillLastLivingSignalAt = DateTime.UtcNow
                         End If
                         _firstHitPending = False
                         _firstHitWindowUntil = DateTime.MinValue
@@ -2762,6 +2783,10 @@ Public Class BotEngine
                         Else
                             reason = "Waiting to send first attack before retarget."
                         End If
+                    End If
+                ElseIf (Not filterBlockedRetarget) AndAlso IsSessionKillConfirmationPending(now) Then
+                    If String.IsNullOrWhiteSpace(reason) Then
+                        reason = "Recent attacked mob disappeared. Waiting for kill confirmation before retarget."
                     End If
                 ElseIf combatLockActive Then
                     If String.IsNullOrWhiteSpace(reason) Then
@@ -6925,18 +6950,23 @@ Public Class BotEngine
     Private Sub TrackSessionKill(targetHasHpSignal As Boolean, telemetryReliable As Boolean, now As DateTime)
         If targetHasHpSignal Then
             _sessionKillMissingSignalCount = 0
+            If _sessionKillTrackingArmed Then
+                _sessionKillLastLivingSignalAt = now
+            End If
             Return
         End If
         If Not _sessionKillTrackingArmed Then
             Return
         End If
         If Not telemetryReliable Then
-            _sessionKillMissingSignalCount = 0
+            ' Pause confirmation across a failed capture instead of erasing a valid missing frame.
             Return
         End If
 
-        Const recentAttackWindowMs As Double = 4000.0
-        If _lastAttackAction = DateTime.MinValue OrElse (now - _lastAttackAction).TotalMilliseconds > recentAttackWindowMs Then
+        ' The initiating attack may have started an in-game auto-attack that lasts much longer than
+        ' four seconds. The last observed living-target signal is the reliable death boundary; using
+        ' the last key timestamp here caused long fights to be systematically undercounted.
+        If Not IsSessionKillConfirmationPending(now) Then
             DisarmSessionKillTracking()
             Return
         End If
@@ -6954,7 +6984,15 @@ Public Class BotEngine
     Private Sub DisarmSessionKillTracking()
         _sessionKillTrackingArmed = False
         _sessionKillMissingSignalCount = 0
+        _sessionKillLastLivingSignalAt = DateTime.MinValue
     End Sub
+
+    Private Function IsSessionKillConfirmationPending(now As DateTime) As Boolean
+        Const recentLivingSignalWindowMs As Double = 3000.0
+        Return _sessionKillTrackingArmed AndAlso
+            _sessionKillLastLivingSignalAt <> DateTime.MinValue AndAlso
+            (now - _sessionKillLastLivingSignalAt).TotalMilliseconds <= recentLivingSignalWindowMs
+    End Function
 
     ' Loot After Kill: independent of the interval-based Loot Pickup (F) above - this presses F the
     ' moment the current target disappears right after we were actively attacking it, rather than
@@ -8512,6 +8550,7 @@ Public Class BotEngine
             _unreachableOcrTask = Nothing
 
             If isCurrent AndAlso Not harvestFailed Then
+                ProcessLootAwardOcrText(_lastUnreachableCandidate, now, cfg.LootAwardSkipTerms)
                 Dim matched As Boolean = IsUnreachablePrompt(_lastUnreachableCandidate)
                 Dim repairMatched As Boolean = IsRepairPrompt(_lastUnreachableCandidate)
                 If matched Then
@@ -8633,7 +8672,13 @@ Public Class BotEngine
             _unreachableOcrTask = Task.Run(
                 Function()
                     Try
-                        Return OcrReader.ReadName(crop)
+                        Using enlarged As Bitmap = EnlargeBitmap(crop, 3)
+                            Dim text As String = If(OcrReader.ReadScreenTextIsolated(enlarged), "").Trim()
+                            If text = "" Then
+                                text = If(OcrReader.ReadName(enlarged), "").Trim()
+                            End If
+                            Return text
+                        End Using
                     Catch
                         Return ""
                     Finally
@@ -8645,6 +8690,181 @@ Public Class BotEngine
         End Try
 
         Return False
+    End Function
+
+    Private Sub ProcessLootAwardOcrText(rawText As String, detectedAt As DateTime, skipTerms As IEnumerable(Of String))
+        Dim currentSignatures As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+        Dim lines As String() = Regex.Split(If(rawText, ""), "[\r\n]+")
+
+        For Each rawLine As String In lines
+            Dim playerName As String = ""
+            Dim itemName As String = ""
+            Dim cleanedLine As String = ""
+            If Not TryParseLootAwardLine(rawLine, playerName, itemName, cleanedLine) Then
+                Continue For
+            End If
+            itemName = NormalizeLootAwardItemName(itemName)
+            If IsSkippedLootAward(itemName, skipTerms) Then
+                Continue For
+            End If
+            Dim signature As String = (playerName & "|" & itemName).ToLowerInvariant()
+            currentSignatures.Add(signature)
+
+            Dim recentAt As DateTime = DateTime.MinValue
+            Dim wasRecentlyRead As Boolean = _recentLootAwardSignatures.TryGetValue(signature, recentAt) AndAlso
+                (detectedAt - recentAt).TotalSeconds < 12.0R
+            _recentLootAwardSignatures(signature) = detectedAt
+            If _visibleLootAwardSignatures.Contains(signature) OrElse wasRecentlyRead Then
+                Continue For
+            End If
+
+            RaiseEvent LootAwardDetected(New LootAwardRead With {
+                .PlayerName = playerName,
+                .ItemName = itemName,
+                .RawText = cleanedLine,
+                .DetectedAtUtc = detectedAt.ToUniversalTime()
+            })
+            RaiseEvent LogLine($"Item award read: {playerName} -> {itemName}")
+        Next
+
+        _visibleLootAwardSignatures.Clear()
+        _visibleLootAwardSignatures.UnionWith(currentSignatures)
+
+        Dim staleBefore As DateTime = detectedAt.AddMinutes(-2)
+        Dim staleSignatures As List(Of String) = _recentLootAwardSignatures.
+            Where(Function(pair) pair.Value < staleBefore).
+            Select(Function(pair) pair.Key).
+            ToList()
+        For Each signature As String In staleSignatures
+            _recentLootAwardSignatures.Remove(signature)
+        Next
+    End Sub
+
+    Private Shared Function TryParseLootAwardLine(rawLine As String, ByRef playerName As String, ByRef itemName As String, ByRef cleanedLine As String) As Boolean
+        playerName = ""
+        itemName = ""
+        cleanedLine = Regex.Replace(If(rawLine, "").Trim(), "\s+", " ")
+        If cleanedLine = "" Then
+            Return False
+        End If
+
+        ' The OCR prefix is useful context but is not part of either captured field. This accepts
+        ' common bracket and I/l/1 mistakes in "Division" without loosening the award phrase itself.
+        Dim awardText As String = Regex.Replace(
+            cleanedLine,
+            "^\s*[\[\(\{]?\s*auto\s+d[i1l]v[i1l]s[i1l]on\s*[\]\)\}]?\s*[:\-]?\s*",
+            "",
+            RegexOptions.IgnoreCase)
+        Dim awardMatch As Match = Regex.Match(
+            awardText,
+            "^(?<player>[A-Za-z0-9][A-Za-z0-9_.\-]{1,31})\s+(?:have|has|hove|hav[e3])\s+(?:earned|eamed|earmed|earncd|earnecl|earne[dcl]|arned)\s+(?<item>.+?)\s*$",
+            RegexOptions.IgnoreCase)
+        If Not awardMatch.Success Then
+            Return False
+        End If
+
+        playerName = awardMatch.Groups("player").Value.Trim()
+        itemName = TrimMergedLootAwardText(awardMatch.Groups("item").Value)
+        itemName = itemName.Trim().Trim("."c, ","c, ";"c, ":"c, "!"c, "]"c, ")"c, "}"c)
+        Return playerName <> "" AndAlso itemName <> ""
+    End Function
+
+    Private Shared Function TrimMergedLootAwardText(itemName As String) As String
+        Dim cleaned As String = Regex.Replace(If(itemName, "").Trim(), "\s+", " ")
+        If cleaned = "" Then
+            Return ""
+        End If
+
+        ' OCR can join several notifications into one line. Keep only the item belonging to the
+        ' first "player has earned" phrase and discard the next combat/system/award message.
+        Dim boundary As Match = Regex.Match(
+            cleaned,
+            "\s+(?=(?:[\[\(\{]?\s*auto\s+d[i1l]v[i1l]s[i1l]on\b|you\s+(?:have\s+earned|earned|damaged)\b|cannot\s+pick\s+up\b|[A-Za-z0-9][A-Za-z0-9_.\-]{1,31}\s+(?:have|has|hove|hav[e3])\s+(?:earned|eamed|earmed|earncd|earnecl|earne[dcl]|arned)\b))",
+            RegexOptions.IgnoreCase)
+        If boundary.Success Then
+            cleaned = cleaned.Substring(0, boundary.Index).Trim()
+        End If
+        Return cleaned
+    End Function
+
+    Private Shared Function IsSkippedLootAward(itemName As String, skipTerms As IEnumerable(Of String)) As Boolean
+        If skipTerms Is Nothing Then
+            Return False
+        End If
+
+        Dim normalizedItem As String = NormalizeLootAwardSkipText(itemName)
+        If normalizedItem = "" Then
+            Return False
+        End If
+
+        For Each rawTerm As String In skipTerms
+            Dim normalizedTerm As String = NormalizeLootAwardSkipText(rawTerm)
+            If normalizedTerm = "" Then
+                Continue For
+            End If
+
+            If (" " & normalizedItem & " ").Contains(" " & normalizedTerm & " ", StringComparison.OrdinalIgnoreCase) Then
+                Return True
+            End If
+
+            Dim compactTerm As String = normalizedTerm.Replace(" ", "")
+            If compactTerm.Contains("rupiah", StringComparison.Ordinal) OrElse
+               LevenshteinDistance(compactTerm.Replace("1"c, "i"c).Replace("0"c, "o"c), "rupiah") <= 2 Then
+                If IsRupiahAward(itemName) Then
+                    Return True
+                End If
+            End If
+        Next
+        Return False
+    End Function
+
+    Private Shared Function NormalizeLootAwardSkipText(value As String) As String
+        Return Regex.Replace(If(value, "").Trim().ToLowerInvariant(), "[^a-z0-9]+", " ").Trim()
+    End Function
+
+    Private Shared Function IsRupiahAward(itemName As String) As Boolean
+        Dim compact As String = Regex.Replace(If(itemName, "").ToLowerInvariant(), "[^a-z0-9]", "")
+        If compact = "" Then
+            Return False
+        End If
+        If compact.Contains("rupiah", StringComparison.Ordinal) OrElse
+           compact.Contains("rupiahs", StringComparison.Ordinal) OrElse
+           compact.Contains("rupiash", StringComparison.Ordinal) OrElse
+           compact.Contains("ruphiah", StringComparison.Ordinal) OrElse
+           compact.Contains("rupia", StringComparison.Ordinal) Then
+            Return True
+        End If
+
+        For Each tokenMatch As Match In Regex.Matches(If(itemName, "").ToLowerInvariant(), "[a-z0-9]{4,9}")
+            Dim token As String = tokenMatch.Value.Replace("1"c, "i"c).Replace("0"c, "o"c)
+            If LevenshteinDistance(token, "rupiah") <= 2 OrElse LevenshteinDistance(token, "rupiahs") <= 2 Then
+                Return True
+            End If
+        Next
+        Return False
+    End Function
+
+    Private Shared Function NormalizeLootAwardItemName(itemName As String) As String
+        Dim cleaned As String = Regex.Replace(If(itemName, "").Trim(), "\s+", " ")
+        cleaned = Regex.Replace(cleaned, "\bf\s*o\s*r\s*b\b", "Forb", RegexOptions.IgnoreCase)
+        cleaned = Regex.Replace(cleaned, "\bkana\s*cla\b", "Kanada", RegexOptions.IgnoreCase)
+        cleaned = Regex.Replace(
+            cleaned,
+            "\b[A-Za-z0-9]{3,8}\b",
+            Function(match As Match)
+                Dim token As String = match.Value
+                Dim folded As String = token.ToLowerInvariant().Replace("0"c, "o"c).Replace("8"c, "b"c)
+                If LevenshteinDistance(folded, "forb") <= 1 Then
+                    Return "Forb"
+                End If
+
+                Dim kanadaFolded As String = folded.Replace("cl", "d")
+                If LevenshteinDistance(kanadaFolded, "kanada") <= 1 Then
+                    Return "Kanada"
+                End If
+                Return token
+            End Function)
+        Return cleaned
     End Function
 
     Private Function TryHandleUnreachableTargetFromClientRegion(cfg As BotConfig, hwnd As IntPtr, now As DateTime, unreachableTextRegion As RectRegion) As Boolean
