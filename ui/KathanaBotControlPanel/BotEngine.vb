@@ -4,6 +4,7 @@ Imports System.Drawing
 Imports System.Drawing.Drawing2D
 Imports System.Drawing.Imaging
 Imports System.IO
+Imports System.IO.Compression
 Imports System.Linq
 Imports System.Runtime.InteropServices
 Imports System.Text.RegularExpressions
@@ -1011,8 +1012,10 @@ Public Class BotEngine
     ' when it's copied to a different computer - AppContext.BaseDirectory resolves to the published
     ' exe's own folder even under single-file self-contained deployment, unlike Assembly.Location
     ' (empty for single-file apps) or a temp single-file extraction directory.
-    Public Shared ReadOnly BuffIconLibraryRoot As String = Path.Combine(AppContext.BaseDirectory, "buff_icons")
-    Private Shared ReadOnly LegacyBuffIconLibraryRoot As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel", "buff_icons")
+    Public Shared ReadOnly BuffIconLibraryRoot As String = Path.Combine(AppContext.BaseDirectory, "BuffWatchIcons")
+    Private Const BundledBuffIconLibraryResourceName As String = "KathanaBotControlPanel.BuffWatchIcons.zip"
+    Private Shared ReadOnly LegacyExecutableBuffIconLibraryRoot As String = Path.Combine(AppContext.BaseDirectory, "buff_icons")
+    Private Shared ReadOnly LegacyAppDataBuffIconLibraryRoot As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel", "buff_icons")
     Public Shared ReadOnly SessionHistoryFilePath As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel", "session_history.csv")
     Private Shared ReadOnly _sessionHistorySync As New Object()
     Private Shared ReadOnly NavigationRouteJsonOptions As New JsonSerializerOptions With {.WriteIndented = True}
@@ -7193,47 +7196,99 @@ Public Class BotEngine
     ' swallowed - a failed migration should not block startup.
     Public Shared Sub MigrateLegacyBuffIconLibraryIfNeeded()
         Try
-            If Not Directory.Exists(LegacyBuffIconLibraryRoot) Then
-                Return
-            End If
-            Dim legacyFiles As String() = Directory.GetFiles(LegacyBuffIconLibraryRoot, "*.png", SearchOption.AllDirectories)
-            If legacyFiles.Length = 0 Then
-                Return
-            End If
-            If Directory.Exists(BuffIconLibraryRoot) AndAlso Directory.GetFiles(BuffIconLibraryRoot, "*.png", SearchOption.AllDirectories).Length > 0 Then
-                Return
-            End If
-
-            For Each sourceFile As String In legacyFiles
-                Dim relativePath As String = Path.GetRelativePath(LegacyBuffIconLibraryRoot, sourceFile)
-                Dim destinationFile As String = Path.Combine(BuffIconLibraryRoot, relativePath)
-                Directory.CreateDirectory(Path.GetDirectoryName(destinationFile))
-                If Not File.Exists(destinationFile) Then
-                    File.Copy(sourceFile, destinationFile)
-                End If
-            Next
+            Directory.CreateDirectory(BuffIconLibraryRoot)
+            MigrateBuffIconFilesFrom(LegacyExecutableBuffIconLibraryRoot)
+            MigrateBuffIconFilesFrom(LegacyAppDataBuffIconLibraryRoot)
+            ExtractBundledBuffIconLibrary()
         Catch
         End Try
     End Sub
 
-    ' Walks buff_icons\<category>\*.png on disk (mirrors the navigation_routes folder-per-category
-    ' convention) rather than duplicating icon Base64 blobs into the main settings JSON.
+    Private Shared Sub MigrateBuffIconFilesFrom(sourceRoot As String)
+        If String.IsNullOrWhiteSpace(sourceRoot) OrElse
+           String.Equals(Path.GetFullPath(sourceRoot), Path.GetFullPath(BuffIconLibraryRoot), StringComparison.OrdinalIgnoreCase) OrElse
+           Not Directory.Exists(sourceRoot) Then
+            Return
+        End If
+
+        For Each sourceFile As String In Directory.GetFiles(sourceRoot, "*.png", SearchOption.AllDirectories)
+            Dim relativePath As String = Path.GetRelativePath(sourceRoot, sourceFile)
+            Dim destinationFile As String = Path.Combine(BuffIconLibraryRoot, relativePath)
+            Directory.CreateDirectory(If(Path.GetDirectoryName(destinationFile), BuffIconLibraryRoot))
+            If Not File.Exists(destinationFile) Then
+                File.Copy(sourceFile, destinationFile)
+            End If
+        Next
+    End Sub
+
+    Public Shared Sub EnsureBuffIconLibraryExists()
+        Directory.CreateDirectory(BuffIconLibraryRoot)
+        ExtractBundledBuffIconLibrary()
+    End Sub
+
+    Private Shared Sub ExtractBundledBuffIconLibrary()
+        Dim assembly As Reflection.Assembly = GetType(BotEngine).Assembly
+        Using resourceStream As Stream = assembly.GetManifestResourceStream(BundledBuffIconLibraryResourceName)
+            If resourceStream Is Nothing Then
+                Return
+            End If
+
+            Dim rootPath As String = Path.GetFullPath(BuffIconLibraryRoot)
+            Dim rootPrefix As String = rootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) & Path.DirectorySeparatorChar
+            Using archive As New ZipArchive(resourceStream, ZipArchiveMode.Read, leaveOpen:=False)
+                For Each entry As ZipArchiveEntry In archive.Entries
+                    Dim relativePath As String = entry.FullName.Replace("/"c, Path.DirectorySeparatorChar).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                    If relativePath = "" Then
+                        Continue For
+                    End If
+
+                    Dim destinationPath As String = Path.GetFullPath(Path.Combine(rootPath, relativePath))
+                    If Not destinationPath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase) Then
+                        Continue For
+                    End If
+                    If String.IsNullOrWhiteSpace(entry.Name) Then
+                        Directory.CreateDirectory(destinationPath)
+                        Continue For
+                    End If
+
+                    Directory.CreateDirectory(If(Path.GetDirectoryName(destinationPath), rootPath))
+                    If File.Exists(destinationPath) Then
+                        Continue For
+                    End If
+                    Try
+                        Using input As Stream = entry.Open(),
+                              output As New FileStream(destinationPath, FileMode.CreateNew, FileAccess.Write, FileShare.None)
+                            input.CopyTo(output)
+                        End Using
+                    Catch ex As IOException
+                        ' Another startup instance may have extracted this same file first.
+                    End Try
+                Next
+            End Using
+        End Using
+    End Sub
+
+    ' Root-level PNG files are immediately usable under the friendly "Library" category. Optional
+    ' subfolders still act as categories, preserving the existing organized-library workflow.
     Public Shared Function ScanBuffIconLibrary() As List(Of BuffIconLibraryEntry)
         Dim entries As New List(Of BuffIconLibraryEntry)()
         Try
-            If Not Directory.Exists(BuffIconLibraryRoot) Then
-                Return entries
-            End If
-            For Each categoryDir As String In Directory.GetDirectories(BuffIconLibraryRoot)
-                Dim category As String = Path.GetFileName(categoryDir)
-                For Each filePath As String In Directory.GetFiles(categoryDir, "*.png")
-                    entries.Add(New BuffIconLibraryEntry() With {
-                        .Category = category,
-                        .Name = Path.GetFileNameWithoutExtension(filePath),
-                        .RelativePath = Path.Combine(category, Path.GetFileName(filePath))
-                    })
-                Next
+            EnsureBuffIconLibraryExists()
+            Dim supportedExtensions As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase) From {".png", ".bmp", ".jpg", ".jpeg"}
+            For Each filePath As String In Directory.GetFiles(BuffIconLibraryRoot, "*.*", SearchOption.AllDirectories).
+                    Where(Function(candidateFile) supportedExtensions.Contains(Path.GetExtension(candidateFile)))
+                Dim relativePath As String = Path.GetRelativePath(BuffIconLibraryRoot, filePath)
+                Dim relativeDirectory As String = If(Path.GetDirectoryName(relativePath), "").Trim()
+                Dim category As String = If(relativeDirectory = "", "library", relativeDirectory.Replace(Path.DirectorySeparatorChar, "/"c))
+                entries.Add(New BuffIconLibraryEntry() With {
+                    .Category = category,
+                    .Name = Path.GetFileNameWithoutExtension(filePath),
+                    .RelativePath = relativePath
+                })
             Next
+            entries = entries.OrderBy(Function(entry) entry.Category, StringComparer.OrdinalIgnoreCase).
+                ThenBy(Function(entry) entry.Name, StringComparer.OrdinalIgnoreCase).
+                ToList()
         Catch
         End Try
         Return entries

@@ -2071,7 +2071,7 @@ Public Class Form1
     Private _lootHistoryVersion As Long = 0
     Private _lastLootHistoryRenderedVersion As Long = -1
     Private ReadOnly _itemAwardReads As New List(Of LootAwardRead)()
-    Private Const MaxItemAwardReads As Integer = 500
+    Private Const MaxItemAwardReads As Integer = 1000
     Private _lastEngineKeyActionLogUtc As DateTime = DateTime.MinValue
     Private _suppressedEngineKeyActionLogCount As Integer = 0
     Private _lastStateLogUtc As DateTime = DateTime.MinValue
@@ -7178,8 +7178,11 @@ Public Class Form1
         Dim topRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
         chkBuffWatchEnabled = New CheckBox() With {.Text = "Enable Buff Watch", .AutoSize = True, .ForeColor = Color.Gainsboro, .Margin = New Padding(3, 10, 14, 3)}
         btnCalibrateBuffArea = New Button() With {.Text = "Calibrate Buff Area (Vision tab)", .AutoSize = True, .BackColor = Color.FromArgb(70, 70, 70), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat, .Margin = New Padding(3, 4, 3, 3)}
+        Dim btnOpenBuffIconFolder As New Button() With {.Text = "Open Icon Library Folder", .AutoSize = True, .BackColor = Color.FromArgb(45, 95, 140), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat, .Margin = New Padding(8, 4, 3, 3)}
+        AddHandler btnOpenBuffIconFolder.Click, AddressOf OpenBuffIconFolderClicked
         topRow.Controls.Add(chkBuffWatchEnabled)
         topRow.Controls.Add(btnCalibrateBuffArea)
+        topRow.Controls.Add(btnOpenBuffIconFolder)
         root.Controls.Add(topRow, 0, 0)
 
         dgvBuffWatch = New DataGridView() With {
@@ -7227,7 +7230,7 @@ Public Class Form1
         bottomLayout.Controls.Add(selfClickRow, 0, 1)
 
         lblBuffWatchStatus = New Label() With {
-            .Text = "Add buffs from the icon library, assign a recast key, then calibrate the Buff Area above.",
+            .Text = $"Portable library: {BotEngine.BuffIconLibraryRoot}{Environment.NewLine}Drop PNG/BMP/JPG icons there; filenames become buff names. Capture/import remains available.",
             .AutoSize = True,
             .ForeColor = Color.Khaki,
             .Margin = New Padding(3, 4, 3, 3)
@@ -7278,6 +7281,15 @@ Public Class Form1
     Private Sub CalibrateBuffAreaClicked(sender As Object, e As EventArgs)
         JumpToCalibrationRegionZoomPreview("buff_area_rect")
         AppendLog("Buff Watch: drag/resize the ""buff_area_rect"" row's live preview on the Vision tab to cover the whole buff icon row.")
+    End Sub
+
+    Private Sub OpenBuffIconFolderClicked(sender As Object, e As EventArgs)
+        Try
+            BotEngine.EnsureBuffIconLibraryExists()
+            Process.Start(New ProcessStartInfo(BotEngine.BuffIconLibraryRoot) With {.UseShellExecute = True})
+        Catch ex As Exception
+            MessageBox.Show(Me, $"Unable to open the Buff Watch icon folder: {ex.Message}", "Buff Watch", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        End Try
     End Sub
 
     Private Sub AddBuffWatchSlotClicked(sender As Object, e As EventArgs)

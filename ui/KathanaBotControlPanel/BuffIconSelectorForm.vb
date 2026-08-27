@@ -1,4 +1,5 @@
 Imports System.ComponentModel
+Imports System.Diagnostics
 Imports System.IO
 Imports System.Runtime.InteropServices
 Imports DrawingPoint = System.Drawing.Point
@@ -19,9 +20,9 @@ Friend Class BuffIconSelectorForm
     Public Property SelectedRelativePath As String = ""
 
     Private ReadOnly _gameHwnd As IntPtr
-    Private ReadOnly _defaultCategories As String() = {"General", "Naga - Kimnara", "Ashura - Rakshasa", "Yaksa - Gandharva", "Deva - Garuda", "Other"}
+    Private ReadOnly _defaultCategories As String() = {"Library", "General", "Naga - Kimnara", "Ashura - Rakshasa", "Yaksa - Gandharva", "Deva - Garuda", "Other"}
     Private _entries As New List(Of BuffIconLibraryEntry)()
-    Private _selectedCategory As String = "general"
+    Private _selectedCategory As String = "library"
     Private _selectedTile As PictureBox = Nothing
     Private _isCapturing As Boolean = False
     Private _capturingCategory As String = ""
@@ -60,6 +61,7 @@ Friend Class BuffIconSelectorForm
         ForeColor = Color.Gainsboro
 
         BuildUi()
+        BotEngine.EnsureBuffIconLibraryExists()
         nudIconSize.Value = Math.Max(nudIconSize.Minimum, Math.Min(nudIconSize.Maximum, CDec(suggestedIconSize)))
         ReloadLibrary()
 
@@ -89,10 +91,12 @@ Friend Class BuffIconSelectorForm
         root.Controls.Add(leftPanel, 0, 0)
         root.SetRowSpan(leftPanel, 2)
 
-        Dim searchRow As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 1}
+        Dim searchRow As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 5, .RowCount = 1}
         searchRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
         searchRow.ColumnStyles.Add(New ColumnStyle(SizeType.AutoSize))
         searchRow.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 55.0F))
+        searchRow.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 104.0F))
+        searchRow.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 72.0F))
         txtSearch = New TextBox() With {.Dock = DockStyle.Fill, .PlaceholderText = "Search icons..."}
         AddHandler txtSearch.TextChanged, AddressOf SearchTextChanged
         searchRow.Controls.Add(txtSearch, 0, 0)
@@ -100,13 +104,19 @@ Friend Class BuffIconSelectorForm
         searchRow.Controls.Add(lblIconSize, 1, 0)
         nudIconSize = New NumericUpDown() With {.Minimum = 16, .Maximum = 128, .Value = 40, .Dock = DockStyle.Fill}
         searchRow.Controls.Add(nudIconSize, 2, 0)
+        Dim btnOpenFolder As New Button() With {.Text = "Open Icon Folder", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(45, 95, 140), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat, .Margin = New Padding(5, 0, 3, 0)}
+        AddHandler btnOpenFolder.Click, AddressOf OpenLibraryFolderClicked
+        searchRow.Controls.Add(btnOpenFolder, 3, 0)
+        Dim btnRefresh As New Button() With {.Text = "Refresh", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(70, 70, 70), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat, .Margin = New Padding(3, 0, 0, 0)}
+        AddHandler btnRefresh.Click, Sub(_sender As Object, _e As EventArgs) ReloadLibrary()
+        searchRow.Controls.Add(btnRefresh, 4, 0)
         root.Controls.Add(searchRow, 1, 0)
 
         flowIcons = New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoScroll = True, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .BackColor = Color.FromArgb(20, 20, 20)}
         root.Controls.Add(flowIcons, 1, 1)
 
         lblHint = New Label() With {
-            .Text = DefaultHintText,
+            .Text = $"Portable icon library: {BotEngine.BuffIconLibraryRoot}",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .AutoEllipsis = True,
@@ -125,7 +135,17 @@ Friend Class BuffIconSelectorForm
         CancelButton = btnCancel
     End Sub
 
+    Private Sub OpenLibraryFolderClicked(sender As Object, e As EventArgs)
+        Try
+            BotEngine.EnsureBuffIconLibraryExists()
+            Process.Start(New ProcessStartInfo(BotEngine.BuffIconLibraryRoot) With {.UseShellExecute = True})
+        Catch ex As Exception
+            MessageBox.Show(Me, $"Unable to open the icon folder: {ex.Message}", "Buff Icon Library", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        End Try
+    End Sub
+
     Private Sub ReloadLibrary()
+        BotEngine.EnsureBuffIconLibraryExists()
         _entries = BotEngine.ScanBuffIconLibrary()
 
         Dim orderedKeys As New List(Of String)()
