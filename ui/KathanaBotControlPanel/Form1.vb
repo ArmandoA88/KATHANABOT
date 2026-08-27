@@ -116,6 +116,7 @@ Public Class Form1
     Private _visionTab As TabPage
     Private _autoPotTab As TabPage
     Private _autoLootTab As TabPage
+    Private _fullSupportTab As TabPage
     Private _levelingTab As TabPage
     Private _holdPlaceTab As TabPage
     Private _buffWatchTab As TabPage
@@ -219,9 +220,6 @@ Public Class Form1
     Private btnRemoveBuffWatchSlot As Button
     Private btnClearBuffWatchSlots As Button
     Private chkBuffWatchSelfClickEnabled As CheckBox
-    Private btnSetBuffWatchSelfClickPoint As Button
-    Private btnClearBuffWatchSelfClickPoint As Button
-    Private lblBuffWatchSelfClickPoint As Label
     Private btnCalibrateBuffArea As Button
     Private lblBuffWatchStatus As Label
 
@@ -1647,6 +1645,8 @@ Public Class Form1
     End Function
 
     Private dgvCombat As DataGridView
+    Private chkPauseCombatKeysWhileChatting As CheckBox
+    Private lblChatKeyPauseStatus As Label
     Private chkMonsterFilter As CheckBox
     Private chkMonsterWhitelistMode As CheckBox
     Private chkMonsterConfirmOnce As CheckBox
@@ -1781,6 +1781,30 @@ Public Class Form1
     Private btnSaveSettings As Button
     Private btnStopBot As Button
     Private btnFullSupport As Button
+    Private chkFullSupportEnabled As CheckBox
+    Private lblFullSupportCalibration As Label
+    Private lblFullSupportLiveStatus As Label
+    Private dgvFullSupportMembers As DataGridView
+    Private ReadOnly _fullSupportPartyMembers As New List(Of FullSupportPartyMember)()
+    Private chkFullSupportTankEnabled As CheckBox
+    Private cboFullSupportTankMember As ComboBox
+    Private cboFullSupportTankKey As ComboBox
+    Private nudFullSupportTankHp As NumericUpDown
+    Private nudFullSupportTankCooldown As NumericUpDown
+    Private chkFullSupportIndividualEnabled As CheckBox
+    Private cboFullSupportIndividualKey As ComboBox
+    Private nudFullSupportIndividualHp As NumericUpDown
+    Private nudFullSupportIndividualCooldown As NumericUpDown
+    Private chkFullSupportPartyHealEnabled As CheckBox
+    Private cboFullSupportPartyHealKey As ComboBox
+    Private nudFullSupportPartyHealHp As NumericUpDown
+    Private nudFullSupportPartyMinimum As NumericUpDown
+    Private nudFullSupportPartyCooldown As NumericUpDown
+    Private chkFullSupportAssistEnabled As CheckBox
+    Private cboFullSupportAssistKey As ComboBox
+    Private nudFullSupportAssistCooldown As NumericUpDown
+    Private chkFullSupportAssistHighPriority As CheckBox
+    Private _fullSupportUiLoading As Boolean = False
     Private btnBypassStuck As Button
     Private btnLootAfterKill As Button
     Private btnPartyInviteAutoAccept As Button
@@ -1920,6 +1944,8 @@ Public Class Form1
     Private _autoRelaunchPending As Boolean = False
     Private _lastAutoRelaunchAttemptUtc As DateTime = DateTime.MinValue
     Private _ctrlShiftWasDown As Boolean = False
+    Private _chatEnterWasDown As Boolean = False
+    Private _chatPauseUiLoading As Boolean = False
     Private _isPickingLootRejectPoint As Boolean = False
     Private _isPickingAutoPartyPoint As Boolean = False
     Private _autoPartyPointLeftMouseWasDown As Boolean = False
@@ -1946,10 +1972,6 @@ Public Class Form1
     Private _buffWatchEnabled As Boolean = False
     Private _buffWatchSlots As New List(Of BuffWatchSlot)()
     Private _buffWatchSelfClickEnabled As Boolean = False
-    Private _isPickingBuffWatchSelfClickPoint As Boolean = False
-    Private _buffWatchSelfClickLeftMouseWasDown As Boolean = False
-    Private _buffWatchSelfClickX As Integer = -1
-    Private _buffWatchSelfClickY As Integer = -1
     Private _developerModeEnabled As Boolean = False
     Private chkDeveloperMode As CheckBox
     Private ReadOnly _developerOnlyControls As New List(Of Control)()
@@ -2051,6 +2073,9 @@ Public Class Form1
     Private ReadOnly _dashboardRupiahRateHistory As New List(Of Double)()
     Private Const DashboardRateHistoryIntervalSeconds As Integer = 5
     Private Const DashboardRateHistoryMaxSamples As Integer = 180
+    Private Const MaxCredibleExpDeltaPerUiSample As Double = 1.0
+    Private Const ExpLevelWrapHighPercent As Double = 90.0
+    Private Const ExpLevelWrapLowPercent As Double = 10.0
     Private _dashboardTargetSignature As String = ""
     Private _dashboardTargetStartedAtUtc As DateTime = DateTime.MinValue
     Private _dashboardTargetStartHpPercent As Double = -1.0
@@ -2286,8 +2311,6 @@ Public Class Form1
         Public Property BuffWatchEnabled As Boolean = False
         Public Property BuffWatchSlots As List(Of BuffWatchSlot) = New List(Of BuffWatchSlot)()
         Public Property BuffWatchSelfClickEnabled As Boolean = False
-        Public Property BuffWatchSelfClickX As Integer = -1
-        Public Property BuffWatchSelfClickY As Integer = -1
         Public Property ResurrectAutoAcceptEnabled As Boolean = False
         Public Property ResurrectOkPointX As Integer = -1
         Public Property ResurrectOkPointY As Integer = -1
@@ -3583,6 +3606,8 @@ Public Class Form1
         _mainTabs.TabPages.Add(_combatTab)
         _mainTabs.TabPages.Add(_visionTab)
         _mainTabs.TabPages.Add(_autoPotTab)
+        _fullSupportTab = BuildFullSupportTab()
+        _mainTabs.TabPages.Add(_fullSupportTab)
         _autoLootTab = BuildAutoLootTab()
         _mainTabs.TabPages.Add(_autoLootTab)
         _levelingTab = BuildLevelingTab()
@@ -4001,6 +4026,13 @@ Public Class Form1
         Dim runStartedAt As DateTime = status.RunStartedAtUtc
         If runStartedAt <> DateTime.MinValue AndAlso runStartedAt <> _dashboardSessionRunStartedAtUtc Then
             _dashboardSessionRunStartedAtUtc = runStartedAt
+            _dashboardSessionStartRupiahs = -1
+            _dashboardSessionRupiahsEarned = 0
+            _dashboardSessionLastExpPercent = -1
+            _dashboardSessionExpEarned = 0
+            _dashboardLastRateSampleAtUtc = DateTime.MinValue
+            _dashboardExpRateHistory.Clear()
+            _dashboardRupiahRateHistory.Clear()
         End If
 
         If status.Running AndAlso status.WindowFound AndAlso status.RupiahsTotal >= 0 Then
@@ -4012,11 +4044,8 @@ Public Class Form1
 
         If status.Running AndAlso status.WindowFound AndAlso status.ExpPercent >= 0 Then
             If _dashboardSessionLastExpPercent >= 0 Then
-                Dim delta As Double = status.ExpPercent - _dashboardSessionLastExpPercent
-                If delta < -50.0 Then
-                    delta += 100.0
-                End If
-                If delta > 0.0 AndAlso delta <= 100.0 Then
+                Dim delta As Double
+                If TryGetCredibleForwardExpDelta(_dashboardSessionLastExpPercent, status.ExpPercent, delta) Then
                     _dashboardSessionExpEarned += delta
                 End If
             End If
@@ -4043,6 +4072,23 @@ Public Class Form1
             AddDashboardRecentEvent(status.LastAction)
         End If
     End Sub
+
+    Private Shared Function TryGetCredibleForwardExpDelta(previousPercent As Double, currentPercent As Double, ByRef delta As Double) As Boolean
+        delta = 0
+        If previousPercent < 0 OrElse previousPercent > 100 OrElse currentPercent < 0 OrElse currentPercent > 100 Then
+            Return False
+        End If
+
+        If currentPercent >= previousPercent Then
+            delta = currentPercent - previousPercent
+        ElseIf previousPercent >= ExpLevelWrapHighPercent AndAlso currentPercent <= ExpLevelWrapLowPercent Then
+            delta = (100.0 - previousPercent) + currentPercent
+        Else
+            Return False
+        End If
+
+        Return delta > 0.0 AndAlso delta <= MaxCredibleExpDeltaPerUiSample
+    End Function
 
     Private Shared Sub TrimDashboardHistory(history As List(Of Double))
         If history IsNot Nothing AndAlso history.Count > DashboardRateHistoryMaxSamples Then
@@ -4556,6 +4602,9 @@ Public Class Form1
         If tab Is _autoPotTab Then
             Return IsAutoPotTabActive()
         End If
+        If tab Is _fullSupportTab Then
+            Return _fullSupportModeEnabled
+        End If
         If tab Is _autoLootTab Then
             Return IsAutoLootTabActive()
         End If
@@ -4564,6 +4613,9 @@ Public Class Form1
         End If
         If tab Is _holdPlaceTab Then
             Return IsHoldPlaceTabActive()
+        End If
+        If tab Is _buffWatchTab Then
+            Return IsBuffWatchTabActive()
         End If
 
         Return False
@@ -4585,6 +4637,10 @@ Public Class Form1
         End If
 
         Return _edition = BotEdition.Full
+    End Function
+
+    Private Function IsBuffWatchTabActive() As Boolean
+        Return If(chkBuffWatchEnabled IsNot Nothing, chkBuffWatchEnabled.Checked, _buffWatchEnabled)
     End Function
 
     Private Function IsVisionTabActive() As Boolean
@@ -6147,6 +6203,335 @@ Public Class Form1
         Return group
     End Function
 
+    Private Function BuildFullSupportTab() As TabPage
+        Dim tab As New TabPage("Full Support") With {.BackColor = ThemeBg}
+        Dim root As New TableLayoutPanel() With {
+            .Dock = DockStyle.Fill,
+            .ColumnCount = 1,
+            .RowCount = 4,
+            .Padding = New Padding(24, 18, 24, 20),
+            .BackColor = ThemeBg
+        }
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 92.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 275.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 300.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        tab.Controls.Add(root)
+
+        Dim header As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .BackColor = ThemeBg}
+        header.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 210.0F))
+        header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 250.0F))
+        Dim titleHost As New Panel() With {.Dock = DockStyle.Fill, .BackColor = ThemeBg}
+        titleHost.Controls.Add(New Label() With {.Text = "Full Support", .Left = 0, .Top = 3, .Width = 500, .Height = 32, .Font = New Font("Segoe UI Semibold", 18.0F, FontStyle.Bold), .ForeColor = Color.White})
+        titleHost.Controls.Add(New Label() With {.Text = "Calibrated party healing with confirmed HP reads", .Left = 2, .Top = 42, .Width = 620, .Height = 24, .ForeColor = ThemeTextSecondary})
+        header.Controls.Add(titleHost, 0, 0)
+
+        chkFullSupportEnabled = New CheckBox() With {
+            .Text = "Enable Full Support",
+            .Dock = DockStyle.Fill,
+            .ForeColor = ThemeGood,
+            .Font = New Font("Segoe UI Semibold", 10.0F, FontStyle.Bold),
+            .TextAlign = ContentAlignment.MiddleLeft,
+            .Padding = New Padding(12, 0, 0, 0)
+        }
+        AddHandler chkFullSupportEnabled.CheckedChanged, AddressOf FullSupportEnabledChanged
+        header.Controls.Add(chkFullSupportEnabled, 1, 0)
+
+        Dim calibrateButton As New Button() With {.Text = "Calibrate party + HP bars", .Dock = DockStyle.Fill, .Margin = New Padding(8, 14, 0, 14), .Font = New Font("Segoe UI Semibold", 9.5F, FontStyle.Bold)}
+        calibrateButton.FlatStyle = FlatStyle.Flat
+        calibrateButton.FlatAppearance.BorderSize = 0
+        calibrateButton.BackColor = Color.FromArgb(28, 128, 103)
+        calibrateButton.ForeColor = Color.White
+        calibrateButton.Cursor = Cursors.Hand
+        AddHandler calibrateButton.Click, AddressOf CalibrateFullSupportClicked
+        header.Controls.Add(calibrateButton, 2, 0)
+        root.Controls.Add(header, 0, 0)
+
+        Dim calibrationRow As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .BackColor = ThemeBg, .Padding = New Padding(0, 0, 0, 14)}
+        calibrationRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 62.0F))
+        calibrationRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 38.0F))
+        dgvFullSupportMembers = New DataGridView() With {
+            .Dock = DockStyle.Fill,
+            .BackgroundColor = Color.FromArgb(15, 25, 45),
+            .BorderStyle = BorderStyle.None,
+            .AllowUserToAddRows = False,
+            .AllowUserToDeleteRows = False,
+            .AllowUserToResizeRows = False,
+            .ReadOnly = True,
+            .RowHeadersVisible = False,
+            .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+            .SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            .EnableHeadersVisualStyles = False
+        }
+        dgvFullSupportMembers.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(24, 42, 70)
+        dgvFullSupportMembers.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(178, 203, 239)
+        dgvFullSupportMembers.ColumnHeadersDefaultCellStyle.SelectionBackColor = Color.FromArgb(24, 42, 70)
+        dgvFullSupportMembers.DefaultCellStyle.BackColor = Color.FromArgb(15, 25, 45)
+        dgvFullSupportMembers.DefaultCellStyle.ForeColor = Color.White
+        dgvFullSupportMembers.DefaultCellStyle.SelectionBackColor = Color.FromArgb(34, 69, 103)
+        dgvFullSupportMembers.DefaultCellStyle.SelectionForeColor = Color.White
+        dgvFullSupportMembers.GridColor = Color.FromArgb(35, 58, 90)
+        dgvFullSupportMembers.Columns.Add("Member", "Member")
+        dgvFullSupportMembers.Columns.Add("Enabled", "Monitor")
+        dgvFullSupportMembers.Columns.Add("HpRect", "HP rectangle (relative)")
+        dgvFullSupportMembers.Columns.Add("ClickPoint", "Selection point")
+        calibrationRow.Controls.Add(dgvFullSupportMembers, 0, 0)
+
+        Dim statusCard As New Panel() With {.Dock = DockStyle.Fill, .Margin = New Padding(14, 0, 0, 0), .Padding = New Padding(22, 18, 22, 18), .BackColor = Color.FromArgb(19, 32, 56)}
+        Dim statusLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3, .BackColor = statusCard.BackColor}
+        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 32.0F))
+        statusLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        statusLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 62.0F))
+        statusLayout.Controls.Add(New Label() With {.Text = "LIVE PARTY MONITOR", .Dock = DockStyle.Fill, .ForeColor = Color.FromArgb(112, 172, 232), .Font = New Font("Segoe UI Semibold", 9.0F, FontStyle.Bold), .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
+        lblFullSupportLiveStatus = New Label() With {.Text = "Start the bot to see party HP reads.", .Dock = DockStyle.Fill, .ForeColor = Color.FromArgb(212, 225, 246), .Font = New Font("Segoe UI", 10.5F), .Padding = New Padding(0, 12, 0, 8), .TextAlign = ContentAlignment.TopLeft, .AutoEllipsis = False}
+        lblFullSupportCalibration = New Label() With {.Dock = DockStyle.Fill, .ForeColor = ThemeTextSecondary, .TextAlign = ContentAlignment.MiddleLeft, .AutoEllipsis = False}
+        statusLayout.Controls.Add(lblFullSupportLiveStatus, 0, 1)
+        statusLayout.Controls.Add(lblFullSupportCalibration, 0, 2)
+        statusCard.Controls.Add(statusLayout)
+        calibrationRow.Controls.Add(statusCard, 1, 0)
+        root.Controls.Add(calibrationRow, 0, 1)
+
+        Dim modes As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 4, .BackColor = ThemeBg, .Padding = New Padding(0, 0, 0, 14)}
+        For column As Integer = 0 To 3
+            modes.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 25.0F))
+        Next
+        modes.Controls.Add(BuildTankFocusCard(), 0, 0)
+        modes.Controls.Add(BuildIndividualHealCard(), 1, 0)
+        modes.Controls.Add(BuildPartyHealCard(), 2, 0)
+        modes.Controls.Add(BuildAssistSkillCard(), 3, 0)
+        root.Controls.Add(modes, 0, 2)
+
+        Dim safetyNote As New Label() With {
+            .Dock = DockStyle.Top,
+            .Height = 64,
+            .Padding = New Padding(18, 13, 18, 0),
+            .BackColor = Color.FromArgb(13, 24, 43),
+            .ForeColor = Color.FromArgb(145, 174, 214),
+            .Text = "Safety: a member must be below the configured threshold in two consecutive scans. Party heal triggers for any one confirmed-low member once the required party size is readable. Missing, black, or uncertain party images skip only that scan."
+        }
+        root.Controls.Add(safetyNote, 0, 3)
+        RefreshFullSupportMembersUi()
+        Return tab
+    End Function
+
+    Private Function BuildTankFocusCard() As Control
+        Dim body As TableLayoutPanel = CreateFullSupportModeCard("🛡  TANK FOCUS", Color.FromArgb(67, 159, 230))
+        chkFullSupportTankEnabled = CreateFullSupportCheck("Heal the selected tank")
+        body.Controls.Add(chkFullSupportTankEnabled, 0, 1)
+        body.SetColumnSpan(chkFullSupportTankEnabled, 2)
+        cboFullSupportTankMember = CreateFullSupportCombo()
+        AddFullSupportField(body, "Tank member", cboFullSupportTankMember, 2)
+        nudFullSupportTankHp = CreateFullSupportNumeric(1, 99, 70)
+        AddFullSupportField(body, "Heal at HP ≤", nudFullSupportTankHp, 3)
+        cboFullSupportTankKey = CreateFullSupportKeyCombo("F1")
+        AddFullSupportField(body, "Heal key", cboFullSupportTankKey, 4)
+        nudFullSupportTankCooldown = CreateFullSupportNumeric(250, 30000, 900, 50)
+        AddFullSupportField(body, "Cooldown ms", nudFullSupportTankCooldown, 5)
+        WireFullSupportLiveConfig(body)
+        Return body.Parent
+    End Function
+
+    Private Function BuildIndividualHealCard() As Control
+        Dim body As TableLayoutPanel = CreateFullSupportModeCard("✚  INDIVIDUAL HEAL", Color.FromArgb(58, 216, 167))
+        chkFullSupportIndividualEnabled = CreateFullSupportCheck("Heal the lowest party member")
+        body.Controls.Add(chkFullSupportIndividualEnabled, 0, 1)
+        body.SetColumnSpan(chkFullSupportIndividualEnabled, 2)
+        nudFullSupportIndividualHp = CreateFullSupportNumeric(1, 99, 55)
+        AddFullSupportField(body, "Heal at HP ≤", nudFullSupportIndividualHp, 2)
+        cboFullSupportIndividualKey = CreateFullSupportKeyCombo("F2")
+        AddFullSupportField(body, "Heal key", cboFullSupportIndividualKey, 3)
+        nudFullSupportIndividualCooldown = CreateFullSupportNumeric(250, 30000, 900, 50)
+        AddFullSupportField(body, "Cooldown ms", nudFullSupportIndividualCooldown, 4)
+        Dim hint As New Label() With {.Text = "Clicks the calibrated member point, then casts.", .Dock = DockStyle.Fill, .ForeColor = ThemeTextSecondary, .Padding = New Padding(0, 8, 0, 0)}
+        body.Controls.Add(hint, 0, 5)
+        body.SetColumnSpan(hint, 2)
+        WireFullSupportLiveConfig(body)
+        Return body.Parent
+    End Function
+
+    Private Function BuildPartyHealCard() As Control
+        Dim body As TableLayoutPanel = CreateFullSupportModeCard("✦  PARTY HEAL", Color.FromArgb(181, 132, 255))
+        chkFullSupportPartyHealEnabled = CreateFullSupportCheck("Cast an area/group heal")
+        body.Controls.Add(chkFullSupportPartyHealEnabled, 0, 1)
+        body.SetColumnSpan(chkFullSupportPartyHealEnabled, 2)
+        nudFullSupportPartyHealHp = CreateFullSupportNumeric(1, 99, 45)
+        AddFullSupportField(body, "Trigger if any HP ≤", nudFullSupportPartyHealHp, 2)
+        nudFullSupportPartyMinimum = CreateFullSupportNumeric(1, 7, 3)
+        AddFullSupportField(body, "Required party size", nudFullSupportPartyMinimum, 3)
+        cboFullSupportPartyHealKey = CreateFullSupportKeyCombo("F3")
+        AddFullSupportField(body, "Party heal key", cboFullSupportPartyHealKey, 4)
+        nudFullSupportPartyCooldown = CreateFullSupportNumeric(250, 30000, 1800, 50)
+        AddFullSupportField(body, "Cooldown ms", nudFullSupportPartyCooldown, 5)
+        WireFullSupportLiveConfig(body)
+        Return body.Parent
+    End Function
+
+    Private Function BuildAssistSkillCard() As Control
+        Dim body As TableLayoutPanel = CreateFullSupportModeCard("★  ASSIST SKILL", Color.FromArgb(255, 190, 92))
+        chkFullSupportAssistEnabled = CreateFullSupportCheck("Cast an assistance skill")
+        body.Controls.Add(chkFullSupportAssistEnabled, 0, 1)
+        body.SetColumnSpan(chkFullSupportAssistEnabled, 2)
+        cboFullSupportAssistKey = CreateFullSupportKeyCombo("F4")
+        AddFullSupportField(body, "Assist key", cboFullSupportAssistKey, 2)
+        nudFullSupportAssistCooldown = CreateFullSupportNumeric(250, 600000, 30000, 250)
+        AddFullSupportField(body, "Cooldown ms", nudFullSupportAssistCooldown, 3)
+        chkFullSupportAssistHighPriority = CreateFullSupportCheck("High priority (cast first)")
+        chkFullSupportAssistHighPriority.Checked = True
+        body.Controls.Add(chkFullSupportAssistHighPriority, 0, 4)
+        body.SetColumnSpan(chkFullSupportAssistHighPriority, 2)
+        Dim hint As New Label() With {.Text = "High priority is enabled by default.", .Dock = DockStyle.Fill, .ForeColor = ThemeTextSecondary, .Padding = New Padding(0, 8, 0, 0)}
+        body.Controls.Add(hint, 0, 5)
+        body.SetColumnSpan(hint, 2)
+        WireFullSupportLiveConfig(body)
+        Return body.Parent
+    End Function
+
+    Private Function CreateFullSupportModeCard(title As String, accent As Color) As TableLayoutPanel
+        Dim card As New Panel() With {.Dock = DockStyle.Fill, .Margin = New Padding(0, 0, 12, 0), .Padding = New Padding(18, 12, 18, 14), .BackColor = Color.FromArgb(19, 32, 56)}
+        Dim body As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 7, .BackColor = card.BackColor}
+        body.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 48.0F))
+        body.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 52.0F))
+        body.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        For row As Integer = 1 To 6
+            body.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
+        Next
+        Dim titleLabel As New Label() With {.Text = title, .Dock = DockStyle.Fill, .ForeColor = accent, .Font = New Font("Segoe UI Semibold", 10.0F, FontStyle.Bold), .TextAlign = ContentAlignment.MiddleLeft}
+        body.Controls.Add(titleLabel, 0, 0)
+        body.SetColumnSpan(titleLabel, 2)
+        card.Controls.Add(body)
+        Return body
+    End Function
+
+    Private Shared Function CreateFullSupportCheck(text As String) As CheckBox
+        Return New CheckBox() With {.Text = text, .Dock = DockStyle.Fill, .ForeColor = Color.White, .Font = New Font("Segoe UI", 9.0F, FontStyle.Bold)}
+    End Function
+
+    Private Shared Function CreateFullSupportCombo() As ComboBox
+        Return New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList, .BackColor = Color.FromArgb(13, 24, 43), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat}
+    End Function
+
+    Private Function CreateFullSupportKeyCombo(defaultKey As String) As ComboBox
+        Dim combo As ComboBox = CreateFullSupportCombo()
+        combo.Items.AddRange(New Object() {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12"})
+        combo.SelectedItem = defaultKey
+        Return combo
+    End Function
+
+    Private Shared Function CreateFullSupportNumeric(minimum As Decimal, maximum As Decimal, value As Decimal, Optional increment As Decimal = 1D) As NumericUpDown
+        Return New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = minimum, .Maximum = maximum, .Value = value, .Increment = increment, .BackColor = Color.FromArgb(13, 24, 43), .ForeColor = Color.White, .BorderStyle = BorderStyle.FixedSingle}
+    End Function
+
+    Private Shared Sub AddFullSupportField(body As TableLayoutPanel, caption As String, control As Control, row As Integer)
+        body.Controls.Add(New Label() With {.Text = caption, .Dock = DockStyle.Fill, .ForeColor = Color.FromArgb(148, 178, 218), .TextAlign = ContentAlignment.MiddleLeft}, 0, row)
+        body.Controls.Add(control, 1, row)
+    End Sub
+
+    Private Sub WireFullSupportLiveConfig(container As Control)
+        For Each control As Control In container.Controls
+            If TypeOf control Is CheckBox Then
+                AddHandler DirectCast(control, CheckBox).CheckedChanged, AddressOf FullSupportControlChanged
+            ElseIf TypeOf control Is ComboBox Then
+                AddHandler DirectCast(control, ComboBox).SelectedIndexChanged, AddressOf FullSupportControlChanged
+            ElseIf TypeOf control Is NumericUpDown Then
+                AddHandler DirectCast(control, NumericUpDown).ValueChanged, AddressOf FullSupportControlChanged
+            End If
+        Next
+    End Sub
+
+    Private Sub FullSupportEnabledChanged(sender As Object, e As EventArgs)
+        If chkFullSupportEnabled Is Nothing Then Return
+        _fullSupportModeEnabled = chkFullSupportEnabled.Checked
+        If btnFullSupport IsNot Nothing Then ApplyFullSupportModeAppearance()
+        FullSupportControlChanged(sender, e)
+        UpdateMainTabIndicators()
+    End Sub
+
+    Private Sub FullSupportControlChanged(sender As Object, e As EventArgs)
+        If _fullSupportUiLoading Then Return
+        PushLiveConfig()
+        SavePersistedListState(False)
+    End Sub
+
+    Private Sub CalibrateFullSupportClicked(sender As Object, e As EventArgs)
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+        If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
+            MessageBox.Show(Me, "Select the Kathana game window first.", "Full Support calibration", MessageBoxButtons.OK, MessageBoxIcon.Information)
+            Return
+        End If
+
+        Using frame As Bitmap = BotEngine.CaptureClient(selected.MainWindowHandle)
+            If frame Is Nothing Then
+                MessageBox.Show(Me, "The game client could not be captured. Keep the game window available and try again.", "Full Support calibration", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+                Return
+            End If
+
+            Dim currentParty As RectRegion = BuildRect("party_list_rect")
+            Using calibration As New FullSupportCalibrationForm(frame, currentParty, _fullSupportPartyMembers)
+                If calibration.ShowDialog(Me) <> DialogResult.OK Then Return
+                Dim resultRect As RectRegion = calibration.PartyRectResult
+                UpsertRegionRow("party_list_rect", resultRect)
+                _fullSupportPartyMembers.Clear()
+                _fullSupportPartyMembers.AddRange(calibration.MembersResult)
+            End Using
+        End Using
+
+        RefreshFullSupportMembersUi()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        AppendLog($"Full Support calibrated: {_fullSupportPartyMembers.Count} member HP bars in party_list_rect.")
+    End Sub
+
+    Private Sub RefreshFullSupportMembersUi()
+        If dgvFullSupportMembers IsNot Nothing Then
+            dgvFullSupportMembers.Rows.Clear()
+            For index As Integer = 0 To _fullSupportPartyMembers.Count - 1
+                Dim member As FullSupportPartyMember = _fullSupportPartyMembers(index)
+                Dim hp As RectRegion = If(member.HpBarRect, New RectRegion())
+                dgvFullSupportMembers.Rows.Add($"{index + 1}. {member.Name}", If(member.Enabled, "Yes", "No"), $"{hp.X}, {hp.Y}, {hp.W} × {hp.H}", $"{member.SelectPointX}, {member.SelectPointY}")
+            Next
+        End If
+
+        If cboFullSupportTankMember IsNot Nothing Then
+            Dim selectedIndex As Integer = cboFullSupportTankMember.SelectedIndex
+            cboFullSupportTankMember.Items.Clear()
+            For index As Integer = 0 To _fullSupportPartyMembers.Count - 1
+                cboFullSupportTankMember.Items.Add($"{index + 1}. {_fullSupportPartyMembers(index).Name}")
+            Next
+            If cboFullSupportTankMember.Items.Count > 0 Then
+                cboFullSupportTankMember.SelectedIndex = Math.Max(0, Math.Min(selectedIndex, cboFullSupportTankMember.Items.Count - 1))
+            End If
+        End If
+
+        If lblFullSupportCalibration IsNot Nothing Then
+            Dim partyRect As RectRegion = BuildRect("party_list_rect")
+            lblFullSupportCalibration.Text = $"Party area: {partyRect.X}, {partyRect.Y}  •  {partyRect.W} × {partyRect.H}{Environment.NewLine}{_fullSupportPartyMembers.Count} member HP bars calibrated"
+        End If
+    End Sub
+
+    Private Shared Function CloneFullSupportMembers(source As IEnumerable(Of FullSupportPartyMember)) As List(Of FullSupportPartyMember)
+        Dim result As New List(Of FullSupportPartyMember)()
+        If source Is Nothing Then Return result
+        For Each member As FullSupportPartyMember In source.Take(7)
+            If member Is Nothing Then Continue For
+            Dim hp As RectRegion = If(member.HpBarRect, New RectRegion(5, 18, 150, 7))
+            result.Add(New FullSupportPartyMember With {.Name = member.Name, .Enabled = member.Enabled, .HpBarRect = New RectRegion(hp.X, hp.Y, hp.W, hp.H), .SelectPointX = member.SelectPointX, .SelectPointY = member.SelectPointY})
+        Next
+        Return result
+    End Function
+
+    Private Shared Sub SelectFullSupportKey(combo As ComboBox, configured As String, fallback As String)
+        If combo Is Nothing Then Return
+        Dim keyName As String = If(configured, "").Trim().ToUpperInvariant()
+        If keyName = "" Then keyName = fallback
+        Dim index As Integer = combo.FindStringExact(keyName)
+        If index < 0 Then
+            combo.Items.Add(keyName)
+            index = combo.Items.Count - 1
+        End If
+        combo.SelectedIndex = index
+    End Sub
+
     Private Function BuildAutoLootTab() As TabPage
         Dim tab As New TabPage("Auto-Loot") With {.BackColor = Color.FromArgb(20, 20, 20)}
         Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1, .Padding = New Padding(10)}
@@ -7202,7 +7587,7 @@ Public Class Form1
         dgvBuffWatch.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Key", .HeaderText = "Recast Key", .FillWeight = 70.0F})
         dgvBuffWatch.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Tolerance", .FillWeight = 65.0F})
         dgvBuffWatch.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "CooldownSec", .HeaderText = "Cooldown (s)", .FillWeight = 75.0F})
-        dgvBuffWatch.Columns.Add(New DataGridViewCheckBoxColumn() With {.Name = "SelfClick", .HeaderText = "Self-Click", .FillWeight = 60.0F})
+        dgvBuffWatch.Columns.Add(New DataGridViewCheckBoxColumn() With {.Name = "SelfClick", .HeaderText = "Self `", .FillWeight = 60.0F})
         root.Controls.Add(dgvBuffWatch, 0, 1)
 
         Dim bottomLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3}
@@ -7219,14 +7604,10 @@ Public Class Form1
         bottomLayout.Controls.Add(buttonRow, 0, 0)
 
         Dim selfClickRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True}
-        chkBuffWatchSelfClickEnabled = New CheckBox() With {.Text = "Enable self-click before recast", .AutoSize = True, .ForeColor = Color.Gainsboro, .Margin = New Padding(3, 8, 14, 3)}
-        btnSetBuffWatchSelfClickPoint = New Button() With {.Text = "Set Self-Click Point", .AutoSize = True, .BackColor = Color.FromArgb(45, 95, 140), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat}
-        btnClearBuffWatchSelfClickPoint = New Button() With {.Text = "Clear", .AutoSize = True, .BackColor = Color.FromArgb(70, 70, 70), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat, .Enabled = False}
-        lblBuffWatchSelfClickPoint = New Label() With {.Text = "Self-Click Point: (not set)", .AutoSize = True, .ForeColor = Color.LightSteelBlue, .Margin = New Padding(6, 8, 3, 3)}
+        chkBuffWatchSelfClickEnabled = New CheckBox() With {.Text = "Enable ` self-target before recast", .AutoSize = True, .ForeColor = Color.Gainsboro, .Margin = New Padding(3, 8, 14, 3)}
+        Dim selfClickKeyLabel As New Label() With {.Text = "Always uses the ` key; no click point or coordinates needed.", .AutoSize = True, .ForeColor = Color.LightSteelBlue, .Margin = New Padding(6, 8, 3, 3)}
         selfClickRow.Controls.Add(chkBuffWatchSelfClickEnabled)
-        selfClickRow.Controls.Add(btnSetBuffWatchSelfClickPoint)
-        selfClickRow.Controls.Add(btnClearBuffWatchSelfClickPoint)
-        selfClickRow.Controls.Add(lblBuffWatchSelfClickPoint)
+        selfClickRow.Controls.Add(selfClickKeyLabel)
         bottomLayout.Controls.Add(selfClickRow, 0, 1)
 
         lblBuffWatchStatus = New Label() With {
@@ -7244,8 +7625,6 @@ Public Class Form1
         AddHandler btnRemoveBuffWatchSlot.Click, AddressOf RemoveBuffWatchSlotClicked
         AddHandler btnClearBuffWatchSlots.Click, AddressOf ClearBuffWatchSlotsClicked
         AddHandler chkBuffWatchSelfClickEnabled.CheckedChanged, AddressOf BuffWatchSelfClickEnabledChanged
-        AddHandler btnSetBuffWatchSelfClickPoint.Click, AddressOf PickBuffWatchSelfClickPointClicked
-        AddHandler btnClearBuffWatchSelfClickPoint.Click, AddressOf ClearBuffWatchSelfClickPointClicked
         AddHandler dgvBuffWatch.CellValueChanged, AddressOf LiveConfigChanged
         AddHandler dgvBuffWatch.CellEndEdit, AddressOf LiveConfigChanged
         AddHandler dgvBuffWatch.CellValueChanged, AddressOf PersistListSettingsChanged
@@ -7270,6 +7649,7 @@ Public Class Form1
         _buffWatchEnabled = (chkBuffWatchEnabled IsNot Nothing AndAlso chkBuffWatchEnabled.Checked)
         PushLiveConfig()
         SavePersistedListState(False)
+        UpdateMainTabIndicators()
     End Sub
 
     Private Sub BuffWatchSelfClickEnabledChanged(sender As Object, e As EventArgs)
@@ -7392,9 +7772,10 @@ Public Class Form1
 
     Private Function BuildCombatSkillsGroup() As GroupBox
         Dim group As New GroupBox() With {.Text = "Combat Skills", .Dock = DockStyle.Fill}
-        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3}
         layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
         dgvCombat = New DataGridView() With {
             .Dock = DockStyle.Fill,
             .AllowUserToAddRows = False,
@@ -7418,6 +7799,29 @@ Public Class Form1
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.MiddleLeft
         }, 0, 1)
+
+        Dim chatPauseRow As New FlowLayoutPanel() With {
+            .Dock = DockStyle.Fill,
+            .FlowDirection = FlowDirection.LeftToRight,
+            .WrapContents = False,
+            .Padding = New Padding(2, 3, 2, 1)
+        }
+        chkPauseCombatKeysWhileChatting = New CheckBox() With {
+            .Text = "Pause bot key presses while in-game chat is open (Enter toggles)",
+            .AutoSize = True,
+            .Checked = False,
+            .Margin = New Padding(3, 5, 12, 3)
+        }
+        lblChatKeyPauseStatus = New Label() With {
+            .Text = "OFF",
+            .AutoSize = True,
+            .ForeColor = Color.LightSteelBlue,
+            .Margin = New Padding(3, 6, 3, 3)
+        }
+        AddHandler chkPauseCombatKeysWhileChatting.CheckedChanged, AddressOf CombatChatPauseSettingChanged
+        chatPauseRow.Controls.Add(chkPauseCombatKeysWhileChatting)
+        chatPauseRow.Controls.Add(lblChatKeyPauseStatus)
+        layout.Controls.Add(chatPauseRow, 0, 2)
         group.Controls.Add(layout)
         Return group
     End Function
@@ -10533,6 +10937,7 @@ Public Class Form1
                 desired.Add(_combatTab)
                 desired.Add(_visionTab)
                 desired.Add(_autoPotTab)
+                desired.Add(_fullSupportTab)
                 desired.Add(_autoLootTab)
                 desired.Add(_levelingTab)
                 desired.Add(_holdPlaceTab)
@@ -10882,117 +11287,6 @@ Public Class Form1
 
         If btnClearResurrectOkPoint IsNot Nothing Then
             btnClearResurrectOkPoint.Enabled = (_resurrectOkPointX >= 0 AndAlso _resurrectOkPointY >= 0)
-        End If
-    End Sub
-
-    Private Sub PickBuffWatchSelfClickPointClicked(sender As Object, e As EventArgs)
-        Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
-        If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
-            AppendLog("Buff Watch: select a Full game process window first.")
-            Return
-        End If
-
-        _isPickingBuffWatchSelfClickPoint = True
-        _buffWatchSelfClickLeftMouseWasDown = False
-        _isPickingArrowUnbundlePoint = False
-        _isPickingArrowBundleIcon = False
-        _isPickingLootRejectPoint = False
-        _isPickingAutoPartyPoint = False
-        _isPickingResurrectOkPoint = False
-        UpdateLootRejectPointUi()
-        UpdateAutoPartyPointUi()
-        UpdateArrowUnbundleUi()
-        UpdateArrowBundleIconUi()
-        UpdateResurrectOkPointUi()
-        UpdateBuffWatchSelfClickPointUi()
-        AppendLog("Buff Watch: click your own character/portrait in the selected game window to set the self-click point.")
-        NativeMethods.SetForegroundWindow(selected.MainWindowHandle)
-    End Sub
-
-    Private Sub ClearBuffWatchSelfClickPointClicked(sender As Object, e As EventArgs)
-        _isPickingBuffWatchSelfClickPoint = False
-        _buffWatchSelfClickLeftMouseWasDown = False
-        _buffWatchSelfClickX = -1
-        _buffWatchSelfClickY = -1
-        UpdateBuffWatchSelfClickPointUi()
-        PushLiveConfig()
-        SavePersistedListState(False)
-        AppendLog("Buff Watch self-click point cleared.")
-    End Sub
-
-    Private Sub HandlePendingBuffWatchSelfClickPointCapture()
-        Try
-            If Not _isPickingBuffWatchSelfClickPoint Then
-                Return
-            End If
-
-            Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
-            If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
-                Return
-            End If
-
-            Dim leftDown As Boolean = (GetAsyncKeyState(CInt(Keys.LButton)) And &H8000S) <> 0
-            If leftDown AndAlso Not _buffWatchSelfClickLeftMouseWasDown Then
-                Dim screenPoint As NativeMethods.POINT
-                If NativeMethods.GetCursorPos(screenPoint) Then
-                    Dim hoveredWindow As IntPtr = NativeMethods.WindowFromPoint(screenPoint)
-                    Dim hoveredRoot As IntPtr = If(hoveredWindow <> IntPtr.Zero, NativeMethods.GetAncestor(hoveredWindow, NativeMethods.GA_ROOT), IntPtr.Zero)
-                    If hoveredRoot <> selected.MainWindowHandle Then
-                        _buffWatchSelfClickLeftMouseWasDown = leftDown
-                        Return
-                    End If
-
-                    Dim clientPoint As NativeMethods.POINT = screenPoint
-                    If NativeMethods.ScreenToClient(selected.MainWindowHandle, clientPoint) Then
-                        Dim clientRect As NativeMethods.RECT
-                        If Not NativeMethods.GetClientRect(selected.MainWindowHandle, clientRect) Then
-                            _buffWatchSelfClickLeftMouseWasDown = leftDown
-                            Return
-                        End If
-
-                        Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
-                        Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
-                        If clientPoint.X < 0 OrElse clientPoint.Y < 0 OrElse clientPoint.X >= clientWidth OrElse clientPoint.Y >= clientHeight Then
-                            AppendLog("Buff Watch: click must be inside the selected game window.")
-                            _buffWatchSelfClickLeftMouseWasDown = leftDown
-                            Return
-                        End If
-
-                        _buffWatchSelfClickX = Math.Max(0, clientPoint.X)
-                        _buffWatchSelfClickY = Math.Max(0, clientPoint.Y)
-                        _isPickingBuffWatchSelfClickPoint = False
-                        _buffWatchSelfClickLeftMouseWasDown = leftDown
-                        UpdateBuffWatchSelfClickPointUi()
-                        PushLiveConfig()
-                        SavePersistedListState(False)
-                        AppendLog($"Buff Watch self-click point set: x={_buffWatchSelfClickX}, y={_buffWatchSelfClickY}.")
-                    End If
-                End If
-            End If
-
-            _buffWatchSelfClickLeftMouseWasDown = leftDown
-        Catch ex As Exception
-            _isPickingBuffWatchSelfClickPoint = False
-            _buffWatchSelfClickLeftMouseWasDown = False
-            UpdateBuffWatchSelfClickPointUi()
-            AppendLog("Buff Watch self-click point capture failed: " & ex.Message)
-        End Try
-    End Sub
-
-    Private Sub UpdateBuffWatchSelfClickPointUi()
-        If lblBuffWatchSelfClickPoint IsNot Nothing Then
-            lblBuffWatchSelfClickPoint.Text = If(_buffWatchSelfClickX >= 0 AndAlso _buffWatchSelfClickY >= 0,
-                $"Self-Click Point: {_buffWatchSelfClickX}, {_buffWatchSelfClickY}",
-                "Self-Click Point: (not set)")
-        End If
-
-        If btnSetBuffWatchSelfClickPoint IsNot Nothing Then
-            btnSetBuffWatchSelfClickPoint.Text = If(_isPickingBuffWatchSelfClickPoint, "Click Game...", "Set Self-Click Point")
-            btnSetBuffWatchSelfClickPoint.BackColor = If(_isPickingBuffWatchSelfClickPoint, Color.FromArgb(175, 110, 30), Color.FromArgb(45, 95, 140))
-        End If
-
-        If btnClearBuffWatchSelfClickPoint IsNot Nothing Then
-            btnClearBuffWatchSelfClickPoint.Enabled = (_buffWatchSelfClickX >= 0 AndAlso _buffWatchSelfClickY >= 0)
         End If
     End Sub
 
@@ -11620,16 +11914,28 @@ Public Class Form1
 
     Private Sub ToggleFullSupportClicked(sender As Object, e As EventArgs)
         _fullSupportModeEnabled = Not _fullSupportModeEnabled
+        If chkFullSupportEnabled IsNot Nothing AndAlso chkFullSupportEnabled.Checked <> _fullSupportModeEnabled Then
+            _fullSupportUiLoading = True
+            Try
+                chkFullSupportEnabled.Checked = _fullSupportModeEnabled
+            Finally
+                _fullSupportUiLoading = False
+            End Try
+        End If
         ApplyFullSupportModeAppearance()
         PushLiveConfig()
+        SavePersistedListState(False)
+        UpdateMainTabIndicators()
         AppendLog(If(_fullSupportModeEnabled,
                      "Full Support (FS) enabled: retargeting is fully disabled - the character will never press E or select a new target.",
                      "Full Support (FS) disabled: normal retargeting behavior restored."))
     End Sub
 
     Private Sub ApplyFullSupportModeAppearance()
-        btnFullSupport.Text = If(_fullSupportModeEnabled, "FS (Full Support): ON", "FS (Full Support): OFF")
-        btnFullSupport.BackColor = If(_fullSupportModeEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+        If btnFullSupport IsNot Nothing Then
+            btnFullSupport.Text = If(_fullSupportModeEnabled, "FS (Full Support): ON", "FS (Full Support): OFF")
+            btnFullSupport.BackColor = If(_fullSupportModeEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+        End If
         If btnBypassStuck IsNot Nothing Then
             btnBypassStuck.Enabled = Not _fullSupportModeEnabled
         End If
@@ -12929,7 +13235,6 @@ Public Class Form1
         HandlePendingResurrectOkPointCapture()
         HandlePendingAutoPartyPointCapture()
         HandlePendingAutoRelaunchClickCapture()
-        HandlePendingBuffWatchSelfClickPointCapture()
         If _fullEngine.IsRunning() Then
             HandlePeriodicStatsNotification(_fullStatus)
         End If
@@ -13105,6 +13410,8 @@ Public Class Form1
             HandleCtrlShiftTogglePress()
         End If
         _ctrlShiftWasDown = comboDown
+        HandleCombatChatEnterToggle()
+        UpdateCombatChatPauseStatus()
         RefreshHoldToShowGameWindowCachedTarget()
         HandlePendingLitePointCapture()
         HandlePendingArrowUnbundlePointCapture()
@@ -13112,7 +13419,58 @@ Public Class Form1
         HandlePendingResurrectOkPointCapture()
         HandlePendingAutoPartyPointCapture()
         HandlePendingAutoRelaunchClickCapture()
-        HandlePendingBuffWatchSelfClickPointCapture()
+    End Sub
+
+    Private Sub CombatChatPauseSettingChanged(_sender As Object, _e As EventArgs)
+        Dim enabled As Boolean = chkPauseCombatKeysWhileChatting IsNot Nothing AndAlso chkPauseCombatKeysWhileChatting.Checked
+        _chatEnterWasDown = (GetAsyncKeyState(CInt(Keys.Enter)) And &H8000S) <> 0
+        If Not enabled AndAlso _fullEngine.IsChatInputPaused() Then
+            _fullEngine.SetChatInputPaused(False, IntPtr.Zero)
+            AppendLog("In-game chat key pause disabled; automated Full Combat key presses resumed.")
+        End If
+        UpdateCombatChatPauseStatus()
+        If Not _chatPauseUiLoading Then
+            PushLiveConfig()
+            SavePersistedListState(False)
+        End If
+    End Sub
+
+    Private Sub HandleCombatChatEnterToggle()
+        Dim enterDown As Boolean = (GetAsyncKeyState(CInt(Keys.Enter)) And &H8000S) <> 0
+        Dim enabled As Boolean = chkPauseCombatKeysWhileChatting IsNot Nothing AndAlso chkPauseCombatKeysWhileChatting.Checked
+
+        If enabled AndAlso enterDown AndAlso Not _chatEnterWasDown AndAlso _fullEngine.IsRunning() AndAlso IsFullGameWindowForeground() Then
+            Dim shouldPause As Boolean = Not _fullEngine.IsChatInputPaused()
+            Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+            Dim gameWindow As IntPtr = If(selected IsNot Nothing, selected.MainWindowHandle, IntPtr.Zero)
+            _fullEngine.SetChatInputPaused(shouldPause, gameWindow)
+            AppendLog(If(shouldPause,
+                         "Enter detected in the Full game window: automated key presses paused for chat.",
+                         "Enter detected again: automated Full Combat key presses resumed."))
+        End If
+
+        _chatEnterWasDown = enterDown
+    End Sub
+
+    Private Sub UpdateCombatChatPauseStatus()
+        If lblChatKeyPauseStatus Is Nothing OrElse lblChatKeyPauseStatus.IsDisposed Then
+            Return
+        End If
+
+        Dim enabled As Boolean = chkPauseCombatKeysWhileChatting IsNot Nothing AndAlso chkPauseCombatKeysWhileChatting.Checked
+        If Not enabled Then
+            lblChatKeyPauseStatus.Text = "OFF"
+            lblChatKeyPauseStatus.ForeColor = Color.LightSteelBlue
+        ElseIf _fullEngine.IsChatInputPaused() Then
+            lblChatKeyPauseStatus.Text = "PAUSED FOR CHAT - press Enter again to resume"
+            lblChatKeyPauseStatus.ForeColor = Color.Gold
+        ElseIf _fullEngine.IsRunning() Then
+            lblChatKeyPauseStatus.Text = "ARMED"
+            lblChatKeyPauseStatus.ForeColor = Color.LightGreen
+        Else
+            lblChatKeyPauseStatus.Text = "READY (starts with Full bot)"
+            lblChatKeyPauseStatus.ForeColor = Color.LightSteelBlue
+        End If
     End Sub
 
     Private Sub HandleCtrlShiftTogglePress()
@@ -13154,6 +13512,26 @@ Public Class Form1
 
         Dim activeTitle As String = sb.ToString()
         Return activeTitle.IndexOf(targetTitle, StringComparison.OrdinalIgnoreCase) >= 0
+    End Function
+
+    Private Function IsFullGameWindowForeground() As Boolean
+        Dim hwnd As IntPtr = GetForegroundWindow()
+        If hwnd = IntPtr.Zero Then
+            Return False
+        End If
+
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+        If selected IsNot Nothing AndAlso selected.MainWindowHandle <> IntPtr.Zero Then
+            Return hwnd = selected.MainWindowHandle
+        End If
+
+        Dim targetTitle As String = GetSelectedWindowTitleForFallback(BotEdition.Full)
+        If targetTitle = "" Then
+            Return False
+        End If
+        Dim sb As New StringBuilder(512)
+        Dim copied As Integer = GetWindowText(hwnd, sb, sb.Capacity)
+        Return copied > 0 AndAlso sb.ToString().IndexOf(targetTitle, StringComparison.OrdinalIgnoreCase) >= 0
     End Function
 
     Private Function IsControlPanelForeground() As Boolean
@@ -13207,6 +13585,11 @@ Public Class Form1
         lblMobName.Text = FormatFullMobStatusText(status)
         lblExpRate.Text = $"Prana/EXP: {status.ExpPercent:0.00}% | Rate: {If(status.ExpPerHour < 0, "Calculating (1m)", status.ExpPerHour.ToString("0.00") & "%/hr")}"
         lblRupiahsRate.Text = $"Rupiahs: {If(status.RupiahsTotal >= 0, status.RupiahsTotal.ToString("N0"), "n/a")} | Rate: {If(status.RupiahsPerHour < 0, "Calculating (1m)", status.RupiahsPerHour.ToString("N0") & "/hr")}"
+        If lblFullSupportLiveStatus IsNot Nothing Then
+            Dim supportText As String = If(String.IsNullOrWhiteSpace(status.FullSupportStatus), "Waiting for party scan.", status.FullSupportStatus)
+            lblFullSupportLiveStatus.Text = supportText
+            lblFullSupportLiveStatus.ForeColor = If(supportText.IndexOf("skipped", StringComparison.OrdinalIgnoreCase) >= 0 OrElse supportText.IndexOf("uncertain", StringComparison.OrdinalIgnoreCase) >= 0, Color.Khaki, If(supportText.IndexOf("heal", StringComparison.OrdinalIgnoreCase) >= 0 AndAlso supportText.IndexOf("disabled", StringComparison.OrdinalIgnoreCase) < 0, ThemeGood, Color.FromArgb(212, 225, 246)))
+        End If
         If lblLevelingState IsNot Nothing Then
             lblLevelingState.Text = $"Agent State: {status.AgentState}"
             lblLevelingState.ForeColor = If(status.AgentGuardrailTriggered, Color.FromArgb(255, 120, 120), If(status.AgentEnabled, Color.Khaki, Color.DimGray))
@@ -15164,7 +15547,27 @@ Public Class Form1
         cfg.AvoidHighMaxHpEnabled = (chkAvoidHighMaxHpTargets IsNot Nothing AndAlso chkAvoidHighMaxHpTargets.Checked)
         cfg.AvoidHighMaxHpThreshold = CInt(If(nudAvoidHighMaxHpThreshold IsNot Nothing, nudAvoidHighMaxHpThreshold.Value, 2000D))
         cfg.EvadeDadatiEnabled = (chkEvadeDadati IsNot Nothing AndAlso chkEvadeDadati.Checked)
+        cfg.PauseCombatKeysWhileChattingEnabled = (chkPauseCombatKeysWhileChatting IsNot Nothing AndAlso chkPauseCombatKeysWhileChatting.Checked)
         cfg.FullSupportModeEnabled = _fullSupportModeEnabled
+        cfg.FullSupportPartyMembers = CloneFullSupportMembers(_fullSupportPartyMembers)
+        cfg.FullSupportTankEnabled = (chkFullSupportTankEnabled IsNot Nothing AndAlso chkFullSupportTankEnabled.Checked)
+        cfg.FullSupportTankMemberIndex = Math.Max(0, If(cboFullSupportTankMember IsNot Nothing, cboFullSupportTankMember.SelectedIndex, 0))
+        cfg.FullSupportTankHealKey = If(cboFullSupportTankKey IsNot Nothing AndAlso cboFullSupportTankKey.SelectedItem IsNot Nothing, cboFullSupportTankKey.SelectedItem.ToString(), "F1")
+        cfg.FullSupportTankHealBelowPercent = CInt(If(nudFullSupportTankHp IsNot Nothing, nudFullSupportTankHp.Value, 70D))
+        cfg.FullSupportTankCooldownMs = CInt(If(nudFullSupportTankCooldown IsNot Nothing, nudFullSupportTankCooldown.Value, 900D))
+        cfg.FullSupportIndividualEnabled = (chkFullSupportIndividualEnabled IsNot Nothing AndAlso chkFullSupportIndividualEnabled.Checked)
+        cfg.FullSupportIndividualHealKey = If(cboFullSupportIndividualKey IsNot Nothing AndAlso cboFullSupportIndividualKey.SelectedItem IsNot Nothing, cboFullSupportIndividualKey.SelectedItem.ToString(), "F2")
+        cfg.FullSupportIndividualHealBelowPercent = CInt(If(nudFullSupportIndividualHp IsNot Nothing, nudFullSupportIndividualHp.Value, 55D))
+        cfg.FullSupportIndividualCooldownMs = CInt(If(nudFullSupportIndividualCooldown IsNot Nothing, nudFullSupportIndividualCooldown.Value, 900D))
+        cfg.FullSupportPartyHealEnabled = (chkFullSupportPartyHealEnabled IsNot Nothing AndAlso chkFullSupportPartyHealEnabled.Checked)
+        cfg.FullSupportPartyHealKey = If(cboFullSupportPartyHealKey IsNot Nothing AndAlso cboFullSupportPartyHealKey.SelectedItem IsNot Nothing, cboFullSupportPartyHealKey.SelectedItem.ToString(), "F3")
+        cfg.FullSupportPartyHealBelowPercent = CInt(If(nudFullSupportPartyHealHp IsNot Nothing, nudFullSupportPartyHealHp.Value, 45D))
+        cfg.FullSupportPartyHealMinimumMembers = CInt(If(nudFullSupportPartyMinimum IsNot Nothing, nudFullSupportPartyMinimum.Value, 3D))
+        cfg.FullSupportPartyHealCooldownMs = CInt(If(nudFullSupportPartyCooldown IsNot Nothing, nudFullSupportPartyCooldown.Value, 1800D))
+        cfg.FullSupportAssistEnabled = (chkFullSupportAssistEnabled IsNot Nothing AndAlso chkFullSupportAssistEnabled.Checked)
+        cfg.FullSupportAssistKey = If(cboFullSupportAssistKey IsNot Nothing AndAlso cboFullSupportAssistKey.SelectedItem IsNot Nothing, cboFullSupportAssistKey.SelectedItem.ToString(), "F4")
+        cfg.FullSupportAssistCooldownMs = CInt(If(nudFullSupportAssistCooldown IsNot Nothing, nudFullSupportAssistCooldown.Value, 30000D))
+        cfg.FullSupportAssistHighPriority = (chkFullSupportAssistHighPriority Is Nothing OrElse chkFullSupportAssistHighPriority.Checked)
         cfg.BypassStuckTarget = _bypassStuckTarget
         cfg.LootAfterKillEnabled = _lootAfterKillEnabled
         cfg.PartyInviteAutoAcceptEnabled = _partyInviteAutoAccept
@@ -15273,8 +15676,6 @@ Public Class Form1
         cfg.BuffWatchEnabled = (chkBuffWatchEnabled IsNot Nothing AndAlso chkBuffWatchEnabled.Checked)
         cfg.BuffWatchSlots = GetBuffWatchSlotsFromGrid()
         cfg.BuffWatchSelfClickEnabled = (chkBuffWatchSelfClickEnabled IsNot Nothing AndAlso chkBuffWatchSelfClickEnabled.Checked)
-        cfg.BuffWatchSelfClickX = _buffWatchSelfClickX
-        cfg.BuffWatchSelfClickY = _buffWatchSelfClickY
         cfg.LootScanPoints = BuildLootScanPoints()
         cfg.LootScanRect = BuildLootScanBoundingRect(cfg.LootScanPoints)
         cfg.LootAwardSkipTerms = GetLootAwardSkipTerms()
@@ -16264,9 +16665,6 @@ Public Class Form1
             If chkBuffWatchSelfClickEnabled IsNot Nothing Then
                 chkBuffWatchSelfClickEnabled.Checked = _buffWatchSelfClickEnabled
             End If
-            _buffWatchSelfClickX = state.BuffWatchSelfClickX
-            _buffWatchSelfClickY = state.BuffWatchSelfClickY
-            UpdateBuffWatchSelfClickPointUi()
             ApplyBuffWatchSlotsToGrid(state.BuffWatchSlots)
             _holdToShowGameWindowEnabled = state.HoldToShowGameWindowEnabled
             Dim parsedHoldToShowKey As Keys
@@ -16430,8 +16828,6 @@ Public Class Form1
                 .BuffWatchEnabled = (chkBuffWatchEnabled IsNot Nothing AndAlso chkBuffWatchEnabled.Checked),
                 .BuffWatchSlots = GetBuffWatchSlotsFromGrid(),
                 .BuffWatchSelfClickEnabled = (chkBuffWatchSelfClickEnabled IsNot Nothing AndAlso chkBuffWatchSelfClickEnabled.Checked),
-                .BuffWatchSelfClickX = _buffWatchSelfClickX,
-                .BuffWatchSelfClickY = _buffWatchSelfClickY,
                 .ResurrectAutoAcceptEnabled = _resurrectAutoAcceptEnabled,
                 .ResurrectOkPointX = _resurrectOkPointX,
                 .ResurrectOkPointY = _resurrectOkPointY,
@@ -16659,10 +17055,47 @@ Public Class Form1
             chkEvadeDadati.Checked = cfg.EvadeDadatiEnabled
         End If
 
+        _chatPauseUiLoading = True
+        Try
+            If chkPauseCombatKeysWhileChatting IsNot Nothing Then
+                chkPauseCombatKeysWhileChatting.Checked = cfg.PauseCombatKeysWhileChattingEnabled
+            End If
+        Finally
+            _chatPauseUiLoading = False
+        End Try
+        UpdateCombatChatPauseStatus()
+
         _fullSupportModeEnabled = cfg.FullSupportModeEnabled
-        If btnFullSupport IsNot Nothing Then
-            ApplyFullSupportModeAppearance()
-        End If
+        _fullSupportUiLoading = True
+        Try
+            If chkFullSupportEnabled IsNot Nothing Then chkFullSupportEnabled.Checked = _fullSupportModeEnabled
+            _fullSupportPartyMembers.Clear()
+            _fullSupportPartyMembers.AddRange(CloneFullSupportMembers(cfg.FullSupportPartyMembers))
+            If chkFullSupportTankEnabled IsNot Nothing Then chkFullSupportTankEnabled.Checked = cfg.FullSupportTankEnabled
+            If chkFullSupportIndividualEnabled IsNot Nothing Then chkFullSupportIndividualEnabled.Checked = cfg.FullSupportIndividualEnabled
+            If chkFullSupportPartyHealEnabled IsNot Nothing Then chkFullSupportPartyHealEnabled.Checked = cfg.FullSupportPartyHealEnabled
+            If chkFullSupportAssistEnabled IsNot Nothing Then chkFullSupportAssistEnabled.Checked = cfg.FullSupportAssistEnabled
+            If chkFullSupportAssistHighPriority IsNot Nothing Then chkFullSupportAssistHighPriority.Checked = cfg.FullSupportAssistHighPriority
+            SetNumericControlValue(nudFullSupportTankHp, Math.Max(1, cfg.FullSupportTankHealBelowPercent))
+            SetNumericControlValue(nudFullSupportTankCooldown, Math.Max(250, cfg.FullSupportTankCooldownMs))
+            SetNumericControlValue(nudFullSupportIndividualHp, Math.Max(1, cfg.FullSupportIndividualHealBelowPercent))
+            SetNumericControlValue(nudFullSupportIndividualCooldown, Math.Max(250, cfg.FullSupportIndividualCooldownMs))
+            SetNumericControlValue(nudFullSupportPartyHealHp, Math.Max(1, cfg.FullSupportPartyHealBelowPercent))
+            SetNumericControlValue(nudFullSupportPartyMinimum, Math.Max(1, cfg.FullSupportPartyHealMinimumMembers))
+            SetNumericControlValue(nudFullSupportPartyCooldown, Math.Max(250, cfg.FullSupportPartyHealCooldownMs))
+            SetNumericControlValue(nudFullSupportAssistCooldown, Math.Max(250, cfg.FullSupportAssistCooldownMs))
+            SelectFullSupportKey(cboFullSupportTankKey, cfg.FullSupportTankHealKey, "F1")
+            SelectFullSupportKey(cboFullSupportIndividualKey, cfg.FullSupportIndividualHealKey, "F2")
+            SelectFullSupportKey(cboFullSupportPartyHealKey, cfg.FullSupportPartyHealKey, "F3")
+            SelectFullSupportKey(cboFullSupportAssistKey, cfg.FullSupportAssistKey, "F4")
+            RefreshFullSupportMembersUi()
+            If cboFullSupportTankMember IsNot Nothing AndAlso cboFullSupportTankMember.Items.Count > 0 Then
+                cboFullSupportTankMember.SelectedIndex = Math.Max(0, Math.Min(cfg.FullSupportTankMemberIndex, cboFullSupportTankMember.Items.Count - 1))
+            End If
+        Finally
+            _fullSupportUiLoading = False
+        End Try
+        ApplyFullSupportModeAppearance()
 
         _bypassStuckTarget = cfg.BypassStuckTarget
         If btnBypassStuck IsNot Nothing Then
@@ -16947,9 +17380,6 @@ Public Class Form1
         If chkBuffWatchSelfClickEnabled IsNot Nothing Then
             chkBuffWatchSelfClickEnabled.Checked = cfg.BuffWatchSelfClickEnabled
         End If
-        _buffWatchSelfClickX = cfg.BuffWatchSelfClickX
-        _buffWatchSelfClickY = cfg.BuffWatchSelfClickY
-        UpdateBuffWatchSelfClickPointUi()
         ApplyBuffWatchSlotsToGrid(cfg.BuffWatchSlots)
         ApplyCalibrationRegionOverlayStates(cfg)
         If txtLootScanAreaPoints IsNot Nothing Then
@@ -17652,13 +18082,8 @@ Public Class Form1
         _lastAchievementSampleAt = nowUtc
 
         If _lastAchievementExpPercent >= 0 Then
-            Dim delta As Double = status.ExpPercent - _lastAchievementExpPercent
-            If delta < -50.0 Then
-                ' A big drop means the character leveled up and the percent wrapped back to ~0 -
-                ' treat it as still-forward progress (matches UpdateExpRate's own heuristic).
-                delta += 100.0
-            End If
-            If delta > 0 Then
+            Dim delta As Double
+            If TryGetCredibleForwardExpDelta(_lastAchievementExpPercent, status.ExpPercent, delta) Then
                 _cumulativeExpEarned += delta
             End If
         End If

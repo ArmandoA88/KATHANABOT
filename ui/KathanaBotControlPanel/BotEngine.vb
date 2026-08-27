@@ -80,6 +80,16 @@ Public Class BuffIconLibraryEntry
     Public Property RelativePath As String = ""
 End Class
 
+' Party-member geometry is relative to PartyListRect, so it remains valid when the game window
+' moves. Each row can still be adjusted independently in the Full Support calibration window.
+Public Class FullSupportPartyMember
+    Public Property Name As String = "Member"
+    Public Property Enabled As Boolean = True
+    Public Property HpBarRect As RectRegion = New RectRegion(6, 18, 156, 8)
+    Public Property SelectPointX As Integer = 84
+    Public Property SelectPointY As Integer = 17
+End Class
+
 Public Enum LevelingAgentState
     Disabled
     Searching
@@ -276,6 +286,26 @@ Public Class BotConfig
     ' Full Support: a character that only heals/buffs and never fights, so it must never select or
     ' change targets - all retargeting (normal, forced, manual, and Dadati evade) is suppressed.
     Public Property FullSupportModeEnabled As Boolean = False
+    Public Property PauseCombatKeysWhileChattingEnabled As Boolean = False
+    Public Property FullSupportPartyMembers As List(Of FullSupportPartyMember) = New List(Of FullSupportPartyMember)()
+    Public Property FullSupportTankEnabled As Boolean = False
+    Public Property FullSupportTankMemberIndex As Integer = 0
+    Public Property FullSupportTankHealKey As String = "F1"
+    Public Property FullSupportTankHealBelowPercent As Integer = 70
+    Public Property FullSupportTankCooldownMs As Integer = 900
+    Public Property FullSupportIndividualEnabled As Boolean = False
+    Public Property FullSupportIndividualHealKey As String = "F2"
+    Public Property FullSupportIndividualHealBelowPercent As Integer = 55
+    Public Property FullSupportIndividualCooldownMs As Integer = 900
+    Public Property FullSupportPartyHealEnabled As Boolean = False
+    Public Property FullSupportPartyHealKey As String = "F3"
+    Public Property FullSupportPartyHealBelowPercent As Integer = 45
+    Public Property FullSupportPartyHealMinimumMembers As Integer = 3
+    Public Property FullSupportPartyHealCooldownMs As Integer = 1800
+    Public Property FullSupportAssistEnabled As Boolean = False
+    Public Property FullSupportAssistKey As String = "F4"
+    Public Property FullSupportAssistCooldownMs As Integer = 30000
+    Public Property FullSupportAssistHighPriority As Boolean = True
     Public Property BypassStuckTarget As Boolean = True
     Public Property StuckTargetMs As Integer = 2200
     Public Property StuckTargetNoProgressRetargetMs As Integer = 6000
@@ -317,8 +347,6 @@ Public Class BotConfig
     Public Property BuffWatchSlots As List(Of BuffWatchSlot) = New List(Of BuffWatchSlot)()
     Public Property BuffAreaRect As RectRegion = New RectRegion(0, 0, 300, 40)
     Public Property BuffWatchSelfClickEnabled As Boolean = False
-    Public Property BuffWatchSelfClickX As Integer = -1
-    Public Property BuffWatchSelfClickY As Integer = -1
     Public Property LootAllowedNames As List(Of String) = New List(Of String)()
     Public Property LootAwardSkipTerms As List(Of String) = New List(Of String) From {"Rupiah"}
     Public Property LootNameMatchThresholdPercent As Integer = 80
@@ -535,6 +563,8 @@ Public Class BotStatus
     Public Property PartySize As Integer
     Public Property PartyAliveCount As Integer
     Public Property PartyAllAlive As Boolean
+    Public Property FullSupportStatus As String = ""
+    Public Property FullSupportPartyHp As List(Of Double) = New List(Of Double)()
     Public Property MobName As String = ""
     Public Property CharacterName As String = ""
     Public Property TargetValid As Boolean
@@ -861,7 +891,13 @@ Public Class BotEngine
     Private Const MobNameOcrRetentionMs As Integer = 2400
     Private Const ExpRateSampleMs As Integer = 60000
     Private Const MinValidExpPerHour As Double = 0.0
-    Private Const MaxValidExpPerHour As Double = 100.0
+    Private Const MaxValidExpPerHour As Double = 9.99
+    Private Const ExpLevelWrapHighPercent As Double = 90.0
+    Private Const ExpLevelWrapLowPercent As Double = 10.0
+    Private Const ExpOcrAdvanceFloorPercent As Double = 0.08
+    Private Const ExpOcrAdvanceGracePercent As Double = 0.03
+    Private Const ExpInitialConfirmTolerancePercent As Double = 0.15
+    Private Const ExpOcrRejectLogIntervalMs As Integer = 60000
     Private Const MinValidRupiahsPerHour As Double = 1000.0
     Private Const MaxValidRupiahsPerHour As Double = 1000000.0
     Private Const ExpOcrMinIntervalMs As Integer = 5000
@@ -920,6 +956,7 @@ Public Class BotEngine
     Private Const MaxPartyMembers As Integer = 7
     Private Const PartyListMinimumNamePixels As Integer = 18
     Private Const FastKeyPressMs As Integer = 12
+    Private Const BuffWatchSelfTargetKey As String = "`"
     Private Const AttackBurstKeysPerLoop As Integer = 3
     Private Const AttackBurstGapMs As Integer = 4
     ' Most action-combat MMOs cancel an attack/skill animation if a movement key is pressed
@@ -1006,6 +1043,8 @@ Public Class BotEngine
     Private _lastStuckLockReleaseLogAt As DateTime = DateTime.MinValue
     Private Shared ReadOnly _captureMethodSync As New Object()
     Private Shared ReadOnly _captureMethodByWindow As New Dictionary(Of IntPtr, CaptureClientMethod)()
+    Private Shared ReadOnly _keyOutputPauseSync As New Object()
+    Private Shared ReadOnly _keyOutputPausedWindows As New HashSet(Of IntPtr)()
     Private Shared _captureBackendPreference As String = "auto"
     Private Shared ReadOnly NavigationRouteStorageRoot As String = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KathanaBotControlPanel", "navigation_routes")
     ' Lives next to the running exe (not %AppData%) so the library travels with the standalone exe
@@ -1026,6 +1065,8 @@ Public Class BotEngine
     Private _status As New BotStatus()
     Private _cts As CancellationTokenSource
     Private _task As Task
+    Private _chatInputPaused As Boolean = False
+    Private _chatInputPausedWindow As IntPtr = IntPtr.Zero
     ' Bumped on every Start()/Stop(); detached OCR Task.Run scans capture the generation
     ' at launch and their harvested results are discarded if the generation has since changed,
     ' so a scan that finishes after Stop()/Start() can never write into a newer/reset session.
@@ -1108,6 +1149,14 @@ Public Class BotEngine
     Private _pendingPartySize As Integer = -1
     Private _pendingPartyAliveCount As Integer = -1
     Private _pendingPartyConfirmCount As Integer = 0
+    Private _lastFullSupportScanAt As DateTime = DateTime.MinValue
+    Private _lastFullSupportTankHealAt As DateTime = DateTime.MinValue
+    Private _lastFullSupportIndividualHealAt As DateTime = DateTime.MinValue
+    Private _lastFullSupportPartyHealAt As DateTime = DateTime.MinValue
+    Private _lastFullSupportAssistAt As DateTime = DateTime.MinValue
+    Private _lastFullSupportPartyHp As New List(Of Double)()
+    Private _previousFullSupportPartyHp As New List(Of Double)()
+    Private _lastFullSupportStatus As String = "Full Support is disabled."
     Private _lastUnreachableScan As DateTime = DateTime.MinValue
     Private _unreachableOcrTask As Task(Of String) = Nothing
     Private _unreachableOcrTaskGeneration As Long = -1L
@@ -1143,6 +1192,10 @@ Public Class BotEngine
     Private _repairClearCount As Integer = 0
     Private _repairTriggerCount As Integer = 0
     Private _lastExpPercent As Double = -1
+    Private _lastAcceptedExpAt As DateTime = DateTime.MinValue
+    Private _pendingInitialExpPercent As Double = -1
+    Private _pendingInitialExpConfirmCount As Integer = 0
+    Private _lastExpOcrRejectLogAt As DateTime = DateTime.MinValue
     Private _lastExpOcrAt As DateTime = DateTime.MinValue
     Private _expOcrTask As Task(Of Double) = Nothing
     Private _expOcrTaskGeneration As Long = -1L
@@ -1303,6 +1356,7 @@ Public Class BotEngine
         {"SEMICOLON", &HBA}, {";", &HBA},
         {"APOSTROPHE", &HDE}, {"'", &HDE},
         {"EQUALS", &HBB}, {"=", &HBB},
+        {"GRAVE", &HC0}, {"BACKTICK", &HC0}, {"`", &HC0},
         {"ESC", &H1B}, {"ESCAPE", &H1B},
         {"ENTER", &HD}, {"RETURN", &HD},
         {"F1", &H70}, {"F2", &H71}, {"F3", &H72}, {"F4", &H73}, {"F5", &H74},
@@ -1331,6 +1385,37 @@ Public Class BotEngine
             Return _status.Running
         End SyncLock
     End Function
+
+    Public Function IsChatInputPaused() As Boolean
+        SyncLock _sync
+            Return _chatInputPaused
+        End SyncLock
+    End Function
+
+    Public Sub SetChatInputPaused(paused As Boolean, gameWindow As IntPtr)
+        Dim oldWindow As IntPtr
+        SyncLock _sync
+            oldWindow = _chatInputPausedWindow
+            _chatInputPaused = paused
+            _chatInputPausedWindow = If(paused, gameWindow, IntPtr.Zero)
+        End SyncLock
+
+        SyncLock _keyOutputPauseSync
+            If oldWindow <> IntPtr.Zero Then
+                _keyOutputPausedWindows.Remove(oldWindow)
+            End If
+            If paused AndAlso gameWindow <> IntPtr.Zero Then
+                _keyOutputPausedWindows.Add(gameWindow)
+            End If
+        End SyncLock
+
+        ' Release any held movement/loot modifier after blocking new output, so opening chat cannot
+        ' leave the character walking or ALT held while another loop action races with the pause.
+        If paused AndAlso gameWindow <> IntPtr.Zero Then
+            ReleaseMovementKeys(gameWindow)
+            ReleaseLootScannerAltKey()
+        End If
+    End Sub
 
     Public Function EnsureLoopWorkerRunning() As Boolean
         Dim restarted As Boolean = False
@@ -1375,6 +1460,7 @@ Public Class BotEngine
             If _task IsNot Nothing AndAlso Not _task.IsCompleted Then
                 Return
             End If
+            SetChatInputPaused(False, IntPtr.Zero)
             _runGeneration += 1L
             _cts = New CancellationTokenSource()
             _status.Running = True
@@ -1451,6 +1537,14 @@ Public Class BotEngine
             _pendingPartySize = -1
             _pendingPartyAliveCount = -1
             _pendingPartyConfirmCount = 0
+            _lastFullSupportScanAt = DateTime.MinValue
+            _lastFullSupportTankHealAt = DateTime.MinValue
+            _lastFullSupportIndividualHealAt = DateTime.MinValue
+            _lastFullSupportPartyHealAt = DateTime.MinValue
+            _lastFullSupportAssistAt = DateTime.MinValue
+            _lastFullSupportPartyHp.Clear()
+            _previousFullSupportPartyHp.Clear()
+            _lastFullSupportStatus = "Full Support is disabled."
             _lastUnreachableScan = DateTime.MinValue
             _unreachableOcrTask = Nothing
             _lastUnreachableCandidate = ""
@@ -1481,6 +1575,10 @@ Public Class BotEngine
             _repairClearCount = 0
             _repairTriggerCount = 0
             _lastExpPercent = -1
+            _lastAcceptedExpAt = DateTime.MinValue
+            _pendingInitialExpPercent = -1
+            _pendingInitialExpConfirmCount = 0
+            _lastExpOcrRejectLogAt = DateTime.MinValue
             _lastExpOcrAt = DateTime.MinValue
             _expOcrTask = Nothing
             _lastExpRateSampleAt = DateTime.MinValue
@@ -1630,6 +1728,7 @@ Public Class BotEngine
             Catch
             End Try
         End If
+        SetChatInputPaused(False, IntPtr.Zero)
 
         Dim sessionStartedAtUtc As DateTime
         Dim sessionExpPercent As Double
@@ -2039,6 +2138,21 @@ Public Class BotEngine
                 If liteFrame IsNot Nothing Then
                     liteFrame.Dispose()
                 End If
+                RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
+                Await Task.Delay(loopDelayMs, token)
+                Continue While
+            End If
+
+            If IsChatInputPaused() Then
+                ClearLatestLoopFrame()
+                ReleaseLootScannerAltKey()
+                SetStatus(Sub(s)
+                              s.WindowFound = True
+                              s.TargetValid = False
+                              s.NotAttackingReason = "In-game chat is open; automated key presses are paused."
+                              s.ErrorMessage = ""
+                              s.GameDisconnected = False
+                          End Sub)
                 RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
                 Await Task.Delay(loopDelayMs, token)
                 Continue While
@@ -2572,9 +2686,18 @@ Public Class BotEngine
             ClearLevelingGuardrailPauseIfRecovered(cfg)
 
             Dim reason As String = If(deathPaused, "Character down: combat skills paused until full life. Auto Resurrect still active.", "")
-            Dim actionSent As Boolean = TryHandleAutoAcceptPrompts(cfg, hwnd, frame, now, partyInviteScanRegion)
+            Dim fullSupportActionSent As Boolean = (Not deathPaused) AndAlso TryHandleFullSupportHealing(cfg, hwnd, frame, partyListRegion, now)
+            Dim actionSent As Boolean = fullSupportActionSent
             If actionSent Then
-                reason = "Auto-accept prompt detected and accepted."
+                reason = "Full Support action sent."
+            End If
+            If Not actionSent Then
+                actionSent = TryHandleAutoAcceptPrompts(cfg, hwnd, frame, now, partyInviteScanRegion)
+            End If
+            If actionSent Then
+                If Not reason.Equals("Full Support action sent.", StringComparison.Ordinal) Then
+                    reason = "Auto-accept prompt detected and accepted."
+                End If
             End If
             If Not actionSent Then
                 actionSent = TryHandleResurrectPrompt(cfg, hwnd, frame, now)
@@ -2676,7 +2799,7 @@ Public Class BotEngine
             ' having already fired, etc.) - the character's survival should never depend on the
             ' currently-selected mob being an allowed attack target.
             Dim actionSentBeforeSupport As Boolean = actionSent
-            Dim supportSent As Boolean = (Not deathPaused) AndAlso TrySendSupportActions(cfg, hwnd, hpPct, mpPct, hpRegion, mpRegion)
+            Dim supportSent As Boolean = (Not deathPaused) AndAlso (Not fullSupportActionSent) AndAlso TrySendSupportActions(cfg, hwnd, hpPct, mpPct, hpRegion, mpRegion)
             If supportSent Then
                 actionSent = True
                 reason = ""
@@ -4798,6 +4921,252 @@ Public Class BotEngine
         Dim maximum As Integer = Math.Max(r, Math.Max(g, b))
         Dim minimum As Integer = Math.Min(r, Math.Min(g, b))
         Return maximum >= 165 AndAlso (maximum - minimum) <= 45
+    End Function
+
+    Private Function TryHandleFullSupportHealing(cfg As BotConfig, hwnd As IntPtr, frame As Bitmap, partyRegion As RectRegion, now As DateTime) As Boolean
+        If cfg Is Nothing OrElse hwnd = IntPtr.Zero OrElse Not cfg.FullSupportModeEnabled Then
+            _lastFullSupportStatus = "Full Support is disabled."
+            _lastFullSupportPartyHp.Clear()
+            _previousFullSupportPartyHp.Clear()
+            Return False
+        End If
+
+        If cfg.FullSupportAssistEnabled AndAlso cfg.FullSupportAssistHighPriority AndAlso TrySendFullSupportAssist(cfg, hwnd, now) Then
+            Return True
+        End If
+
+        Dim members As List(Of FullSupportPartyMember) = If(cfg.FullSupportPartyMembers, New List(Of FullSupportPartyMember)())
+        Dim enabledMembers As Integer = members.Take(MaxPartyMembers).Count(Function(member) member IsNot Nothing AndAlso member.Enabled)
+        If enabledMembers = 0 Then
+            If cfg.FullSupportAssistEnabled AndAlso Not cfg.FullSupportAssistHighPriority AndAlso TrySendFullSupportAssist(cfg, hwnd, now) Then
+                Return True
+            End If
+            _lastFullSupportStatus = If(cfg.FullSupportAssistEnabled, "Assist enabled; calibrate party HP bars to use healing.", "Calibrate at least one party member HP bar.")
+            Return False
+        End If
+        If Not cfg.FullSupportTankEnabled AndAlso Not cfg.FullSupportIndividualEnabled AndAlso Not cfg.FullSupportPartyHealEnabled Then
+            If cfg.FullSupportAssistEnabled AndAlso Not cfg.FullSupportAssistHighPriority AndAlso TrySendFullSupportAssist(cfg, hwnd, now) Then
+                Return True
+            End If
+            _lastFullSupportStatus = If(cfg.FullSupportAssistEnabled, "Assist waiting for cooldown; party healing is disabled.", "Party scan ready; enable Tank, Individual, or Party healing.")
+            Return False
+        End If
+
+        Dim scanIntervalMs As Integer = Math.Max(250, cfg.PartyListScanIntervalMs)
+        If _lastFullSupportScanAt <> DateTime.MinValue AndAlso (now - _lastFullSupportScanAt).TotalMilliseconds < scanIntervalMs Then
+            Return False
+        End If
+        _lastFullSupportScanAt = now
+
+        If partyRegion Is Nothing Then
+            _lastFullSupportStatus = "Party scan skipped: party_list_rect is not calibrated."
+            Return False
+        End If
+
+        Dim crop As Bitmap = Nothing
+        Try
+            If frame IsNot Nothing Then
+                Dim sourceRect As Rectangle = partyRegion.Clamp(frame.Width, frame.Height)
+                If sourceRect.Width >= 20 AndAlso sourceRect.Height >= 12 Then
+                    crop = New Bitmap(sourceRect.Width, sourceRect.Height, PixelFormat.Format24bppRgb)
+                    Using g As Graphics = Graphics.FromImage(crop)
+                        g.DrawImage(frame, New Rectangle(0, 0, crop.Width, crop.Height), sourceRect, GraphicsUnit.Pixel)
+                    End Using
+                End If
+            Else
+                crop = CaptureClientRegion(hwnd, partyRegion)
+            End If
+
+            If crop Is Nothing OrElse crop.Width < 20 OrElse crop.Height < 12 OrElse IsLikelyBlackFrame(crop) Then
+                _lastFullSupportStatus = "Party scan uncertain; this cycle was skipped (bot remains running)."
+                Return False
+            End If
+
+            Dim currentHp As New List(Of Double)()
+            Using buffer As New BitmapReadBuffer(crop)
+                For index As Integer = 0 To Math.Min(MaxPartyMembers, members.Count) - 1
+                    Dim member As FullSupportPartyMember = members(index)
+                    If member Is Nothing OrElse Not member.Enabled OrElse member.HpBarRect Is Nothing Then
+                        currentHp.Add(-1.0R)
+                        Continue For
+                    End If
+                    currentHp.Add(MeasurePartyMemberHpPercent(buffer, member.HpBarRect, crop.Width, crop.Height))
+                Next
+            End Using
+
+            _previousFullSupportPartyHp = New List(Of Double)(_lastFullSupportPartyHp)
+            _lastFullSupportPartyHp = New List(Of Double)(currentHp)
+            Dim readable As Integer = currentHp.Where(Function(value) value >= 0.0R).Count()
+            If readable = 0 Then
+                _lastFullSupportStatus = "No calibrated red HP fill was readable; healing was skipped."
+                Return False
+            End If
+
+            Dim hpSummary As String = String.Join("  ", currentHp.Select(Function(value, index) If(value < 0, $"{index + 1}:--", $"{index + 1}:{value:0}%")))
+            _lastFullSupportStatus = $"Monitoring {readable}/{enabledMembers} HP bars | {hpSummary}"
+
+            ' Every low-health decision needs the same member to be low in two consecutive scans.
+            ' This prevents one damaged/covered frame or a moving party panel from casting a heal.
+            Dim isConfirmedLow As Func(Of Integer, Integer, Boolean) =
+                Function(index As Integer, threshold As Integer) As Boolean
+                    Return index >= 0 AndAlso index < currentHp.Count AndAlso
+                           index < _previousFullSupportPartyHp.Count AndAlso
+                           currentHp(index) >= 0.0R AndAlso _previousFullSupportPartyHp(index) >= 0.0R AndAlso
+                           currentHp(index) <= threshold AndAlso _previousFullSupportPartyHp(index) <= threshold
+                End Function
+
+            If cfg.FullSupportPartyHealEnabled Then
+                Dim threshold As Integer = Math.Max(1, Math.Min(99, cfg.FullSupportPartyHealBelowPercent))
+                Dim lowCount As Integer = Enumerable.Range(0, currentHp.Count).Count(Function(index) isConfirmedLow(index, threshold))
+                ' "Required party size" is a readiness/safety gate, not the number of injured
+                ' members. Once that many calibrated HP bars are readable, any one member that is
+                ' confirmed low in two scans is enough to trigger the area/group heal.
+                Dim requiredPartySize As Integer = Math.Max(1, Math.Min(MaxPartyMembers, cfg.FullSupportPartyHealMinimumMembers))
+                If readable >= requiredPartySize AndAlso lowCount >= 1 AndAlso FullSupportCooldownReady(_lastFullSupportPartyHealAt, cfg.FullSupportPartyHealCooldownMs, now) Then
+                    Dim keyName As String = NormalizeFullSupportKey(cfg.FullSupportPartyHealKey, "F3")
+                    If SendKey(hwnd, keyName, FastKeyPressMs) Then
+                        _lastFullSupportPartyHealAt = now
+                        _lastFullSupportStatus = $"Party heal {keyName}: {lowCount} low at/below {threshold}% ({readable}/{requiredPartySize} required HP bars readable)."
+                        SetLastAction($"{keyName} (Full Support party heal)")
+                        RaiseEvent LogLine(_lastFullSupportStatus)
+                        Return True
+                    End If
+                End If
+            End If
+
+            If cfg.FullSupportTankEnabled Then
+                Dim tankIndex As Integer = Math.Max(0, Math.Min(currentHp.Count - 1, cfg.FullSupportTankMemberIndex))
+                Dim threshold As Integer = Math.Max(1, Math.Min(99, cfg.FullSupportTankHealBelowPercent))
+                If isConfirmedLow(tankIndex, threshold) AndAlso FullSupportCooldownReady(_lastFullSupportTankHealAt, cfg.FullSupportTankCooldownMs, now) Then
+                    Dim keyName As String = NormalizeFullSupportKey(cfg.FullSupportTankHealKey, "F1")
+                    If SelectPartyMemberForSupport(hwnd, partyRegion, members(tankIndex)) AndAlso SendKey(hwnd, keyName, FastKeyPressMs) Then
+                        _lastFullSupportTankHealAt = now
+                        _lastFullSupportStatus = $"Tank focus: member {tankIndex + 1} at {currentHp(tankIndex):0}% -> {keyName}."
+                        SetLastAction($"{keyName} (Full Support tank heal)")
+                        RaiseEvent LogLine(_lastFullSupportStatus)
+                        Return True
+                    End If
+                End If
+            End If
+
+            If cfg.FullSupportIndividualEnabled Then
+                Dim threshold As Integer = Math.Max(1, Math.Min(99, cfg.FullSupportIndividualHealBelowPercent))
+                Dim lowestIndex As Integer = -1
+                Dim lowestHp As Double = Double.MaxValue
+                For index As Integer = 0 To currentHp.Count - 1
+                    If isConfirmedLow(index, threshold) AndAlso currentHp(index) < lowestHp Then
+                        lowestHp = currentHp(index)
+                        lowestIndex = index
+                    End If
+                Next
+                If lowestIndex >= 0 AndAlso FullSupportCooldownReady(_lastFullSupportIndividualHealAt, cfg.FullSupportIndividualCooldownMs, now) Then
+                    Dim keyName As String = NormalizeFullSupportKey(cfg.FullSupportIndividualHealKey, "F2")
+                    If SelectPartyMemberForSupport(hwnd, partyRegion, members(lowestIndex)) AndAlso SendKey(hwnd, keyName, FastKeyPressMs) Then
+                        _lastFullSupportIndividualHealAt = now
+                        _lastFullSupportStatus = $"Individual heal: member {lowestIndex + 1} at {lowestHp:0}% -> {keyName}."
+                        SetLastAction($"{keyName} (Full Support individual heal)")
+                        RaiseEvent LogLine(_lastFullSupportStatus)
+                        Return True
+                    End If
+                End If
+            End If
+
+            If cfg.FullSupportAssistEnabled AndAlso Not cfg.FullSupportAssistHighPriority AndAlso TrySendFullSupportAssist(cfg, hwnd, now) Then
+                Return True
+            End If
+
+            Return False
+        Finally
+            If crop IsNot Nothing Then
+                crop.Dispose()
+            End If
+        End Try
+    End Function
+
+    Private Function TrySendFullSupportAssist(cfg As BotConfig, hwnd As IntPtr, now As DateTime) As Boolean
+        If cfg Is Nothing OrElse hwnd = IntPtr.Zero OrElse Not cfg.FullSupportAssistEnabled OrElse
+           Not FullSupportCooldownReady(_lastFullSupportAssistAt, cfg.FullSupportAssistCooldownMs, now) Then
+            Return False
+        End If
+
+        Dim keyName As String = NormalizeFullSupportKey(cfg.FullSupportAssistKey, "F4")
+        If Not SendKey(hwnd, keyName, FastKeyPressMs) Then
+            RaiseEvent LogLine($"Full Support assist failed to send {keyName}.")
+            Return False
+        End If
+
+        _lastFullSupportAssistAt = now
+        _lastFullSupportStatus = $"Assist skill {keyName} cast ({If(cfg.FullSupportAssistHighPriority, "high", "normal")} priority)."
+        SetLastAction($"{keyName} (Full Support assist)")
+        RaiseEvent LogLine(_lastFullSupportStatus)
+        Return True
+    End Function
+
+    Private Shared Function MeasurePartyMemberHpPercent(buffer As BitmapReadBuffer, relativeRect As RectRegion, cropWidth As Integer, cropHeight As Integer) As Double
+        If buffer Is Nothing OrElse relativeRect Is Nothing Then
+            Return -1.0R
+        End If
+        Dim rect As Rectangle = relativeRect.Clamp(cropWidth, cropHeight)
+        If rect.Width < 4 OrElse rect.Height < 2 Then
+            Return -1.0R
+        End If
+
+        Dim firstFilledX As Integer = -1
+        Dim lastFilledX As Integer = -1
+        Dim emptyRun As Integer = 0
+        Dim maximumGap As Integer = Math.Max(2, CInt(Math.Ceiling(rect.Width * 0.025R)))
+        Dim requiredPixelsPerColumn As Integer = Math.Max(1, CInt(Math.Ceiling(rect.Height * 0.18R)))
+        For localX As Integer = 0 To rect.Width - 1
+            Dim matchingPixels As Integer = 0
+            For y As Integer = rect.Top To rect.Bottom - 1
+                Dim r As Integer = 0
+                Dim g As Integer = 0
+                Dim b As Integer = 0
+                buffer.GetRgb(rect.Left + localX, y, r, g, b)
+                If IsPartyHpBarPixelRgb(r, g, b) Then
+                    matchingPixels += 1
+                End If
+            Next
+            If matchingPixels >= requiredPixelsPerColumn Then
+                If firstFilledX < 0 Then
+                    firstFilledX = localX
+                End If
+                lastFilledX = localX
+                emptyRun = 0
+            ElseIf firstFilledX >= 0 Then
+                emptyRun += 1
+                If emptyRun > maximumGap Then Exit For
+            End If
+        Next
+
+        If firstFilledX < 0 OrElse firstFilledX > Math.Max(4, CInt(Math.Ceiling(rect.Width * 0.18R))) Then
+            Return -1.0R
+        End If
+        Return Math.Max(0.0R, Math.Min(100.0R, ((lastFilledX + 1) / CDbl(rect.Width)) * 100.0R))
+    End Function
+
+    Private Shared Function FullSupportCooldownReady(lastActionAt As DateTime, cooldownMs As Integer, now As DateTime) As Boolean
+        Return lastActionAt = DateTime.MinValue OrElse (now - lastActionAt).TotalMilliseconds >= Math.Max(250, cooldownMs)
+    End Function
+
+    Private Shared Function NormalizeFullSupportKey(configured As String, fallback As String) As String
+        Dim keyName As String = If(configured, "").Trim().ToUpperInvariant()
+        Return If(keyName = "", fallback, keyName)
+    End Function
+
+    Private Function SelectPartyMemberForSupport(hwnd As IntPtr, partyRegion As RectRegion, member As FullSupportPartyMember) As Boolean
+        If hwnd = IntPtr.Zero OrElse partyRegion Is Nothing OrElse member Is Nothing Then
+            Return False
+        End If
+        Dim relativeX As Integer = Math.Max(0, Math.Min(Math.Max(0, partyRegion.W - 1), member.SelectPointX))
+        Dim relativeY As Integer = Math.Max(0, Math.Min(Math.Max(0, partyRegion.H - 1), member.SelectPointY))
+        Dim diagnostic As String = ""
+        If Not LeftClickVerifiedAtClientPoint(hwnd, partyRegion.X + relativeX, partyRegion.Y + relativeY, diagnostic) Then
+            RaiseEvent LogLine($"Full Support member selection failed: {diagnostic}.")
+            Return False
+        End If
+        Thread.Sleep(45)
+        Return True
     End Function
 
     Private Shared Function NormalizeChatOcrText(rawText As String) As String
@@ -7488,8 +7857,12 @@ Public Class BotEngine
                 End If
 
                 Dim slotLabel As String = If(String.IsNullOrWhiteSpace(slot.Name), $"slot {i + 1}", slot.Name)
-                If slot.SelfClickBeforeCast AndAlso cfg.BuffWatchSelfClickEnabled AndAlso cfg.BuffWatchSelfClickX >= 0 AndAlso cfg.BuffWatchSelfClickY >= 0 Then
-                    ClickClientPoint(hwnd, cfg.BuffWatchSelfClickX, cfg.BuffWatchSelfClickY)
+                If slot.SelfClickBeforeCast AndAlso cfg.BuffWatchSelfClickEnabled Then
+                    If Not SendKey(hwnd, BuffWatchSelfTargetKey, FastKeyPressMs) Then
+                        RaiseEvent LogLine($"Buff watch: ""{slotLabel}"" icon missing but failed to send the ` self-target key; recast skipped.")
+                        Continue For
+                    End If
+                    Thread.Sleep(35)
                 End If
 
                 If SendKey(hwnd, keyName, FastKeyPressMs) Then
@@ -7509,7 +7882,7 @@ Public Class BotEngine
             Try
                 Dim parsed As Double = _expOcrTask.Result
                 If isCurrent AndAlso parsed >= 0 AndAlso parsed <= 100 Then
-                    _lastExpPercent = parsed
+                    TryAcceptExpPercent(parsed, DateTime.UtcNow)
                 End If
             Catch ex As Exception
                 If isCurrent Then
@@ -7521,6 +7894,70 @@ Public Class BotEngine
 
         Return _lastExpPercent
     End Function
+
+    Private Function TryAcceptExpPercent(candidate As Double, now As DateTime) As Boolean
+        If Double.IsNaN(candidate) OrElse Double.IsInfinity(candidate) OrElse candidate < 0 OrElse candidate > 100 Then
+            Return False
+        End If
+
+        ' Do not let one startup OCR read establish the session baseline. Two close readings are
+        ' cheap (EXP OCR is already rate-limited) and prevent a single bad value from poisoning all
+        ' later session-gain calculations.
+        If _lastExpPercent < 0 Then
+            If _pendingInitialExpPercent < 0 OrElse Math.Abs(candidate - _pendingInitialExpPercent) > ExpInitialConfirmTolerancePercent Then
+                _pendingInitialExpPercent = candidate
+                _pendingInitialExpConfirmCount = 1
+                Return False
+            End If
+
+            _pendingInitialExpConfirmCount += 1
+            If _pendingInitialExpConfirmCount < 2 Then
+                Return False
+            End If
+
+            _lastExpPercent = candidate
+            _lastAcceptedExpAt = now
+            _pendingInitialExpPercent = -1
+            _pendingInitialExpConfirmCount = 0
+            Return True
+        End If
+
+        Dim delta As Double
+        If candidate >= _lastExpPercent Then
+            delta = candidate - _lastExpPercent
+        ElseIf _lastExpPercent >= ExpLevelWrapHighPercent AndAlso candidate <= ExpLevelWrapLowPercent Then
+            delta = (100.0 - _lastExpPercent) + candidate
+        Else
+            LogRejectedExpOcr(candidate, now, "backward reading without a valid level-up rollover")
+            Return False
+        End If
+
+        If delta <= 0.001 Then
+            Return True
+        End If
+
+        Dim elapsedHours As Double = 0
+        If _lastAcceptedExpAt <> DateTime.MinValue Then
+            elapsedHours = Math.Max(0.0, (now - _lastAcceptedExpAt).TotalHours)
+        End If
+        Dim maximumPlausibleAdvance As Double = Math.Max(ExpOcrAdvanceFloorPercent, (elapsedHours * MaxValidExpPerHour) + ExpOcrAdvanceGracePercent)
+        If delta > maximumPlausibleAdvance Then
+            LogRejectedExpOcr(candidate, now, $"advance of {delta:0.00}% exceeds the {maximumPlausibleAdvance:0.00}% limit")
+            Return False
+        End If
+
+        _lastExpPercent = candidate
+        _lastAcceptedExpAt = now
+        Return True
+    End Function
+
+    Private Sub LogRejectedExpOcr(candidate As Double, now As DateTime, reason As String)
+        If _lastExpOcrRejectLogAt <> DateTime.MinValue AndAlso (now - _lastExpOcrRejectLogAt).TotalMilliseconds < ExpOcrRejectLogIntervalMs Then
+            Return
+        End If
+        _lastExpOcrRejectLogAt = now
+        RaiseEvent LogLine($"EXP OCR reading {candidate:0.00}% ignored: {reason}. Keeping {_lastExpPercent:0.00}%.")
+    End Sub
 
     Private Function IsStatsOcrDue(now As DateTime) As Boolean
         Dim expDue As Boolean =
@@ -7616,7 +8053,7 @@ Public Class BotEngine
         End If
 
         Dim delta As Double = expPercent - _lastExpRateSamplePercent
-        If delta < -50.0 Then
+        If _lastExpRateSamplePercent >= ExpLevelWrapHighPercent AndAlso expPercent <= ExpLevelWrapLowPercent Then
             delta += 100.0
         End If
 
@@ -10680,6 +11117,8 @@ Public Class BotEngine
             _status.PartySize = _lastPartySize
             _status.PartyAliveCount = _lastPartyAliveCount
             _status.PartyAllAlive = _lastPartyAllAlive
+            _status.FullSupportStatus = _lastFullSupportStatus
+            _status.FullSupportPartyHp = New List(Of Double)(_lastFullSupportPartyHp)
             _status.SessionKilledMobs = _sessionKilledMobs
             _status.CharacterName = _lastCharacterName
             PruneRepairMatchTimes(DateTime.UtcNow)
@@ -10715,7 +11154,7 @@ Public Class BotEngine
             Return ""
         End If
 
-        Return $"{status.Running}|{status.RunStartedAtUtc:O}|{status.WindowFound}|{status.NotAttackingReason}|{status.ErrorMessage}|{status.GameDisconnected}|{status.AgentState}|{status.AgentReason}|{status.AgentGuardrailTriggered}|{status.TargetValid}|{status.MobName}|{status.MobHpText}|{status.SessionKilledMobs}|{status.MapCoordinateText}|{status.MapCoordinateX}|{status.MapCoordinateY}|{status.MapCoordinateConfidence}|{status.MapCoordinateDebugLog}|{status.HoldPlaceActive}|{status.HoldPlaceReason}|{status.HoldPlaceDistance:0.0}|{status.RepairConfirmCount}|{status.RepairTriggerCount}"
+        Return $"{status.Running}|{status.RunStartedAtUtc:O}|{status.WindowFound}|{status.NotAttackingReason}|{status.ErrorMessage}|{status.GameDisconnected}|{status.AgentState}|{status.AgentReason}|{status.AgentGuardrailTriggered}|{status.TargetValid}|{status.MobName}|{status.MobHpText}|{status.SessionKilledMobs}|{status.MapCoordinateText}|{status.MapCoordinateX}|{status.MapCoordinateY}|{status.MapCoordinateConfidence}|{status.MapCoordinateDebugLog}|{status.HoldPlaceActive}|{status.HoldPlaceReason}|{status.HoldPlaceDistance:0.0}|{status.RepairConfirmCount}|{status.RepairTriggerCount}|{status.FullSupportStatus}"
     End Function
 
     Private Function CloneStatus(src As BotStatus) As BotStatus
@@ -10736,6 +11175,8 @@ Public Class BotEngine
             .PartySize = src.PartySize,
             .PartyAliveCount = src.PartyAliveCount,
             .PartyAllAlive = src.PartyAllAlive,
+            .FullSupportStatus = src.FullSupportStatus,
+            .FullSupportPartyHp = New List(Of Double)(If(src.FullSupportPartyHp, New List(Of Double)())),
             .MobName = src.MobName,
             .CharacterName = src.CharacterName,
             .TargetValid = src.TargetValid,
@@ -12093,6 +12534,12 @@ Public Class BotEngine
         If hwnd = IntPtr.Zero Then
             Return False
         End If
+
+        SyncLock _keyOutputPauseSync
+            If _keyOutputPausedWindows.Contains(hwnd) Then
+                Return False
+            End If
+        End SyncLock
 
         Dim vk As Integer
         If Not KeyMap.TryGetValue(keyName.ToUpperInvariant(), vk) Then

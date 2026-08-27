@@ -76,8 +76,6 @@
       }
     ],
     "BuffWatchSelfClickEnabled": false,
-    "BuffWatchSelfClickX": 31,
-    "BuffWatchSelfClickY": 745,
     "ResurrectAutoAcceptEnabled": true,
     "ResurrectOkPointX": 665,
     "ResurrectOkPointY": 426,
@@ -308,7 +306,12 @@
           "Y": 717
         }
       ],
+      "PauseCombatKeysWhileChattingEnabled": false,
       "FullSupportModeEnabled": false,
+      "FullSupportAssistEnabled": false,
+      "FullSupportAssistKey": "F4",
+      "FullSupportAssistCooldownMs": 30000,
+      "FullSupportAssistHighPriority": true,
       "BypassStuckTarget": true,
       "StuckTargetMs": 1500,
       "StuckTargetNoProgressRetargetMs": 3000,
@@ -382,8 +385,6 @@
         "H": 32
       },
       "BuffWatchSelfClickEnabled": false,
-      "BuffWatchSelfClickX": 31,
-      "BuffWatchSelfClickY": 745,
       "LootAllowedNames": [],
       "LootNameMatchThresholdPercent": 60,
       "PartyInviteAutoAcceptEnabled": true,
