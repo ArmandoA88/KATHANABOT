@@ -59,13 +59,18 @@ jobs:
         run: |
           $tag = "v$($env:RELEASE_VERSION)"
           gh release view $tag --repo $env:GITHUB_REPOSITORY | Out-Null
-          if ($LASTEXITCODE -eq 0) {
+          $releaseExists = ($LASTEXITCODE -eq 0)
+          if ($releaseExists) {
             Write-Host "Release $tag already exists; skipping publish."
             "skip=true" >> $env:GITHUB_OUTPUT
           } else {
             Write-Host "Release $tag not found yet; will publish."
             "skip=false" >> $env:GITHUB_OUTPUT
           }
+          # gh's non-zero exit code for "release not found" is expected and already
+          # handled above - reset it so this step doesn't fail just because the
+          # last native command it ran happened to exit non-zero.
+          exit 0
 
       - name: Set up .NET 9
         if: steps.existing.outputs.skip != 'true'
