@@ -54,6 +54,8 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           $tag = "v$($env:RELEASE_VERSION)"
           gh release view $tag --repo $env:GITHUB_REPOSITORY | Out-Null
@@ -64,9 +66,6 @@ jobs:
             Write-Host "Release $tag not found yet; will publish."
             "skip=false" >> $env:GITHUB_OUTPUT
           }
-        env:
-          RELEASE_VERSION: ${{ steps.version.outputs.version }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
 
       - name: Set up .NET 9
         if: steps.existing.outputs.skip != 'true'
