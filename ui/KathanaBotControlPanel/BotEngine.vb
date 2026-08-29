@@ -355,6 +355,7 @@ Public Class BotConfig
     Public Property PartyAskEnabled As Boolean = False
     Public Property PartyAskIntervalMs As Integer = 30000
     Public Property PartyAskText As String = "add"
+    Public Property ChatMessageUseCtrlV As Boolean = True
     Public Property AskForResurrectEnabled As Boolean = False
     Public Property AskForResurrectIntervalMs As Integer = 30000
     Public Property AskForResurrectText As String = "need resu pls"
@@ -985,7 +986,6 @@ Public Class BotEngine
     ' noisy/miscalibrated HP-bar color read (never backed by a real visible target window) could
     ' manufacture a "target" forever and permanently block search/travel.
     Private Const MobHpFallbackMaxStaleMs As Integer = 4000
-    Private Const LootScannerIntervalMs As Integer = 10000
     Private Const StartupCombatPriorityMs As Integer = 3000
     Private Const FullFrameRefreshMs As Integer = 500
     Private Const StatusUpdateMinIntervalMs As Integer = 200
@@ -2339,7 +2339,7 @@ Public Class BotEngine
             TryHandlePendingLootPickupVerification(cfg, hwnd, frame, now, mobNameRegion)
             If cfg.LootScannerEnabled AndAlso deferOptionalWork AndAlso activeHwnd = hwnd AndAlso (Not _lootScannerCapturePending) Then
                 MarkOptionalWorkDeferred()
-            ElseIf cfg.LootScannerEnabled AndAlso activeHwnd = hwnd AndAlso (Not _lootScannerCapturePending) AndAlso (now - _lastRightAltAt).TotalMilliseconds >= Math.Max(1000, cfg.LootScannerIntervalMs) Then
+            ElseIf cfg.LootScannerEnabled AndAlso activeHwnd = hwnd AndAlso (Not _lootScannerCapturePending) AndAlso (now - _lastRightAltAt).TotalMilliseconds >= Math.Max(100, Math.Min(20000, cfg.LootScannerIntervalMs)) Then
                 BeginLootScannerCapture(now)
             End If
             Dim mobOcrWatch As Stopwatch = Stopwatch.StartNew()
@@ -3140,8 +3140,8 @@ Public Class BotEngine
                 ' to a signature-based gate forever, which would
                 ' silently stop re-scanning it after a single missed OCR read for the rest of the
                 ' run - the same class of bug fixed earlier for the resurrect/party-invite dialogs.
-                ' This scan already only runs once per LootScannerIntervalMs (several seconds), so
-                ' the extra OCR cost of always re-reading is negligible next to that.
+                ' This scan runs once per the configured LootScannerIntervalMs, so always re-read
+                ' when the user-selected timer requests a new Alt + screenshot cycle.
                 Dim ocrRegions As List(Of OcrReader.OcrTextRegion) = OcrReader.ReadScreenTextRegionsIsolated(lootScanFrame)
                 Dim ocrText As String = String.Join(Environment.NewLine, ocrRegions.Select(Function(region) region.Text))
                 If Not String.IsNullOrWhiteSpace(ocrText) AndAlso allowedNames IsNot Nothing Then
@@ -8587,7 +8587,7 @@ Public Class BotEngine
         End If
         Thread.Sleep(60)
 
-        Dim typedOk As Boolean = SendPartyAskCommand(hwnd, commandText)
+        Dim typedOk As Boolean = SendPartyAskCommand(hwnd, commandText, cfg.ChatMessageUseCtrlV)
         Thread.Sleep(55)
 
         Dim sentFinalEnter As Boolean = SendKey(hwnd, "ENTER", FastKeyPressMs)
@@ -8651,7 +8651,7 @@ Public Class BotEngine
         End If
         Thread.Sleep(60)
 
-        Dim typedOk As Boolean = SendPartyAskCommand(hwnd, commandText)
+        Dim typedOk As Boolean = SendPartyAskCommand(hwnd, commandText, cfg.ChatMessageUseCtrlV)
         Thread.Sleep(55)
 
         Dim sentFinalEnter As Boolean = SendKey(hwnd, "ENTER", FastKeyPressMs)
@@ -8800,21 +8800,23 @@ Public Class BotEngine
     ' dropping whatever PartyAskCharToKeyName doesn't map (e.g. "!", "?", accented letters). Falls
     ' back to the old per-character typing if the clipboard couldn't be claimed (e.g. another app
     ' holding it right at that moment), so this can never regress to typing nothing at all.
-    Private Shared Function SendPartyAskCommand(hwnd As IntPtr, rawText As String) As Boolean
+    Private Shared Function SendPartyAskCommand(hwnd As IntPtr, rawText As String, useCtrlV As Boolean) As Boolean
         Dim commandText As String = NormalizePartyAskCommand(rawText)
 
-        Dim previousClipboardText As String = GetClipboardText()
-        If SetClipboardText(commandText) Then
-            Dim pasted As Boolean = SendCtrlVPaste(hwnd)
-            ' Give the game a moment to actually process the posted Ctrl+V and read the clipboard
-            ' before putting the user's own content back - PostMessage only queues the keystrokes,
-            ' it doesn't wait for the target window to have handled them yet.
-            Thread.Sleep(150)
-            If previousClipboardText IsNot Nothing Then
-                SetClipboardText(previousClipboardText)
-            End If
-            If pasted Then
-                Return True
+        If useCtrlV Then
+            Dim previousClipboardText As String = GetClipboardText()
+            If SetClipboardText(commandText) Then
+                Dim pasted As Boolean = SendCtrlVPaste(hwnd)
+                ' Give the game a moment to actually process the posted Ctrl+V and read the clipboard
+                ' before putting the user's own content back - PostMessage only queues the keystrokes,
+                ' it doesn't wait for the target window to have handled them yet.
+                Thread.Sleep(150)
+                If previousClipboardText IsNot Nothing Then
+                    SetClipboardText(previousClipboardText)
+                End If
+                If pasted Then
+                    Return True
+                End If
             End If
         End If
 
@@ -12927,7 +12929,7 @@ Public Class BotEngine
         End If
         Thread.Sleep(60)
 
-        Dim typedOk As Boolean = SendPartyAskCommand(hwnd, commandText)
+        Dim typedOk As Boolean = SendPartyAskCommand(hwnd, commandText, cfg.ChatMessageUseCtrlV)
         Thread.Sleep(55)
 
         Dim sentFinalEnter As Boolean = SendKey(hwnd, "ENTER", FastKeyPressMs)

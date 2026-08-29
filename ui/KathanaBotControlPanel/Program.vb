@@ -8,6 +8,18 @@ End Enum
 
 Friend Module Program
     Friend Const StartupNotice As String =
+"ENGLISH" & vbCrLf &
+"Hey, I need your feedback! If you have ideas to improve the bot or make it better and easier to use, please let me know. In the Kathana game, send a private message to xSAITAMAx." & vbCrLf &
+"I might not respond, but I will read all feedback and improvement ideas. I won't respond to troubleshooting messages; I will make a troubleshooting video sooner or later. Thank you for your support!" & vbCrLf & vbCrLf &
+"ESPAÑOL" & vbCrLf &
+"¡Hola! Necesito tus comentarios. Si tienes ideas para mejorar el bot o hacerlo mejor y más fácil de usar, házmelo saber. En el juego Kathana, envíame un mensaje privado a xSAITAMAx." & vbCrLf &
+"Puede que no responda, pero leeré todos los comentarios y las ideas para mejorar. No responderé mensajes sobre solución de problemas; tarde o temprano haré un video al respecto. ¡Gracias por tu apoyo!" & vbCrLf & vbCrLf &
+"TAGALOG" & vbCrLf &
+"Hey, kailangan ko ang feedback mo! Kung may mga ideya ka para mapahusay ang bot o gawin itong mas maayos at mas madaling gamitin, ipaalam mo sa akin. Sa larong Kathana, mag-private message ka kay xSAITAMAx." & vbCrLf &
+"Maaaring hindi ako sumagot, pero babasahin ko ang lahat ng feedback at mga ideya para sa pagpapahusay. Hindi ako sasagot sa mga mensahe tungkol sa troubleshooting; gagawa ako ng troubleshooting video balang araw. Maraming salamat sa iyong suporta!"
+
+    ' Kept on hold for possible future reuse; this is no longer shown at startup.
+    Friend Const PreviousStartupNotice As String =
 "Espero que esto te ayude a disfrutar más el juego. Recuerda que el tiempo aquí es tiempo que no usas en lo importante, pero por ahora diviértete. Te quiero mucho, SAITAMA." & vbCrLf & vbCrLf &
 "I hope this helps you enjoy the game more. Remember that time here is time you are not using for important things, but for now, have fun. I love you very much, SAITAMA." & vbCrLf & vbCrLf &
 "Sana ay makatulong ito para mas ma-enjoy mo ang laro. Tandaan mo na ang oras dito ay oras na hindi mo nagagamit sa mahahalagang bagay, pero sa ngayon, magsaya ka. Mahal na mahal kita, SAITAMA."

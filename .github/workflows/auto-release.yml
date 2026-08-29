@@ -1,0 +1,99 @@
+name: Auto-publish Velopack release on version bump
+
+# Runs whenever a commit lands on agent-ai that touches the app, the version file,
+# or the release notes. It reads the version straight out of the .vbproj (the same
+# default build-velopack-release.ps1 already falls back to) and only builds/publishes
+# a new GitHub release when that exact version tag doesn't already exist. This keeps
+# the Velopack feed on GitHub current automatically, so the in-app "Check Now" /
+# auto-update flow (Velopack UpdateManager in Form1.vb) always finds the newest build
+# without anyone having to run the manual "Build and publish Velopack release" workflow.
+
+on:
+  push:
+    branches:
+      - agent-ai
+    paths:
+      - "ui/**"
+      - "RELEASE_NOTES.md"
+      - "build-velopack-release.ps1"
+      - ".github/workflows/auto-release.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: kathana-velopack-release
+  cancel-in-progress: false
+
+jobs:
+  auto-release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: agent-ai
+
+      - name: Read version from project file
+        id: version
+        shell: pwsh
+        run: |
+          [xml]$projectXml = Get-Content -LiteralPath "ui/KathanaBotControlPanel/KathanaBotControlPanel.vbproj"
+          $version = [string]$projectXml.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "Could not read <Version> from the .vbproj."
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') {
+            throw "Version '$version' read from the .vbproj is not a valid release version (example: 1.0.128)."
+          }
+          Write-Host "Project version: $version"
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Check whether this version was already released
+        id: existing
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "v$($env:RELEASE_VERSION)"
+          gh release view $tag --repo $env:GITHUB_REPOSITORY | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists; skipping publish."
+            "skip=true" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Host "Release $tag not found yet; will publish."
+            "skip=false" >> $env:GITHUB_OUTPUT
+          }
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
+      - name: Set up .NET 9
+        if: steps.existing.outputs.skip != 'true'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Build, package, and publish GitHub release
+        if: steps.existing.outputs.skip != 'true'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          REPOSITORY_URL: https://github.com/${{ github.repository }}
+          TARGET_BRANCH: agent-ai
+        run: |
+          & .\build-velopack-release.ps1 `
+            -Version $env:RELEASE_VERSION `
+            -RepositoryUrl $env:REPOSITORY_URL `
+            -TargetBranch $env:TARGET_BRANCH `
+            -GitHubToken $env:GITHUB_TOKEN `
+            -Publish
+
+      - name: Preserve package files as workflow artifacts
+        if: steps.existing.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: KathanaBot-${{ steps.version.outputs.version }}-Velopack
+          path: dist/velopack/Releases/*
+          if-no-files-found: error

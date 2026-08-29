@@ -1810,6 +1810,7 @@ Public Class Form1
     Private btnPartyInviteAutoAccept As Button
     Private btnRessAutoAccept As Button
     Private btnPartyAsk As Button
+    Private btnChatMessageInputMode As Button
     Private btnVisionLootScanner As Button
     Private btnLootScanner As Button
     Private tblNotificationSettings As TableLayoutPanel
@@ -1863,7 +1864,7 @@ Public Class Form1
     Private btnExportDiagnostics As Button
     Private btnOpenSessionHistory As Button
     Private nudFullFrameScanMs As NumericUpDown
-    Private nudLootScannerSeconds As NumericUpDown
+    Private nudLootScannerIntervalMs As NumericUpDown
     Private nudMapScanMs As NumericUpDown
     Private nudPartyScanMs As NumericUpDown
     Private nudMobNameScanMs As NumericUpDown
@@ -1907,6 +1908,7 @@ Public Class Form1
     Private _partyInviteAutoAccept As Boolean = True
     Private _ressAutoAccept As Boolean = True
     Private _partyAskEnabled As Boolean = False
+    Private _chatMessageUseCtrlV As Boolean = True
     Private _litePartyAutoAccept As Boolean = False
     Private _litePartyAskEnabled As Boolean = False
     Private _lootScannerEnabled As Boolean = True
@@ -2325,6 +2327,7 @@ Public Class Form1
         Public Property AskForPartyEnabled As Boolean = False
         Public Property AskForPartySeconds As Decimal = 30D
         Public Property AskForPartyText As String
+        Public Property ChatMessageUseCtrlV As Boolean = True
         Public Property AskForResurrectEnabled As Boolean = False
         Public Property AskForResurrectSeconds As Decimal = 30D
         Public Property AskForResurrectText As String
@@ -2652,9 +2655,9 @@ Public Class Form1
             AddHandler nudFullFrameScanMs.ValueChanged, AddressOf LiveConfigChanged
             AddHandler nudFullFrameScanMs.ValueChanged, AddressOf PersistListSettingsChanged
         End If
-        If nudLootScannerSeconds IsNot Nothing Then
-            AddHandler nudLootScannerSeconds.ValueChanged, AddressOf LiveConfigChanged
-            AddHandler nudLootScannerSeconds.ValueChanged, AddressOf PersistListSettingsChanged
+        If nudLootScannerIntervalMs IsNot Nothing Then
+            AddHandler nudLootScannerIntervalMs.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler nudLootScannerIntervalMs.ValueChanged, AddressOf PersistListSettingsChanged
         End If
         If nudMapScanMs IsNot Nothing Then
             AddHandler nudMapScanMs.ValueChanged, AddressOf LiveConfigChanged
@@ -6563,20 +6566,31 @@ Public Class Form1
     Private Function BuildLootScanSettingsGroup() As GroupBox
         Dim group As New GroupBox() With {.Text = "Loot Scan Matching", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
         Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 5}
-        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 180.0F))
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 220.0F))
         layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 44.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 24.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
 
         layout.Controls.Add(New Label() With {.Text = "Loot Name Match %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
         nudLootNameMatchThreshold = New NumericUpDown() With {.Minimum = 50, .Maximum = 100, .Value = DefaultLootNameMatchThresholdPercent, .Dock = DockStyle.Fill}
         layout.Controls.Add(nudLootNameMatchThreshold, 1, 0)
 
-        layout.Controls.Add(New Label() With {.Text = "Loot Scan Area", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
-        layout.Controls.Add(New Label() With {.Text = "Configured in Vision tab", .Dock = DockStyle.Fill, .ForeColor = Color.LightSteelBlue, .TextAlign = ContentAlignment.MiddleLeft}, 1, 1)
+        layout.Controls.Add(New Label() With {.Text = "Alt + Screenshot Every (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 1)
+        nudLootScannerIntervalMs = New NumericUpDown() With {
+            .Minimum = 100,
+            .Maximum = 20000,
+            .Increment = 100,
+            .Value = 10000,
+            .ThousandsSeparator = True,
+            .Dock = DockStyle.Fill
+        }
+        layout.Controls.Add(nudLootScannerIntervalMs, 1, 1)
+
+        layout.Controls.Add(New Label() With {.Text = "Loot Scan Area", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
+        layout.Controls.Add(New Label() With {.Text = "Configured in Vision tab", .Dock = DockStyle.Fill, .ForeColor = Color.LightSteelBlue, .TextAlign = ContentAlignment.MiddleLeft}, 1, 2)
 
         btnLootScanner = New Button() With {
             .Text = If(_lootScannerEnabled, "Loot Scanner (Alt): ON", "Loot Scanner (Alt): OFF"),
@@ -6587,11 +6601,11 @@ Public Class Form1
             .ForeColor = Color.White
         }
         AddHandler btnLootScanner.Click, AddressOf ToggleLootScannerClicked
-        layout.Controls.Add(btnLootScanner, 0, 2)
+        layout.Controls.Add(btnLootScanner, 0, 3)
         layout.SetColumnSpan(btnLootScanner, 2)
 
         Dim note As New Label() With {
-            .Text = "Loot Scanner (Alt) reads the loot text from the Vision tab scan area and raises a loot alarm/notification when an allowed name matches here.",
+            .Text = "Loot Scanner (Alt) presses Alt and takes a new screenshot at the frequency above (100-20,000 ms). It reads the Vision tab loot area and raises an alarm/notification when an allowed name matches. Lower values scan faster but use more CPU.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.TopLeft
@@ -6983,7 +6997,6 @@ Public Class Form1
 
         Dim scanTimerPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .AutoScroll = True, .Margin = New Padding(0)}
         nudFullFrameScanMs = AddScanTimerInput(scanTimerPanel, "Full ms", 100, 5000, 50, 500D)
-        nudLootScannerSeconds = AddScanTimerInput(scanTimerPanel, "Loot sec", 1, 120, 1, 10D)
         nudMapScanMs = AddScanTimerInput(scanTimerPanel, "Map ms", 250, 10000, 50, 900D)
         nudPartyScanMs = AddScanTimerInput(scanTimerPanel, "Party ms", 250, 10000, 50, 700D)
         nudMobNameScanMs = AddScanTimerInput(scanTimerPanel, "Mob OCR ms", 120, 5000, 25, 650D, "How often the mob's name is re-read from mob_name_rect.")
@@ -8039,6 +8052,14 @@ Public Class Form1
             .BackColor = If(_partyAskEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45)),
             .ForeColor = Color.White
         }
+        btnChatMessageInputMode = New Button() With {
+            .Dock = DockStyle.Fill,
+            .MinimumSize = New Size(0, 38),
+            .Margin = New Padding(3, 3, 3, 3),
+            .ForeColor = Color.White,
+            .UseVisualStyleBackColor = False
+        }
+        UpdateChatMessageInputModeButton()
         btnHelp = New Button() With {
             .Text = "Explanation (EN/ES/FIL)",
             .Dock = DockStyle.Fill,
@@ -8067,6 +8088,7 @@ Public Class Form1
         AddHandler btnPartyInviteAutoAccept.Click, AddressOf TogglePartyInviteAutoAcceptClicked
         AddHandler btnRessAutoAccept.Click, AddressOf ToggleRessAutoAcceptClicked
         AddHandler btnPartyAsk.Click, AddressOf TogglePartyAskClicked
+        AddHandler btnChatMessageInputMode.Click, AddressOf ToggleChatMessageInputModeClicked
         AddHandler txtPartyAskText.TextChanged, AddressOf PartyAskTextChanged
         AddHandler btnHelp.Click, AddressOf HelpClicked
         AddHandler btnProfiles.Click, AddressOf ProfilesButtonClicked
@@ -8126,6 +8148,7 @@ Public Class Form1
         If _scanTimerToolTip Is Nothing Then
             _scanTimerToolTip = New ToolTip() With {.AutoPopDelay = 15000, .InitialDelay = 300, .ReshowDelay = 300}
         End If
+        _scanTimerToolTip.SetToolTip(btnChatMessageInputMode, "Choose how all automated chat messages are entered. Click to switch between Ctrl+V paste and per-character typing.")
         Dim scanSpeedHint As String = "How often the bot re-checks for mobs and re-runs OCR/combat logic. High = every 200ms (fastest, more CPU). Medium = every 500ms. Low = every 1000ms (lightest load)."
         _scanTimerToolTip.SetToolTip(btnScanSpeedHigh, scanSpeedHint)
         _scanTimerToolTip.SetToolTip(btnScanSpeedMedium, scanSpeedHint)
@@ -8138,11 +8161,17 @@ Public Class Form1
         runRow.Controls.Add(btnAttack, 0, 0)
         runRow.Controls.Add(scanSpeedRow, 1, 0)
 
+        Dim partyAskRow As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .ColumnCount = 2, .RowCount = 1, .Margin = New Padding(0)}
+        partyAskRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 72.0F))
+        partyAskRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 28.0F))
+        partyAskRow.Controls.Add(btnPartyAsk, 0, 0)
+        partyAskRow.Controls.Add(btnChatMessageInputMode, 1, 0)
+
         Dim controls As Control() = {
             lblFullEdition, lblRunState, lblShortcutHint, lblState, lblSystem, hpMpLayout,
             lblMobName, lblExpRate, lblRupiahsRate, runRow, btnSaveSettings, btnStopBot,
             btnFullSupport, btnBypassStuck, btnLootAfterKill, btnPartyInviteAutoAccept, btnRessAutoAccept,
-            lblPartyAskEvery, nudPartyAskSeconds, lblPartyAskText, txtPartyAskText, btnPartyAsk, btnProfiles, btnHelp,
+            lblPartyAskEvery, nudPartyAskSeconds, lblPartyAskText, txtPartyAskText, partyAskRow, btnProfiles, btnHelp,
             holdToShowGameWindowRow, chkDeveloperMode
         }
         For rowIndex As Integer = 0 To controls.Length - 1
@@ -8470,6 +8499,7 @@ Public Class Form1
         _partyInviteAutoAccept = False
         _ressAutoAccept = False
         _partyAskEnabled = False
+        _chatMessageUseCtrlV = True
         _litePartyAskEnabled = False
         _askForResurrectEnabled = False
         _lootScannerEnabled = False
@@ -8576,6 +8606,7 @@ Public Class Form1
         UpdatePartyInviteAutoAcceptButton()
         UpdateRessAutoAcceptButton()
         UpdatePartyAskButton()
+        UpdateChatMessageInputModeButton()
         ApplyLiteDefaults()
         UpdateLootRejectPointUi()
         RefreshKeyActionSummary()
@@ -12027,6 +12058,27 @@ Public Class Form1
         UpdateMainTabIndicators()
     End Sub
 
+    Private Sub ToggleChatMessageInputModeClicked(_sender As Object, _e As EventArgs)
+        _chatMessageUseCtrlV = Not _chatMessageUseCtrlV
+        UpdateChatMessageInputModeButton()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        AppendLog($"Automated chat messages will use {If(_chatMessageUseCtrlV, "Ctrl+V", "typing")}.")
+    End Sub
+
+    Private Sub UpdateChatMessageInputModeButton()
+        If btnChatMessageInputMode Is Nothing Then
+            Return
+        End If
+        btnChatMessageInputMode.Text = If(_chatMessageUseCtrlV, "Ctrl+V", "Typing")
+        btnChatMessageInputMode.BackColor = If(_chatMessageUseCtrlV, Color.FromArgb(35, 100, 145), Color.FromArgb(85, 70, 120))
+        btnChatMessageInputMode.AccessibleName = "Automated chat message input mode"
+        btnChatMessageInputMode.AccessibleDescription = If(
+            _chatMessageUseCtrlV,
+            "Click to switch automated chat messages from Ctrl+V paste to typing.",
+            "Click to switch automated chat messages from typing to Ctrl+V paste.")
+    End Sub
+
     Private Sub ToggleLootScannerClicked(sender As Object, e As EventArgs)
         _lootScannerEnabled = Not _lootScannerEnabled
         UpdateLootScannerButtons()
@@ -12680,7 +12732,7 @@ Public Class Form1
                     "- The loot name list is an allow-list. Add names you want and remove names you do not want.",
                     "- Loot Name Match % is the fuzzy OCR threshold used to decide whether text matches an allowed loot name.",
                     "- Loot Scan Area comes from the Vision tab.",
-                    "- Loot Scanner (Alt) toggles the OCR-based loot scanner.",
+                    "- Loot Scanner (Alt) toggles the OCR-based loot scanner. Alt + Screenshot Every (ms) controls its frequency from 100 to 20,000 ms; lower values scan faster but use more CPU.",
                     "- Auto Party Invite presses the selected key (1-0 or F1-F10) then clicks the fixed point below, on its own loop timer.",
                     "- Auto Party Message types the text above into chat (Enter, type, Enter) on its own separate loop timer.",
                     "- Items Won reads Auto Division awards from unreachable_text_rect, lists player + item + raw OCR text, normalizes Forb/Kanada OCR variants, and skips Rupiah entries."
@@ -12817,7 +12869,7 @@ Public Class Form1
                     "- La lista de nombres de loot es una allow-list.",
                     "- Loot Name Match % es el umbral de OCR difuso para aceptar coincidencias.",
                     "- Loot Scan Area se configura en Vision.",
-                    "- Loot Scanner (Alt) activa el scanner OCR.",
+                    "- Loot Scanner (Alt) activa el scanner OCR. Alt + Screenshot Every (ms) controla la frecuencia entre 100 y 20,000 ms; valores menores escanean mas rapido pero usan mas CPU.",
                     "- Auto Party Invite presiona la tecla elegida (1-0 o F1-F10) y luego hace click en el punto fijo, en su propio temporizador.",
                     "- Auto Party Message escribe el texto en el chat (Enter, escribir, Enter) en su propio temporizador independiente.",
                     "- Items Won lee premios de Auto Division desde unreachable_text_rect, muestra jugador + objeto + OCR original, corrige variantes Forb/Kanada y omite Rupiah."
@@ -12952,7 +13004,7 @@ Public Class Form1
                     "- Ang loot name list ay allow-list ng mga gusto mong pulutin.",
                     "- Loot Name Match % ang fuzzy OCR threshold para sa loot text.",
                     "- Sa Vision tine-setup ang Loot Scan Area.",
-                    "- Loot Scanner (Alt) ang OCR scanner flow.",
+                    "- Loot Scanner (Alt) ang OCR scanner flow. Ang Alt + Screenshot Every (ms) ang frequency mula 100 hanggang 20,000 ms; mas mabilis ang mababang value pero mas mataas ang CPU usage.",
                     "- Auto Party Invite pinipindot ang piniling key (1-0 o F1-F10) tapos nagki-click sa fixed point, sa sarili nitong loop timer.",
                     "- Auto Party Message tine-type ang text sa chat (Enter, type, Enter) sa hiwalay nitong loop timer.",
                     "- Binabasa ng Items Won ang Auto Division awards mula sa unreachable_text_rect, inililista ang player + item + raw OCR, inaayos ang Forb/Kanada variants, at nilalaktawan ang Rupiah."
@@ -13280,7 +13332,7 @@ Public Class Form1
             $"AdaptiveConfirmSlow/Recover: {If(nudAdaptiveSlowConfirm IsNot Nothing, nudAdaptiveSlowConfirm.Value.ToString(), "5")}/{If(nudAdaptiveRecoveryConfirm IsNot Nothing, nudAdaptiveRecoveryConfirm.Value.ToString(), "14")}{Environment.NewLine}" &
             $"CaptureBackendPreference: {GetSelectedCaptureBackendCode()}{Environment.NewLine}" &
             $"FullFrameScanMs: {If(nudFullFrameScanMs IsNot Nothing, nudFullFrameScanMs.Value.ToString(), "500")}{Environment.NewLine}" &
-            $"LootScannerIntervalSec: {If(nudLootScannerSeconds IsNot Nothing, nudLootScannerSeconds.Value.ToString("0.0"), "10")}{Environment.NewLine}" &
+            $"LootScannerIntervalMs: {If(nudLootScannerIntervalMs IsNot Nothing, nudLootScannerIntervalMs.Value.ToString(), "10000")}{Environment.NewLine}" &
             $"MapScanMs: {If(nudMapScanMs IsNot Nothing, nudMapScanMs.Value.ToString(), "900")}{Environment.NewLine}" &
             $"PartyScanMs: {If(nudPartyScanMs IsNot Nothing, nudPartyScanMs.Value.ToString(), "700")}{Environment.NewLine}" &
             $"MobNameScanMs: {If(nudMobNameScanMs IsNot Nothing, nudMobNameScanMs.Value.ToString(), "650")}{Environment.NewLine}" &
@@ -15575,6 +15627,7 @@ Public Class Form1
         cfg.PartyAskEnabled = _partyAskEnabled
         cfg.PartyAskIntervalMs = CInt(Math.Round(CDbl(If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D)) * 1000.0))
         cfg.PartyAskText = GetPartyAskCommandText()
+        cfg.ChatMessageUseCtrlV = _chatMessageUseCtrlV
         cfg.AskForResurrectEnabled = _askForResurrectEnabled
         cfg.AskForResurrectIntervalMs = CInt(Math.Round(CDbl(If(nudAskForResurrectSeconds IsNot Nothing, nudAskForResurrectSeconds.Value, 30D)) * 1000.0))
         cfg.AskForResurrectText = GetAskForResurrectCommandText()
@@ -15646,7 +15699,7 @@ Public Class Form1
         cfg.AdaptiveRecoveryConfirmCount = CInt(If(nudAdaptiveRecoveryConfirm IsNot Nothing, nudAdaptiveRecoveryConfirm.Value, 14D))
         cfg.CaptureBackendPreference = GetSelectedCaptureBackendCode()
         cfg.FullFrameRefreshIntervalMs = CInt(If(nudFullFrameScanMs IsNot Nothing, nudFullFrameScanMs.Value, 500D))
-        cfg.LootScannerIntervalMs = CInt(Math.Round(CDbl(If(nudLootScannerSeconds IsNot Nothing, nudLootScannerSeconds.Value, 10D)) * 1000.0R))
+        cfg.LootScannerIntervalMs = CInt(If(nudLootScannerIntervalMs IsNot Nothing, nudLootScannerIntervalMs.Value, 10000D))
         cfg.MapCoordinateScanIntervalMs = CInt(If(nudMapScanMs IsNot Nothing, nudMapScanMs.Value, 900D))
         cfg.PartyListScanIntervalMs = CInt(If(nudPartyScanMs IsNot Nothing, nudPartyScanMs.Value, 700D))
         cfg.PartyInviteScanIntervalMs = CInt(If(nudPartyScanMs IsNot Nothing, nudPartyScanMs.Value, 900D))
@@ -16677,6 +16730,7 @@ Public Class Form1
             UpdatePartyInviteAutoAcceptButton()
             UpdateRessAutoAcceptButton()
             _partyAskEnabled = state.AskForPartyEnabled
+            _chatMessageUseCtrlV = state.ChatMessageUseCtrlV
             If nudPartyAskSeconds IsNot Nothing Then
                 Dim boundedAskSeconds As Decimal = Math.Max(nudPartyAskSeconds.Minimum, Math.Min(nudPartyAskSeconds.Maximum, state.AskForPartySeconds))
                 nudPartyAskSeconds.Value = boundedAskSeconds
@@ -16685,6 +16739,7 @@ Public Class Form1
                 txtPartyAskText.Text = If(String.IsNullOrWhiteSpace(state.AskForPartyText), DefaultPartyAskCommand, state.AskForPartyText.Trim())
             End If
             UpdatePartyAskButton()
+            UpdateChatMessageInputModeButton()
 
             _askForResurrectEnabled = state.AskForResurrectEnabled
             If nudAskForResurrectSeconds IsNot Nothing Then
@@ -16841,7 +16896,8 @@ Public Class Form1
                 .PartyRessAutoAcceptEnabled = _ressAutoAccept,
                 .AskForPartyEnabled = _partyAskEnabled,
                 .AskForPartySeconds = If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D),
-                                .AskForPartyText = GetPartyAskCommandText(),
+                .AskForPartyText = GetPartyAskCommandText(),
+                .ChatMessageUseCtrlV = _chatMessageUseCtrlV,
                 .AskForResurrectEnabled = _askForResurrectEnabled,
                 .AskForResurrectSeconds = If(nudAskForResurrectSeconds IsNot Nothing, nudAskForResurrectSeconds.Value, 30D),
                 .AskForResurrectText = GetAskForResurrectCommandText(),
@@ -17111,11 +17167,13 @@ Public Class Form1
         UpdatePartyInviteAutoAcceptButton()
         UpdateRessAutoAcceptButton()
         _partyAskEnabled = cfg.PartyAskEnabled
+        _chatMessageUseCtrlV = cfg.ChatMessageUseCtrlV
         SetNumericControlValue(nudPartyAskSeconds, CDec(Math.Max(1, cfg.PartyAskIntervalMs) / 1000.0))
         If txtPartyAskText IsNot Nothing Then
             txtPartyAskText.Text = If(String.IsNullOrWhiteSpace(cfg.PartyAskText), DefaultPartyAskCommand, cfg.PartyAskText.Trim())
         End If
         UpdatePartyAskButton()
+        UpdateChatMessageInputModeButton()
 
         _askForResurrectEnabled = cfg.AskForResurrectEnabled
         SetNumericControlValue(nudAskForResurrectSeconds, CDec(Math.Max(1, cfg.AskForResurrectIntervalMs) / 1000.0))
@@ -17266,7 +17324,7 @@ Public Class Form1
         SetNumericControlValue(nudAdaptiveRecoveryConfirm, CDec(Math.Max(1, cfg.AdaptiveRecoveryConfirmCount)))
         SelectCaptureBackend(cfg.CaptureBackendPreference)
         SetNumericControlValue(nudFullFrameScanMs, CDec(Math.Max(100, cfg.FullFrameRefreshIntervalMs)))
-        SetNumericControlValue(nudLootScannerSeconds, CDec(Math.Max(1.0R, cfg.LootScannerIntervalMs / 1000.0R)))
+        SetNumericControlValue(nudLootScannerIntervalMs, CDec(Math.Max(100, Math.Min(20000, cfg.LootScannerIntervalMs))))
         SetNumericControlValue(nudMapScanMs, CDec(Math.Max(250, cfg.MapCoordinateScanIntervalMs)))
         SetNumericControlValue(nudPartyScanMs, CDec(Math.Max(250, cfg.PartyListScanIntervalMs)))
         SetNumericControlValue(nudMobNameScanMs, CDec(Math.Max(120, cfg.MobNameScanIntervalMs)))
