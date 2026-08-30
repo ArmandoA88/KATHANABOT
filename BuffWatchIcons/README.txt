@@ -9,5 +9,9 @@ creates it beside the EXE and extracts all missing starter icons automatically o
 - Example: Divine_Shield.png appears as "Divine_Shield".
 - Open Buff Watch > Add From Library... and press Refresh after adding files.
 - Optional subfolders become categories in the icon selector.
+- Race folders contain researched copies for Naga/Kimnara, Ashura/Rakshasa,
+  Yaksa/Gandharva, and Deva/Garuda.
+- IMPORTANT: If a skill is missing from your race folder, check Library. Library is the
+  complete master collection and also holds shared, alternate-name, and unclassified icons.
 - Keep this folder beside the standalone KathanaBotControlPanel EXE when moving it.
 - The existing Capture from Game and Import from File options remain available.

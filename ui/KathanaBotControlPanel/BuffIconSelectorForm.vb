@@ -71,10 +71,11 @@ Friend Class BuffIconSelectorForm
     End Sub
 
     Private Sub BuildUi()
-        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 3, .Padding = New Padding(8)}
+        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 4, .Padding = New Padding(8)}
         root.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 170.0F))
         root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
         root.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 44.0F))
         root.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         root.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
         Controls.Add(root)
@@ -89,7 +90,7 @@ Friend Class BuffIconSelectorForm
         AddHandler btnAddCategory.Click, AddressOf AddCategoryClicked
         leftPanel.Controls.Add(btnAddCategory, 0, 1)
         root.Controls.Add(leftPanel, 0, 0)
-        root.SetRowSpan(leftPanel, 2)
+        root.SetRowSpan(leftPanel, 3)
 
         Dim searchRow As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 5, .RowCount = 1}
         searchRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
@@ -112,8 +113,20 @@ Friend Class BuffIconSelectorForm
         searchRow.Controls.Add(btnRefresh, 4, 0)
         root.Controls.Add(searchRow, 1, 0)
 
+        Dim raceFolderNotice As New Label() With {
+            .Text = "CAN'T FIND A SKILL IN YOUR RACE FOLDER? CHECK LIBRARY - it contains the complete collection, including shared, alternate-name, and unclassified icons.",
+            .Dock = DockStyle.Fill,
+            .BackColor = Color.FromArgb(126, 62, 0),
+            .ForeColor = Color.LightYellow,
+            .Font = New Font("Segoe UI", 9.0F, FontStyle.Bold),
+            .TextAlign = ContentAlignment.MiddleCenter,
+            .Padding = New Padding(8, 3, 8, 3),
+            .Margin = New Padding(0, 3, 0, 3)
+        }
+        root.Controls.Add(raceFolderNotice, 1, 1)
+
         flowIcons = New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoScroll = True, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .BackColor = Color.FromArgb(20, 20, 20)}
-        root.Controls.Add(flowIcons, 1, 1)
+        root.Controls.Add(flowIcons, 1, 2)
 
         lblHint = New Label() With {
             .Text = $"Portable icon library: {BotEngine.BuffIconLibraryRoot}",
@@ -122,7 +135,7 @@ Friend Class BuffIconSelectorForm
             .AutoEllipsis = True,
             .TextAlign = ContentAlignment.MiddleLeft
         }
-        root.Controls.Add(lblHint, 0, 2)
+        root.Controls.Add(lblHint, 0, 3)
 
         Dim buttonRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.RightToLeft}
         btnCancel = New Button() With {.Text = "Cancel", .AutoSize = True, .DialogResult = DialogResult.Cancel, .BackColor = Color.FromArgb(70, 70, 70), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat}
@@ -130,7 +143,7 @@ Friend Class BuffIconSelectorForm
         AddHandler btnApply.Click, AddressOf ApplyClicked
         buttonRow.Controls.Add(btnCancel)
         buttonRow.Controls.Add(btnApply)
-        root.Controls.Add(buttonRow, 1, 2)
+        root.Controls.Add(buttonRow, 1, 3)
 
         CancelButton = btnCancel
     End Sub

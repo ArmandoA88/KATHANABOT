@@ -1,7 +1,8 @@
-# KathanaBot 1.0.128
+# KathanaBot 1.0.129
 
 ## What changed
 
+- **Organized Buff Watch skills by race as well as Library.** Researched skill icons are now copied into Naga/Kimnara, Ashura/Rakshasa, Yaksa/Gandharva, and Deva/Garuda categories while the complete master collection remains in Library. A high-visibility notice tells users to check Library when a skill is shared, uses an alternate name, or could not be classified safely.
 - **Added a 100-20,000 ms Alt + screenshot frequency control to Loot Scan Matching.** The value is saved, updates the running Full engine immediately, and controls the actual Loot Scanner Alt/capture cycle.
 - **Replaced the startup notice with a high-visibility feedback request in English, Spanish, and Tagalog.** The previous notice remains on hold in the source, and the new message directs improvement ideas to `xSAITAMAx` by in-game PM.
 - **Added a Ctrl+V/Typing message-input toggle beside Auto Ask Party in Combat Full.** The smaller button controls all automated chat messages and remembers the selected mode.

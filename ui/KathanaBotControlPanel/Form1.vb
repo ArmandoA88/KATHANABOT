@@ -7624,9 +7624,12 @@ Public Class Form1
         bottomLayout.Controls.Add(selfClickRow, 0, 1)
 
         lblBuffWatchStatus = New Label() With {
-            .Text = $"Portable library: {BotEngine.BuffIconLibraryRoot}{Environment.NewLine}Drop PNG/BMP/JPG icons there; filenames become buff names. Capture/import remains available.",
+            .Text = $"Portable library: {BotEngine.BuffIconLibraryRoot}{Environment.NewLine}Race folders contain researched skill copies. CAN'T FIND ONE? Check Library - it always keeps the complete collection.{Environment.NewLine}Drop PNG/BMP/JPG icons there; filenames become buff names. Capture/import remains available.",
             .AutoSize = True,
-            .ForeColor = Color.Khaki,
+            .ForeColor = Color.LightYellow,
+            .BackColor = Color.FromArgb(96, 45, 0),
+            .Font = New Font("Segoe UI", 9.0F, FontStyle.Bold),
+            .Padding = New Padding(6, 4, 6, 4),
             .Margin = New Padding(3, 4, 3, 3)
         }
         bottomLayout.Controls.Add(lblBuffWatchStatus, 0, 2)
