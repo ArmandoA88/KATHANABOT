@@ -1804,6 +1804,21 @@ Public Class Form1
     Private cboFullSupportAssistKey As ComboBox
     Private nudFullSupportAssistCooldown As NumericUpDown
     Private chkFullSupportAssistHighPriority As CheckBox
+    Private chkFullSupportSelfSurvivalEnabled As CheckBox
+    Private ReadOnly chkFullSupportSelfActionEnabled As New List(Of CheckBox)()
+    Private ReadOnly cboFullSupportSelfActionKey As New List(Of ComboBox)()
+    Private ReadOnly nudFullSupportSelfActionHp As New List(Of NumericUpDown)()
+    Private ReadOnly nudFullSupportSelfActionCooldown As New List(Of NumericUpDown)()
+    Private ReadOnly nudFullSupportSelfActionPriority As New List(Of NumericUpDown)()
+    Private ReadOnly cboFullSupportSelfActionMode As New List(Of ComboBox)()
+    Private chkFullSupportPartyResurrectEnabled As CheckBox
+    Private cboFullSupportPartyResurrectKey As ComboBox
+    Private nudFullSupportPartyResurrectRetry As NumericUpDown
+    Private nudFullSupportPartyResurrectConfirmScans As NumericUpDown
+    Private chkFullSupportPartyResurrectOnlyAssist As CheckBox
+    Private nudFullSupportPartyResurrectMinSelfHp As NumericUpDown
+    Private nudFullSupportPartyResurrectMaxAttempts As NumericUpDown
+    Private nudFullSupportPartyResurrectBackoff As NumericUpDown
     Private _fullSupportUiLoading As Boolean = False
     Private btnBypassStuck As Button
     Private btnLootAfterKill As Button
@@ -6207,18 +6222,20 @@ Public Class Form1
     End Function
 
     Private Function BuildFullSupportTab() As TabPage
-        Dim tab As New TabPage("Full Support") With {.BackColor = ThemeBg}
+        Dim tab As New TabPage("Full Support") With {.BackColor = ThemeBg, .AutoScroll = True}
         Dim root As New TableLayoutPanel() With {
-            .Dock = DockStyle.Fill,
+            .Dock = DockStyle.Top,
+            .AutoSize = True,
             .ColumnCount = 1,
-            .RowCount = 4,
+            .RowCount = 5,
             .Padding = New Padding(24, 18, 24, 20),
             .BackColor = ThemeBg
         }
         root.RowStyles.Add(New RowStyle(SizeType.Absolute, 92.0F))
         root.RowStyles.Add(New RowStyle(SizeType.Absolute, 275.0F))
         root.RowStyles.Add(New RowStyle(SizeType.Absolute, 300.0F))
-        root.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 330.0F))
+        root.RowStyles.Add(New RowStyle(SizeType.Absolute, 72.0F))
         tab.Controls.Add(root)
 
         Dim header As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .BackColor = ThemeBg}
@@ -6277,6 +6294,7 @@ Public Class Form1
         dgvFullSupportMembers.GridColor = Color.FromArgb(35, 58, 90)
         dgvFullSupportMembers.Columns.Add("Member", "Member")
         dgvFullSupportMembers.Columns.Add("Enabled", "Monitor")
+        dgvFullSupportMembers.Columns.Add("State", "Live state")
         dgvFullSupportMembers.Columns.Add("HpRect", "HP rectangle (relative)")
         dgvFullSupportMembers.Columns.Add("ClickPoint", "Selection point")
         calibrationRow.Controls.Add(dgvFullSupportMembers, 0, 0)
@@ -6305,15 +6323,22 @@ Public Class Form1
         modes.Controls.Add(BuildAssistSkillCard(), 3, 0)
         root.Controls.Add(modes, 0, 2)
 
+        Dim survivalRow As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .BackColor = ThemeBg, .Padding = New Padding(0, 0, 0, 14)}
+        survivalRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 66.0F))
+        survivalRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 34.0F))
+        survivalRow.Controls.Add(BuildFullSupportSelfSurvivalCard(), 0, 0)
+        survivalRow.Controls.Add(BuildFullSupportResurrectionCard(), 1, 0)
+        root.Controls.Add(survivalRow, 0, 3)
+
         Dim safetyNote As New Label() With {
             .Dock = DockStyle.Top,
             .Height = 64,
             .Padding = New Padding(18, 13, 18, 0),
             .BackColor = Color.FromArgb(13, 24, 43),
             .ForeColor = Color.FromArgb(145, 174, 214),
-            .Text = "Safety: a member must be below the configured threshold in two consecutive scans. Party heal triggers for any one confirmed-low member once the required party size is readable. Missing, black, or uncertain party images skip only that scan."
+            .Text = "Safety: self recovery and living-member heals require two consecutive low readings. A missing HP bar becomes DEAD only after the configured row-presence confirmations. DEAD members are excluded from healing; resurrection waits behind urgent healing, retries with backoff, and never moves the Vidya."
         }
-        root.Controls.Add(safetyNote, 0, 3)
+        root.Controls.Add(safetyNote, 0, 4)
         RefreshFullSupportMembersUi()
         Return tab
     End Function
@@ -6388,6 +6413,108 @@ Public Class Form1
         body.SetColumnSpan(hint, 2)
         WireFullSupportLiveConfig(body)
         Return body.Parent
+    End Function
+
+    Private Function BuildFullSupportSelfSurvivalCard() As Control
+        Dim card As New Panel() With {.Dock = DockStyle.Fill, .Margin = New Padding(0, 0, 12, 0), .Padding = New Padding(18, 12, 18, 14), .BackColor = Color.FromArgb(19, 32, 56)}
+        Dim body As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 6, .RowCount = 6, .BackColor = card.BackColor}
+        body.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 29.0F))
+        body.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 11.0F))
+        body.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 12.0F))
+        body.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 18.0F))
+        body.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 12.0F))
+        body.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 18.0F))
+        body.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
+        body.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        For row As Integer = 2 To 5
+            body.RowStyles.Add(New RowStyle(SizeType.Absolute, 50.0F))
+        Next
+
+        chkFullSupportSelfSurvivalEnabled = CreateFullSupportCheck("VIDYA SELF SURVIVAL — enable four ordered recovery options")
+        chkFullSupportSelfSurvivalEnabled.ForeColor = Color.FromArgb(77, 225, 174)
+        body.Controls.Add(chkFullSupportSelfSurvivalEnabled, 0, 0)
+        body.SetColumnSpan(chkFullSupportSelfSurvivalEnabled, 6)
+
+        Dim headers As String() = {"Recovery option", "HP <=", "Key", "Cooldown ms", "Priority", "Cast style"}
+        For column As Integer = 0 To headers.Length - 1
+            body.Controls.Add(New Label() With {.Text = headers(column), .Dock = DockStyle.Fill, .ForeColor = Color.FromArgb(148, 178, 218), .TextAlign = ContentAlignment.MiddleLeft}, column, 1)
+        Next
+
+        chkFullSupportSelfActionEnabled.Clear()
+        cboFullSupportSelfActionKey.Clear()
+        nudFullSupportSelfActionHp.Clear()
+        nudFullSupportSelfActionCooldown.Clear()
+        nudFullSupportSelfActionPriority.Clear()
+        cboFullSupportSelfActionMode.Clear()
+        Dim defaults As List(Of FullSupportSelfAction) = BotConfig.CreateDefaultFullSupportSelfActions()
+        For index As Integer = 0 To defaults.Count - 1
+            Dim row As Integer = index + 2
+            Dim action As FullSupportSelfAction = defaults(index)
+            Dim enabled As CheckBox = CreateFullSupportCheck(action.Name)
+            Dim hp As NumericUpDown = CreateFullSupportNumeric(1, 99, action.HpBelowPercent)
+            Dim key As ComboBox = CreateFullSupportKeyCombo(action.KeyName)
+            Dim cooldown As NumericUpDown = CreateFullSupportNumeric(250, 600000, action.CooldownMs, 50)
+            Dim priority As NumericUpDown = CreateFullSupportNumeric(1, 4, action.Priority)
+            Dim mode As ComboBox = CreateFullSupportCombo()
+            mode.Items.AddRange(New Object() {"Direct", "Self-target (`)", "Area/group"})
+            mode.SelectedIndex = If(action.CastMode = "self", 1, If(action.CastMode = "area", 2, 0))
+
+            chkFullSupportSelfActionEnabled.Add(enabled)
+            nudFullSupportSelfActionHp.Add(hp)
+            cboFullSupportSelfActionKey.Add(key)
+            nudFullSupportSelfActionCooldown.Add(cooldown)
+            nudFullSupportSelfActionPriority.Add(priority)
+            cboFullSupportSelfActionMode.Add(mode)
+            body.Controls.Add(enabled, 0, row)
+            body.Controls.Add(hp, 1, row)
+            body.Controls.Add(key, 2, row)
+            body.Controls.Add(cooldown, 3, row)
+            body.Controls.Add(priority, 4, row)
+            body.Controls.Add(mode, 5, row)
+        Next
+
+        WireFullSupportLiveConfig(body)
+        card.Controls.Add(body)
+        Return card
+    End Function
+
+    Private Function BuildFullSupportResurrectionCard() As Control
+        Dim card As New Panel() With {.Dock = DockStyle.Fill, .Margin = New Padding(0), .Padding = New Padding(18, 12, 18, 14), .BackColor = Color.FromArgb(19, 32, 56)}
+        Dim body As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 9, .BackColor = card.BackColor}
+        body.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 54.0F))
+        body.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 46.0F))
+        body.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
+        For row As Integer = 1 To 8
+            body.RowStyles.Add(New RowStyle(SizeType.Absolute, 31.0F))
+        Next
+
+        chkFullSupportPartyResurrectEnabled = CreateFullSupportCheck("PARTY AUTO RESURRECTION")
+        chkFullSupportPartyResurrectEnabled.ForeColor = Color.FromArgb(255, 190, 92)
+        body.Controls.Add(chkFullSupportPartyResurrectEnabled, 0, 0)
+        body.SetColumnSpan(chkFullSupportPartyResurrectEnabled, 2)
+        cboFullSupportPartyResurrectKey = CreateFullSupportKeyCombo("F5")
+        AddFullSupportField(body, "Resurrection key", cboFullSupportPartyResurrectKey, 1)
+        nudFullSupportPartyResurrectRetry = CreateFullSupportNumeric(1000, 60000, 5000, 250)
+        AddFullSupportField(body, "Retry interval ms", nudFullSupportPartyResurrectRetry, 2)
+        nudFullSupportPartyResurrectConfirmScans = CreateFullSupportNumeric(2, 8, 3)
+        AddFullSupportField(body, "Dead confirm scans", nudFullSupportPartyResurrectConfirmScans, 3)
+        nudFullSupportPartyResurrectMinSelfHp = CreateFullSupportNumeric(1, 99, 50)
+        AddFullSupportField(body, "Minimum Vidya HP", nudFullSupportPartyResurrectMinSelfHp, 4)
+        nudFullSupportPartyResurrectMaxAttempts = CreateFullSupportNumeric(1, 10, 3)
+        AddFullSupportField(body, "Attempts per round", nudFullSupportPartyResurrectMaxAttempts, 5)
+        nudFullSupportPartyResurrectBackoff = CreateFullSupportNumeric(1000, 600000, 30000, 1000)
+        AddFullSupportField(body, "Backoff ms", nudFullSupportPartyResurrectBackoff, 6)
+        chkFullSupportPartyResurrectOnlyAssist = CreateFullSupportCheck("Only while Assist is enabled")
+        chkFullSupportPartyResurrectOnlyAssist.Checked = True
+        body.Controls.Add(chkFullSupportPartyResurrectOnlyAssist, 0, 7)
+        body.SetColumnSpan(chkFullSupportPartyResurrectOnlyAssist, 2)
+        Dim hint As New Label() With {.Text = "Selects the calibrated dead party row and casts. No coordinate travel.", .Dock = DockStyle.Fill, .ForeColor = ThemeTextSecondary, .TextAlign = ContentAlignment.MiddleLeft}
+        body.Controls.Add(hint, 0, 8)
+        body.SetColumnSpan(hint, 2)
+
+        WireFullSupportLiveConfig(body)
+        card.Controls.Add(body)
+        Return card
     End Function
 
     Private Function CreateFullSupportModeCard(title As String, accent As Color) As TableLayoutPanel
@@ -6491,7 +6618,7 @@ Public Class Form1
             For index As Integer = 0 To _fullSupportPartyMembers.Count - 1
                 Dim member As FullSupportPartyMember = _fullSupportPartyMembers(index)
                 Dim hp As RectRegion = If(member.HpBarRect, New RectRegion())
-                dgvFullSupportMembers.Rows.Add($"{index + 1}. {member.Name}", If(member.Enabled, "Yes", "No"), $"{hp.X}, {hp.Y}, {hp.W} × {hp.H}", $"{member.SelectPointX}, {member.SelectPointY}")
+                dgvFullSupportMembers.Rows.Add($"{index + 1}. {member.Name}", If(member.Enabled, "Yes", "No"), If(member.Enabled, "WAITING", "DISABLED"), $"{hp.X}, {hp.Y}, {hp.W} × {hp.H}", $"{member.SelectPointX}, {member.SelectPointY}")
             Next
         End If
 
@@ -6512,6 +6639,22 @@ Public Class Form1
         End If
     End Sub
 
+    Private Sub UpdateFullSupportMemberStatesUi(status As BotStatus)
+        If dgvFullSupportMembers Is Nothing OrElse status Is Nothing Then Return
+        Dim states As List(Of String) = If(status.FullSupportPartyStates, New List(Of String)())
+        Dim hpValues As List(Of Double) = If(status.FullSupportPartyHp, New List(Of Double)())
+        For index As Integer = 0 To dgvFullSupportMembers.Rows.Count - 1
+            Dim state As String = If(index < states.Count AndAlso Not String.IsNullOrWhiteSpace(states(index)), states(index), "WAITING")
+            Dim display As String = state
+            If index < hpValues.Count AndAlso hpValues(index) > 0.5R AndAlso (state = "ALIVE" OrElse state = "LOW") Then
+                display = $"{state} {hpValues(index):0}%"
+            End If
+            Dim cell As DataGridViewCell = dgvFullSupportMembers.Rows(index).Cells("State")
+            cell.Value = display
+            cell.Style.ForeColor = If(state = "DEAD", Color.FromArgb(255, 120, 120), If(state.StartsWith("POSSIBLE", StringComparison.OrdinalIgnoreCase), Color.Khaki, If(state = "LOW", Color.FromArgb(255, 190, 92), If(state = "ALIVE", ThemeGood, Color.Gainsboro))))
+        Next
+    End Sub
+
     Private Shared Function CloneFullSupportMembers(source As IEnumerable(Of FullSupportPartyMember)) As List(Of FullSupportPartyMember)
         Dim result As New List(Of FullSupportPartyMember)()
         If source Is Nothing Then Return result
@@ -6522,6 +6665,49 @@ Public Class Form1
         Next
         Return result
     End Function
+
+    Private Function BuildFullSupportSelfActionsFromUi() As List(Of FullSupportSelfAction)
+        Dim result As New List(Of FullSupportSelfAction)()
+        Dim defaults As List(Of FullSupportSelfAction) = BotConfig.CreateDefaultFullSupportSelfActions()
+        For index As Integer = 0 To defaults.Count - 1
+            Dim mode As String = "direct"
+            If index < cboFullSupportSelfActionMode.Count AndAlso cboFullSupportSelfActionMode(index).SelectedIndex = 1 Then
+                mode = "self"
+            ElseIf index < cboFullSupportSelfActionMode.Count AndAlso cboFullSupportSelfActionMode(index).SelectedIndex = 2 Then
+                mode = "area"
+            End If
+            result.Add(New FullSupportSelfAction With {
+                .Name = defaults(index).Name,
+                .Enabled = index < chkFullSupportSelfActionEnabled.Count AndAlso chkFullSupportSelfActionEnabled(index).Checked,
+                .KeyName = If(index < cboFullSupportSelfActionKey.Count AndAlso cboFullSupportSelfActionKey(index).SelectedItem IsNot Nothing, cboFullSupportSelfActionKey(index).SelectedItem.ToString(), defaults(index).KeyName),
+                .HpBelowPercent = CInt(If(index < nudFullSupportSelfActionHp.Count, nudFullSupportSelfActionHp(index).Value, defaults(index).HpBelowPercent)),
+                .CooldownMs = CInt(If(index < nudFullSupportSelfActionCooldown.Count, nudFullSupportSelfActionCooldown(index).Value, defaults(index).CooldownMs)),
+                .Priority = CInt(If(index < nudFullSupportSelfActionPriority.Count, nudFullSupportSelfActionPriority(index).Value, defaults(index).Priority)),
+                .CastMode = mode
+            })
+        Next
+        Return result
+    End Function
+
+    Private Sub LoadFullSupportSelfActionsIntoUi(source As IEnumerable(Of FullSupportSelfAction))
+        Dim defaults As List(Of FullSupportSelfAction) = BotConfig.CreateDefaultFullSupportSelfActions()
+        Dim configured As List(Of FullSupportSelfAction) = If(source, Enumerable.Empty(Of FullSupportSelfAction)()).Where(Function(action) action IsNot Nothing).ToList()
+        For index As Integer = 0 To defaults.Count - 1
+            Dim defaultActionName As String = defaults(index).Name
+            Dim action As FullSupportSelfAction = configured.FirstOrDefault(Function(candidate) String.Equals(candidate.Name, defaultActionName, StringComparison.OrdinalIgnoreCase))
+            If action Is Nothing AndAlso index < configured.Count Then action = configured(index)
+            If action Is Nothing Then action = defaults(index)
+            If index < chkFullSupportSelfActionEnabled.Count Then chkFullSupportSelfActionEnabled(index).Checked = action.Enabled
+            If index < cboFullSupportSelfActionKey.Count Then SelectFullSupportKey(cboFullSupportSelfActionKey(index), action.KeyName, defaults(index).KeyName)
+            If index < nudFullSupportSelfActionHp.Count Then SetNumericControlValue(nudFullSupportSelfActionHp(index), Math.Max(1, action.HpBelowPercent))
+            If index < nudFullSupportSelfActionCooldown.Count Then SetNumericControlValue(nudFullSupportSelfActionCooldown(index), Math.Max(250, action.CooldownMs))
+            If index < nudFullSupportSelfActionPriority.Count Then SetNumericControlValue(nudFullSupportSelfActionPriority(index), Math.Max(1, Math.Min(4, action.Priority)))
+            If index < cboFullSupportSelfActionMode.Count Then
+                Dim mode As String = If(action.CastMode, "direct").Trim().ToLowerInvariant()
+                cboFullSupportSelfActionMode(index).SelectedIndex = If(mode = "self", 1, If(mode = "area", 2, 0))
+            End If
+        Next
+    End Sub
 
     Private Shared Sub SelectFullSupportKey(combo As ComboBox, configured As String, fallback As String)
         If combo Is Nothing Then Return
@@ -13643,8 +13829,9 @@ Public Class Form1
         If lblFullSupportLiveStatus IsNot Nothing Then
             Dim supportText As String = If(String.IsNullOrWhiteSpace(status.FullSupportStatus), "Waiting for party scan.", status.FullSupportStatus)
             lblFullSupportLiveStatus.Text = supportText
-            lblFullSupportLiveStatus.ForeColor = If(supportText.IndexOf("skipped", StringComparison.OrdinalIgnoreCase) >= 0 OrElse supportText.IndexOf("uncertain", StringComparison.OrdinalIgnoreCase) >= 0, Color.Khaki, If(supportText.IndexOf("heal", StringComparison.OrdinalIgnoreCase) >= 0 AndAlso supportText.IndexOf("disabled", StringComparison.OrdinalIgnoreCase) < 0, ThemeGood, Color.FromArgb(212, 225, 246)))
+            lblFullSupportLiveStatus.ForeColor = If(supportText.IndexOf("dead", StringComparison.OrdinalIgnoreCase) >= 0 OrElse supportText.IndexOf("resurrection", StringComparison.OrdinalIgnoreCase) >= 0, Color.FromArgb(255, 190, 92), If(supportText.IndexOf("skipped", StringComparison.OrdinalIgnoreCase) >= 0 OrElse supportText.IndexOf("uncertain", StringComparison.OrdinalIgnoreCase) >= 0, Color.Khaki, If(supportText.IndexOf("heal", StringComparison.OrdinalIgnoreCase) >= 0 AndAlso supportText.IndexOf("disabled", StringComparison.OrdinalIgnoreCase) < 0, ThemeGood, Color.FromArgb(212, 225, 246))))
         End If
+        UpdateFullSupportMemberStatesUi(status)
         If lblLevelingState IsNot Nothing Then
             lblLevelingState.Text = $"Agent State: {status.AgentState}"
             lblLevelingState.ForeColor = If(status.AgentGuardrailTriggered, Color.FromArgb(255, 120, 120), If(status.AgentEnabled, Color.Khaki, Color.DimGray))
@@ -15623,6 +15810,16 @@ Public Class Form1
         cfg.FullSupportAssistKey = If(cboFullSupportAssistKey IsNot Nothing AndAlso cboFullSupportAssistKey.SelectedItem IsNot Nothing, cboFullSupportAssistKey.SelectedItem.ToString(), "F4")
         cfg.FullSupportAssistCooldownMs = CInt(If(nudFullSupportAssistCooldown IsNot Nothing, nudFullSupportAssistCooldown.Value, 30000D))
         cfg.FullSupportAssistHighPriority = (chkFullSupportAssistHighPriority Is Nothing OrElse chkFullSupportAssistHighPriority.Checked)
+        cfg.FullSupportSelfSurvivalEnabled = (chkFullSupportSelfSurvivalEnabled IsNot Nothing AndAlso chkFullSupportSelfSurvivalEnabled.Checked)
+        cfg.FullSupportSelfActions = BuildFullSupportSelfActionsFromUi()
+        cfg.FullSupportPartyResurrectEnabled = (chkFullSupportPartyResurrectEnabled IsNot Nothing AndAlso chkFullSupportPartyResurrectEnabled.Checked)
+        cfg.FullSupportPartyResurrectKey = If(cboFullSupportPartyResurrectKey IsNot Nothing AndAlso cboFullSupportPartyResurrectKey.SelectedItem IsNot Nothing, cboFullSupportPartyResurrectKey.SelectedItem.ToString(), "F5")
+        cfg.FullSupportPartyResurrectRetryMs = CInt(If(nudFullSupportPartyResurrectRetry IsNot Nothing, nudFullSupportPartyResurrectRetry.Value, 5000D))
+        cfg.FullSupportPartyResurrectConfirmScans = CInt(If(nudFullSupportPartyResurrectConfirmScans IsNot Nothing, nudFullSupportPartyResurrectConfirmScans.Value, 3D))
+        cfg.FullSupportPartyResurrectOnlyWhileAssistEnabled = (chkFullSupportPartyResurrectOnlyAssist Is Nothing OrElse chkFullSupportPartyResurrectOnlyAssist.Checked)
+        cfg.FullSupportPartyResurrectMinimumSelfHpPercent = CInt(If(nudFullSupportPartyResurrectMinSelfHp IsNot Nothing, nudFullSupportPartyResurrectMinSelfHp.Value, 50D))
+        cfg.FullSupportPartyResurrectMaxAttempts = CInt(If(nudFullSupportPartyResurrectMaxAttempts IsNot Nothing, nudFullSupportPartyResurrectMaxAttempts.Value, 3D))
+        cfg.FullSupportPartyResurrectBackoffMs = CInt(If(nudFullSupportPartyResurrectBackoff IsNot Nothing, nudFullSupportPartyResurrectBackoff.Value, 30000D))
         cfg.BypassStuckTarget = _bypassStuckTarget
         cfg.LootAfterKillEnabled = _lootAfterKillEnabled
         cfg.PartyInviteAutoAcceptEnabled = _partyInviteAutoAccept
@@ -17147,6 +17344,16 @@ Public Class Form1
             SelectFullSupportKey(cboFullSupportIndividualKey, cfg.FullSupportIndividualHealKey, "F2")
             SelectFullSupportKey(cboFullSupportPartyHealKey, cfg.FullSupportPartyHealKey, "F3")
             SelectFullSupportKey(cboFullSupportAssistKey, cfg.FullSupportAssistKey, "F4")
+            If chkFullSupportSelfSurvivalEnabled IsNot Nothing Then chkFullSupportSelfSurvivalEnabled.Checked = cfg.FullSupportSelfSurvivalEnabled
+            LoadFullSupportSelfActionsIntoUi(cfg.FullSupportSelfActions)
+            If chkFullSupportPartyResurrectEnabled IsNot Nothing Then chkFullSupportPartyResurrectEnabled.Checked = cfg.FullSupportPartyResurrectEnabled
+            If chkFullSupportPartyResurrectOnlyAssist IsNot Nothing Then chkFullSupportPartyResurrectOnlyAssist.Checked = cfg.FullSupportPartyResurrectOnlyWhileAssistEnabled
+            SelectFullSupportKey(cboFullSupportPartyResurrectKey, cfg.FullSupportPartyResurrectKey, "F5")
+            SetNumericControlValue(nudFullSupportPartyResurrectRetry, Math.Max(1000, cfg.FullSupportPartyResurrectRetryMs))
+            SetNumericControlValue(nudFullSupportPartyResurrectConfirmScans, Math.Max(2, cfg.FullSupportPartyResurrectConfirmScans))
+            SetNumericControlValue(nudFullSupportPartyResurrectMinSelfHp, Math.Max(1, cfg.FullSupportPartyResurrectMinimumSelfHpPercent))
+            SetNumericControlValue(nudFullSupportPartyResurrectMaxAttempts, Math.Max(1, cfg.FullSupportPartyResurrectMaxAttempts))
+            SetNumericControlValue(nudFullSupportPartyResurrectBackoff, Math.Max(1000, cfg.FullSupportPartyResurrectBackoffMs))
             RefreshFullSupportMembersUi()
             If cboFullSupportTankMember IsNot Nothing AndAlso cboFullSupportTankMember.Items.Count > 0 Then
                 cboFullSupportTankMember.SelectedIndex = Math.Max(0, Math.Min(cfg.FullSupportTankMemberIndex, cboFullSupportTankMember.Items.Count - 1))

@@ -1,7 +1,8 @@
-# KathanaBot 1.0.129
+# KathanaBot 1.0.130
 
 ## What changed
 
+- **Added Vidya self-survival and nearby party resurrection to Full Support.** Users can independently configure HP Potion, two self-heal skills, and Morada with HP thresholds, hotkeys, cooldowns, cast styles, and priorities. Calibrated party members now show ALIVE/LOW/POSSIBLE DEAD/DEAD/UNKNOWN states; confirmed-dead members are excluded from normal healing and can receive Assist-gated resurrection attempts with confirmation, retry, safety-HP, maximum-attempt, and backoff controls. The existing self resurrection-dialog auto-accept remains separate and active when the Vidya is dead.
 - **Organized Buff Watch skills by race as well as Library.** Researched skill icons are now copied into Naga/Kimnara, Ashura/Rakshasa, Yaksa/Gandharva, and Deva/Garuda categories while the complete master collection remains in Library. A high-visibility notice tells users to check Library when a skill is shared, uses an alternate name, or could not be classified safely.
 - **Added a 100-20,000 ms Alt + screenshot frequency control to Loot Scan Matching.** The value is saved, updates the running Full engine immediately, and controls the actual Loot Scanner Alt/capture cycle.
 - **Replaced the startup notice with a high-visibility feedback request in English, Spanish, and Tagalog.** The previous notice remains on hold in the source, and the new message directs improvement ideas to `xSAITAMAx` by in-game PM.
@@ -9,6 +10,7 @@
 - **Added a visual calibration wizard for Full Support** ("Calibrate party + HP bars"): click-drag over a live game capture to set the party list area, then place each member's HP bar and select-click point per party slot (up to 7), with a member editor for naming and enabling/disabling slots. Full Support now heals off these confirmed HP-bar reads instead of guessed coordinates, and the tab shows the calibrated party area and member count at a glance.
 - **Fixed false Home EXP gains and impossible hourly rates caused by OCR misreads.** EXP now requires a confirmed startup baseline, rejects backward/impossible jumps, recognizes level rollover only from 90%+ to 10% or less, keeps accepted pace below 10% per hour, and resets the Home session counters on each Full run.
 - **Added an optional Full Combat in-game chat key pause, off by default.** When enabled, Enter in the selected game window pauses all automated key output for typing; the next Enter resumes the already-running bot. The Combat Skills panel shows OFF, READY/ARMED, or PAUSED status.
+- **Full Support tank and individual heals now reselect the Vidya with the backtick (`) key right after casting.** This keeps self-survival, resurrection, and other Vidya-targeted actions working off the Vidya instead of whichever party member was just healed; the live status line reports whether the reselect succeeded.
 
 ## Recent change history - last 5
 
