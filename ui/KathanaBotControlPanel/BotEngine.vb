@@ -1436,6 +1436,50 @@ Public Class BotEngine
         End SyncLock
     End Function
 
+    Public Sub ResetStatsTelemetryReadings()
+        Dim snapshot As BotStatus
+        SyncLock _sync
+            ' Invalidate and detach any numeric OCR work that began before Reset was confirmed.
+            ' The next engine pass must capture fresh pixels instead of harvesting a stale task.
+            _runGeneration += 1L
+            _lastExpPercent = -1
+            _lastAcceptedExpAt = DateTime.MinValue
+            _pendingExpPercent = -1
+            _pendingExpConfirmCount = 0
+            _lastExpOcrRejectLogAt = DateTime.MinValue
+            _lastExpOcrAt = DateTime.MinValue
+            _expOcrTask = Nothing
+            _expOcrTaskGeneration = -1L
+            _lastExpRateSampleAt = DateTime.MinValue
+            _lastExpRateSamplePercent = -1
+            _lastExpPerHour = -1
+
+            _lastRupiahsTotal = -1
+            _lastAcceptedRupiahsAt = DateTime.MinValue
+            _pendingRupiahsTotal = -1
+            _pendingRupiahsConfirmCount = 0
+            _lastRupiahsOcrRejectLogAt = DateTime.MinValue
+            _lastRupiahsOcrAt = DateTime.MinValue
+            _rupiahsOcrTask = Nothing
+            _rupiahsOcrTaskGeneration = -1L
+            _lastRupiahsRateSampleAt = DateTime.MinValue
+            _lastRupiahsRateSampleTotal = -1
+            _lastRupiahsPerHour = -1
+
+            _status.ExpPercent = -1
+            _status.ExpPerHour = -1
+            _status.RupiahsTotal = -1
+            _status.RupiahsPerHour = -1
+            _status.UpdatedAt = DateTime.UtcNow
+            _lastStatusRaisedAt = DateTime.MinValue
+            _lastStatusRaisedSignature = ""
+            snapshot = CloneStatus(_status)
+        End SyncLock
+
+        RaiseEvent LogLine("EXP and Rupiah OCR cleared; the next valid fresh readings will become the fixed stats baselines.")
+        RaiseEvent StatusUpdated(snapshot)
+    End Sub
+
     Public Function IsRunning() As Boolean
         SyncLock _sync
             Return _status.Running
@@ -8216,7 +8260,7 @@ Public Class BotEngine
                 _lastExpPercent = candidate
                 _lastAcceptedExpAt = now
                 ClearPendingExpCandidate()
-                RaiseEvent LogLine($"EXP OCR resynchronized from {previous:0.00}% to {candidate:0.00}% after two consistent readings; no negative EXP was counted.")
+                RaiseEvent LogLine($"EXP OCR resynchronized from {previous:0.00}% to {candidate:0.00}% after two consistent readings; fixed-baseline gain will follow the lower reading.")
                 Return True
             End If
             LogRejectedExpOcr(candidate, now, "backward reading is waiting for a second consistent OCR result")

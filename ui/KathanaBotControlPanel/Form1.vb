@@ -15,7 +15,7 @@ Imports System.Security.Cryptography
 Imports Velopack
 Imports Velopack.Sources
 
-Public Class Form1
+Partial Public Class Form1
     Private Shared ReadOnly PrimaryKeys As String() = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"}
     Private Shared ReadOnly FunctionKeys As String() = {"F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10"}
     Private Shared ReadOnly LitePrimarySkillKeys As String() = {"1", "2", "3", "4", "5", "6", "7", "8"}
@@ -121,6 +121,7 @@ Public Class Form1
     Private _holdPlaceTab As TabPage
     Private _buffWatchTab As TabPage
     Private _diagnosticsTab As TabPage
+    Private _quizTab As TabPage
     Private _updateTab As TabPage
     Private Const HelpScopeAll As String = "all"
     Private Const HelpScopeLite As String = "lite"
@@ -2084,26 +2085,16 @@ Public Class Form1
     Private _lastAchievementExpBasisPoints As Integer = -1
     Private _cumulativeExpEarnedBasisPoints As Long = 0
     Private _cumulativeRupiahsEarned As Long = 0
-    Private _achievementObservedRunStartedAtUtc As DateTime = DateTime.MinValue
-    Private _achievementObservedCharacterName As String = ""
     Private _achievementBaseExpBasisPoints As Integer = -1
     Private _achievementExpLevelRollovers As Integer = 0
-    Private _achievementCommittedExpEarnedBasisPoints As Long = 0
     Private _achievementBaseRupiahsTotal As Long = -1
-    Private _achievementCommittedRupiahsEarned As Long = 0
     Private ReadOnly _applicationSessionStartedAtUtc As DateTime = DateTime.UtcNow
-    Private _dashboardSessionRunStartedAtUtc As DateTime = DateTime.MinValue
     Private _dashboardRunBaseRupiahs As Long = -1
-    Private _dashboardCommittedRupiahsEarned As Long = 0
-    Private _dashboardCommittedRupiahsSpent As Long = 0
     Private _dashboardSessionRupiahsEarned As Long = 0
-    Private _dashboardSessionRupiahsSpent As Long = 0
     Private _dashboardRunBaseExpBasisPoints As Integer = -1
     Private _dashboardRunLastExpBasisPoints As Integer = -1
     Private _dashboardRunExpLevelRollovers As Integer = 0
-    Private _dashboardCommittedExpEarnedBasisPoints As Long = 0
     Private _dashboardSessionExpEarnedBasisPoints As Long = 0
-    Private _dashboardSessionCharacterName As String = ""
     Private _dashboardLastRateSampleAtUtc As DateTime = DateTime.MinValue
     Private ReadOnly _dashboardExpRateHistory As New List(Of Double)()
     Private ReadOnly _dashboardRupiahRateHistory As New List(Of Double)()
@@ -2311,6 +2302,7 @@ Public Class Form1
         Public Property UpdateCheckAtStartup As Boolean = True
         Public Property UpdateIncludePrereleases As Boolean = False
         Public Property DashboardMode As String = "Compact"
+        Public Property Quiz As PersistedQuizState = New PersistedQuizState()
         Public Property Full As PersistedListState = New PersistedListState()
         Public Property Lite As PersistedLiteState = New PersistedLiteState()
     End Class
@@ -3655,6 +3647,9 @@ Public Class Form1
         _diagnosticsTab = BuildDiagnosticsTab()
         _mainTabs.TabPages.Add(_diagnosticsTab)
         UpdateDiagnosticsTabVisibility()
+        ' Built now so its settings can load normally, but deliberately not added to the sidebar
+        ' until the Home-page digit sequence unlocks it for this executable session.
+        _quizTab = BuildQuizTab()
         _updateTab = BuildUpdateTab()
         _mainTabs.TabPages.Add(_updateTab)
         _mainTabs.FitTabsToHeight()
@@ -3842,32 +3837,39 @@ Public Class Form1
 
     Private Sub DashboardResetSessionClicked(sender As Object, e As EventArgs)
         If MessageBox.Show(Me,
-                           "Reset the EXE-session EXP and Rupiah counters? This does not change the in-game wallet or EXP.",
+                           "Reset the EXE-session EXP and Rupiah counters? After OK, the next fresh valid OCR readings become the new fixed baselines. This does not change the in-game wallet or EXP.",
                            "Reset Session Stats",
-                           MessageBoxButtons.YesNo,
-                           MessageBoxIcon.Question) <> DialogResult.Yes Then
+                           MessageBoxButtons.OKCancel,
+                           MessageBoxIcon.Question) <> DialogResult.OK Then
             Return
         End If
 
         _dashboardRunBaseRupiahs = -1
-        _dashboardCommittedRupiahsEarned = 0
-        _dashboardCommittedRupiahsSpent = 0
         _dashboardSessionRupiahsEarned = 0
-        _dashboardSessionRupiahsSpent = 0
         _dashboardRunBaseExpBasisPoints = -1
         _dashboardRunLastExpBasisPoints = -1
         _dashboardRunExpLevelRollovers = 0
-        _dashboardCommittedExpEarnedBasisPoints = 0
         _dashboardSessionExpEarnedBasisPoints = 0
-        _dashboardSessionCharacterName = ""
         _dashboardLastRateSampleAtUtc = DateTime.MinValue
         _dashboardExpRateHistory.Clear()
         _dashboardRupiahRateHistory.Clear()
-        AddDashboardRecentEvent("EXE-session EXP and Rupiah counters reset")
+        _fullEngine.ResetStatsTelemetryReadings()
+        ResetAchievementTelemetryState()
+        AddDashboardRecentEvent("EXP and Rupiah counters reset; waiting for fresh fixed baselines")
+    End Sub
 
-        If _fullStatus IsNot Nothing Then
-            UpdateDashboardUi(_fullStatus, BotEdition.Full)
-        End If
+    Private Sub ResetAchievementTelemetryState()
+        SyncLock _achievementSamplesSync
+            _achievementSamples.Clear()
+        End SyncLock
+        _lastAchievementSampleAt = DateTime.MinValue
+        _lastAchievementExpBasisPoints = -1
+        _cumulativeExpEarnedBasisPoints = 0
+        _cumulativeRupiahsEarned = 0
+        _achievementBaseExpBasisPoints = -1
+        _achievementExpLevelRollovers = 0
+        _achievementBaseRupiahsTotal = -1
+        RefreshAchievementSummaryGrid()
     End Sub
 
     Private Sub DashboardModeChanged(sender As Object, e As EventArgs)
@@ -4041,12 +4043,12 @@ Public Class Form1
             Dim etaText As String = FormatExpEta(status.ExpPercent, status.ExpPerHour)
             cardDashRate.SetValue(If(etaText = "", $"{status.ExpPercent:0.00}% · ETA calculating", $"{status.ExpPercent:0.00}% · ETA {etaText}"), If(etaText = "", ThemeTextSecondary, ThemeTextPrimary))
             Dim rateText As String = If(status.ExpPerHour < 0, "rate calculating", $"{status.ExpPerHour:0.00}%/hr")
-            cardDashRate.SetSecondary($"Current level {status.ExpPercent:0.00}%  ·  +{sessionExpEarned:0.00}% EXE session{Environment.NewLine}{rateText}  ·  confirmed OCR only")
+            cardDashRate.SetSecondary($"Current level {status.ExpPercent:0.00}%  ·  {sessionExpEarned.ToString("+0.00;-0.00;0.00")}% from fixed baseline{Environment.NewLine}{rateText}  ·  confirmed OCR only")
             cardDashRate.SetProgress(status.ExpPercent, expAccent)
             cardDashRate.SetRateHistory(_dashboardExpRateHistory, expAccent, _dashboardExpRateHistory.Count > 0, "0.00", "% EXP/hr", DashboardRateHistoryIntervalSeconds)
         ElseIf edition = BotEdition.Full Then
             cardDashRate.SetValue("Confirming EXP", ThemeTextSecondary)
-            cardDashRate.SetSecondary($"+{sessionExpEarned:0.00}% EXE session  ·  waiting for confirmed prana_exp_rect OCR")
+            cardDashRate.SetSecondary($"{sessionExpEarned.ToString("+0.00;-0.00;0.00")}% from fixed baseline  ·  waiting for fresh confirmed prana_exp_rect OCR")
             cardDashRate.SetProgress(0.0, expAccent, False)
             cardDashRate.SetRateHistory(_dashboardExpRateHistory, expAccent, _dashboardExpRateHistory.Count > 0, "0.00", "% EXP/hr", DashboardRateHistoryIntervalSeconds)
         Else
@@ -4061,8 +4063,8 @@ Public Class Form1
         If edition = BotEdition.Full AndAlso status.RupiahsTotal >= 0 Then
             cardDashSession.SetValue($"{status.RupiahsTotal:N0} wallet", rupiahAccent)
             Dim projectionText As String = If(status.RupiahsPerHour < 0, "projection calculating", $"Projected {status.RupiahsPerHour:N0}/hr  ·  {(status.RupiahsPerHour * 24.0):N0}/day")
-            Dim netWalletChange As Long = _dashboardSessionRupiahsEarned - _dashboardSessionRupiahsSpent
-            cardDashSession.SetSecondary($"+{_dashboardSessionRupiahsEarned:N0} earned  ·  -{_dashboardSessionRupiahsSpent:N0} spent  ·  {netWalletChange:+#,##0;-#,##0;0} net{Environment.NewLine}{projectionText}  ·  confirmed OCR only")
+            Dim baselineText As String = If(_dashboardRunBaseRupiahs < 0, "waiting", _dashboardRunBaseRupiahs.ToString("N0"))
+            cardDashSession.SetSecondary($"{_dashboardSessionRupiahsEarned.ToString("+#,##0;-#,##0;0")} from fixed baseline {baselineText}{Environment.NewLine}{projectionText}  ·  confirmed OCR only")
             cardDashSession.SetRateHistory(_dashboardRupiahRateHistory, rupiahAccent, _dashboardRupiahRateHistory.Count > 0, "N0", " Rupiah/hr", DashboardRateHistoryIntervalSeconds)
         ElseIf edition <> BotEdition.Full Then
             cardDashSession.SetValue("Full mode only", ThemeTextSecondary)
@@ -4078,8 +4080,8 @@ Public Class Form1
             dashboardSummary.SetMetric(0, runtime, ThemeAccent)
             dashboardSummary.SetMetric(1, status.SessionKilledMobs.ToString("N0"), ThemeGood)
             dashboardSummary.SetMetric(2, killsPerHour.ToString("0.0"))
-            dashboardSummary.SetMetric(3, $"+{sessionExpEarned:0.00}%", expAccent)
-            dashboardSummary.SetMetric(4, $"+{_dashboardSessionRupiahsEarned:N0}", rupiahAccent)
+            dashboardSummary.SetMetric(3, sessionExpEarned.ToString("+0.00;-0.00;0.00") & "%", expAccent)
+            dashboardSummary.SetMetric(4, _dashboardSessionRupiahsEarned.ToString("+#,##0;-#,##0;0"), rupiahAccent)
             dashboardSummary.SetMetric(5, _itemAwardReads.Count.ToString("N0"), Color.FromArgb(80, 200, 190))
         End If
         UpdateDashboardAnalyticsCards(status, killsPerHour)
@@ -4099,35 +4101,15 @@ Public Class Form1
             Return
         End If
 
-        Dim runStartedAt As DateTime = status.RunStartedAtUtc
-        Dim startNewBaselineSegment As Boolean = False
-        If runStartedAt <> DateTime.MinValue AndAlso runStartedAt <> _dashboardSessionRunStartedAtUtc Then
-            _dashboardSessionRunStartedAtUtc = runStartedAt
-            startNewBaselineSegment = True
-        End If
-
-        Dim observedCharacterName As String = If(status.CharacterName, "").Trim()
-        If observedCharacterName <> "" Then
-            If _dashboardSessionCharacterName <> "" AndAlso
-               Not observedCharacterName.Equals(_dashboardSessionCharacterName, StringComparison.OrdinalIgnoreCase) Then
-                startNewBaselineSegment = True
-            End If
-            _dashboardSessionCharacterName = observedCharacterName
-        End If
-
-        If startNewBaselineSegment Then
-            BeginDashboardTelemetryBaselineSegment()
-        End If
-
         If status.Running AndAlso status.WindowFound AndAlso status.RupiahsTotal >= 0 Then
             If _dashboardRunBaseRupiahs < 0 Then
-                ' The first valid read after Start is the fixed wallet baseline for this bot run.
+                ' The first valid reading in this EXE stats session is fixed until Reset Stats.
                 _dashboardRunBaseRupiahs = status.RupiahsTotal
             End If
 
-            Dim walletChangeFromBase As Long = status.RupiahsTotal - _dashboardRunBaseRupiahs
-            _dashboardSessionRupiahsEarned = _dashboardCommittedRupiahsEarned + Math.Max(0L, walletChangeFromBase)
-            _dashboardSessionRupiahsSpent = _dashboardCommittedRupiahsSpent + Math.Max(0L, -walletChangeFromBase)
+            ' This is deliberately signed. Spending or a confirmed lower OCR reading moves the
+            ' displayed total down while retaining exactly the same original baseline.
+            _dashboardSessionRupiahsEarned = status.RupiahsTotal - _dashboardRunBaseRupiahs
         End If
 
         If status.Running AndAlso status.WindowFound AndAlso status.ExpPercent >= 0 Then
@@ -4137,7 +4119,7 @@ Public Class Form1
                 _dashboardRunBaseExpBasisPoints,
                 _dashboardRunLastExpBasisPoints,
                 _dashboardRunExpLevelRollovers)
-            _dashboardSessionExpEarnedBasisPoints = _dashboardCommittedExpEarnedBasisPoints + runExpGain
+            _dashboardSessionExpEarnedBasisPoints = runExpGain
         End If
 
         Dim nowUtc As DateTime = DateTime.UtcNow
@@ -4159,18 +4141,6 @@ Public Class Form1
             _dashboardLastRecordedAction = status.LastAction
             AddDashboardRecentEvent(status.LastAction)
         End If
-    End Sub
-
-    Private Sub BeginDashboardTelemetryBaselineSegment()
-        ' Preserve completed bot-run totals for the EXE lifetime, then make the first valid reading
-        ' of the next run/character the new fixed base. No changes while stopped are counted.
-        _dashboardCommittedRupiahsEarned = _dashboardSessionRupiahsEarned
-        _dashboardCommittedRupiahsSpent = _dashboardSessionRupiahsSpent
-        _dashboardCommittedExpEarnedBasisPoints = _dashboardSessionExpEarnedBasisPoints
-        _dashboardRunBaseRupiahs = -1
-        _dashboardRunBaseExpBasisPoints = -1
-        _dashboardRunLastExpBasisPoints = -1
-        _dashboardRunExpLevelRollovers = 0
     End Sub
 
     Private Shared Function GetExpGainFromFixedBaseline(currentBasisPoints As Integer,
@@ -4198,8 +4168,9 @@ Public Class Form1
         End If
         lastBasisPoints = currentBasisPoints
 
-        Dim gained As Long = (CLng(Math.Max(0, levelRollovers)) * 10000L) + currentBasisPoints - baseBasisPoints
-        Return Math.Max(0L, gained)
+        ' Keep the baseline fixed and allow confirmed readings to move the displayed gain in either
+        ' direction. A genuine high-to-low level rollover is still added as one completed level.
+        Return (CLng(Math.Max(0, levelRollovers)) * 10000L) + currentBasisPoints - baseBasisPoints
     End Function
 
     Private Shared Function PercentToBasisPoints(percent As Double) As Integer
@@ -8737,21 +8708,7 @@ Public Class Form1
         }
         AddHandler btnResetAchievements.Click,
             Sub(_s As Object, _e As EventArgs)
-                SyncLock _achievementSamplesSync
-                    _achievementSamples.Clear()
-                End SyncLock
-                _lastAchievementSampleAt = DateTime.MinValue
-                _lastAchievementExpBasisPoints = -1
-                _cumulativeExpEarnedBasisPoints = 0
-                _cumulativeRupiahsEarned = 0
-                _achievementBaseExpBasisPoints = -1
-                _achievementExpLevelRollovers = 0
-                _achievementCommittedExpEarnedBasisPoints = 0
-                _achievementBaseRupiahsTotal = -1
-                _achievementCommittedRupiahsEarned = 0
-                _achievementObservedRunStartedAtUtc = DateTime.MinValue
-                _achievementObservedCharacterName = ""
-                RefreshAchievementSummaryGrid()
+                ResetAchievementTelemetryState()
             End Sub
         layout.Controls.Add(btnResetAchievements, 0, 2)
 
@@ -11288,6 +11245,12 @@ Public Class Form1
             End If
             If _developerModeEnabled Then
                 desired.Add(_diagnosticsTab)
+            End If
+            If _quizUnlocked Then
+                ' The quiz page is session-hidden until its Home-page sequence is entered. Keep it
+                ' in this authoritative rebuild list afterward; otherwise selecting it causes the
+                ' ordinary edition/sidebar refresh to remove it again immediately.
+                desired.Add(_quizTab)
             End If
             desired.Add(_updateTab)
             desired.RemoveAll(Function(page) page Is Nothing)
@@ -16917,6 +16880,8 @@ Public Class Form1
             End Try
             RefreshUpdateInstallMode()
 
+            ApplyPersistedQuizState(If(appState IsNot Nothing, appState.Quiz, Nothing))
+
             Dim savedToggleX As Integer = If(appState IsNot Nothing, appState.InGameBotToggleX, -1)
             _inGameBotToggleX = If(savedToggleX < 0, -1, savedToggleX)
             _inGameBotToggleY = Math.Max(0, If(appState IsNot Nothing, appState.InGameBotToggleY, 10))
@@ -17283,6 +17248,7 @@ Public Class Form1
                 .UpdateCheckAtStartup = (chkUpdateCheckAtStartup IsNot Nothing AndAlso chkUpdateCheckAtStartup.Checked),
                 .UpdateIncludePrereleases = (chkUpdateIncludePrereleases IsNot Nothing AndAlso chkUpdateIncludePrereleases.Checked),
                 .DashboardMode = _dashboardMode.ToString(),
+                .Quiz = BuildPersistedQuizState(),
                 .Full = fullState,
                 .Lite = liteState
             }
@@ -18472,35 +18438,17 @@ Public Class Form1
         End If
         _lastAchievementSampleAt = nowUtc
 
-        Dim runStartedAt As DateTime = status.RunStartedAtUtc
-        Dim observedCharacterName As String = If(status.CharacterName, "").Trim()
-        Dim observationSegmentChanged As Boolean =
-            (runStartedAt <> DateTime.MinValue AndAlso runStartedAt <> _achievementObservedRunStartedAtUtc) OrElse
-            (observedCharacterName <> "" AndAlso _achievementObservedCharacterName <> "" AndAlso
-             Not observedCharacterName.Equals(_achievementObservedCharacterName, StringComparison.OrdinalIgnoreCase))
-        If observationSegmentChanged Then
-            _achievementCommittedExpEarnedBasisPoints = _cumulativeExpEarnedBasisPoints
-            _achievementCommittedRupiahsEarned = _cumulativeRupiahsEarned
-            _achievementBaseExpBasisPoints = -1
-            _lastAchievementExpBasisPoints = -1
-            _achievementExpLevelRollovers = 0
-            _achievementBaseRupiahsTotal = -1
-        End If
-        If runStartedAt <> DateTime.MinValue Then _achievementObservedRunStartedAtUtc = runStartedAt
-        If observedCharacterName <> "" Then _achievementObservedCharacterName = observedCharacterName
-
         Dim currentExpBasisPoints As Integer = PercentToBasisPoints(status.ExpPercent)
-        Dim segmentExpGain As Long = GetExpGainFromFixedBaseline(
+        _cumulativeExpEarnedBasisPoints = GetExpGainFromFixedBaseline(
             currentExpBasisPoints,
             _achievementBaseExpBasisPoints,
             _lastAchievementExpBasisPoints,
             _achievementExpLevelRollovers)
-        _cumulativeExpEarnedBasisPoints = _achievementCommittedExpEarnedBasisPoints + segmentExpGain
 
         If _achievementBaseRupiahsTotal < 0 Then
             _achievementBaseRupiahsTotal = status.RupiahsTotal
         End If
-        _cumulativeRupiahsEarned = _achievementCommittedRupiahsEarned + Math.Max(0L, status.RupiahsTotal - _achievementBaseRupiahsTotal)
+        _cumulativeRupiahsEarned = status.RupiahsTotal - _achievementBaseRupiahsTotal
 
         SyncLock _achievementSamplesSync
             _achievementSamples.Add(New AchievementSample With {
@@ -18516,9 +18464,8 @@ Public Class Form1
         End SyncLock
     End Sub
 
-    ' Earned-in-window = latest sample minus the earliest sample still inside the window (or the
-    ' oldest sample retained at all, if the window is longer than our history so far) - works the
-    ' same way for both metrics because both stored values are monotonic earned odometers.
+    ' Change-in-window = latest sample minus the earliest sample still inside the window. Values are
+    ' signed so spending or confirmed EXP loss correctly lowers the result.
     Private Function GetAchievementEarned(windowMinutes As Double) As (RupiahEarned As Long, ExpEarned As Double, HasData As Boolean)
         Dim nowUtc As DateTime = DateTime.UtcNow
         Dim cutoff As DateTime = nowUtc.AddMinutes(-windowMinutes)
@@ -18543,8 +18490,8 @@ Public Class Form1
         End If
 
         Dim latest As AchievementSample = snapshot(snapshot.Count - 1)
-        Dim rupiahEarned As Long = Math.Max(0L, latest.CumulativeRupiahsEarned - baseline.CumulativeRupiahsEarned)
-        Dim expEarned As Double = Math.Max(0L, latest.CumulativeExpEarnedBasisPoints - baseline.CumulativeExpEarnedBasisPoints) / 100.0
+        Dim rupiahEarned As Long = latest.CumulativeRupiahsEarned - baseline.CumulativeRupiahsEarned
+        Dim expEarned As Double = (latest.CumulativeExpEarnedBasisPoints - baseline.CumulativeExpEarnedBasisPoints) / 100.0
         Return (rupiahEarned, expEarned, True)
     End Function
 
@@ -19863,6 +19810,7 @@ Public Class Form1
 
     Protected Overrides Sub OnFormClosing(e As FormClosingEventArgs)
         _dashboardEntranceTimer.Stop()
+        ShutdownQuizSolver()
         If _updateCancellation IsNot Nothing Then
             _updateCancellation.Cancel()
             _updateCancellation.Dispose()
