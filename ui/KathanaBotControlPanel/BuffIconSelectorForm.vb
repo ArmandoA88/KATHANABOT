@@ -19,11 +19,18 @@ Friend Class BuffIconSelectorForm
     <DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Property SelectedRelativePath As String = ""
 
+    <DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public ReadOnly Property SelectedEntries As List(Of BuffIconLibraryEntry)
+        Get
+            Return New List(Of BuffIconLibraryEntry)(_selectedEntries)
+        End Get
+    End Property
+
     Private ReadOnly _gameHwnd As IntPtr
     Private ReadOnly _defaultCategories As String() = {"Library", "General", "Naga - Kimnara", "Ashura - Rakshasa", "Yaksa - Gandharva", "Deva - Garuda", "Other"}
     Private _entries As New List(Of BuffIconLibraryEntry)()
     Private _selectedCategory As String = "library"
-    Private _selectedTile As PictureBox = Nothing
+    Private ReadOnly _selectedEntries As New List(Of BuffIconLibraryEntry)()
     Private _isCapturing As Boolean = False
     Private _capturingCategory As String = ""
     Private _captureLeftMouseWasDown As Boolean = False
@@ -129,7 +136,7 @@ Friend Class BuffIconSelectorForm
         root.Controls.Add(flowIcons, 1, 2)
 
         lblHint = New Label() With {
-            .Text = $"Portable icon library: {BotEngine.BuffIconLibraryRoot}",
+            .Text = $"Ctrl+click to select several skills. Library: {BotEngine.BuffIconLibraryRoot}",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .AutoEllipsis = True,
@@ -160,6 +167,7 @@ Friend Class BuffIconSelectorForm
     Private Sub ReloadLibrary()
         BotEngine.EnsureBuffIconLibraryExists()
         _entries = BotEngine.ScanBuffIconLibrary()
+        ReconcileSelectedEntries()
 
         Dim orderedKeys As New List(Of String)()
         Dim displayByKey As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
@@ -223,7 +231,6 @@ Friend Class BuffIconSelectorForm
             ctrl.Dispose()
         Next
         flowIcons.Controls.Clear()
-        _selectedTile = Nothing
 
         Dim searchText As String = If(txtSearch IsNot Nothing, txtSearch.Text, "").Trim()
         Dim matching As New List(Of BuffIconLibraryEntry)()
@@ -245,7 +252,7 @@ Friend Class BuffIconSelectorForm
     End Sub
 
     Private Function BuildIconTile(entry As BuffIconLibraryEntry) As Control
-        Dim tile As New TableLayoutPanel() With {.Width = 92, .Height = 112, .Margin = New Padding(5), .RowCount = 2, .ColumnCount = 1, .Tag = entry}
+        Dim tile As New TableLayoutPanel() With {.Width = 92, .Height = 112, .Margin = New Padding(5), .RowCount = 2, .ColumnCount = 1, .Tag = entry, .Cursor = Cursors.Hand, .BackColor = Color.FromArgb(20, 20, 20)}
         tile.RowStyles.Add(New RowStyle(SizeType.Absolute, 84.0F))
         tile.RowStyles.Add(New RowStyle(SizeType.Absolute, 24.0F))
 
@@ -273,9 +280,14 @@ Friend Class BuffIconSelectorForm
             .TextAlign = ContentAlignment.MiddleCenter,
             .ForeColor = Color.Gainsboro,
             .Font = New Font("Segoe UI", 8.0F),
-            .AutoEllipsis = True
+            .AutoEllipsis = True,
+            .Cursor = Cursors.Hand,
+            .Tag = entry
         }
+        AddHandler lbl.Click, AddressOf IconTileClicked
         tile.Controls.Add(lbl, 0, 1)
+        AddHandler tile.Click, AddressOf IconTileClicked
+        ApplyIconTileSelectionVisual(tile, IsEntrySelected(entry.RelativePath))
         Return tile
     End Function
 
@@ -309,25 +321,99 @@ Friend Class BuffIconSelectorForm
         Return tile
     End Function
 
-    Private Sub IconTileClicked(sender As Object, e As EventArgs)
-        Dim pic As PictureBox = TryCast(sender, PictureBox)
-        If pic Is Nothing Then
+    Private Sub ReconcileSelectedEntries()
+        For selectedIndex As Integer = _selectedEntries.Count - 1 To 0 Step -1
+            Dim replacement As BuffIconLibraryEntry = Nothing
+            For Each entry As BuffIconLibraryEntry In _entries
+                If String.Equals(entry.RelativePath, _selectedEntries(selectedIndex).RelativePath, StringComparison.OrdinalIgnoreCase) Then
+                    replacement = entry
+                    Exit For
+                End If
+            Next
+
+            If replacement Is Nothing Then
+                _selectedEntries.RemoveAt(selectedIndex)
+            Else
+                _selectedEntries(selectedIndex) = replacement
+            End If
+        Next
+        UpdateSelectionState()
+    End Sub
+
+    Private Function FindSelectedEntryIndex(relativePath As String) As Integer
+        For index As Integer = 0 To _selectedEntries.Count - 1
+            If String.Equals(_selectedEntries(index).RelativePath, relativePath, StringComparison.OrdinalIgnoreCase) Then
+                Return index
+            End If
+        Next
+        Return -1
+    End Function
+
+    Private Function IsEntrySelected(relativePath As String) As Boolean
+        Return FindSelectedEntryIndex(relativePath) >= 0
+    End Function
+
+    Private Shared Sub ApplyIconTileSelectionVisual(tile As Control, selected As Boolean)
+        If tile Is Nothing Then
             Return
         End If
-        Dim entry As BuffIconLibraryEntry = TryCast(pic.Tag, BuffIconLibraryEntry)
+
+        tile.BackColor = If(selected, Color.FromArgb(42, 86, 132), Color.FromArgb(20, 20, 20))
+        For Each child As Control In tile.Controls
+            Dim pic As PictureBox = TryCast(child, PictureBox)
+            If pic IsNot Nothing Then
+                pic.BorderStyle = If(selected, BorderStyle.Fixed3D, BorderStyle.FixedSingle)
+                pic.BackColor = If(selected, Color.FromArgb(55, 105, 155), Color.FromArgb(35, 35, 35))
+            End If
+        Next
+    End Sub
+
+    Private Sub UpdateSelectionState()
+        If flowIcons IsNot Nothing Then
+            For Each tile As Control In flowIcons.Controls
+                Dim entry As BuffIconLibraryEntry = TryCast(tile.Tag, BuffIconLibraryEntry)
+                If entry IsNot Nothing Then
+                    ApplyIconTileSelectionVisual(tile, IsEntrySelected(entry.RelativePath))
+                End If
+            Next
+        End If
+
+        If _selectedEntries.Count > 0 Then
+            Dim lastEntry As BuffIconLibraryEntry = _selectedEntries(_selectedEntries.Count - 1)
+            SelectedName = lastEntry.Name
+            SelectedRelativePath = lastEntry.RelativePath
+        Else
+            SelectedName = ""
+            SelectedRelativePath = ""
+        End If
+
+        If btnApply IsNot Nothing Then
+            btnApply.Enabled = _selectedEntries.Count > 0
+            btnApply.Text = If(_selectedEntries.Count <= 1, "Apply", $"Apply {_selectedEntries.Count} Skills")
+        End If
+    End Sub
+
+    Private Sub IconTileClicked(sender As Object, e As EventArgs)
+        Dim source As Control = TryCast(sender, Control)
+        Dim entry As BuffIconLibraryEntry = If(source Is Nothing, Nothing, TryCast(source.Tag, BuffIconLibraryEntry))
         If entry Is Nothing Then
             Return
         End If
 
-        If _selectedTile IsNot Nothing Then
-            _selectedTile.BorderStyle = BorderStyle.FixedSingle
+        Dim selectedIndex As Integer = FindSelectedEntryIndex(entry.RelativePath)
+        Dim controlHeld As Boolean = (ModifierKeys And Keys.Control) = Keys.Control
+        If Not controlHeld Then
+            _selectedEntries.Clear()
+            selectedIndex = -1
         End If
-        pic.BorderStyle = BorderStyle.Fixed3D
-        _selectedTile = pic
 
-        SelectedName = entry.Name
-        SelectedRelativePath = entry.RelativePath
-        btnApply.Enabled = True
+        If controlHeld AndAlso selectedIndex >= 0 Then
+            _selectedEntries.RemoveAt(selectedIndex)
+        ElseIf FindSelectedEntryIndex(entry.RelativePath) < 0 Then
+            _selectedEntries.Add(entry)
+        End If
+
+        UpdateSelectionState()
     End Sub
 
     Private Sub AddIconClicked(sender As Object, e As EventArgs)
@@ -534,7 +620,7 @@ Friend Class BuffIconSelectorForm
     End Sub
 
     Private Sub ApplyClicked(sender As Object, e As EventArgs)
-        If String.IsNullOrWhiteSpace(SelectedRelativePath) Then
+        If _selectedEntries.Count = 0 Then
             Return
         End If
         DialogResult = DialogResult.OK

@@ -926,19 +926,27 @@ Public Class BotEngine
     Private Const TargetNameConfirmMinGapMs As Integer = 120
     Private Const TargetNameConfirmRequiredCount As Integer = 2
     Private Const MobNameOcrRetentionMs As Integer = 2400
-    Private Const ExpRateSampleMs As Integer = 60000
+    Private Const ExpRateSampleMs As Integer = 30000
     Private Const MinValidExpPerHour As Double = 0.0
-    Private Const MaxValidExpPerHour As Double = 9.99
+    Private Const MaxValidExpPerHour As Double = 30.0
     Private Const ExpLevelWrapHighPercent As Double = 90.0
     Private Const ExpLevelWrapLowPercent As Double = 10.0
-    Private Const ExpOcrAdvanceFloorPercent As Double = 0.08
-    Private Const ExpOcrAdvanceGracePercent As Double = 0.03
-    Private Const ExpInitialConfirmTolerancePercent As Double = 0.15
-    Private Const ExpOcrRejectLogIntervalMs As Integer = 60000
+    Private Const ExpOcrAdvanceFloorPercent As Double = 0.5
+    Private Const ExpOcrAdvanceGracePercent As Double = 0.1
+    Private Const ExpExceptionalConfirmTolerancePercent As Double = 0.35
+    Private Const ExpExceptionalConfirmReads As Integer = 2
+    Private Const ExpOcrRejectLogIntervalMs As Integer = 15000
+    Private Const RupiahsInitialConfirmReads As Integer = 1
+    Private Const RupiahsLargeJumpConfirmReads As Integer = 2
+    Private Const RupiahsImmediateChangeFloor As Long = 25000
+    Private Const RupiahsChangeGrace As Long = 10000
+    Private Const RupiahsLargeJumpToleranceFloor As Long = 25000
+    Private Const RupiahsLargeJumpToleranceCeiling As Long = 250000
+    Private Const RupiahsOcrRejectLogIntervalMs As Integer = 15000
     Private Const MinValidRupiahsPerHour As Double = 1000.0
-    Private Const MaxValidRupiahsPerHour As Double = 1000000.0
-    Private Const ExpOcrMinIntervalMs As Integer = 5000
-    Private Const RupiahsOcrMinIntervalMs As Integer = 5000
+    Private Const MaxValidRupiahsPerHour As Double = 5000000.0
+    Private Const ExpOcrMinIntervalMs As Integer = 2000
+    Private Const RupiahsOcrMinIntervalMs As Integer = 2000
     Private Const CharacterNameOcrMinIntervalMs As Integer = 5000
     Private Const MapCoordinateOcrMinIntervalMs As Integer = 900
     Private Const HoldPlaceMaxCoordinateAcceptanceDistance As Double = 100.0R
@@ -1237,8 +1245,8 @@ Public Class BotEngine
     Private _repairTriggerCount As Integer = 0
     Private _lastExpPercent As Double = -1
     Private _lastAcceptedExpAt As DateTime = DateTime.MinValue
-    Private _pendingInitialExpPercent As Double = -1
-    Private _pendingInitialExpConfirmCount As Integer = 0
+    Private _pendingExpPercent As Double = -1
+    Private _pendingExpConfirmCount As Integer = 0
     Private _lastExpOcrRejectLogAt As DateTime = DateTime.MinValue
     Private _lastExpOcrAt As DateTime = DateTime.MinValue
     Private _expOcrTask As Task(Of Double) = Nothing
@@ -1247,6 +1255,10 @@ Public Class BotEngine
     Private _lastExpRateSamplePercent As Double = -1
     Private _lastExpPerHour As Double = -1
     Private _lastRupiahsTotal As Long = -1
+    Private _lastAcceptedRupiahsAt As DateTime = DateTime.MinValue
+    Private _pendingRupiahsTotal As Long = -1
+    Private _pendingRupiahsConfirmCount As Integer = 0
+    Private _lastRupiahsOcrRejectLogAt As DateTime = DateTime.MinValue
     Private _lastRupiahsOcrAt As DateTime = DateTime.MinValue
     Private _rupiahsOcrTask As Task(Of Long) = Nothing
     Private _rupiahsOcrTaskGeneration As Long = -1L
@@ -1628,8 +1640,8 @@ Public Class BotEngine
             _repairTriggerCount = 0
             _lastExpPercent = -1
             _lastAcceptedExpAt = DateTime.MinValue
-            _pendingInitialExpPercent = -1
-            _pendingInitialExpConfirmCount = 0
+            _pendingExpPercent = -1
+            _pendingExpConfirmCount = 0
             _lastExpOcrRejectLogAt = DateTime.MinValue
             _lastExpOcrAt = DateTime.MinValue
             _expOcrTask = Nothing
@@ -1637,6 +1649,10 @@ Public Class BotEngine
             _lastExpRateSamplePercent = -1
             _lastExpPerHour = -1
             _lastRupiahsTotal = -1
+            _lastAcceptedRupiahsAt = DateTime.MinValue
+            _pendingRupiahsTotal = -1
+            _pendingRupiahsConfirmCount = 0
+            _lastRupiahsOcrRejectLogAt = DateTime.MinValue
             _lastRupiahsOcrAt = DateTime.MinValue
             _rupiahsOcrTask = Nothing
             _lastRupiahsRateSampleAt = DateTime.MinValue
@@ -3073,7 +3089,7 @@ Public Class BotEngine
                           s.MobHpPercent = Math.Round(mobHpPct, 1)
                           s.MobMaxHp = mobMaxHp
                           s.MobHpText = _lastMobHpText
-                          s.ExpPercent = Math.Round(Math.Max(0, If(expPct < 0, 0, expPct)), 2)
+                          s.ExpPercent = If(expPct < 0, -1, Math.Round(expPct, 2))
                           s.ExpPerHour = If(expPerHour < 0, -1, Math.Round(expPerHour, 2))
                           s.RupiahsTotal = rupiahsTotal
                           s.RupiahsPerHour = If(rupiahsPerHour < 0, -1, Math.Round(rupiahsPerHour, 0))
@@ -3572,7 +3588,7 @@ Public Class BotEngine
 
     Private Function ShouldTriggerLevelingGuardrail(cfg As BotConfig, hpPct As Double, mpPct As Double, expPerHour As Double, now As DateTime, targetWindowVisible As Boolean, telemetryReliable As Boolean, deathPaused As Boolean, ByRef guardrailReason As String) As Boolean
         guardrailReason = ""
-        If cfg Is Nothing OrElse Not cfg.LevelingAgentEnabled Then
+        If cfg Is Nothing OrElse Not cfg.LevelingAgentEnabled OrElse cfg.FullSupportModeEnabled Then
             Return False
         End If
 
@@ -5116,12 +5132,11 @@ Public Class BotEngine
                     Dim keyName As String = NormalizeFullSupportKey(cfg.FullSupportTankHealKey, "F1")
                     If SelectPartyMemberForSupport(hwnd, partyRegion, members(tankIndex)) AndAlso SendKey(hwnd, keyName, FastKeyPressMs) Then
                         _lastFullSupportTankHealAt = now
-                        Thread.Sleep(35)
-                        Dim selfSelected As Boolean = SendKey(hwnd, "`", FastKeyPressMs)
+                        Dim selfSelected As Boolean = ReselectVidyaAfterFullSupportHeal(hwnd)
                         _lastFullSupportStatus = If(
                             selfSelected,
-                            $"Tank focus: member {tankIndex + 1} at {currentHp(tankIndex):0}% -> {keyName}; Vidya reselected with `.",
-                            $"Tank focus: member {tankIndex + 1} at {currentHp(tankIndex):0}% -> {keyName}; Vidya reselection with ` failed.")
+                            $"Tank focus: member {tankIndex + 1} at {currentHp(tankIndex):0}% -> {keyName}; Vidya reselected with 3 ` presses.",
+                            $"Tank focus: member {tankIndex + 1} at {currentHp(tankIndex):0}% -> {keyName}; Vidya 3-press reselection sequence failed.")
                         SetLastAction($"{keyName} (Full Support tank heal)")
                         RaiseEvent LogLine(_lastFullSupportStatus)
                         Return True
@@ -5143,12 +5158,11 @@ Public Class BotEngine
                     Dim keyName As String = NormalizeFullSupportKey(cfg.FullSupportIndividualHealKey, "F2")
                     If SelectPartyMemberForSupport(hwnd, partyRegion, members(lowestIndex)) AndAlso SendKey(hwnd, keyName, FastKeyPressMs) Then
                         _lastFullSupportIndividualHealAt = now
-                        Thread.Sleep(35)
-                        Dim selfSelected As Boolean = SendKey(hwnd, "`", FastKeyPressMs)
+                        Dim selfSelected As Boolean = ReselectVidyaAfterFullSupportHeal(hwnd)
                         _lastFullSupportStatus = If(
                             selfSelected,
-                            $"Individual heal: member {lowestIndex + 1} at {lowestHp:0}% -> {keyName}; Vidya reselected with `.",
-                            $"Individual heal: member {lowestIndex + 1} at {lowestHp:0}% -> {keyName}; Vidya reselection with ` failed.")
+                            $"Individual heal: member {lowestIndex + 1} at {lowestHp:0}% -> {keyName}; Vidya reselected with 3 ` presses.",
+                            $"Individual heal: member {lowestIndex + 1} at {lowestHp:0}% -> {keyName}; Vidya 3-press reselection sequence failed.")
                         SetLastAction($"{keyName} (Full Support individual heal)")
                         RaiseEvent LogLine(_lastFullSupportStatus)
                         Return True
@@ -5409,6 +5423,23 @@ Public Class BotEngine
 
     Private Shared Function FullSupportCooldownReady(lastActionAt As DateTime, cooldownMs As Integer, now As DateTime) As Boolean
         Return lastActionAt = DateTime.MinValue OrElse (now - lastActionAt).TotalMilliseconds >= Math.Max(250, cooldownMs)
+    End Function
+
+    Private Shared Function ReselectVidyaAfterFullSupportHeal(hwnd As IntPtr) As Boolean
+        Thread.Sleep(35)
+
+        Dim timing As Stopwatch = Stopwatch.StartNew()
+        Dim firstSent As Boolean = SendKey(hwnd, "`", FastKeyPressMs)
+
+        Dim remainingMs As Integer = 100 - CInt(timing.ElapsedMilliseconds)
+        If remainingMs > 0 Then Thread.Sleep(remainingMs)
+        Dim secondSent As Boolean = SendKey(hwnd, "`", FastKeyPressMs)
+
+        remainingMs = 300 - CInt(timing.ElapsedMilliseconds)
+        If remainingMs > 0 Then Thread.Sleep(remainingMs)
+        Dim thirdSent As Boolean = SendKey(hwnd, "`", FastKeyPressMs)
+
+        Return firstSent AndAlso secondSent AndAlso thirdSent
     End Function
 
     Private Shared Function NormalizeFullSupportKey(configured As String, fallback As String) As String
@@ -8145,6 +8176,8 @@ Public Class BotEngine
                 Dim parsed As Double = _expOcrTask.Result
                 If isCurrent AndAlso parsed >= 0 AndAlso parsed <= 100 Then
                     TryAcceptExpPercent(parsed, DateTime.UtcNow)
+                ElseIf isCurrent Then
+                    LogExpOcrUnavailable(DateTime.UtcNow)
                 End If
             Catch ex As Exception
                 If isCurrent Then
@@ -8162,25 +8195,13 @@ Public Class BotEngine
             Return False
         End If
 
-        ' Do not let one startup OCR read establish the session baseline. Two close readings are
-        ' cheap (EXP OCR is already rate-limited) and prevent a single bad value from poisoning all
-        ' later session-gain calculations.
+        ' Establish the baseline immediately. Subsequent exceptional readings still require a
+        ' second nearby OCR result, so startup is responsive without allowing one large jump to
+        ' poison the running earned-EXP counter.
         If _lastExpPercent < 0 Then
-            If _pendingInitialExpPercent < 0 OrElse Math.Abs(candidate - _pendingInitialExpPercent) > ExpInitialConfirmTolerancePercent Then
-                _pendingInitialExpPercent = candidate
-                _pendingInitialExpConfirmCount = 1
-                Return False
-            End If
-
-            _pendingInitialExpConfirmCount += 1
-            If _pendingInitialExpConfirmCount < 2 Then
-                Return False
-            End If
-
             _lastExpPercent = candidate
             _lastAcceptedExpAt = now
-            _pendingInitialExpPercent = -1
-            _pendingInitialExpConfirmCount = 0
+            ClearPendingExpCandidate()
             Return True
         End If
 
@@ -8190,11 +8211,21 @@ Public Class BotEngine
         ElseIf _lastExpPercent >= ExpLevelWrapHighPercent AndAlso candidate <= ExpLevelWrapLowPercent Then
             delta = (100.0 - _lastExpPercent) + candidate
         Else
-            LogRejectedExpOcr(candidate, now, "backward reading without a valid level-up rollover")
+            If TryConfirmExceptionalExpCandidate(candidate) Then
+                Dim previous As Double = _lastExpPercent
+                _lastExpPercent = candidate
+                _lastAcceptedExpAt = now
+                ClearPendingExpCandidate()
+                RaiseEvent LogLine($"EXP OCR resynchronized from {previous:0.00}% to {candidate:0.00}% after two consistent readings; no negative EXP was counted.")
+                Return True
+            End If
+            LogRejectedExpOcr(candidate, now, "backward reading is waiting for a second consistent OCR result")
             Return False
         End If
 
         If delta <= 0.001 Then
+            ClearPendingExpCandidate()
+            _lastAcceptedExpAt = now
             Return True
         End If
 
@@ -8204,14 +8235,47 @@ Public Class BotEngine
         End If
         Dim maximumPlausibleAdvance As Double = Math.Max(ExpOcrAdvanceFloorPercent, (elapsedHours * MaxValidExpPerHour) + ExpOcrAdvanceGracePercent)
         If delta > maximumPlausibleAdvance Then
-            LogRejectedExpOcr(candidate, now, $"advance of {delta:0.00}% exceeds the {maximumPlausibleAdvance:0.00}% limit")
+            If TryConfirmExceptionalExpCandidate(candidate) Then
+                _lastExpPercent = candidate
+                _lastAcceptedExpAt = now
+                ClearPendingExpCandidate()
+                RaiseEvent LogLine($"EXP OCR accepted a confirmed {delta:0.00}% advance to {candidate:0.00}%.")
+                Return True
+            End If
+            LogRejectedExpOcr(candidate, now, $"advance of {delta:0.00}% is waiting for a second nearby OCR result")
             Return False
         End If
 
         _lastExpPercent = candidate
         _lastAcceptedExpAt = now
+        ClearPendingExpCandidate()
         Return True
     End Function
+
+    Private Function TryConfirmExceptionalExpCandidate(candidate As Double) As Boolean
+        If _pendingExpPercent < 0 OrElse Math.Abs(candidate - _pendingExpPercent) > ExpExceptionalConfirmTolerancePercent Then
+            _pendingExpPercent = candidate
+            _pendingExpConfirmCount = 1
+            Return False
+        End If
+
+        _pendingExpPercent = candidate
+        _pendingExpConfirmCount += 1
+        Return _pendingExpConfirmCount >= ExpExceptionalConfirmReads
+    End Function
+
+    Private Sub ClearPendingExpCandidate()
+        _pendingExpPercent = -1
+        _pendingExpConfirmCount = 0
+    End Sub
+
+    Private Sub LogExpOcrUnavailable(now As DateTime)
+        If _lastExpOcrRejectLogAt <> DateTime.MinValue AndAlso (now - _lastExpOcrRejectLogAt).TotalMilliseconds < ExpOcrRejectLogIntervalMs Then
+            Return
+        End If
+        _lastExpOcrRejectLogAt = now
+        RaiseEvent LogLine("EXP OCR did not find a valid percentage in prana_exp_rect; retrying automatically.")
+    End Sub
 
     Private Sub LogRejectedExpOcr(candidate As Double, now As DateTime, reason As String)
         If _lastExpOcrRejectLogAt <> DateTime.MinValue AndAlso (now - _lastExpOcrRejectLogAt).TotalMilliseconds < ExpOcrRejectLogIntervalMs Then
@@ -8236,6 +8300,12 @@ Public Class BotEngine
         GetCachedPranaExpPercent()
 
         If _expOcrTask IsNot Nothing Then
+            Return _lastExpPercent
+        End If
+
+        ' Keep the two numeric HUD reads sequential. Running both WinRT OCR passes against the
+        ' shared engine at once caused long stalls on some systems.
+        If _rupiahsOcrTask IsNot Nothing Then
             Return _lastExpPercent
         End If
 
@@ -8344,7 +8414,9 @@ Public Class BotEngine
             Try
                 Dim parsed As Long = _rupiahsOcrTask.Result
                 If isCurrent AndAlso parsed >= 0 Then
-                    _lastRupiahsTotal = parsed
+                    TryAcceptRupiahsTotal(parsed, DateTime.UtcNow)
+                ElseIf isCurrent Then
+                    LogRupiahsOcrUnavailable(DateTime.UtcNow)
                 End If
             Catch ex As Exception
                 If isCurrent Then
@@ -8357,11 +8429,114 @@ Public Class BotEngine
         Return _lastRupiahsTotal
     End Function
 
+    Private Function TryAcceptRupiahsTotal(candidate As Long, now As DateTime) As Boolean
+        If candidate < 0 Then
+            Return False
+        End If
+
+        If _lastRupiahsTotal < 0 Then
+            If candidate = _pendingRupiahsTotal Then
+                _pendingRupiahsConfirmCount += 1
+            Else
+                _pendingRupiahsTotal = candidate
+                _pendingRupiahsConfirmCount = 1
+            End If
+
+            If _pendingRupiahsConfirmCount < RupiahsInitialConfirmReads Then
+                Return False
+            End If
+
+            _lastRupiahsTotal = candidate
+            _lastAcceptedRupiahsAt = now
+            _pendingRupiahsTotal = -1
+            _pendingRupiahsConfirmCount = 0
+            Return True
+        End If
+
+        If candidate = _lastRupiahsTotal Then
+            _lastAcceptedRupiahsAt = now
+            _pendingRupiahsTotal = -1
+            _pendingRupiahsConfirmCount = 0
+            Return True
+        End If
+
+        Dim elapsedHours As Double = If(
+            _lastAcceptedRupiahsAt = DateTime.MinValue,
+            0.0,
+            Math.Max(0.0, (now - _lastAcceptedRupiahsAt).TotalHours))
+        Dim immediateLimit As Long = Math.Max(
+            RupiahsImmediateChangeFloor,
+            CLng(Math.Ceiling((elapsedHours * MaxValidRupiahsPerHour) + RupiahsChangeGrace)))
+        Dim absoluteChange As Long = If(
+            candidate >= _lastRupiahsTotal,
+            candidate - _lastRupiahsTotal,
+            _lastRupiahsTotal - candidate)
+
+        If absoluteChange <= immediateLimit Then
+            _lastRupiahsTotal = candidate
+            _lastAcceptedRupiahsAt = now
+            _pendingRupiahsTotal = -1
+            _pendingRupiahsConfirmCount = 0
+            Return True
+        End If
+
+        If AreRupiahsCandidatesConsistent(_pendingRupiahsTotal, candidate) Then
+            _pendingRupiahsConfirmCount += 1
+        Else
+            _pendingRupiahsTotal = candidate
+            _pendingRupiahsConfirmCount = 1
+        End If
+
+        If _pendingRupiahsConfirmCount >= RupiahsLargeJumpConfirmReads Then
+            _lastRupiahsTotal = candidate
+            _lastAcceptedRupiahsAt = now
+            _pendingRupiahsTotal = -1
+            _pendingRupiahsConfirmCount = 0
+            RaiseEvent LogLine($"Rupiah OCR accepted a repeated large wallet change to {candidate:N0}.")
+            Return True
+        End If
+
+        If _lastRupiahsOcrRejectLogAt = DateTime.MinValue OrElse
+           (now - _lastRupiahsOcrRejectLogAt).TotalMilliseconds >= RupiahsOcrRejectLogIntervalMs Then
+            _lastRupiahsOcrRejectLogAt = now
+            RaiseEvent LogLine($"Rupiah OCR reading {candidate:N0} is pending confirmation; keeping {_lastRupiahsTotal:N0}.")
+        End If
+        Return False
+    End Function
+
+    Private Function AreRupiahsCandidatesConsistent(previousCandidate As Long, candidate As Long) As Boolean
+        If previousCandidate < 0 OrElse candidate < 0 OrElse _lastRupiahsTotal < 0 Then
+            Return previousCandidate = candidate
+        End If
+
+        Dim previousDirection As Integer = Math.Sign(previousCandidate - _lastRupiahsTotal)
+        Dim candidateDirection As Integer = Math.Sign(candidate - _lastRupiahsTotal)
+        If previousDirection <> candidateDirection Then
+            Return False
+        End If
+
+        Dim proportionalTolerance As Long = CLng(Math.Round(Math.Abs(CDbl(previousCandidate)) * 0.002R))
+        Dim tolerance As Long = Math.Max(RupiahsLargeJumpToleranceFloor, Math.Min(RupiahsLargeJumpToleranceCeiling, proportionalTolerance))
+        Return Math.Abs(candidate - previousCandidate) <= tolerance
+    End Function
+
+    Private Sub LogRupiahsOcrUnavailable(now As DateTime)
+        If _lastRupiahsOcrRejectLogAt <> DateTime.MinValue AndAlso (now - _lastRupiahsOcrRejectLogAt).TotalMilliseconds < RupiahsOcrRejectLogIntervalMs Then
+            Return
+        End If
+        _lastRupiahsOcrRejectLogAt = now
+        RaiseEvent LogLine("Rupiah OCR did not find a valid wallet number in rupiahs_rect; retrying automatically.")
+    End Sub
+
     Private Function ReadRupiahsTotal(hwnd As IntPtr, frame As Bitmap, rupiahsRegion As RectRegion) As Long
         Dim now As DateTime = DateTime.UtcNow
         GetCachedRupiahsTotal()
 
         If _rupiahsOcrTask IsNot Nothing Then
+            Return _lastRupiahsTotal
+        End If
+
+        If _expOcrTask IsNot Nothing Then
             Return _lastRupiahsTotal
         End If
 

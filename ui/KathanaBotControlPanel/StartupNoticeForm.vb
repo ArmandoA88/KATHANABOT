@@ -72,7 +72,7 @@ Friend NotInheritable Class StartupNoticeForm
         root.Controls.Add(messageBox, 1, 1)
 
         Dim contactLabel As New Label() With {
-            .Text = "IN-GAME PM: xSAITAMAx",
+            .Text = "DISCORD: mando1545",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.FromArgb(80, 210, 255),
             .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold),
@@ -123,7 +123,7 @@ Friend NotInheritable Class StartupNoticeForm
         HighlightAll(target, "ENGLISH", Color.FromArgb(255, 202, 74), FontStyle.Bold)
         HighlightAll(target, "ESPAÑOL", Color.FromArgb(255, 122, 92), FontStyle.Bold)
         HighlightAll(target, "TAGALOG", Color.FromArgb(100, 220, 160), FontStyle.Bold)
-        HighlightAll(target, "xSAITAMAx", Color.FromArgb(80, 210, 255), FontStyle.Bold)
+        HighlightAll(target, "mando1545", Color.FromArgb(80, 210, 255), FontStyle.Bold)
         target.Select(0, 0)
     End Sub
 

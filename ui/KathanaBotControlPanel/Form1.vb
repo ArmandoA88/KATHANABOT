@@ -1321,13 +1321,15 @@ Public Class Form1
     Private NotInheritable Class DashboardModeSelector
         Inherits Control
 
-        Private Shared ReadOnly ModeNames As String() = {"Compact", "Standard", "Detailed"}
+        Private Shared ReadOnly SegmentNames As String() = {"Compact", "Standard", "Detailed", "Reset Stats"}
+        Private Const DashboardModeCount As Integer = 3
         Private ReadOnly _animationTimer As New System.Windows.Forms.Timer() With {.Interval = 16}
         Private _selectedIndex As Integer = 0
         Private _hoverIndex As Integer = -1
         Private _selectionPosition As Double = 0.0R
 
         Public Event SelectedModeChanged As EventHandler
+        Public Event ResetStatsRequested As EventHandler
 
         Public Sub New()
             Height = 34
@@ -1349,11 +1351,11 @@ Public Class Form1
         <System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)>
         Public Property SelectedMode As String
             Get
-                Return ModeNames(_selectedIndex)
+                Return SegmentNames(_selectedIndex)
             End Get
             Set(value As String)
-                Dim nextIndex As Integer = Array.FindIndex(ModeNames, Function(mode) mode.Equals(If(value, ""), StringComparison.OrdinalIgnoreCase))
-                If nextIndex < 0 OrElse nextIndex = _selectedIndex Then
+                Dim nextIndex As Integer = Array.FindIndex(SegmentNames, Function(mode) mode.Equals(If(value, ""), StringComparison.OrdinalIgnoreCase))
+                If nextIndex < 0 OrElse nextIndex >= DashboardModeCount OrElse nextIndex = _selectedIndex Then
                     Return
                 End If
                 _selectedIndex = nextIndex
@@ -1367,7 +1369,7 @@ Public Class Form1
             If Width <= 0 Then
                 Return -1
             End If
-            Return Math.Max(0, Math.Min(ModeNames.Length - 1, CInt(Math.Floor((Math.Max(0, Math.Min(Width - 1, x)) / CDbl(Width)) * ModeNames.Length))))
+            Return Math.Max(0, Math.Min(SegmentNames.Length - 1, CInt(Math.Floor((Math.Max(0, Math.Min(Width - 1, x)) / CDbl(Width)) * SegmentNames.Length))))
         End Function
 
         Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
@@ -1390,8 +1392,10 @@ Public Class Form1
             If e.Button = MouseButtons.Left Then
                 Focus()
                 Dim index As Integer = SegmentAt(e.X)
-                If index >= 0 Then
-                    SelectedMode = ModeNames(index)
+                If index >= 0 AndAlso index < DashboardModeCount Then
+                    SelectedMode = SegmentNames(index)
+                ElseIf index = DashboardModeCount Then
+                    RaiseEvent ResetStatsRequested(Me, EventArgs.Empty)
                 End If
             End If
         End Sub
@@ -1399,16 +1403,16 @@ Public Class Form1
         Protected Overrides Sub OnKeyDown(e As KeyEventArgs)
             MyBase.OnKeyDown(e)
             If e.KeyCode = Keys.Left Then
-                SelectedMode = ModeNames(Math.Max(0, _selectedIndex - 1))
+                SelectedMode = SegmentNames(Math.Max(0, _selectedIndex - 1))
                 e.Handled = True
             ElseIf e.KeyCode = Keys.Right Then
-                SelectedMode = ModeNames(Math.Min(ModeNames.Length - 1, _selectedIndex + 1))
+                SelectedMode = SegmentNames(Math.Min(DashboardModeCount - 1, _selectedIndex + 1))
                 e.Handled = True
             ElseIf e.KeyCode = Keys.Home Then
-                SelectedMode = ModeNames(0)
+                SelectedMode = SegmentNames(0)
                 e.Handled = True
             ElseIf e.KeyCode = Keys.End Then
-                SelectedMode = ModeNames(ModeNames.Length - 1)
+                SelectedMode = SegmentNames(DashboardModeCount - 1)
                 e.Handled = True
             End If
         End Sub
@@ -1440,7 +1444,7 @@ Public Class Form1
             Dim innerLeft As Integer = 3
             Dim innerTop As Integer = 3
             Dim innerHeight As Integer = Height - 7
-            Dim segmentWidth As Double = (Width - 6.0R) / ModeNames.Length
+            Dim segmentWidth As Double = (Width - 6.0R) / SegmentNames.Length
             Dim selectedRect As New Rectangle(
                 CInt(Math.Round(innerLeft + (_selectionPosition * segmentWidth))),
                 innerTop,
@@ -1454,11 +1458,11 @@ Public Class Form1
                 e.Graphics.DrawPath(selectedBorder, selectedPath)
             End Using
 
-            For index As Integer = 0 To ModeNames.Length - 1
+            For index As Integer = 0 To SegmentNames.Length - 1
                 Dim segmentRect As New Rectangle(
-                    CInt(Math.Round(index * (Width / CDbl(ModeNames.Length)))),
+                    CInt(Math.Round(index * (Width / CDbl(SegmentNames.Length)))),
                     0,
-                    CInt(Math.Ceiling(Width / CDbl(ModeNames.Length))),
+                    CInt(Math.Ceiling(Width / CDbl(SegmentNames.Length))),
                     Height)
                 If index = _hoverIndex AndAlso index <> _selectedIndex Then
                     Dim hoverRect As Rectangle = Rectangle.Inflate(segmentRect, -4, -5)
@@ -1468,7 +1472,7 @@ Public Class Form1
                     End Using
                 End If
                 Dim textColor As Color = If(index = _selectedIndex, Color.White, If(index = _hoverIndex, ThemeTextPrimary, ThemeTextSecondary))
-                TextRenderer.DrawText(e.Graphics, ModeNames(index), Font, segmentRect, textColor,
+                TextRenderer.DrawText(e.Graphics, SegmentNames(index), Font, segmentRect, textColor,
                                       TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
             Next
 
@@ -2077,22 +2081,36 @@ Public Class Form1
     Private Const MaxAchievementSamples As Integer = 10000
     Private Const AchievementSampleMinIntervalSeconds As Integer = 15
     Private _lastAchievementSampleAt As DateTime = DateTime.MinValue
-    Private _lastAchievementExpPercent As Double = -1
-    Private _cumulativeExpEarned As Double = 0
+    Private _lastAchievementExpBasisPoints As Integer = -1
+    Private _cumulativeExpEarnedBasisPoints As Long = 0
+    Private _cumulativeRupiahsEarned As Long = 0
+    Private _achievementObservedRunStartedAtUtc As DateTime = DateTime.MinValue
+    Private _achievementObservedCharacterName As String = ""
+    Private _achievementBaseExpBasisPoints As Integer = -1
+    Private _achievementExpLevelRollovers As Integer = 0
+    Private _achievementCommittedExpEarnedBasisPoints As Long = 0
+    Private _achievementBaseRupiahsTotal As Long = -1
+    Private _achievementCommittedRupiahsEarned As Long = 0
     Private ReadOnly _applicationSessionStartedAtUtc As DateTime = DateTime.UtcNow
     Private _dashboardSessionRunStartedAtUtc As DateTime = DateTime.MinValue
-    Private _dashboardSessionStartRupiahs As Long = -1
+    Private _dashboardRunBaseRupiahs As Long = -1
+    Private _dashboardCommittedRupiahsEarned As Long = 0
+    Private _dashboardCommittedRupiahsSpent As Long = 0
     Private _dashboardSessionRupiahsEarned As Long = 0
-    Private _dashboardSessionLastExpPercent As Double = -1
-    Private _dashboardSessionExpEarned As Double = 0.0
+    Private _dashboardSessionRupiahsSpent As Long = 0
+    Private _dashboardRunBaseExpBasisPoints As Integer = -1
+    Private _dashboardRunLastExpBasisPoints As Integer = -1
+    Private _dashboardRunExpLevelRollovers As Integer = 0
+    Private _dashboardCommittedExpEarnedBasisPoints As Long = 0
+    Private _dashboardSessionExpEarnedBasisPoints As Long = 0
+    Private _dashboardSessionCharacterName As String = ""
     Private _dashboardLastRateSampleAtUtc As DateTime = DateTime.MinValue
     Private ReadOnly _dashboardExpRateHistory As New List(Of Double)()
     Private ReadOnly _dashboardRupiahRateHistory As New List(Of Double)()
     Private Const DashboardRateHistoryIntervalSeconds As Integer = 5
     Private Const DashboardRateHistoryMaxSamples As Integer = 180
-    Private Const MaxCredibleExpDeltaPerUiSample As Double = 1.0
-    Private Const ExpLevelWrapHighPercent As Double = 90.0
-    Private Const ExpLevelWrapLowPercent As Double = 10.0
+    Private Const ExpLevelWrapHighBasisPoints As Integer = 9000
+    Private Const ExpLevelWrapLowBasisPoints As Integer = 1000
     Private _dashboardTargetSignature As String = ""
     Private _dashboardTargetStartedAtUtc As DateTime = DateTime.MinValue
     Private _dashboardTargetStartHpPercent As Double = -1.0
@@ -2233,12 +2251,12 @@ Public Class Form1
 
     ' RupiahsTotal/ExpPercent are only recorded when both are valid live readings, so the earned-
     ' in-window calculation never has to reason about -1 "unknown" sentinel values mixed in.
-    ' CumulativeExpEarned unwraps level-up resets into a monotonically non-decreasing odometer
-    ' (see RecordAchievementSampleIfDue), the same way RupiahsTotal is already a running total.
+    ' Both earned values are monotonic odometers built only from confirmed forward changes.
+    ' EXP uses integer hundredths of a percent to avoid floating-point accumulation drift.
     Private Class AchievementSample
         Public Property TimestampUtc As DateTime
-        Public Property RupiahsTotal As Long
-        Public Property CumulativeExpEarned As Double
+        Public Property CumulativeRupiahsEarned As Long
+        Public Property CumulativeExpEarnedBasisPoints As Long
     End Class
 
     Private Class LootHistoryEvent
@@ -3660,12 +3678,13 @@ Public Class Form1
             .Dock = DockStyle.Fill,
             .BackColor = ThemeBg,
             .Padding = New Padding(40, 10, 40, 6),
-            .ColumnCount = 4,
+            .ColumnCount = 5,
             .RowCount = 1
         }
         header.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
-        header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 260.0F))
-        header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 258.0F))
+        header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 220.0F))
+        header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 238.0F))
+        header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 130.0F))
         header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 82.0F))
 
         Dim titleStack As New Panel() With {.Dock = DockStyle.Fill, .BackColor = ThemeBg}
@@ -3695,7 +3714,7 @@ Public Class Form1
             .TextAlign = ContentAlignment.MiddleRight
         }
 
-        Dim modeHost As New Panel() With {.Dock = DockStyle.Fill, .BackColor = ThemeBg, .Padding = New Padding(10, 6, 4, 8)}
+        Dim modeHost As New Panel() With {.Dock = DockStyle.Fill, .BackColor = ThemeBg, .Padding = New Padding(10, 6, 6, 8)}
         Dim modeCaption As New Label() With {
             .Text = "DASHBOARD VIEW",
             .Dock = DockStyle.Top,
@@ -3709,6 +3728,7 @@ Public Class Form1
             .SelectedMode = "Compact"
         }
         AddHandler _dashboardModeSelectorControl.SelectedModeChanged, AddressOf DashboardModeChanged
+        AddHandler _dashboardModeSelectorControl.ResetStatsRequested, AddressOf DashboardResetSessionClicked
         modeHost.Controls.Add(_dashboardModeSelectorControl)
         modeHost.Controls.Add(modeCaption)
 
@@ -3727,7 +3747,8 @@ Public Class Form1
         header.Controls.Add(titleStack, 0, 0)
         header.Controls.Add(lblDashSubtitle, 1, 0)
         header.Controls.Add(modeHost, 2, 0)
-        header.Controls.Add(actionHost, 3, 0)
+        header.SetColumnSpan(modeHost, 2)
+        header.Controls.Add(actionHost, 4, 0)
         root.Controls.Add(header, 0, 0)
 
         dashboardSummary = New DashboardSummaryBar() With {.Dock = DockStyle.Fill, .Margin = New Padding(48, 6, 48, 6), .MinimumSize = New Size(0, 88)}
@@ -3816,6 +3837,36 @@ Public Class Form1
             StopClicked(Nothing, e)
         Else
             StartClicked(sender, e)
+        End If
+    End Sub
+
+    Private Sub DashboardResetSessionClicked(sender As Object, e As EventArgs)
+        If MessageBox.Show(Me,
+                           "Reset the EXE-session EXP and Rupiah counters? This does not change the in-game wallet or EXP.",
+                           "Reset Session Stats",
+                           MessageBoxButtons.YesNo,
+                           MessageBoxIcon.Question) <> DialogResult.Yes Then
+            Return
+        End If
+
+        _dashboardRunBaseRupiahs = -1
+        _dashboardCommittedRupiahsEarned = 0
+        _dashboardCommittedRupiahsSpent = 0
+        _dashboardSessionRupiahsEarned = 0
+        _dashboardSessionRupiahsSpent = 0
+        _dashboardRunBaseExpBasisPoints = -1
+        _dashboardRunLastExpBasisPoints = -1
+        _dashboardRunExpLevelRollovers = 0
+        _dashboardCommittedExpEarnedBasisPoints = 0
+        _dashboardSessionExpEarnedBasisPoints = 0
+        _dashboardSessionCharacterName = ""
+        _dashboardLastRateSampleAtUtc = DateTime.MinValue
+        _dashboardExpRateHistory.Clear()
+        _dashboardRupiahRateHistory.Clear()
+        AddDashboardRecentEvent("EXE-session EXP and Rupiah counters reset")
+
+        If _fullStatus IsNot Nothing Then
+            UpdateDashboardUi(_fullStatus, BotEdition.Full)
         End If
     End Sub
 
@@ -3985,12 +4036,18 @@ Public Class Form1
         End If
 
         Dim expAccent As Color = Color.FromArgb(170, 135, 255)
-        If edition = BotEdition.Full Then
+        Dim sessionExpEarned As Double = _dashboardSessionExpEarnedBasisPoints / 100.0
+        If edition = BotEdition.Full AndAlso status.ExpPercent >= 0 Then
             Dim etaText As String = FormatExpEta(status.ExpPercent, status.ExpPerHour)
             cardDashRate.SetValue(If(etaText = "", $"{status.ExpPercent:0.00}% · ETA calculating", $"{status.ExpPercent:0.00}% · ETA {etaText}"), If(etaText = "", ThemeTextSecondary, ThemeTextPrimary))
             Dim rateText As String = If(status.ExpPerHour < 0, "rate calculating", $"{status.ExpPerHour:0.00}%/hr")
-            cardDashRate.SetSecondary($"Current level {status.ExpPercent:0.00}%  ·  +{_dashboardSessionExpEarned:0.00}% EXE session{Environment.NewLine}{rateText}  ·  15-minute rate trend")
+            cardDashRate.SetSecondary($"Current level {status.ExpPercent:0.00}%  ·  +{sessionExpEarned:0.00}% EXE session{Environment.NewLine}{rateText}  ·  confirmed OCR only")
             cardDashRate.SetProgress(status.ExpPercent, expAccent)
+            cardDashRate.SetRateHistory(_dashboardExpRateHistory, expAccent, _dashboardExpRateHistory.Count > 0, "0.00", "% EXP/hr", DashboardRateHistoryIntervalSeconds)
+        ElseIf edition = BotEdition.Full Then
+            cardDashRate.SetValue("Confirming EXP", ThemeTextSecondary)
+            cardDashRate.SetSecondary($"+{sessionExpEarned:0.00}% EXE session  ·  waiting for confirmed prana_exp_rect OCR")
+            cardDashRate.SetProgress(0.0, expAccent, False)
             cardDashRate.SetRateHistory(_dashboardExpRateHistory, expAccent, _dashboardExpRateHistory.Count > 0, "0.00", "% EXP/hr", DashboardRateHistoryIntervalSeconds)
         Else
             cardDashRate.SetValue("Full mode only", ThemeTextSecondary)
@@ -4004,7 +4061,8 @@ Public Class Form1
         If edition = BotEdition.Full AndAlso status.RupiahsTotal >= 0 Then
             cardDashSession.SetValue($"{status.RupiahsTotal:N0} wallet", rupiahAccent)
             Dim projectionText As String = If(status.RupiahsPerHour < 0, "projection calculating", $"Projected {status.RupiahsPerHour:N0}/hr  ·  {(status.RupiahsPerHour * 24.0):N0}/day")
-            cardDashSession.SetSecondary($"+{_dashboardSessionRupiahsEarned:N0} EXE session{Environment.NewLine}{projectionText}  ·  15-minute earnings trend")
+            Dim netWalletChange As Long = _dashboardSessionRupiahsEarned - _dashboardSessionRupiahsSpent
+            cardDashSession.SetSecondary($"+{_dashboardSessionRupiahsEarned:N0} earned  ·  -{_dashboardSessionRupiahsSpent:N0} spent  ·  {netWalletChange:+#,##0;-#,##0;0} net{Environment.NewLine}{projectionText}  ·  confirmed OCR only")
             cardDashSession.SetRateHistory(_dashboardRupiahRateHistory, rupiahAccent, _dashboardRupiahRateHistory.Count > 0, "N0", " Rupiah/hr", DashboardRateHistoryIntervalSeconds)
         ElseIf edition <> BotEdition.Full Then
             cardDashSession.SetValue("Full mode only", ThemeTextSecondary)
@@ -4020,7 +4078,7 @@ Public Class Form1
             dashboardSummary.SetMetric(0, runtime, ThemeAccent)
             dashboardSummary.SetMetric(1, status.SessionKilledMobs.ToString("N0"), ThemeGood)
             dashboardSummary.SetMetric(2, killsPerHour.ToString("0.0"))
-            dashboardSummary.SetMetric(3, $"+{_dashboardSessionExpEarned:0.00}%", expAccent)
+            dashboardSummary.SetMetric(3, $"+{sessionExpEarned:0.00}%", expAccent)
             dashboardSummary.SetMetric(4, $"+{_dashboardSessionRupiahsEarned:N0}", rupiahAccent)
             dashboardSummary.SetMetric(5, _itemAwardReads.Count.ToString("N0"), Color.FromArgb(80, 200, 190))
         End If
@@ -4042,32 +4100,44 @@ Public Class Form1
         End If
 
         Dim runStartedAt As DateTime = status.RunStartedAtUtc
+        Dim startNewBaselineSegment As Boolean = False
         If runStartedAt <> DateTime.MinValue AndAlso runStartedAt <> _dashboardSessionRunStartedAtUtc Then
             _dashboardSessionRunStartedAtUtc = runStartedAt
-            _dashboardSessionStartRupiahs = -1
-            _dashboardSessionRupiahsEarned = 0
-            _dashboardSessionLastExpPercent = -1
-            _dashboardSessionExpEarned = 0
-            _dashboardLastRateSampleAtUtc = DateTime.MinValue
-            _dashboardExpRateHistory.Clear()
-            _dashboardRupiahRateHistory.Clear()
+            startNewBaselineSegment = True
+        End If
+
+        Dim observedCharacterName As String = If(status.CharacterName, "").Trim()
+        If observedCharacterName <> "" Then
+            If _dashboardSessionCharacterName <> "" AndAlso
+               Not observedCharacterName.Equals(_dashboardSessionCharacterName, StringComparison.OrdinalIgnoreCase) Then
+                startNewBaselineSegment = True
+            End If
+            _dashboardSessionCharacterName = observedCharacterName
+        End If
+
+        If startNewBaselineSegment Then
+            BeginDashboardTelemetryBaselineSegment()
         End If
 
         If status.Running AndAlso status.WindowFound AndAlso status.RupiahsTotal >= 0 Then
-            If _dashboardSessionStartRupiahs < 0 Then
-                _dashboardSessionStartRupiahs = status.RupiahsTotal
+            If _dashboardRunBaseRupiahs < 0 Then
+                ' The first valid read after Start is the fixed wallet baseline for this bot run.
+                _dashboardRunBaseRupiahs = status.RupiahsTotal
             End If
-            _dashboardSessionRupiahsEarned = Math.Max(0L, status.RupiahsTotal - _dashboardSessionStartRupiahs)
+
+            Dim walletChangeFromBase As Long = status.RupiahsTotal - _dashboardRunBaseRupiahs
+            _dashboardSessionRupiahsEarned = _dashboardCommittedRupiahsEarned + Math.Max(0L, walletChangeFromBase)
+            _dashboardSessionRupiahsSpent = _dashboardCommittedRupiahsSpent + Math.Max(0L, -walletChangeFromBase)
         End If
 
         If status.Running AndAlso status.WindowFound AndAlso status.ExpPercent >= 0 Then
-            If _dashboardSessionLastExpPercent >= 0 Then
-                Dim delta As Double
-                If TryGetCredibleForwardExpDelta(_dashboardSessionLastExpPercent, status.ExpPercent, delta) Then
-                    _dashboardSessionExpEarned += delta
-                End If
-            End If
-            _dashboardSessionLastExpPercent = status.ExpPercent
+            Dim currentExpBasisPoints As Integer = PercentToBasisPoints(status.ExpPercent)
+            Dim runExpGain As Long = GetExpGainFromFixedBaseline(
+                currentExpBasisPoints,
+                _dashboardRunBaseExpBasisPoints,
+                _dashboardRunLastExpBasisPoints,
+                _dashboardRunExpLevelRollovers)
+            _dashboardSessionExpEarnedBasisPoints = _dashboardCommittedExpEarnedBasisPoints + runExpGain
         End If
 
         Dim nowUtc As DateTime = DateTime.UtcNow
@@ -4091,21 +4161,52 @@ Public Class Form1
         End If
     End Sub
 
-    Private Shared Function TryGetCredibleForwardExpDelta(previousPercent As Double, currentPercent As Double, ByRef delta As Double) As Boolean
-        delta = 0
-        If previousPercent < 0 OrElse previousPercent > 100 OrElse currentPercent < 0 OrElse currentPercent > 100 Then
-            Return False
+    Private Sub BeginDashboardTelemetryBaselineSegment()
+        ' Preserve completed bot-run totals for the EXE lifetime, then make the first valid reading
+        ' of the next run/character the new fixed base. No changes while stopped are counted.
+        _dashboardCommittedRupiahsEarned = _dashboardSessionRupiahsEarned
+        _dashboardCommittedRupiahsSpent = _dashboardSessionRupiahsSpent
+        _dashboardCommittedExpEarnedBasisPoints = _dashboardSessionExpEarnedBasisPoints
+        _dashboardRunBaseRupiahs = -1
+        _dashboardRunBaseExpBasisPoints = -1
+        _dashboardRunLastExpBasisPoints = -1
+        _dashboardRunExpLevelRollovers = 0
+    End Sub
+
+    Private Shared Function GetExpGainFromFixedBaseline(currentBasisPoints As Integer,
+                                                        ByRef baseBasisPoints As Integer,
+                                                        ByRef lastBasisPoints As Integer,
+                                                        ByRef levelRollovers As Integer) As Long
+        If currentBasisPoints < 0 OrElse currentBasisPoints > 10000 Then
+            Return 0
         End If
 
-        If currentPercent >= previousPercent Then
-            delta = currentPercent - previousPercent
-        ElseIf previousPercent >= ExpLevelWrapHighPercent AndAlso currentPercent <= ExpLevelWrapLowPercent Then
-            delta = (100.0 - previousPercent) + currentPercent
-        Else
-            Return False
+        If baseBasisPoints < 0 Then
+            baseBasisPoints = currentBasisPoints
+            lastBasisPoints = currentBasisPoints
+            levelRollovers = 0
+            Return 0
         End If
 
-        Return delta > 0.0 AndAlso delta <= MaxCredibleExpDeltaPerUiSample
+        If lastBasisPoints >= 0 AndAlso currentBasisPoints <> lastBasisPoints Then
+            If lastBasisPoints >= ExpLevelWrapHighBasisPoints AndAlso currentBasisPoints <= ExpLevelWrapLowBasisPoints Then
+                levelRollovers += 1
+            ElseIf levelRollovers > 0 AndAlso lastBasisPoints <= ExpLevelWrapLowBasisPoints AndAlso currentBasisPoints >= ExpLevelWrapHighBasisPoints Then
+                ' A low OCR outlier followed by the prior high value was not a real level rollover.
+                levelRollovers -= 1
+            End If
+        End If
+        lastBasisPoints = currentBasisPoints
+
+        Dim gained As Long = (CLng(Math.Max(0, levelRollovers)) * 10000L) + currentBasisPoints - baseBasisPoints
+        Return Math.Max(0L, gained)
+    End Function
+
+    Private Shared Function PercentToBasisPoints(percent As Double) As Integer
+        If Double.IsNaN(percent) OrElse Double.IsInfinity(percent) OrElse percent < 0 OrElse percent > 100 Then
+            Return -1
+        End If
+        Return CInt(Math.Round(percent * 100.0, MidpointRounding.AwayFromZero))
     End Function
 
     Private Shared Sub TrimDashboardHistory(history As List(Of Double))
@@ -7883,20 +7984,34 @@ Public Class Form1
             suggestedIconSize = Math.Max(16, Math.Min(128, buffAreaRegion.H))
         End If
         Using picker As New BuffIconSelectorForm(hwnd, suggestedIconSize)
-            If picker.ShowDialog(Me) = DialogResult.OK AndAlso Not String.IsNullOrWhiteSpace(picker.SelectedRelativePath) Then
-                Dim slot As New BuffWatchSlot() With {
-                    .Enabled = True,
-                    .Name = If(String.IsNullOrWhiteSpace(picker.SelectedName), "Buff", picker.SelectedName),
-                    .IconRelativePath = picker.SelectedRelativePath,
-                    .Tolerance = 45,
-                    .KeyName = "",
-                    .CooldownSec = 3D,
-                    .SelfClickBeforeCast = False
-                }
-                AddBuffWatchSlotRow(slot)
+            If picker.ShowDialog(Me) = DialogResult.OK Then
+                Dim selectedEntries As List(Of BuffIconLibraryEntry) = picker.SelectedEntries
+                If selectedEntries.Count = 0 AndAlso Not String.IsNullOrWhiteSpace(picker.SelectedRelativePath) Then
+                    selectedEntries.Add(New BuffIconLibraryEntry With {.Name = picker.SelectedName, .RelativePath = picker.SelectedRelativePath})
+                End If
+
+                For Each entry As BuffIconLibraryEntry In selectedEntries
+                    If entry Is Nothing OrElse String.IsNullOrWhiteSpace(entry.RelativePath) Then
+                        Continue For
+                    End If
+                    Dim slot As New BuffWatchSlot() With {
+                        .Enabled = True,
+                        .Name = If(String.IsNullOrWhiteSpace(entry.Name), "Buff", entry.Name),
+                        .IconRelativePath = entry.RelativePath,
+                        .Tolerance = 45,
+                        .KeyName = "",
+                        .CooldownSec = 3D,
+                        .SelfClickBeforeCast = False
+                    }
+                    AddBuffWatchSlotRow(slot)
+                Next
+
+                If selectedEntries.Count = 0 Then
+                    Return
+                End If
                 PushLiveConfig()
                 SavePersistedListState(False)
-                AppendLog($"Buff Watch: added ""{slot.Name}"" - set its recast key in the grid.")
+                AppendLog($"Buff Watch: added {selectedEntries.Count} skill icon{If(selectedEntries.Count = 1, "", "s")} - set each recast key in the grid.")
             End If
         End Using
     End Sub
@@ -8626,8 +8741,16 @@ Public Class Form1
                     _achievementSamples.Clear()
                 End SyncLock
                 _lastAchievementSampleAt = DateTime.MinValue
-                _lastAchievementExpPercent = -1
-                _cumulativeExpEarned = 0
+                _lastAchievementExpBasisPoints = -1
+                _cumulativeExpEarnedBasisPoints = 0
+                _cumulativeRupiahsEarned = 0
+                _achievementBaseExpBasisPoints = -1
+                _achievementExpLevelRollovers = 0
+                _achievementCommittedExpEarnedBasisPoints = 0
+                _achievementBaseRupiahsTotal = -1
+                _achievementCommittedRupiahsEarned = 0
+                _achievementObservedRunStartedAtUtc = DateTime.MinValue
+                _achievementObservedCharacterName = ""
                 RefreshAchievementSummaryGrid()
             End Sub
         layout.Controls.Add(btnResetAchievements, 0, 2)
@@ -13824,7 +13947,7 @@ Public Class Form1
         lblHp.ForeColor = HpColor(status.HpPercent)
         lblMp.ForeColor = MpColor(status.MpPercent)
         lblMobName.Text = FormatFullMobStatusText(status)
-        lblExpRate.Text = $"Prana/EXP: {status.ExpPercent:0.00}% | Rate: {If(status.ExpPerHour < 0, "Calculating (1m)", status.ExpPerHour.ToString("0.00") & "%/hr")}"
+        lblExpRate.Text = $"Prana/EXP: {If(status.ExpPercent < 0, "confirming", status.ExpPercent.ToString("0.00") & "%")} | Rate: {If(status.ExpPerHour < 0, "Calculating (1m)", status.ExpPerHour.ToString("0.00") & "%/hr")}"
         lblRupiahsRate.Text = $"Rupiahs: {If(status.RupiahsTotal >= 0, status.RupiahsTotal.ToString("N0"), "n/a")} | Rate: {If(status.RupiahsPerHour < 0, "Calculating (1m)", status.RupiahsPerHour.ToString("N0") & "/hr")}"
         If lblFullSupportLiveStatus IsNot Nothing Then
             Dim supportText As String = If(String.IsNullOrWhiteSpace(status.FullSupportStatus), "Waiting for party scan.", status.FullSupportStatus)
@@ -18339,7 +18462,7 @@ Public Class Form1
     ' regardless of which tab/edition is currently selected in the UI.
     Private Sub RecordAchievementSampleIfDue()
         Dim status As BotStatus = _fullStatus
-        If status Is Nothing OrElse Not status.WindowFound OrElse status.RupiahsTotal < 0 OrElse status.ExpPercent < 0 Then
+        If status Is Nothing OrElse Not status.Running OrElse Not status.WindowFound OrElse status.RupiahsTotal < 0 OrElse status.ExpPercent < 0 Then
             Return
         End If
 
@@ -18349,19 +18472,41 @@ Public Class Form1
         End If
         _lastAchievementSampleAt = nowUtc
 
-        If _lastAchievementExpPercent >= 0 Then
-            Dim delta As Double
-            If TryGetCredibleForwardExpDelta(_lastAchievementExpPercent, status.ExpPercent, delta) Then
-                _cumulativeExpEarned += delta
-            End If
+        Dim runStartedAt As DateTime = status.RunStartedAtUtc
+        Dim observedCharacterName As String = If(status.CharacterName, "").Trim()
+        Dim observationSegmentChanged As Boolean =
+            (runStartedAt <> DateTime.MinValue AndAlso runStartedAt <> _achievementObservedRunStartedAtUtc) OrElse
+            (observedCharacterName <> "" AndAlso _achievementObservedCharacterName <> "" AndAlso
+             Not observedCharacterName.Equals(_achievementObservedCharacterName, StringComparison.OrdinalIgnoreCase))
+        If observationSegmentChanged Then
+            _achievementCommittedExpEarnedBasisPoints = _cumulativeExpEarnedBasisPoints
+            _achievementCommittedRupiahsEarned = _cumulativeRupiahsEarned
+            _achievementBaseExpBasisPoints = -1
+            _lastAchievementExpBasisPoints = -1
+            _achievementExpLevelRollovers = 0
+            _achievementBaseRupiahsTotal = -1
         End If
-        _lastAchievementExpPercent = status.ExpPercent
+        If runStartedAt <> DateTime.MinValue Then _achievementObservedRunStartedAtUtc = runStartedAt
+        If observedCharacterName <> "" Then _achievementObservedCharacterName = observedCharacterName
+
+        Dim currentExpBasisPoints As Integer = PercentToBasisPoints(status.ExpPercent)
+        Dim segmentExpGain As Long = GetExpGainFromFixedBaseline(
+            currentExpBasisPoints,
+            _achievementBaseExpBasisPoints,
+            _lastAchievementExpBasisPoints,
+            _achievementExpLevelRollovers)
+        _cumulativeExpEarnedBasisPoints = _achievementCommittedExpEarnedBasisPoints + segmentExpGain
+
+        If _achievementBaseRupiahsTotal < 0 Then
+            _achievementBaseRupiahsTotal = status.RupiahsTotal
+        End If
+        _cumulativeRupiahsEarned = _achievementCommittedRupiahsEarned + Math.Max(0L, status.RupiahsTotal - _achievementBaseRupiahsTotal)
 
         SyncLock _achievementSamplesSync
             _achievementSamples.Add(New AchievementSample With {
                 .TimestampUtc = nowUtc,
-                .RupiahsTotal = status.RupiahsTotal,
-                .CumulativeExpEarned = _cumulativeExpEarned
+                .CumulativeRupiahsEarned = _cumulativeRupiahsEarned,
+                .CumulativeExpEarnedBasisPoints = _cumulativeExpEarnedBasisPoints
             })
             Dim cutoff As DateTime = nowUtc.AddHours(-24)
             _achievementSamples.RemoveAll(Function(s As AchievementSample) s.TimestampUtc < cutoff)
@@ -18373,8 +18518,7 @@ Public Class Form1
 
     ' Earned-in-window = latest sample minus the earliest sample still inside the window (or the
     ' oldest sample retained at all, if the window is longer than our history so far) - works the
-    ' same way for both metrics since CumulativeExpEarned is a monotonic odometer just like
-    ' RupiahsTotal already is.
+    ' same way for both metrics because both stored values are monotonic earned odometers.
     Private Function GetAchievementEarned(windowMinutes As Double) As (RupiahEarned As Long, ExpEarned As Double, HasData As Boolean)
         Dim nowUtc As DateTime = DateTime.UtcNow
         Dim cutoff As DateTime = nowUtc.AddMinutes(-windowMinutes)
@@ -18399,8 +18543,8 @@ Public Class Form1
         End If
 
         Dim latest As AchievementSample = snapshot(snapshot.Count - 1)
-        Dim rupiahEarned As Long = Math.Max(0L, latest.RupiahsTotal - baseline.RupiahsTotal)
-        Dim expEarned As Double = Math.Max(0.0, latest.CumulativeExpEarned - baseline.CumulativeExpEarned)
+        Dim rupiahEarned As Long = Math.Max(0L, latest.CumulativeRupiahsEarned - baseline.CumulativeRupiahsEarned)
+        Dim expEarned As Double = Math.Max(0L, latest.CumulativeExpEarnedBasisPoints - baseline.CumulativeExpEarnedBasisPoints) / 100.0
         Return (rupiahEarned, expEarned, True)
     End Function
 
@@ -19077,7 +19221,7 @@ Public Class Form1
         End If
 
         Dim body As String =
-            $"Prana/EXP: {status.ExpPercent:0.00}% | Rate: {FormatExpRateForNotification(status)}{Environment.NewLine}" &
+            $"Prana/EXP: {If(status.ExpPercent < 0, "confirming", status.ExpPercent.ToString("0.00") & "%")} | Rate: {FormatExpRateForNotification(status)}{Environment.NewLine}" &
             $"Rupiahs: {If(status.RupiahsTotal >= 0, status.RupiahsTotal.ToString("N0"), "n/a")} | Rate: {FormatRupiahsRateForNotification(status)}"
 
         _lastStatsNotificationUtc = DateTime.UtcNow
@@ -19125,7 +19269,7 @@ Public Class Form1
         Dim body As String =
             $"Status: {statusText}{Environment.NewLine}" &
             $"HP: {status.HpPercent:0.0}% | MP: {status.MpPercent:0.0}%{Environment.NewLine}" &
-            $"Prana/EXP: {status.ExpPercent:0.00}% | Rate: {FormatExpRateForNotification(status)}{Environment.NewLine}" &
+            $"Prana/EXP: {If(status.ExpPercent < 0, "confirming", status.ExpPercent.ToString("0.00") & "%")} | Rate: {FormatExpRateForNotification(status)}{Environment.NewLine}" &
             $"Rupiahs: {If(status.RupiahsTotal >= 0, status.RupiahsTotal.ToString("N0"), "n/a")} | Rate: {FormatRupiahsRateForNotification(status)}{Environment.NewLine}" &
             $"Attacking: {attacking}"
         Return body
