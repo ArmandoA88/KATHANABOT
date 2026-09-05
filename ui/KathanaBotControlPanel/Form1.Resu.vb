@@ -76,7 +76,7 @@ Partial Public Class Form1
         AddResuRow("Periodic typed message", _resuPeriodicMessageEnabled)
         AddResuRow("Message text", _resuPeriodicMessageText)
         AddResuRow("Message interval (seconds)", _resuPeriodicMessageIntervalSeconds)
-        AddResuRow("Message sequence", New Label With {.Text = "At each interval RESU sends Enter, types/pastes this message into game chat, then sends Enter again. It targets the selected game window in the background.", .AutoSize = True, .MaximumSize = New Size(750, 0), .ForeColor = ThemeTextSecondary})
+        AddResuRow("Message sequence", New Label With {.Text = "At each interval RESU sends Enter, types this message one key at a time into game chat, then sends Enter again. It does not use Ctrl+V or alter the clipboard.", .AutoSize = True, .MaximumSize = New Size(750, 0), .ForeColor = ThemeTextSecondary})
         _resuScanMs = New NumericUpDown With {.Minimum = 100, .Maximum = 5000, .Increment = 100, .Value = 500, .Dock = DockStyle.Fill}
         _resuTimeout = New NumericUpDown With {.Minimum = 10, .Maximum = 600, .Value = 60, .Dock = DockStyle.Fill}
         _resuMinimumPayment = New NumericUpDown With {.Minimum = 1, .Maximum = 1000000000D, .Value = 1, .ThousandsSeparator = True, .Dock = DockStyle.Fill}

@@ -9322,7 +9322,7 @@ Public Class BotEngine
         If hwnd = IntPtr.Zero OrElse messageText.Length = 0 Then Return False
         If Not SendKey(hwnd, "ENTER", 30, forceBackgroundPost:=True) Then Return False
         Thread.Sleep(60)
-        Dim entered = SendPartyAskCommand(hwnd, messageText, True)
+        Dim entered = SendPartyAskCommand(hwnd, messageText, False)
         Thread.Sleep(55)
         Dim submitted = SendKey(hwnd, "ENTER", 30, forceBackgroundPost:=True)
         Return entered AndAlso submitted

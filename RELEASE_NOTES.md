@@ -1,16 +1,10 @@
-# KathanaBot 1.0.145
+# KathanaBot 1.0.147
 
 ## What changed
 
-Updated the stats baseline behavior.
-- Reset Stats now uses OK/Cancel.
-- After OK, cached and in-progress EXP/Rupiah OCR is discarded.
-- The next fresh valid readings become the new fixed baselines.
-- Rupiah: latest wallet minus fixed baseline.
-- EXP: rollover-adjusted latest EXP minus fixed baseline.
-- Both totals can increase or decrease.
-- Stopping/restarting the bot does not change the baseline; application restart or confirmed Reset Stats does.
-- Rolling achievement statistics now also allow negative changes.
+- **Fixed the active Profile not surviving an app restart.** The loaded/saved profile name is now stored in the settings file, so KathanaBot reopens with the same profile still selected instead of falling back to unnamed settings. The Home dashboard header now also shows "Profile: " followed by its name at a glance, and the Profiles menu bolds/checks whichever profile is currently active.
+- **Fixed Save Settings not updating the active profile.** Editing settings while a named profile is loaded now writes those changes back into that profile's file (not just the shared settings file), so the profile actually reflects what you last saved instead of reverting on next load.
+- **RESU's periodic chat message now types character-by-character instead of pasting via Ctrl+V**, so it no longer touches or overwrites your clipboard.
 
 ## Recent change history - last 5
 

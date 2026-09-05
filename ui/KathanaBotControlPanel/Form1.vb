@@ -1871,6 +1871,7 @@ Partial Public Class Form1
     Private txtDiagnostics As TextBox
     Private pnlHealthBanner As Panel
     Private btnProfiles As Button
+    Private lblDashboardProfile As Label
     Private _activeProfileName As String = ""
     Private chkAdaptivePerformance As CheckBox
     Private chkPixelChangeGate As CheckBox
@@ -2290,6 +2291,7 @@ Partial Public Class Form1
     End Enum
 
     Private Class PersistedAppState
+        Public Property ActiveProfileName As String = ""
         Public Property WindowTitle As String = DefaultGameWindowTitle
         Public Property PeriodicScreenshotsEnabled As Boolean = False
         Public Property PeriodicScreenshotIntervalMinutes As Decimal = 15D
@@ -3684,11 +3686,20 @@ Partial Public Class Form1
         header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 130.0F))
         header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 82.0F))
 
-        Dim titleStack As New Panel() With {.Dock = DockStyle.Fill, .BackColor = ThemeBg}
+        Dim titleStack As New TableLayoutPanel() With {
+            .Dock = DockStyle.Fill,
+            .BackColor = ThemeBg,
+            .ColumnCount = 1,
+            .RowCount = 3,
+            .Margin = New Padding(0),
+            .Padding = New Padding(0)
+        }
+        titleStack.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
+        titleStack.RowStyles.Add(New RowStyle(SizeType.Absolute, 18.0F))
+        titleStack.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         Dim lblTitle As New Label() With {
             .Text = "KathanaBot",
-            .Dock = DockStyle.Top,
-            .Height = 38,
+            .Dock = DockStyle.Fill,
             .Font = New Font("Segoe UI Semibold", 21.0F, FontStyle.Bold),
             .ForeColor = ThemeTextPrimary,
             .TextAlign = ContentAlignment.MiddleLeft
@@ -3700,8 +3711,17 @@ Partial Public Class Form1
             .ForeColor = ThemeTextSecondary,
             .TextAlign = ContentAlignment.TopLeft
         }
-        titleStack.Controls.Add(lblTagline)
-        titleStack.Controls.Add(lblTitle)
+        lblDashboardProfile = New Label() With {
+            .Text = "Profile: None",
+            .Dock = DockStyle.Fill,
+            .Font = New Font("Segoe UI Semibold", 9.0F, FontStyle.Regular),
+            .ForeColor = ThemeAccent,
+            .TextAlign = ContentAlignment.TopLeft
+        }
+        titleStack.Controls.Add(lblTitle, 0, 0)
+        titleStack.Controls.Add(lblTagline, 0, 1)
+        titleStack.Controls.Add(lblDashboardProfile, 0, 2)
+        UpdateProfilesButtonAppearance()
 
         lblDashSubtitle = New Label() With {
             .Text = "Waiting for character  •  Full mode",
@@ -5413,11 +5433,13 @@ Partial Public Class Form1
     ''' action column (same style as the other toggle/help buttons there) with a popup menu.
     ''' </summary>
     Private Sub UpdateProfilesButtonAppearance()
-        If btnProfiles Is Nothing Then
-            Return
+        Dim displayName As String = If(String.IsNullOrWhiteSpace(_activeProfileName), "None", _activeProfileName.Trim())
+        If btnProfiles IsNot Nothing Then
+            btnProfiles.Text = If(displayName = "None", "Profiles", "Profile: " & displayName)
         End If
-
-        btnProfiles.Text = If(String.IsNullOrEmpty(_activeProfileName), "Profiles", "Profile: " & _activeProfileName)
+        If lblDashboardProfile IsNot Nothing Then
+            lblDashboardProfile.Text = "Profile: " & displayName
+        End If
     End Sub
 
     Private Sub ProfilesButtonClicked(sender As Object, e As EventArgs)
@@ -5435,6 +5457,8 @@ Partial Public Class Form1
             For Each profileName As String In profileNames
                 Dim capturedName As String = profileName
                 Dim profileItem As New ToolStripMenuItem(capturedName)
+                profileItem.Checked = String.Equals(_activeProfileName, capturedName, StringComparison.OrdinalIgnoreCase)
+                profileItem.Font = New Font(profileItem.Font, If(profileItem.Checked, FontStyle.Bold, FontStyle.Regular))
                 Dim loadItem As New ToolStripMenuItem("Load")
                 AddHandler loadItem.Click, Sub(s As Object, ev As EventArgs) LoadProfileByName(capturedName)
                 Dim deleteItem As New ToolStripMenuItem("Delete")
@@ -5470,6 +5494,29 @@ Partial Public Class Form1
         Return builder.ToString()
     End Function
 
+    Private Sub SaveCurrentSettingsToProfile(profileName As String)
+        Dim safeName As String = SanitizeProfileName(profileName)
+        If String.IsNullOrWhiteSpace(safeName) Then
+            Throw New InvalidOperationException("The active profile name is empty.")
+        End If
+        If Not File.Exists(PersistFilePath) Then
+            Throw New FileNotFoundException("The current settings file was not created.", PersistFilePath)
+        End If
+
+        SyncLock _persistFileLock
+            Directory.CreateDirectory(ProfilesDirectoryPath)
+            Dim destinationPath As String = Path.Combine(ProfilesDirectoryPath, safeName & ".json")
+            Dim tempFilePath As String = destinationPath & ".tmp"
+            Dim backupFilePath As String = destinationPath & ".bak"
+            File.Copy(PersistFilePath, tempFilePath, overwrite:=True)
+            If File.Exists(destinationPath) Then
+                File.Replace(tempFilePath, destinationPath, backupFilePath, ignoreMetadataErrors:=True)
+            Else
+                File.Move(tempFilePath, destinationPath)
+            End If
+        End SyncLock
+    End Sub
+
     Private Sub SaveCurrentAsNewProfileClicked(sender As Object, e As EventArgs)
         Dim enteredName As String = Microsoft.VisualBasic.Interaction.InputBox(
             "Save the current Full + Lite settings as a named profile:", "Save Profile", "")
@@ -5478,15 +5525,16 @@ Partial Public Class Form1
             Return
         End If
 
+        Dim previousProfileName As String = _activeProfileName
         Try
-            SavePersistedListState(True)
-            Directory.CreateDirectory(ProfilesDirectoryPath)
-            Dim destinationPath As String = Path.Combine(ProfilesDirectoryPath, profileName & ".json")
-            File.Copy(PersistFilePath, destinationPath, overwrite:=True)
             _activeProfileName = profileName
             UpdateProfilesButtonAppearance()
+            SavePersistedListState(True, True)
+            SaveCurrentSettingsToProfile(profileName)
             AppendLog($"Profile ""{profileName}"" saved.")
         Catch ex As Exception
+            _activeProfileName = previousProfileName
+            UpdateProfilesButtonAppearance()
             Dim message As String = $"Unable to save profile ""{profileName}"": {ex.Message}"
             AppendLog(message)
             MessageBox.Show(Me, message, "Save Profile", MessageBoxButtons.OK, MessageBoxIcon.Warning)
@@ -5503,19 +5551,26 @@ Partial Public Class Form1
         Try
             ' Same atomic temp-file-then-replace approach as SavePersistedListState, so a failed
             ' load can never leave the live settings file half-written.
-            Dim tempFilePath As String = PersistFilePath & ".tmp"
-            Dim backupFilePath As String = PersistFilePath & ".bak"
-            File.Copy(sourcePath, tempFilePath, overwrite:=True)
-            If File.Exists(PersistFilePath) Then
-                File.Replace(tempFilePath, PersistFilePath, backupFilePath, ignoreMetadataErrors:=True)
-            Else
-                File.Move(tempFilePath, PersistFilePath)
-            End If
+            _persistDebounceTimer.Stop()
+            _pendingPersistState = Nothing
+            SyncLock _persistFileLock
+                Dim tempFilePath As String = PersistFilePath & ".tmp"
+                Dim backupFilePath As String = PersistFilePath & ".bak"
+                File.Copy(sourcePath, tempFilePath, overwrite:=True)
+                If File.Exists(PersistFilePath) Then
+                    File.Replace(tempFilePath, PersistFilePath, backupFilePath, ignoreMetadataErrors:=True)
+                Else
+                    File.Move(tempFilePath, PersistFilePath)
+                End If
+            End SyncLock
 
             LoadPersistedListState()
             PushLiveConfig()
             _activeProfileName = profileName
             UpdateProfilesButtonAppearance()
+            ' Persist the selected profile marker in the live settings file. Older profile files
+            ' did not contain this field, so the selection would otherwise disappear on restart.
+            SavePersistedListState(True, True)
             AppendLog($"Profile ""{profileName}"" loaded.")
         Catch ex As Exception
             Dim message As String = $"Unable to load profile ""{profileName}"": {ex.Message}"
@@ -5539,6 +5594,7 @@ Partial Public Class Form1
             If String.Equals(_activeProfileName, profileName, StringComparison.OrdinalIgnoreCase) Then
                 _activeProfileName = ""
                 UpdateProfilesButtonAppearance()
+                SavePersistedListState(True, True)
             End If
             AppendLog($"Profile ""{profileName}"" deleted.")
         Catch ex As Exception
@@ -8892,7 +8948,19 @@ Partial Public Class Form1
         CommitPendingGridEdits()
         PushLiveConfig()
         SavePersistedListState(True, True)
-        AppendLog("Settings saved (engine + disk).")
+        If String.IsNullOrWhiteSpace(_activeProfileName) Then
+            AppendLog("Settings saved (engine + disk).")
+            Return
+        End If
+
+        Try
+            SaveCurrentSettingsToProfile(_activeProfileName)
+            AppendLog($"Settings saved to active profile ""{_activeProfileName}"" (engine + disk).")
+        Catch ex As Exception
+            Dim message As String = $"Settings were saved locally, but profile ""{_activeProfileName}"" could not be updated: {ex.Message}"
+            AppendLog(message)
+            MessageBox.Show(Me, message, "Save Settings", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        End Try
     End Sub
 
     Private Function ResolveTargetEdition(sender As Object) As BotEdition
@@ -16827,6 +16895,10 @@ Partial Public Class Form1
             If hasSeparatedState AndAlso appState IsNot Nothing Then
                 state = If(appState.Full, New PersistedListState())
                 liteState = If(appState.Lite, New PersistedLiteState())
+                Dim savedProfileName As String = SanitizeProfileName(appState.ActiveProfileName)
+                Dim savedProfilePath As String = Path.Combine(ProfilesDirectoryPath, savedProfileName & ".json")
+                _activeProfileName = If(savedProfileName <> "" AndAlso File.Exists(savedProfilePath), savedProfileName, "")
+                UpdateProfilesButtonAppearance()
             Else
                 state = JsonSerializer.Deserialize(Of PersistedListState)(raw)
                 liteState = New PersistedLiteState()
@@ -17242,6 +17314,7 @@ Partial Public Class Form1
             }
 
             appState = New PersistedAppState With {
+                .ActiveProfileName = _activeProfileName,
                 .WindowTitle = GetSelectedWindowTitleForFallback(If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full)),
                 .PeriodicScreenshotsEnabled = (chkPeriodicScreenshots IsNot Nothing AndAlso chkPeriodicScreenshots.Checked),
                 .PeriodicScreenshotIntervalMinutes = If(nudPeriodicScreenshotMinutes IsNot Nothing, nudPeriodicScreenshotMinutes.Value, 15D),
