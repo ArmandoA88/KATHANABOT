@@ -353,13 +353,6 @@ Public Class BotConfig
     Public Property AutoPartyMessageEnabled As Boolean = False
     Public Property AutoPartyMessageText As String = "party pls"
     Public Property AutoPartyMessageIntervalMs As Integer = 30000
-    ' Auto Accept Trade: a blind click-on-a-timer macro, same spirit as Auto Party Invite's fixed
-    ' point, just without the key press - clicks the calibrated Accept/OK point on its own loop
-    ' timer regardless of whether a trade dialog is actually showing, until it lands.
-    Public Property TradeAutoAcceptEnabled As Boolean = False
-    Public Property TradeAcceptPointX As Integer = -1
-    Public Property TradeAcceptPointY As Integer = -1
-    Public Property TradeAcceptIntervalMs As Integer = 2000
     Public Property LootRejectClickEnabled As Boolean = False
     Public Property LootRejectPointX As Integer = -1
     Public Property LootRejectPointY As Integer = -1
@@ -1191,9 +1184,6 @@ Public Class BotEngine
     Private _lastAutoPartyInviteAt As DateTime = DateTime.MinValue
     Private _autoPartyInviteWasEnabled As Boolean = False
     Private _lastAutoPartyInviteNoPointWarningAt As DateTime = DateTime.MinValue
-    Private _lastTradeAutoAcceptAt As DateTime = DateTime.MinValue
-    Private _tradeAutoAcceptWasEnabled As Boolean = False
-    Private _lastTradeAutoAcceptNoPointWarningAt As DateTime = DateTime.MinValue
     Private _lastAutoPartyMessageAt As DateTime = DateTime.MinValue
     Private _autoPartyMessageWasEnabled As Boolean = False
     Private _lastPartyListScanAt As DateTime = DateTime.MinValue
@@ -1638,9 +1628,6 @@ Public Class BotEngine
             _lastAutoPartyInviteAt = DateTime.MinValue
             _autoPartyInviteWasEnabled = False
             _lastAutoPartyInviteNoPointWarningAt = DateTime.MinValue
-            _lastTradeAutoAcceptAt = DateTime.MinValue
-            _tradeAutoAcceptWasEnabled = False
-            _lastTradeAutoAcceptNoPointWarningAt = DateTime.MinValue
             _lastAutoPartyMessageAt = DateTime.MinValue
             _autoPartyMessageWasEnabled = False
             _lastPartyListScanAt = DateTime.MinValue
@@ -2846,12 +2833,6 @@ Public Class BotEngine
                 actionSent = TryHandleAutoPartyInvite(cfg, hwnd, now)
                 If actionSent Then
                     reason = "Auto Party invite sent."
-                End If
-            End If
-            If Not actionSent Then
-                actionSent = TryHandleTradeAutoAccept(cfg, hwnd, now)
-                If actionSent Then
-                    reason = "Auto Accept Trade click sent."
                 End If
             End If
             If Not actionSent Then
@@ -13400,50 +13381,6 @@ Public Class BotEngine
         _lastAutoPartyInviteAt = now
         SetLastAction($"{keyName} (Auto Party Invite)")
         RaiseEvent LogLine($"Auto Party Invite: pressed {keyName}.")
-        Return True
-    End Function
-
-    ' Auto Accept Trade: the same blind click-on-a-timer macro as Auto Party Invite above, just
-    ' without a preceding key press - clicks the calibrated Accept/OK point on its own loop timer
-    ' regardless of whether a trade dialog is actually showing, until it happens to land on one.
-    Private Function TryHandleTradeAutoAccept(cfg As BotConfig, hwnd As IntPtr, now As DateTime) As Boolean
-        If cfg Is Nothing OrElse hwnd = IntPtr.Zero Then
-            Return False
-        End If
-
-        If Not cfg.TradeAutoAcceptEnabled Then
-            _tradeAutoAcceptWasEnabled = False
-            Return False
-        End If
-
-        If Not _tradeAutoAcceptWasEnabled Then
-            _tradeAutoAcceptWasEnabled = True
-            _lastTradeAutoAcceptAt = DateTime.MinValue
-        End If
-
-        If cfg.TradeAcceptPointX < 0 OrElse cfg.TradeAcceptPointY < 0 Then
-            If _lastTradeAutoAcceptNoPointWarningAt = DateTime.MinValue OrElse (now - _lastTradeAutoAcceptNoPointWarningAt).TotalMilliseconds > 30000 Then
-                _lastTradeAutoAcceptNoPointWarningAt = now
-                RaiseEvent LogLine("Auto Accept Trade: no click point calibrated - set one in the Auto-Loot tab.")
-            End If
-            Return False
-        End If
-
-        Dim intervalMs As Integer = Math.Max(250, cfg.TradeAcceptIntervalMs)
-        If _lastTradeAutoAcceptAt <> DateTime.MinValue AndAlso (now - _lastTradeAutoAcceptAt).TotalMilliseconds < intervalMs Then
-            Return False
-        End If
-
-        Dim clickDiagnostic As String = ""
-        If Not LeftClickVerifiedAtClientPoint(hwnd, cfg.TradeAcceptPointX, cfg.TradeAcceptPointY, clickDiagnostic) Then
-            _lastTradeAutoAcceptAt = now
-            RaiseEvent LogLine($"Auto Accept Trade: click failed: {clickDiagnostic}.")
-            Return False
-        End If
-
-        _lastTradeAutoAcceptAt = now
-        SetLastAction($"Click ({cfg.TradeAcceptPointX},{cfg.TradeAcceptPointY}) - Auto Accept Trade")
-        RaiseEvent LogLine("Auto Accept Trade: clicked accept point.")
         Return True
     End Function
 

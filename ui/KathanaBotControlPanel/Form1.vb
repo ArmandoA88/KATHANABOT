@@ -193,11 +193,6 @@ Partial Public Class Form1
     Private lblAutoPartyPoint As Label
     Private nudAutoPartyPointX As NumericUpDown
     Private nudAutoPartyPointY As NumericUpDown
-    Private btnPickTradeAcceptPoint As Button
-    Private btnClearTradeAcceptPoint As Button
-    Private lblTradeAcceptPoint As Label
-    Private nudTradeAcceptPointX As NumericUpDown
-    Private nudTradeAcceptPointY As NumericUpDown
     Private btnPickArrowUnbundlePoint As Button
     Private btnRemoveArrowUnbundlePoint As Button
     Private btnClearArrowUnbundlePoints As Button
@@ -1667,9 +1662,6 @@ Partial Public Class Form1
     Private cboAutoPartyInviteKey As ComboBox
     Private nudAutoPartyInviteSeconds As NumericUpDown
     Private chkAutoPartyOverlay As CheckBox
-    Private btnTradeAutoAccept As Button
-    Private nudTradeAcceptSeconds As NumericUpDown
-    Private chkTradeAcceptOverlay As CheckBox
     Private btnAutoPartyMessage As Button
     Private dgvItemAwards As DataGridView
     Private lblItemAwardsSummary As Label
@@ -1999,14 +1991,6 @@ Partial Public Class Form1
     Private _autoPartyMessageEnabled As Boolean = False
     Private _autoPartyOverlayEnabled As Boolean = False
     Private _autoPartyOverlayForm As AutoRelaunchClickOverlayForm
-    Private _tradeAutoAcceptEnabled As Boolean = False
-    Private _isPickingTradeAcceptPoint As Boolean = False
-    Private _tradeAcceptPointLeftMouseWasDown As Boolean = False
-    Private _tradeAcceptPointUiSyncInProgress As Boolean = False
-    Private _tradeAcceptOverlayEnabled As Boolean = False
-    Private _tradeAcceptOverlayForm As AutoRelaunchClickOverlayForm
-    Private _tradeAcceptPointX As Integer = -1
-    Private _tradeAcceptPointY As Integer = -1
     Private _buffWatchEnabled As Boolean = False
     Private _buffWatchSlots As New List(Of BuffWatchSlot)()
     Private _buffWatchSelfClickEnabled As Boolean = False
@@ -2338,12 +2322,6 @@ Partial Public Class Form1
         Public Property AutoPartyInvitePointX As Integer = -1
         Public Property AutoPartyInvitePointY As Integer = -1
         Public Property AutoPartyOverlayEnabled As Boolean = False
-        Public Property TradeAutoAcceptEnabled As Boolean = False
-        Public Property TradeAcceptPointEnabled As Boolean = False
-        Public Property TradeAcceptPointX As Integer = -1
-        Public Property TradeAcceptPointY As Integer = -1
-        Public Property TradeAcceptSeconds As Decimal = 2D
-        Public Property TradeAcceptOverlayEnabled As Boolean = False
         Public Property AutoPartyMessageEnabled As Boolean = False
         Public Property AutoPartyMessageSeconds As Decimal = 30D
         Public Property AutoPartyMessageText As String = DefaultAutoPartyMessageText
@@ -6828,15 +6806,13 @@ Partial Public Class Form1
         left.Controls.Add(BuildLootFilterGroup(), 0, 0)
         left.Controls.Add(BuildLootScanSettingsGroup(), 0, 1)
 
-        Dim right As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3}
-        right.RowStyles.Add(New RowStyle(SizeType.Percent, 46.0F))
-        right.RowStyles.Add(New RowStyle(SizeType.Percent, 30.0F))
-        right.RowStyles.Add(New RowStyle(SizeType.Percent, 24.0F))
+        Dim right As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
+        right.RowStyles.Add(New RowStyle(SizeType.Percent, 62.0F))
+        right.RowStyles.Add(New RowStyle(SizeType.Percent, 38.0F))
         Dim autoPartyGroup As GroupBox = BuildAutoPartyGroup()
         right.Controls.Add(autoPartyGroup, 0, 0)
         _developerOnlyControls.Add(autoPartyGroup)
         right.Controls.Add(BuildArrowUnbundleGroup(), 0, 1)
-        right.Controls.Add(BuildTradeAcceptGroup(), 0, 2)
 
         root.Controls.Add(left, 0, 0)
         root.Controls.Add(right, 1, 0)
@@ -6990,70 +6966,6 @@ Partial Public Class Form1
         UpdateAutoPartyPointUi()
         UpdateAutoPartyInviteUi()
         UpdateAutoPartyMessageUi()
-        Return group
-    End Function
-
-    Private Function BuildTradeAcceptGroup() As GroupBox
-        Dim group As New GroupBox() With {.Text = "Auto Accept Trade", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
-        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 5}
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
-        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
-
-        Dim pointRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(0)}
-        lblTradeAcceptPoint = New Label() With {.Text = "Accept Point: (not set)", .AutoSize = True, .Height = 30, .Padding = New Padding(0, 6, 10, 0), .ForeColor = Color.LightSalmon}
-        btnPickTradeAcceptPoint = New Button() With {.Text = "Pick Accept Point", .Width = 130, .Height = 30, .BackColor = Color.FromArgb(45, 95, 140), .ForeColor = Color.White}
-        AddHandler btnPickTradeAcceptPoint.Click, AddressOf PickTradeAcceptPointClicked
-        btnClearTradeAcceptPoint = New Button() With {.Text = "Clear", .Width = 74, .Height = 30, .BackColor = Color.FromArgb(110, 45, 45), .ForeColor = Color.White}
-        AddHandler btnClearTradeAcceptPoint.Click, AddressOf ClearTradeAcceptPointClicked
-        chkTradeAcceptOverlay = New CheckBox() With {.Text = "Show Click Overlay", .AutoSize = True, .Height = 30, .Padding = New Padding(8, 3, 0, 0), .ForeColor = Color.LightSkyBlue}
-        AddHandler chkTradeAcceptOverlay.CheckedChanged, AddressOf TradeAcceptOverlayChanged
-        pointRow.Controls.Add(lblTradeAcceptPoint)
-        pointRow.Controls.Add(btnPickTradeAcceptPoint)
-        pointRow.Controls.Add(btnClearTradeAcceptPoint)
-        pointRow.Controls.Add(chkTradeAcceptOverlay)
-        layout.Controls.Add(pointRow, 0, 0)
-
-        Dim coordRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(0)}
-        coordRow.Controls.Add(New Label() With {.Text = "X:", .AutoSize = True, .Height = 26, .Padding = New Padding(0, 5, 4, 0), .ForeColor = Color.White})
-        nudTradeAcceptPointX = New NumericUpDown() With {.Minimum = 0, .Maximum = 4096, .Value = 0, .Width = 70, .Height = 26, .Margin = New Padding(0, 2, 14, 2)}
-        AddHandler nudTradeAcceptPointX.ValueChanged, AddressOf TradeAcceptPointXYChanged
-        coordRow.Controls.Add(nudTradeAcceptPointX)
-        coordRow.Controls.Add(New Label() With {.Text = "Y:", .AutoSize = True, .Height = 26, .Padding = New Padding(0, 5, 4, 0), .ForeColor = Color.White})
-        nudTradeAcceptPointY = New NumericUpDown() With {.Minimum = 0, .Maximum = 4096, .Value = 0, .Width = 70, .Height = 26, .Margin = New Padding(0, 2, 0, 2)}
-        AddHandler nudTradeAcceptPointY.ValueChanged, AddressOf TradeAcceptPointXYChanged
-        coordRow.Controls.Add(nudTradeAcceptPointY)
-        coordRow.Controls.Add(New Label() With {.Text = "Every (sec):", .AutoSize = True, .Height = 26, .Padding = New Padding(10, 5, 4, 0), .ForeColor = Color.White})
-        nudTradeAcceptSeconds = New NumericUpDown() With {.Minimum = 0.25D, .Maximum = 60D, .DecimalPlaces = 2, .Increment = 0.25D, .Value = 2D, .Width = 65, .Height = 26, .Margin = New Padding(0, 2, 0, 2)}
-        coordRow.Controls.Add(nudTradeAcceptSeconds)
-        layout.Controls.Add(coordRow, 0, 1)
-
-        Dim coordHint As New Label() With {.Text = "(type exact coordinates here, or use Pick Accept Point)", .AutoSize = True, .Height = 30, .Padding = New Padding(0, 4, 0, 0), .ForeColor = Color.Gray}
-        layout.Controls.Add(coordHint, 0, 2)
-
-        btnTradeAutoAccept = New Button() With {
-            .Text = "Auto Accept Trade: OFF",
-            .Dock = DockStyle.Fill,
-            .MinimumSize = New Size(0, 34),
-            .BackColor = Color.FromArgb(110, 45, 45),
-            .ForeColor = Color.White
-        }
-        AddHandler btnTradeAutoAccept.Click, AddressOf ToggleTradeAutoAcceptClicked
-        layout.Controls.Add(btnTradeAutoAccept, 0, 3)
-
-        Dim note As New Label() With {
-            .Text = "Clicks the Accept Point above on its own loop timer, unconditionally - no OCR, just a click every interval until the trade window happens to be open and gets accepted. Show Click Overlay draws a marker over the game window at the calibrated point so you can verify it before enabling the loop.",
-            .Dock = DockStyle.Fill,
-            .ForeColor = Color.LightSteelBlue,
-            .TextAlign = ContentAlignment.TopLeft
-        }
-        layout.Controls.Add(note, 0, 4)
-
-        group.Controls.Add(layout)
-        UpdateTradeAcceptPointUi()
-        UpdateTradeAutoAcceptUi()
         Return group
     End Function
 
@@ -10528,13 +10440,11 @@ Partial Public Class Form1
         _isPickingArrowUnbundlePoint = False
         _isPickingArrowBundleIcon = False
         _isPickingResurrectOkPoint = False
-        _isPickingTradeAcceptPoint = False
         UpdateAutoPartyPointUi()
         UpdateArrowUnbundleUi()
         UpdateArrowBundleIconUi()
         UpdateResurrectOkPointUi()
         UpdateLootRejectPointUi()
-        UpdateTradeAcceptPointUi()
         FocusVisionSnapshotForPick("Loot reject")
     End Sub
 
@@ -10561,13 +10471,11 @@ Partial Public Class Form1
         _isPickingArrowUnbundlePoint = False
         _isPickingArrowBundleIcon = False
         _isPickingResurrectOkPoint = False
-        _isPickingTradeAcceptPoint = False
         UpdateLootRejectPointUi()
         UpdateArrowUnbundleUi()
         UpdateArrowBundleIconUi()
         UpdateResurrectOkPointUi()
         UpdateAutoPartyPointUi()
-        UpdateTradeAcceptPointUi()
         AppendLog("Auto Party: left-click the exact spot to invite/confirm at, directly inside the selected game window.")
         NativeMethods.SetForegroundWindow(selected.MainWindowHandle)
     End Sub
@@ -10642,100 +10550,6 @@ Partial Public Class Form1
         End Try
     End Sub
 
-    Private Sub PickTradeAcceptPointClicked(sender As Object, e As EventArgs)
-        Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
-        If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
-            AppendLog("Auto Accept Trade: select a Full game process window first.")
-            Return
-        End If
-
-        _isPickingTradeAcceptPoint = True
-        _tradeAcceptPointLeftMouseWasDown = False
-        _isPickingAutoPartyPoint = False
-        _isPickingLootRejectPoint = False
-        _isPickingArrowUnbundlePoint = False
-        _isPickingArrowBundleIcon = False
-        _isPickingResurrectOkPoint = False
-        UpdateAutoPartyPointUi()
-        UpdateLootRejectPointUi()
-        UpdateArrowUnbundleUi()
-        UpdateArrowBundleIconUi()
-        UpdateResurrectOkPointUi()
-        UpdateTradeAcceptPointUi()
-        AppendLog("Auto Accept Trade: left-click the trade dialog's Accept/OK point, directly inside the selected game window (trigger a trade request first if you can).")
-        NativeMethods.SetForegroundWindow(selected.MainWindowHandle)
-    End Sub
-
-    Private Sub ClearTradeAcceptPointClicked(sender As Object, e As EventArgs)
-        _isPickingTradeAcceptPoint = False
-        _tradeAcceptPointLeftMouseWasDown = False
-        _tradeAcceptPointX = -1
-        _tradeAcceptPointY = -1
-        UpdateTradeAcceptPointUi()
-        PushLiveConfig()
-        SavePersistedListState(False)
-        AppendLog("Auto Accept Trade click point cleared.")
-    End Sub
-
-    Private Sub HandlePendingTradeAcceptPointCapture()
-        Try
-            If Not _isPickingTradeAcceptPoint Then
-                Return
-            End If
-
-            Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
-            If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
-                Return
-            End If
-
-            Dim leftDown As Boolean = (GetAsyncKeyState(CInt(Keys.LButton)) And &H8000S) <> 0
-            If leftDown AndAlso Not _tradeAcceptPointLeftMouseWasDown Then
-                Dim screenPoint As NativeMethods.POINT
-                If NativeMethods.GetCursorPos(screenPoint) Then
-                    Dim hoveredWindow As IntPtr = NativeMethods.WindowFromPoint(screenPoint)
-                    Dim hoveredRoot As IntPtr = If(hoveredWindow <> IntPtr.Zero, NativeMethods.GetAncestor(hoveredWindow, NativeMethods.GA_ROOT), IntPtr.Zero)
-                    If hoveredRoot <> selected.MainWindowHandle Then
-                        _tradeAcceptPointLeftMouseWasDown = leftDown
-                        Return
-                    End If
-
-                    Dim clientPoint As NativeMethods.POINT = screenPoint
-                    If NativeMethods.ScreenToClient(selected.MainWindowHandle, clientPoint) Then
-                        Dim clientRect As NativeMethods.RECT
-                        If Not NativeMethods.GetClientRect(selected.MainWindowHandle, clientRect) Then
-                            _tradeAcceptPointLeftMouseWasDown = leftDown
-                            Return
-                        End If
-
-                        Dim clientWidth As Integer = Math.Max(1, clientRect.Right - clientRect.Left)
-                        Dim clientHeight As Integer = Math.Max(1, clientRect.Bottom - clientRect.Top)
-                        If clientPoint.X < 0 OrElse clientPoint.Y < 0 OrElse clientPoint.X >= clientWidth OrElse clientPoint.Y >= clientHeight Then
-                            AppendLog("Auto Accept Trade: click must be inside the selected game window.")
-                            _tradeAcceptPointLeftMouseWasDown = leftDown
-                            Return
-                        End If
-
-                        _tradeAcceptPointX = Math.Max(0, clientPoint.X)
-                        _tradeAcceptPointY = Math.Max(0, clientPoint.Y)
-                        _isPickingTradeAcceptPoint = False
-                        _tradeAcceptPointLeftMouseWasDown = leftDown
-                        UpdateTradeAcceptPointUi()
-                        PushLiveConfig()
-                        SavePersistedListState(False)
-                        AppendLog($"Auto Accept Trade click point set: x={_tradeAcceptPointX}, y={_tradeAcceptPointY}.")
-                    End If
-                End If
-            End If
-
-            _tradeAcceptPointLeftMouseWasDown = leftDown
-        Catch ex As Exception
-            _isPickingTradeAcceptPoint = False
-            _tradeAcceptPointLeftMouseWasDown = False
-            UpdateTradeAcceptPointUi()
-            AppendLog("Auto Accept Trade click point capture failed: " & ex.Message)
-        End Try
-    End Sub
-
     Private Sub PickArrowUnbundlePointClicked(sender As Object, e As EventArgs)
         Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
         If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
@@ -10749,13 +10563,11 @@ Partial Public Class Form1
         _isPickingAutoPartyPoint = False
         _isPickingArrowBundleIcon = False
         _isPickingResurrectOkPoint = False
-        _isPickingTradeAcceptPoint = False
         UpdateLootRejectPointUi()
         UpdateAutoPartyPointUi()
         UpdateArrowUnbundleUi()
         UpdateArrowBundleIconUi()
         UpdateResurrectOkPointUi()
-        UpdateTradeAcceptPointUi()
         AppendLog("Arrow unbundle: click the inventory arrow stack spot directly inside the selected game window.")
         NativeMethods.SetForegroundWindow(selected.MainWindowHandle)
     End Sub
@@ -10855,13 +10667,11 @@ Partial Public Class Form1
         _isPickingLootRejectPoint = False
         _isPickingAutoPartyPoint = False
         _isPickingResurrectOkPoint = False
-        _isPickingTradeAcceptPoint = False
         UpdateLootRejectPointUi()
         UpdateAutoPartyPointUi()
         UpdateArrowUnbundleUi()
         UpdateArrowBundleIconUi()
         UpdateResurrectOkPointUi()
-        UpdateTradeAcceptPointUi()
         AppendLog("Arrow unbundle: click the center of a slot that currently holds a bundle (not loose arrows) inside the selected game window.")
         NativeMethods.SetForegroundWindow(selected.MainWindowHandle)
     End Sub
@@ -11038,14 +10848,6 @@ Partial Public Class Form1
             AppendLog("Auto Resurrect OK point pick canceled from snapshot; use Set OK Point, then click directly inside the game window.")
             Return
         End If
-
-        If _isPickingTradeAcceptPoint Then
-            _isPickingTradeAcceptPoint = False
-            _tradeAcceptPointLeftMouseWasDown = False
-            UpdateTradeAcceptPointUi()
-            AppendLog("Auto Accept Trade point pick canceled from snapshot; use Pick Accept Point, then click directly inside the game window.")
-            Return
-        End If
     End Sub
 
     Private Shared Function TryMapPictureBoxPointToImage(picture As PictureBox, clientPoint As System.Drawing.Point, ByRef imagePoint As System.Drawing.Point) As Boolean
@@ -11141,128 +10943,6 @@ Partial Public Class Form1
             picSnapshot.Cursor = If(IsSnapshotPickActive(), Cursors.Cross, Cursors.Default)
         End If
     End Sub
-
-    Private Sub UpdateTradeAcceptPointUi()
-        If lblTradeAcceptPoint IsNot Nothing Then
-            lblTradeAcceptPoint.Text = If(_tradeAcceptPointX >= 0 AndAlso _tradeAcceptPointY >= 0,
-                $"Accept Point: {_tradeAcceptPointX}, {_tradeAcceptPointY}",
-                "Accept Point: (not set)")
-        End If
-
-        If btnPickTradeAcceptPoint IsNot Nothing Then
-            btnPickTradeAcceptPoint.Text = If(_isPickingTradeAcceptPoint, "Click Game...", "Pick Accept Point")
-            btnPickTradeAcceptPoint.BackColor = If(_isPickingTradeAcceptPoint, Color.FromArgb(175, 110, 30), Color.FromArgb(45, 95, 140))
-        End If
-
-        If btnClearTradeAcceptPoint IsNot Nothing Then
-            btnClearTradeAcceptPoint.Enabled = (_tradeAcceptPointX >= 0 AndAlso _tradeAcceptPointY >= 0)
-        End If
-
-        If nudTradeAcceptPointX IsNot Nothing AndAlso nudTradeAcceptPointY IsNot Nothing Then
-            _tradeAcceptPointUiSyncInProgress = True
-            Try
-                Dim boundedX As Decimal = Math.Max(nudTradeAcceptPointX.Minimum, Math.Min(nudTradeAcceptPointX.Maximum, CDec(Math.Max(0, _tradeAcceptPointX))))
-                If nudTradeAcceptPointX.Value <> boundedX Then
-                    nudTradeAcceptPointX.Value = boundedX
-                End If
-                Dim boundedY As Decimal = Math.Max(nudTradeAcceptPointY.Minimum, Math.Min(nudTradeAcceptPointY.Maximum, CDec(Math.Max(0, _tradeAcceptPointY))))
-                If nudTradeAcceptPointY.Value <> boundedY Then
-                    nudTradeAcceptPointY.Value = boundedY
-                End If
-            Finally
-                _tradeAcceptPointUiSyncInProgress = False
-            End Try
-        End If
-
-        If picSnapshot IsNot Nothing Then
-            picSnapshot.Cursor = If(IsSnapshotPickActive(), Cursors.Cross, Cursors.Default)
-        End If
-    End Sub
-
-    Private Sub TradeAcceptPointXYChanged(sender As Object, e As EventArgs)
-        If _tradeAcceptPointUiSyncInProgress Then
-            Return
-        End If
-        If nudTradeAcceptPointX Is Nothing OrElse nudTradeAcceptPointY Is Nothing Then
-            Return
-        End If
-
-        _tradeAcceptPointX = CInt(nudTradeAcceptPointX.Value)
-        _tradeAcceptPointY = CInt(nudTradeAcceptPointY.Value)
-        _isPickingTradeAcceptPoint = False
-        UpdateTradeAcceptPointUi()
-        PushLiveConfig()
-        SavePersistedListState(False)
-        AppendLog($"Auto Accept Trade click point set: x={_tradeAcceptPointX}, y={_tradeAcceptPointY}.")
-    End Sub
-
-    Private Sub ToggleTradeAutoAcceptClicked(sender As Object, e As EventArgs)
-        _tradeAutoAcceptEnabled = Not _tradeAutoAcceptEnabled
-        UpdateTradeAutoAcceptUi()
-        PushLiveConfig()
-        SavePersistedListState(False)
-        AppendLog(If(_tradeAutoAcceptEnabled,
-                     "Auto Accept Trade enabled: will click the accept point on the interval set until a trade dialog happens to be open.",
-                     "Auto Accept Trade disabled."))
-    End Sub
-
-    Private Sub UpdateTradeAutoAcceptUi()
-        If btnTradeAutoAccept Is Nothing Then
-            Return
-        End If
-        btnTradeAutoAccept.Text = If(_tradeAutoAcceptEnabled, "Auto Accept Trade: ON", "Auto Accept Trade: OFF")
-        btnTradeAutoAccept.BackColor = If(_tradeAutoAcceptEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
-    End Sub
-
-    Private Sub TradeAcceptOverlayChanged(sender As Object, e As EventArgs)
-        _tradeAcceptOverlayEnabled = (chkTradeAcceptOverlay IsNot Nothing AndAlso chkTradeAcceptOverlay.Checked)
-        If _tradeAcceptOverlayEnabled AndAlso (_tradeAcceptPointX < 0 OrElse _tradeAcceptPointY < 0) Then
-            AppendLog("Auto Accept Trade overlay: no click point set yet - use Pick Accept Point first, or the overlay has nothing to draw.")
-        End If
-        SetTradeAcceptOverlayVisible(_tradeAcceptOverlayEnabled)
-        PushLiveConfig()
-        SavePersistedListState(False)
-    End Sub
-
-    Private Sub SetTradeAcceptOverlayVisible(visible As Boolean)
-        If Not visible Then
-            If _tradeAcceptOverlayForm IsNot Nothing AndAlso Not _tradeAcceptOverlayForm.IsDisposed Then
-                _tradeAcceptOverlayForm.Close()
-            End If
-            _tradeAcceptOverlayForm = Nothing
-            Return
-        End If
-
-        If _tradeAcceptOverlayForm IsNot Nothing AndAlso Not _tradeAcceptOverlayForm.IsDisposed Then
-            Return
-        End If
-
-        _tradeAcceptOverlayForm = New AutoRelaunchClickOverlayForm(
-            Function() ResolveAutoRelaunchClickWindow(IntPtr.Zero, ""),
-            Function() GetTradeAcceptOverlaySteps())
-        AddHandler _tradeAcceptOverlayForm.FormClosed,
-            Sub(_s As Object, _e As FormClosedEventArgs)
-                _tradeAcceptOverlayForm = Nothing
-            End Sub
-        _tradeAcceptOverlayForm.Show()
-    End Sub
-
-    Private Function GetTradeAcceptOverlaySteps() As List(Of AutoRelaunchOverlayStep)
-        Dim overlaySteps As New List(Of AutoRelaunchOverlayStep)()
-        If _tradeAcceptPointX >= 0 AndAlso _tradeAcceptPointY >= 0 Then
-            Dim intervalSeconds As Decimal = If(nudTradeAcceptSeconds IsNot Nothing, nudTradeAcceptSeconds.Value, 2D)
-            overlaySteps.Add(New AutoRelaunchOverlayStep With {
-                .StepNumber = 1,
-                .X = _tradeAcceptPointX,
-                .Y = _tradeAcceptPointY,
-                .DelaySeconds = intervalSeconds,
-                .TimingLabel = $"every {intervalSeconds:0.##}s",
-                .Description = "click to accept trade",
-                .MarkerColor = Color.FromArgb(235, 235, 165, 20)
-            })
-        End If
-        Return overlaySteps
-    End Function
 
     Private Sub AutoPartyPointXYChanged(sender As Object, e As EventArgs)
         If _autoPartyPointUiSyncInProgress Then
@@ -11820,13 +11500,11 @@ Partial Public Class Form1
         _isPickingArrowBundleIcon = False
         _isPickingLootRejectPoint = False
         _isPickingAutoPartyPoint = False
-        _isPickingTradeAcceptPoint = False
         UpdateLootRejectPointUi()
         UpdateAutoPartyPointUi()
         UpdateArrowUnbundleUi()
         UpdateArrowBundleIconUi()
         UpdateResurrectOkPointUi()
-        UpdateTradeAcceptPointUi()
         AppendLog("Auto Resurrect: click the dialog's OK button directly inside the selected game window (trigger the dialog first if you can).")
         NativeMethods.SetForegroundWindow(selected.MainWindowHandle)
     End Sub
@@ -13883,7 +13561,6 @@ Partial Public Class Form1
         HandlePendingArrowBundleIconCapture()
         HandlePendingResurrectOkPointCapture()
         HandlePendingAutoPartyPointCapture()
-        HandlePendingTradeAcceptPointCapture()
         HandlePendingAutoRelaunchClickCapture()
         If _fullEngine.IsRunning() Then
             HandlePeriodicStatsNotification(_fullStatus)
@@ -14068,7 +13745,6 @@ Partial Public Class Form1
         HandlePendingArrowBundleIconCapture()
         HandlePendingResurrectOkPointCapture()
         HandlePendingAutoPartyPointCapture()
-        HandlePendingTradeAcceptPointCapture()
         HandlePendingAutoRelaunchClickCapture()
     End Sub
 
@@ -16350,10 +16026,6 @@ Partial Public Class Form1
         cfg.AutoPartyInviteIntervalMs = CInt(Math.Round(CDbl(If(nudAutoPartyInviteSeconds IsNot Nothing, nudAutoPartyInviteSeconds.Value, 30D)) * 1000.0))
         cfg.AutoPartyInvitePointX = _autoPartyPointX
         cfg.AutoPartyInvitePointY = _autoPartyPointY
-        cfg.TradeAutoAcceptEnabled = _tradeAutoAcceptEnabled
-        cfg.TradeAcceptPointX = _tradeAcceptPointX
-        cfg.TradeAcceptPointY = _tradeAcceptPointY
-        cfg.TradeAcceptIntervalMs = CInt(Math.Round(CDbl(If(nudTradeAcceptSeconds IsNot Nothing, nudTradeAcceptSeconds.Value, 2D)) * 1000.0))
         cfg.AutoPartyMessageEnabled = _autoPartyMessageEnabled
         cfg.AutoPartyMessageText = GetAutoPartyMessageCommandText()
         cfg.AutoPartyMessageIntervalMs = CInt(Math.Round(CDbl(If(nudAutoPartyMessageSeconds IsNot Nothing, nudAutoPartyMessageSeconds.Value, 30D)) * 1000.0))
@@ -17267,22 +16939,6 @@ Partial Public Class Form1
             If chkAutoPartyOverlay IsNot Nothing Then
                 chkAutoPartyOverlay.Checked = _autoPartyOverlayEnabled
             End If
-            _tradeAutoAcceptEnabled = state.TradeAutoAcceptEnabled
-            UpdateTradeAutoAcceptUi()
-            If state.TradeAcceptPointEnabled Then
-                _tradeAcceptPointX = Math.Max(0, state.TradeAcceptPointX)
-                _tradeAcceptPointY = Math.Max(0, state.TradeAcceptPointY)
-            Else
-                _tradeAcceptPointX = -1
-                _tradeAcceptPointY = -1
-            End If
-            SetNumericControlValue(nudTradeAcceptSeconds, If(state.TradeAcceptSeconds > 0, state.TradeAcceptSeconds, 2D))
-            UpdateTradeAcceptPointUi()
-            _tradeAcceptOverlayEnabled = state.TradeAcceptOverlayEnabled
-            If chkTradeAcceptOverlay IsNot Nothing Then
-                chkTradeAcceptOverlay.Checked = _tradeAcceptOverlayEnabled
-            End If
-            SetTradeAcceptOverlayVisible(_tradeAcceptOverlayEnabled)
             _autoPartyMessageEnabled = state.AutoPartyMessageEnabled
             If txtAutoPartyMessageText IsNot Nothing Then
                 txtAutoPartyMessageText.Text = If(String.IsNullOrWhiteSpace(state.AutoPartyMessageText), DefaultAutoPartyMessageText, state.AutoPartyMessageText.Trim())
@@ -17499,12 +17155,6 @@ Partial Public Class Form1
                 .AutoPartyInvitePointX = _autoPartyPointX,
                 .AutoPartyInvitePointY = _autoPartyPointY,
                 .AutoPartyOverlayEnabled = _autoPartyOverlayEnabled,
-                .TradeAutoAcceptEnabled = _tradeAutoAcceptEnabled,
-                .TradeAcceptPointEnabled = (_tradeAcceptPointX >= 0 AndAlso _tradeAcceptPointY >= 0),
-                .TradeAcceptPointX = _tradeAcceptPointX,
-                .TradeAcceptPointY = _tradeAcceptPointY,
-                .TradeAcceptSeconds = If(nudTradeAcceptSeconds IsNot Nothing, nudTradeAcceptSeconds.Value, 2D),
-                .TradeAcceptOverlayEnabled = _tradeAcceptOverlayEnabled,
                 .AutoPartyMessageEnabled = _autoPartyMessageEnabled,
                 .AutoPartyMessageSeconds = If(nudAutoPartyMessageSeconds IsNot Nothing, nudAutoPartyMessageSeconds.Value, 30D),
                 .AutoPartyMessageText = GetAutoPartyMessageCommandText(),
@@ -18013,18 +17663,6 @@ Partial Public Class Form1
             _autoPartyPointY = -1
         End If
         _isPickingAutoPartyPoint = False
-        _tradeAutoAcceptEnabled = cfg.TradeAutoAcceptEnabled
-        UpdateTradeAutoAcceptUi()
-        If cfg.TradeAcceptPointX >= 0 AndAlso cfg.TradeAcceptPointY >= 0 Then
-            _tradeAcceptPointX = cfg.TradeAcceptPointX
-            _tradeAcceptPointY = cfg.TradeAcceptPointY
-        Else
-            _tradeAcceptPointX = -1
-            _tradeAcceptPointY = -1
-        End If
-        SetNumericControlValue(nudTradeAcceptSeconds, CDec(Math.Max(250, cfg.TradeAcceptIntervalMs) / 1000.0))
-        _isPickingTradeAcceptPoint = False
-        UpdateTradeAcceptPointUi()
         _autoPartyMessageEnabled = cfg.AutoPartyMessageEnabled
         If txtAutoPartyMessageText IsNot Nothing Then
             txtAutoPartyMessageText.Text = If(String.IsNullOrWhiteSpace(cfg.AutoPartyMessageText), DefaultAutoPartyMessageText, cfg.AutoPartyMessageText.Trim())
