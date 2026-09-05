@@ -19,6 +19,7 @@ Partial Public Class Form1
     Private _quizAnswersRegion As RectRegion
     Private _quizLastClickedHash As String = ""
     Private _quizLastClickedUtc As DateTime = DateTime.MinValue
+    Private _quizRetryAfterUtc As DateTime = DateTime.MinValue
     Private _quizLastClickNormalizedX As Double = -1.0R
     Private _quizLastClickNormalizedY As Double = -1.0R
     Private _quizLastClickedButtonNumber As Integer
@@ -29,6 +30,7 @@ Partial Public Class Form1
     Private lblQuizApiKey As Label
     Private lblQuizCalibration As Label
     Private lblQuizStatus As Label
+    Private lblQuizEvidence As LinkLabel
     Private picQuizPreview As PictureBox
     Private dgvQuizAnswerDatabase As DataGridView
     Private lblQuizDatabaseCount As Label
@@ -40,6 +42,9 @@ Partial Public Class Form1
         Public Property ButtonNumber As Integer
         Public Property Confidence As Double
         Public Property WasGuess As Boolean
+        Public Property AnswerMethod As String = "Legacy"
+        Public Property Evidence As String = ""
+        Public Property SourceUrl As String = ""
     End Class
 
     Private Class PersistedQuizState
@@ -69,7 +74,7 @@ Partial Public Class Form1
             .ForeColor = ThemeTextPrimary
         }
         Dim description As New Label With {
-            .Text = "Calibrates against the selected game's client area, detects the current answer-button layout, and asks OpenAI to return the exact numbered button. The solver is independent from combat and support modes.",
+            .Text = "Checks Kathana / Tantra Online answers with a fast web lookup. Confident general knowledge is answered directly. Only personal GM trivia may be guessed; unsupported game answers are skipped. Web lookups use your OpenAI API key and incur search charges.",
             .Dock = DockStyle.Top,
             .Height = 54,
             .Font = New Font("Segoe UI", 9.5F),
@@ -119,6 +124,10 @@ Partial Public Class Form1
         information.Controls.Add(lblQuizStatus)
         body.Controls.Add(information)
 
+        lblQuizEvidence = New LinkLabel With {.Text = "Answer sources will appear here. Historical guesses are not reused as verified answers.", .Dock = DockStyle.Top, .Height = 56, .ForeColor = ThemeTextSecondary, .LinkColor = ThemeAccent, .AutoEllipsis = True}
+        AddHandler lblQuizEvidence.LinkClicked, Sub(sender, args) OpenQuizSource(TryCast(args.Link.LinkData, String))
+        body.Controls.Add(lblQuizEvidence)
+
         Dim safety As New Label With {
             .Text = "Click safety: the button layout is detected again immediately before input. The selected answer receives 10 complete left-clicks, 50 ms apart. The cursor is restored afterward.",
             .Dock = DockStyle.Top,
@@ -157,6 +166,14 @@ Partial Public Class Form1
         dgvQuizAnswerDatabase.Columns.Add(New DataGridViewTextBoxColumn With {.Name = "Button", .HeaderText = "Button", .Width = 68})
         dgvQuizAnswerDatabase.Columns.Add(New DataGridViewTextBoxColumn With {.Name = "Confidence", .HeaderText = "Confidence", .Width = 92})
         dgvQuizAnswerDatabase.Columns.Add(New DataGridViewCheckBoxColumn With {.Name = "Guess", .HeaderText = "Guess", .Width = 58})
+        dgvQuizAnswerDatabase.Columns.Add(New DataGridViewTextBoxColumn With {.Name = "Method", .HeaderText = "Method", .Width = 115})
+        dgvQuizAnswerDatabase.Columns.Add(New DataGridViewLinkColumn With {.Name = "Source", .HeaderText = "Source", .Width = 150, .LinkColor = ThemeAccent, .VisitedLinkColor = ThemeAccent})
+        AddHandler dgvQuizAnswerDatabase.CellContentClick,
+            Sub(sender, args)
+                If args.RowIndex >= 0 AndAlso args.ColumnIndex = dgvQuizAnswerDatabase.Columns("Source").Index Then
+                    OpenQuizSource(TryCast(dgvQuizAnswerDatabase.Rows(args.RowIndex).Cells("Source").Value, String))
+                End If
+            End Sub
         body.Controls.Add(dgvQuizAnswerDatabase)
 
         AddHandler chkQuizSolverEnabled.CheckedChanged, AddressOf QuizSolverEnabledChanged
@@ -225,6 +242,7 @@ Partial Public Class Form1
         If _quizUnlocked OrElse _quizTab Is Nothing OrElse _mainTabs Is Nothing Then Return
         _quizUnlocked = True
         ApplyDarkTheme(_quizTab)
+        ApplyDarkTheme(_resuTab)
         ' Use the same authoritative tab builder as edition/developer-mode changes. It inserts Quiz
         ' after Diagnostics (when visible) and immediately before Update, and now preserves it on
         ' every later sidebar refresh for the rest of this executable session.
@@ -235,7 +253,8 @@ Partial Public Class Form1
         _sidebarRailOverlay?.Invalidate()
         UpdateMainTabIndicators()
         UpdateTabIndicatorTarget()
-        If String.IsNullOrWhiteSpace(_quizApiKey) Then BeginInvoke(New Action(Sub() ConfigureQuizApiKey()))
+        ' The sequence also reveals RESU, which uses local OCR and needs no API key.
+        ' Quiz already exposes its own Configure API Key button.
     End Sub
 
     Private Sub ConfigureQuizApiKey()
@@ -336,12 +355,18 @@ Partial Public Class Form1
     Private Async Function RunQuizSolverOnceAsync(manual As Boolean) As Task
         If _quizSolveInProgress Then Return
         If Not manual AndAlso (chkQuizSolverEnabled Is Nothing OrElse Not chkQuizSolverEnabled.Checked) Then Return
+        If Not manual AndAlso DateTime.UtcNow < _quizRetryAfterUtc Then
+            RefreshQuizLivePreview(False)
+            Return
+        End If
         If Not ValidateQuizSetup(manual) Then Return
         _quizSolveInProgress = True
         _quizCancellation?.Cancel()
         _quizCancellation?.Dispose()
         _quizCancellation = New CancellationTokenSource()
         Dim cancellationToken = _quizCancellation.Token
+        Dim lookupStarted As Boolean = False
+        Dim answerClicked As Boolean = False
         Try
             Dim selected = GetSelectedProcessWindowForEdition(BotEdition.Full)
             Dim hwnd = selected.MainWindowHandle
@@ -371,36 +396,54 @@ Partial Public Class Form1
                     Return
                 End If
                 visualHash = QuizImageTools.PerceptualHash(answerImage)
-                If visualHash = _quizLastClickedHash OrElse (DateTime.UtcNow - _quizLastClickedUtc).TotalSeconds < 15 Then
+                Dim expectedQuizHash = QuizImageTools.PerceptualHash(quizImage)
+                Dim quizIdentity = expectedQuizHash & ":" & visualHash
+                If quizIdentity = _quizLastClickedHash OrElse (DateTime.UtcNow - _quizLastClickedUtc).TotalSeconds < 15 Then
                     SetQuizStatus("Already answered this visible quiz; waiting for the next one.", ThemeTextSecondary)
                     Return
                 End If
                 Using annotated = QuizImageTools.CreateAnnotatedQuiz(quizImage, relativeAnswers, buttons)
                     SetQuizPreview(annotated)
-                    SetQuizStatus($"Reading question and {buttons.Count} detected answers...", ThemeAccent)
+                    SetQuizStatus($"Reading {buttons.Count} choices; checking Kathana / Tantra sources when needed...", ThemeAccent)
+                    lblQuizEvidence.Links.Clear()
+                    lblQuizEvidence.Text = "Looking up the current question..."
                     Dim model = If(cboQuizModel.SelectedItem?.ToString(), DefaultQuizModel)
+                    lookupStarted = True
                     Dim answer = Await QuizOpenAiClient.SolveAsync(_quizApiKey, model, quizImage, annotated, cancellationToken)
                     cancellationToken.ThrowIfCancellationRequested()
-
-                    Dim targetIndex = ResolveQuizTargetIndex(answer, buttons, answersArea.Size)
-                    If targetIndex < 0 OrElse targetIndex >= buttons.Count Then
-                        targetIndex = Random.Shared.Next(0, buttons.Count)
-                        answer.IsGuess = True
+                    ShowQuizEvidence(answer)
+                    Dim skipReason As String = ""
+                    If Not QuizAnswerPolicy.CanClick(answer, buttons.Count, skipReason) Then
+                        SetQuizStatus("Skipped: " & skipReason, ThemeWarn)
+                        AppendLog($"Quiz solver skipped: {answer.QuestionText}; {skipReason} {answer.Evidence}")
+                        Return
+                    End If
+                    Dim targetIndex = answer.ButtonNumber - 1
+                    Dim currentWindow = GetSelectedProcessWindowForEdition(BotEdition.Full)
+                    If currentWindow Is Nothing OrElse currentWindow.MainWindowHandle <> hwnd Then
+                        SetQuizStatus("Skipped: the selected game changed during lookup.", ThemeWarn)
+                        Return
+                    End If
+                    Dim currentClient As NativeMethods.RECT
+                    If Not NativeMethods.GetClientRect(hwnd, currentClient) OrElse currentClient.Right - currentClient.Left <> clientWidth OrElse currentClient.Bottom - currentClient.Top <> clientHeight Then
+                        SetQuizStatus("Skipped: game window size changed during lookup.", ThemeWarn)
+                        Return
                     End If
 
                     Dim clickedClientPoint As System.Drawing.Point
-                    If Not RevalidateAndClickQuizAnswer(hwnd, answersArea, targetIndex, visualHash, clickedClientPoint) Then
+                    If Not RevalidateAndClickQuizAnswer(hwnd, quizArea, answersArea, targetIndex, visualHash, expectedQuizHash, clickedClientPoint) Then
                         SetQuizStatus("Quiz changed before the click; skipped it and will scan again.", ThemeWarn)
                         Return
                     End If
-                    _quizLastClickedHash = visualHash
+                    _quizLastClickedHash = quizIdentity
                     _quizLastClickedUtc = DateTime.UtcNow
+                    answerClicked = True
                     _quizLastClickNormalizedX = clickedClientPoint.X / CDbl(Math.Max(1, clientWidth))
                     _quizLastClickNormalizedY = clickedClientPoint.Y / CDbl(Math.Max(1, clientHeight))
                     _quizLastClickedButtonNumber = targetIndex + 1
-                    Dim guessText = If(answer.IsGuess, " (educated guess)", "")
+                    Dim guessText = $" ({QuizAnswerPolicy.MethodLabel(answer)})"
                     SetQuizStatus($"Clicked answer {targetIndex + 1} x10 (50 ms): {answer.AnswerText}{guessText} — {answer.Confidence:P0} confidence", ThemeGood)
-                    AppendLog($"Quiz solver: {answer.QuestionText} -> {answer.AnswerText}; button {targetIndex + 1}; sent 10 left-clicks 50 ms apart; confidence {answer.Confidence:P0}{guessText}.")
+                    AppendLog($"Quiz solver: {answer.QuestionText} -> {answer.AnswerText}; button {targetIndex + 1}; sent 10 left-clicks 50 ms apart; confidence {answer.Confidence:P0}{guessText}. {answer.Evidence} {answer.SourceUrl}")
                     AddQuizDatabaseEntry(answer, targetIndex + 1)
                     RefreshQuizLivePreview(False)
                 End Using
@@ -411,34 +454,24 @@ Partial Public Class Form1
             AppendLog("Quiz solver error: " & ex.Message)
         Finally
             _quizSolveInProgress = False
+            ' Keep screen refreshes cheap after an unresolved answer, timeout, or API error.
+            If lookupStarted AndAlso Not answerClicked Then _quizRetryAfterUtc = DateTime.UtcNow.AddSeconds(15)
         End Try
     End Function
 
-    Private Shared Function ResolveQuizTargetIndex(answer As QuizSolveResult, buttons As IReadOnlyList(Of Rectangle), answerAreaSize As Size) As Integer
-        If answer IsNot Nothing AndAlso answer.ButtonNumber >= 1 AndAlso answer.ButtonNumber <= buttons.Count Then Return answer.ButtonNumber - 1
-        Dim gridSize = QuizImageTools.LocationGridSize
-        If answer Is Nothing OrElse answer.GridColumn < 1 OrElse answer.GridColumn > gridSize OrElse answer.GridRow < 1 OrElse answer.GridRow > gridSize Then Return -1
-        Dim gridCenter As New PointF(CSng((answer.GridColumn - 0.5R) * answerAreaSize.Width / CDbl(gridSize)), CSng((answer.GridRow - 0.5R) * answerAreaSize.Height / CDbl(gridSize)))
-        Dim bestIndex As Integer = -1
-        Dim bestDistance As Double = Double.MaxValue
-        For i As Integer = 0 To buttons.Count - 1
-            Dim centerX = buttons(i).Left + buttons(i).Width / 2.0R
-            Dim centerY = buttons(i).Top + buttons(i).Height / 2.0R
-            Dim distance = (centerX - gridCenter.X) ^ 2 + (centerY - gridCenter.Y) ^ 2
-            If distance < bestDistance Then bestDistance = distance : bestIndex = i
-        Next
-        Return bestIndex
-    End Function
-
     Private Function RevalidateAndClickQuizAnswer(hwnd As IntPtr,
+                                                  quizArea As Rectangle,
                                                   answersArea As Rectangle,
                                                   targetIndex As Integer,
                                                   expectedHash As String,
+                                                  expectedQuizHash As String,
                                                   ByRef clickedClientPoint As System.Drawing.Point) As Boolean
         clickedClientPoint = System.Drawing.Point.Empty
         Dim selected = GetSelectedProcessWindowForEdition(BotEdition.Full)
         If selected Is Nothing OrElse selected.MainWindowHandle <> hwnd OrElse Not IsUsableQuizWindow(hwnd) Then Return False
-        Using liveAnswer = BotEngine.CaptureClientRegion(hwnd, New RectRegion(answersArea.X, answersArea.Y, answersArea.Width, answersArea.Height))
+        Using liveQuiz = BotEngine.CaptureClientRegion(hwnd, New RectRegion(quizArea.X, quizArea.Y, quizArea.Width, quizArea.Height)),
+              liveAnswer = QuizImageTools.Crop(liveQuiz, New Rectangle(answersArea.X - quizArea.X, answersArea.Y - quizArea.Y, answersArea.Width, answersArea.Height))
+            If PerceptualHashDistance(expectedQuizHash, QuizImageTools.PerceptualHash(liveQuiz)) > 6 Then Return False
             Dim liveButtons = QuizImageTools.DetectAnswerButtons(liveAnswer)
             If targetIndex < 0 OrElse targetIndex >= liveButtons.Count Then Return False
             Dim liveHash = QuizImageTools.PerceptualHash(liveAnswer)
@@ -545,7 +578,10 @@ Partial Public Class Form1
             .Answer = If(answer.AnswerText, "").Trim(),
             .ButtonNumber = buttonNumber,
             .Confidence = Math.Max(0.0R, Math.Min(1.0R, answer.Confidence)),
-            .WasGuess = answer.IsGuess
+            .WasGuess = answer.IsGuess,
+            .AnswerMethod = QuizAnswerPolicy.MethodLabel(answer),
+            .Evidence = If(answer.Evidence, ""),
+            .SourceUrl = If(answer.SourceUrl, "")
         })
         If _quizAnswerDatabase.Count > 2000 Then _quizAnswerDatabase.RemoveRange(2000, _quizAnswerDatabase.Count - 2000)
         RefreshQuizDatabaseGrid()
@@ -562,7 +598,10 @@ Partial Public Class Form1
                 entry.Answer,
                 entry.ButtonNumber,
                 entry.Confidence.ToString("P0"),
-                entry.WasGuess)
+                entry.WasGuess,
+                entry.AnswerMethod,
+                entry.SourceUrl)
+            dgvQuizAnswerDatabase.Rows(dgvQuizAnswerDatabase.Rows.Count - 1).Cells("Answer").ToolTipText = If(entry.Evidence, "")
         Next
         If lblQuizDatabaseCount IsNot Nothing Then lblQuizDatabaseCount.Text = $"{_quizAnswerDatabase.Count:N0} solved question(s)"
     End Sub
@@ -575,9 +614,32 @@ Partial Public Class Form1
             .Answer = If(entry.Answer, ""),
             .ButtonNumber = entry.ButtonNumber,
             .Confidence = entry.Confidence,
-            .WasGuess = entry.WasGuess
+            .WasGuess = entry.WasGuess,
+            .AnswerMethod = If(entry.AnswerMethod, "Legacy"),
+            .Evidence = If(entry.Evidence, ""),
+            .SourceUrl = QuizOpenAiClient.NormalizeSourceUrl(entry.SourceUrl)
         }
     End Function
+
+    Private Sub ShowQuizEvidence(answer As QuizSolveResult)
+        lblQuizEvidence.Links.Clear()
+        Dim description = If(answer.CanAnswer, QuizAnswerPolicy.MethodLabel(answer), "Unresolved") & ": " & If(answer.Evidence, "")
+        lblQuizEvidence.Text = description
+        If answer.SourceVerified AndAlso Not String.IsNullOrWhiteSpace(answer.SourceUrl) Then
+            lblQuizEvidence.Text &= Environment.NewLine & answer.SourceUrl
+            lblQuizEvidence.Links.Add(description.Length + Environment.NewLine.Length, answer.SourceUrl.Length, answer.SourceUrl)
+        End If
+    End Sub
+
+    Private Sub OpenQuizSource(value As String)
+        Dim source = QuizOpenAiClient.NormalizeSourceUrl(value)
+        If source.Length = 0 Then Return
+        Try
+            Process.Start(New ProcessStartInfo(source) With {.UseShellExecute = True})
+        Catch ex As Exception
+            AppendLog("Unable to open quiz source: " & ex.Message)
+        End Try
+    End Sub
 
     Private Sub SetQuizPreview(image As Bitmap)
         If picQuizPreview Is Nothing OrElse image Is Nothing Then Return

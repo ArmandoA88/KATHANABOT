@@ -1397,6 +1397,7 @@ Public Class BotEngine
     Private Shared ReadOnly MovementStopVks As Integer() = {&H57, &H41, &H53, &H44, &H26, &H28, &H25, &H27}
 
     Private Shared ReadOnly KeyMap As New Dictionary(Of String, Integer)(StringComparer.OrdinalIgnoreCase) From {
+        {"TAB", &H9},
         {"0", &H30}, {"1", &H31}, {"2", &H32}, {"3", &H33}, {"4", &H34}, {"5", &H35},
         {"6", &H36}, {"7", &H37}, {"8", &H38}, {"9", &H39},
         {"A", &H41}, {"B", &H42}, {"C", &H43}, {"D", &H44}, {"E", &H45}, {"F", &H46}, {"G", &H47},
@@ -9316,6 +9317,17 @@ Public Class BotEngine
         Return typedAny
     End Function
 
+    Public Shared Function SendChatMessageSequence(hwnd As IntPtr, rawText As String) As Boolean
+        Dim messageText = If(rawText, "").Replace(vbCr, " ").Replace(vbLf, " ").Trim()
+        If hwnd = IntPtr.Zero OrElse messageText.Length = 0 Then Return False
+        If Not SendKey(hwnd, "ENTER", 30, forceBackgroundPost:=True) Then Return False
+        Thread.Sleep(60)
+        Dim entered = SendPartyAskCommand(hwnd, messageText, True)
+        Thread.Sleep(55)
+        Dim submitted = SendKey(hwnd, "ENTER", 30, forceBackgroundPost:=True)
+        Return entered AndAlso submitted
+    End Function
+
     Private Sub PruneRepairMatchTimes(now As DateTime)
         Dim cutoff As DateTime = now.AddMilliseconds(-RepairConfirmWindowMs)
         While _repairMatchTimes.Count > 0 AndAlso _repairMatchTimes.Peek() < cutoff
@@ -13015,6 +13027,10 @@ Public Class BotEngine
     Friend Shared Sub keybd_event(bVk As Byte, bScan As Byte, dwFlags As UInteger, dwExtraInfo As UIntPtr)
     End Sub
 
+    Public Shared Function IsSupportedKeyName(keyName As String) As Boolean
+        Return Not String.IsNullOrWhiteSpace(keyName) AndAlso KeyMap.ContainsKey(keyName.Trim())
+    End Function
+
     Public Shared Function SendKey(hwnd As IntPtr, keyName As String, pressMs As Integer, Optional forceBackgroundPost As Boolean = False, Optional forcePhysicalKeyEvent As Boolean = False) As Boolean
         If hwnd = IntPtr.Zero Then
             Return False
@@ -13027,7 +13043,7 @@ Public Class BotEngine
         End SyncLock
 
         Dim vk As Integer
-        If Not KeyMap.TryGetValue(keyName.ToUpperInvariant(), vk) Then
+        If Not KeyMap.TryGetValue(If(keyName, "").Trim(), vk) Then
             Return False
         End If
 

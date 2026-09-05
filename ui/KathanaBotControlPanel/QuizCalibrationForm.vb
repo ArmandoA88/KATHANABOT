@@ -30,7 +30,7 @@ Friend Class QuizApiKeyDialog
             .Location = New DrawingPoint(22, 18)
         }
         Dim help As New Label With {
-            .Text = "The key is encrypted for your Windows account before it is remembered. Only the calibrated quiz image is sent to OpenAI.",
+            .Text = "Saved encrypted for this Windows account. Quiz images go to OpenAI, which can search the web using question text.",
             .Font = New Font("Segoe UI", 9.0F),
             .ForeColor = Color.FromArgb(150, 170, 200),
             .Location = New DrawingPoint(22, 50),

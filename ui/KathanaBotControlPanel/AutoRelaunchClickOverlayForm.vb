@@ -5,6 +5,8 @@ Friend Class AutoRelaunchOverlayStep
     Public Property StepNumber As Integer
     Public Property X As Integer
     Public Property Y As Integer
+    Public Property RegionWidth As Integer
+    Public Property RegionHeight As Integer
     Public Property DelaySeconds As Decimal
     Public Property TimingLabel As String = ""
     Public Property Description As String = ""
@@ -98,6 +100,8 @@ Friend Class AutoRelaunchClickOverlayForm
                 .StepNumber = stepInfo.StepNumber,
                 .X = stepInfo.X,
                 .Y = stepInfo.Y,
+                .RegionWidth = stepInfo.RegionWidth,
+                .RegionHeight = stepInfo.RegionHeight,
                 .DelaySeconds = stepInfo.DelaySeconds,
                 .TimingLabel = If(stepInfo.TimingLabel, ""),
                 .Description = If(stepInfo.Description, ""),
@@ -143,6 +147,13 @@ Friend Class AutoRelaunchClickOverlayForm
             Next
 
             For Each stepInfo As AutoRelaunchOverlayStep In _steps
+                If stepInfo.RegionWidth > 0 AndAlso stepInfo.RegionHeight > 0 Then
+                    Dim regionRect As New Rectangle(stepInfo.X - (stepInfo.RegionWidth \ 2), stepInfo.Y - (stepInfo.RegionHeight \ 2), stepInfo.RegionWidth, stepInfo.RegionHeight)
+                    Using regionPen As New Pen(stepInfo.MarkerColor, 3.0F)
+                        regionPen.DashStyle = DashStyle.Dash
+                        e.Graphics.DrawRectangle(regionPen, regionRect)
+                    End Using
+                End If
                 Dim markerRect As New Rectangle(stepInfo.X - 15, stepInfo.Y - 15, 30, 30)
                 Using markerBrush As New SolidBrush(stepInfo.MarkerColor)
                     e.Graphics.FillEllipse(markerBrush, markerRect)

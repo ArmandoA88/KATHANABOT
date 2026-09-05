@@ -2303,6 +2303,7 @@ Partial Public Class Form1
         Public Property UpdateIncludePrereleases As Boolean = False
         Public Property DashboardMode As String = "Compact"
         Public Property Quiz As PersistedQuizState = New PersistedQuizState()
+        Public Property Resu As ResuSettings = New ResuSettings()
         Public Property Full As PersistedListState = New PersistedListState()
         Public Property Lite As PersistedLiteState = New PersistedLiteState()
     End Class
@@ -3650,6 +3651,7 @@ Partial Public Class Form1
         ' Built now so its settings can load normally, but deliberately not added to the sidebar
         ' until the Home-page digit sequence unlocks it for this executable session.
         _quizTab = BuildQuizTab()
+        _resuTab = BuildResuTab()
         _updateTab = BuildUpdateTab()
         _mainTabs.TabPages.Add(_updateTab)
         _mainTabs.FitTabsToHeight()
@@ -4676,6 +4678,8 @@ Partial Public Class Form1
         If tab Is Nothing Then
             Return False
         End If
+
+        If tab Is _resuTab Then Return _resuRunning
 
         If tab Is _dashboardTab Then
             Return GetRunningEdition().HasValue
@@ -11251,6 +11255,7 @@ Partial Public Class Form1
                 ' in this authoritative rebuild list afterward; otherwise selecting it causes the
                 ' ordinary edition/sidebar refresh to remove it again immediately.
                 desired.Add(_quizTab)
+                desired.Add(_resuTab)
             End If
             desired.Add(_updateTab)
             desired.RemoveAll(Function(page) page Is Nothing)
@@ -16881,6 +16886,7 @@ Partial Public Class Form1
             RefreshUpdateInstallMode()
 
             ApplyPersistedQuizState(If(appState IsNot Nothing, appState.Quiz, Nothing))
+            ApplyPersistedResuState(If(appState IsNot Nothing, appState.Resu, Nothing))
 
             Dim savedToggleX As Integer = If(appState IsNot Nothing, appState.InGameBotToggleX, -1)
             _inGameBotToggleX = If(savedToggleX < 0, -1, savedToggleX)
@@ -17249,6 +17255,7 @@ Partial Public Class Form1
                 .UpdateIncludePrereleases = (chkUpdateIncludePrereleases IsNot Nothing AndAlso chkUpdateIncludePrereleases.Checked),
                 .DashboardMode = _dashboardMode.ToString(),
                 .Quiz = BuildPersistedQuizState(),
+                .Resu = _resuSettings,
                 .Full = fullState,
                 .Lite = liteState
             }
@@ -19811,6 +19818,7 @@ Partial Public Class Form1
     Protected Overrides Sub OnFormClosing(e As FormClosingEventArgs)
         _dashboardEntranceTimer.Stop()
         ShutdownQuizSolver()
+        ShutdownResu()
         If _updateCancellation IsNot Nothing Then
             _updateCancellation.Cancel()
             _updateCancellation.Dispose()
