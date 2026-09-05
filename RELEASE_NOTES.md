@@ -1,16 +1,8 @@
-# KathanaBot 1.0.133
+# KathanaBot 1.0.135
 
 ## What changed
 
-Updated the stats baseline behavior.
-- Reset Stats now uses OK/Cancel.
-- After OK, cached and in-progress EXP/Rupiah OCR is discarded.
-- The next fresh valid readings become the new fixed baselines.
-- Rupiah: latest wallet minus fixed baseline.
-- EXP: rollover-adjusted latest EXP minus fixed baseline.
-- Both totals can increase or decrease.
-- Stopping/restarting the bot does not change the baseline; application restart or confirmed Reset Stats does.
-- Rolling achievement statistics now also allow negative changes.
+- **Widened Hold on Place's Emergency Leash Distance range from 5-200 to 1-500.**
 
 ## Recent change history - last 5
 

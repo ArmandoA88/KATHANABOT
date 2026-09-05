@@ -7764,7 +7764,7 @@ Partial Public Class Form1
         settingsLayout.SetColumnSpan(chkHoldPlaceCombatSafe, 2)
 
         settingsLayout.Controls.Add(New Label() With {.Text = "Emergency Leash", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 9)
-        nudHoldPlaceEmergencyLeash = New NumericUpDown() With {.Minimum = 5, .Maximum = 200, .Increment = 5, .Value = 60, .Width = 90, .Margin = New Padding(2)}
+        nudHoldPlaceEmergencyLeash = New NumericUpDown() With {.Minimum = 1, .Maximum = 500, .Increment = 5, .Value = 60, .Width = 90, .Margin = New Padding(2)}
         settingsLayout.Controls.Add(nudHoldPlaceEmergencyLeash, 1, 9)
 
         chkHoldPlaceDirectionLearning = New CheckBox() With {.Text = "Learn direction after corrections", .Dock = DockStyle.Fill, .Checked = True, .Margin = New Padding(2)}
@@ -17590,7 +17590,7 @@ Partial Public Class Form1
         If chkHoldPlaceCombatSafe IsNot Nothing Then
             chkHoldPlaceCombatSafe.Checked = cfg.HoldPlaceCombatSafeEnabled
         End If
-        SetNumericControlValue(nudHoldPlaceEmergencyLeash, CDec(Math.Max(5, Math.Min(200, If(cfg.HoldPlaceEmergencyLeashDistance > 0, cfg.HoldPlaceEmergencyLeashDistance, 60)))))
+        SetNumericControlValue(nudHoldPlaceEmergencyLeash, CDec(Math.Max(1, Math.Min(500, If(cfg.HoldPlaceEmergencyLeashDistance > 0, cfg.HoldPlaceEmergencyLeashDistance, 60)))))
         If chkHoldPlaceDirectionLearning IsNot Nothing Then
             chkHoldPlaceDirectionLearning.Checked = cfg.HoldPlaceDirectionLearningEnabled
         End If
