@@ -120,7 +120,7 @@ Partial Public Class Form1
         body.Controls.Add(information)
 
         Dim safety As New Label With {
-            .Text = "Click safety: the button layout is detected again immediately before input. The first click is followed by the second click exactly 50 ms later. The cursor is restored afterward.",
+            .Text = "Click safety: the button layout is detected again immediately before input. The selected answer receives 10 complete left-clicks, 50 ms apart. The cursor is restored afterward.",
             .Dock = DockStyle.Top,
             .Height = 44,
             .ForeColor = ThemeTextSecondary
@@ -399,8 +399,8 @@ Partial Public Class Form1
                     _quizLastClickNormalizedY = clickedClientPoint.Y / CDbl(Math.Max(1, clientHeight))
                     _quizLastClickedButtonNumber = targetIndex + 1
                     Dim guessText = If(answer.IsGuess, " (educated guess)", "")
-                    SetQuizStatus($"Clicked answer {targetIndex + 1}: {answer.AnswerText}{guessText} — {answer.Confidence:P0} confidence", ThemeGood)
-                    AppendLog($"Quiz solver: {answer.QuestionText} -> {answer.AnswerText}; button {targetIndex + 1}; confidence {answer.Confidence:P0}{guessText}.")
+                    SetQuizStatus($"Clicked answer {targetIndex + 1} x10 (50 ms): {answer.AnswerText}{guessText} — {answer.Confidence:P0} confidence", ThemeGood)
+                    AppendLog($"Quiz solver: {answer.QuestionText} -> {answer.AnswerText}; button {targetIndex + 1}; sent 10 left-clicks 50 ms apart; confidence {answer.Confidence:P0}{guessText}.")
                     AddQuizDatabaseEntry(answer, targetIndex + 1)
                     RefreshQuizLivePreview(False)
                 End Using
@@ -450,7 +450,7 @@ Partial Public Class Form1
             }
             clickedClientPoint = New System.Drawing.Point(clientPoint.X, clientPoint.Y)
             If Not NativeMethods.ClientToScreen(hwnd, clientPoint) Then Return False
-            Return PerformQuizDoubleClick(hwnd, clientPoint)
+            Return PerformQuizClickBurst(hwnd, clientPoint)
         End Using
     End Function
 
@@ -468,17 +468,21 @@ Partial Public Class Form1
         Return count
     End Function
 
-    Private Shared Function PerformQuizDoubleClick(hwnd As IntPtr, screenPoint As NativeMethods.POINT) As Boolean
+    Private Shared Function PerformQuizClickBurst(hwnd As IntPtr, screenPoint As NativeMethods.POINT) As Boolean
         Dim previous As New NativeMethods.POINT()
         Dim hadCursor = NativeMethods.GetCursorPos(previous)
         Try
-            NativeMethods.SetForegroundWindow(hwnd)
+            If NativeMethods.IsIconic(hwnd) Then
+                NativeMethods.ShowWindow(hwnd, NativeMethods.SW_RESTORE)
+            End If
+            ForceSetForegroundWindow(hwnd)
+            NativeMethods.BringWindowToTop(hwnd)
             If Not NativeMethods.SetCursorPos(screenPoint.X, screenPoint.Y) Then Return False
-            NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTDOWN, 0UI, 0UI, 0UI, UIntPtr.Zero)
-            NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTUP, 0UI, 0UI, 0UI, UIntPtr.Zero)
-            Thread.Sleep(50)
-            NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTDOWN, 0UI, 0UI, 0UI, UIntPtr.Zero)
-            NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTUP, 0UI, 0UI, 0UI, UIntPtr.Zero)
+            For clickIndex = 1 To 10
+                NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTDOWN, 0UI, 0UI, 0UI, UIntPtr.Zero)
+                NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTUP, 0UI, 0UI, 0UI, UIntPtr.Zero)
+                If clickIndex < 10 Then Thread.Sleep(50)
+            Next
             Return True
         Finally
             If hadCursor Then NativeMethods.SetCursorPos(previous.X, previous.Y)
