@@ -145,10 +145,13 @@ Public Class CalibrationOverlayForm
         End Using
 
         Dim bounds As Rectangle = GetLootScanBounds(points)
+        DrawLootGrid(g, points, bounds)
         Using textBack As New SolidBrush(Color.FromArgb(185, 0, 0, 0))
             Dim labelRect As New Rectangle(bounds.X, Math.Max(0, bounds.Y - 18), Math.Min(140, Math.Max(90, bounds.Width)), 18)
             g.FillRectangle(textBack, labelRect)
-            TextRenderer.DrawText(g, label, Font, labelRect, Color.White, TextFormatFlags.Left Or TextFormatFlags.VerticalCenter)
+            Dim columns As Integer = Math.Max(1, Math.Min(BotConfig.MaxLootGridDimension, _currentConfig.LootGridColumns))
+            Dim rows As Integer = Math.Max(1, Math.Min(BotConfig.MaxLootGridDimension, _currentConfig.LootGridRows))
+            TextRenderer.DrawText(g, $"{label} {columns}x{rows}", Font, labelRect, Color.White, TextFormatFlags.Left Or TextFormatFlags.VerticalCenter)
         End Using
 
         If selected Then
@@ -162,6 +165,34 @@ Public Class CalibrationOverlayForm
                 End Using
             Next
         End If
+    End Sub
+
+    Private Sub DrawLootGrid(g As Graphics, points As List(Of DrawingPoint), bounds As Rectangle)
+        If _currentConfig Is Nothing OrElse bounds.Width <= 0 OrElse bounds.Height <= 0 Then
+            Return
+        End If
+
+        Dim columns As Integer = Math.Max(1, Math.Min(BotConfig.MaxLootGridDimension, _currentConfig.LootGridColumns))
+        Dim rows As Integer = Math.Max(1, Math.Min(BotConfig.MaxLootGridDimension, _currentConfig.LootGridRows))
+        Dim savedState As GraphicsState = g.Save()
+        Try
+            Using path As New GraphicsPath()
+                path.AddPolygon(points.ToArray())
+                g.SetClip(path, CombineMode.Intersect)
+                Using gridPen As New Pen(Color.FromArgb(225, 80, 235, 255), 1.0F)
+                    For column As Integer = 1 To columns - 1
+                        Dim x As Single = CSng(bounds.Left + (bounds.Width * column / CDbl(columns)))
+                        g.DrawLine(gridPen, x, bounds.Top, x, bounds.Bottom)
+                    Next
+                    For row As Integer = 1 To rows - 1
+                        Dim y As Single = CSng(bounds.Top + (bounds.Height * row / CDbl(rows)))
+                        g.DrawLine(gridPen, bounds.Left, y, bounds.Right, y)
+                    Next
+                End Using
+            End Using
+        Finally
+            g.Restore(savedState)
+        End Try
     End Sub
 
     Private Sub DrawRegion(g As Graphics, key As String, region As RectRegion, colorFill As Color, label As String)
@@ -601,6 +632,8 @@ Public Class CalibrationOverlayForm
         cfg.LootScanRect = CloneRegion(src.LootScanRect)
         cfg.LootScanPoints = CloneLootScanPoints(src.LootScanPoints)
         cfg.LootScannerEnabled = src.LootScannerEnabled
+        cfg.LootGridColumns = src.LootGridColumns
+        cfg.LootGridRows = src.LootGridRows
         cfg.DisabledCalibrationRegionOverlays = If(src.DisabledCalibrationRegionOverlays, New List(Of String)()).ToList()
         Return cfg
     End Function

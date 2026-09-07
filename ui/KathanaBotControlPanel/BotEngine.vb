@@ -387,6 +387,9 @@ Public Class BotConfig
     Public Property AskForResurrectText As String = "need resu pls"
     Public Property AskForResurrectIncludeMapCoordinates As Boolean = True
     Public Property LootScannerEnabled As Boolean = True
+    Public Const MaxLootGridDimension As Integer = 40
+    Public Property LootGridColumns As Integer = 6
+    Public Property LootGridRows As Integer = 4
     Public Property NotificationProvider As String = "ntfy"
     Public Property DiscordWebhookUrl As String = ""
     Public Property DiscordGlobalWebhookUrl As String = ""
@@ -679,6 +682,14 @@ Public Class LootAwardRead
     Public Property DetectedAtUtc As DateTime = DateTime.MinValue
 End Class
 
+Public Class LootGridDetection
+    Public Property ItemName As String = ""
+    Public Property Cell As Rectangle = Rectangle.Empty
+    Public Property ClickPoint As DrawingPoint = DrawingPoint.Empty
+    Public Property ClickSucceeded As Boolean
+    Public Property DetectedAtUtc As DateTime = DateTime.UtcNow
+End Class
+
 Friend Module NativeMethods
     Friend Const PW_CLIENTONLY As UInteger = 1UI
     Friend Const PW_RENDERFULLCONTENT As UInteger = 2UI
@@ -920,6 +931,7 @@ Public Class BotEngine
     Public Event StatusUpdated(status As BotStatus)
     Public Event LogLine(line As String)
     Public Event LootAwardDetected(award As LootAwardRead)
+    Public Event LootGridDetected(detection As LootGridDetection)
     Private Const NotificationProviderNtfy As String = "ntfy"
     Private Const NotificationProviderDiscord As String = "discord"
     Private Const AllowBlindAttackWhenTargetMissing As Boolean = False
@@ -3266,6 +3278,9 @@ Public Class BotEngine
         Dim topic As String = If(cfg.ItemNtfyTopic, "").Trim()
         Dim notificationProvider As String = NormalizeNotificationProviderName(cfg.NotificationProvider)
         Dim discordWebhookUrl As String = GetDiscordItemWebhookUrl(cfg)
+        Dim lootGridColumns As Integer = Math.Max(1, Math.Min(BotConfig.MaxLootGridDimension, cfg.LootGridColumns))
+        Dim lootGridRows As Integer = Math.Max(1, Math.Min(BotConfig.MaxLootGridDimension, cfg.LootGridRows))
+        Dim scanGeneration As Long = _runGeneration
 
         _lootScannerProcessingTask = Task.Run(Sub()
             Dim scanFrame As Bitmap = frameClone
@@ -3288,10 +3303,30 @@ Public Class BotEngine
                 Dim ocrText As String = String.Join(Environment.NewLine, ocrRegions.Select(Function(region) region.Text))
                 If Not String.IsNullOrWhiteSpace(ocrText) AndAlso allowedNames IsNot Nothing Then
                     Dim matchedItem As String = ""
-                    Dim matchedRegion As OcrReader.OcrTextRegion = Nothing
-                    If TryFindAllowedLootRegionMatch(ocrRegions, allowedNames, lootMatchThresholdPercent, matchedItem, matchedRegion) OrElse
-                       TryFindAllowedLootMatch(ocrText, allowedNames, lootMatchThresholdPercent, matchedItem) Then
-                        RaiseEvent LogLine($"LOOT ALARM: Found {matchedItem} (fuzzy {lootMatchThresholdPercent}%).")
+                    Dim matchedCell As Rectangle = Rectangle.Empty
+                    If TryFindAllowedLootGridMatch(ocrRegions, allowedNames, lootMatchThresholdPercent, lootScanFrame.Width, lootScanFrame.Height, lootGridColumns, lootGridRows, matchedItem, matchedCell) Then
+                        Dim clickX As Integer = lootScanBounds.X + matchedCell.Left + (matchedCell.Width \ 2)
+                        Dim clickY As Integer = lootScanBounds.Y + matchedCell.Top + (matchedCell.Height \ 2)
+                        Dim clicked As Boolean = False
+                        Dim clickDiagnostic As String = ""
+                        If scanGeneration = _runGeneration Then
+                            clicked = LeftClickVerifiedAtClientPoint(hwnd, clickX, clickY, clickDiagnostic, restoreCursor:=True, pressHoldMs:=25)
+                        End If
+                        Dim column As Integer = Math.Min(lootGridColumns, Math.Max(1, CInt(Math.Floor(matchedCell.Left * lootGridColumns / CDbl(Math.Max(1, lootScanFrame.Width)))) + 1))
+                        Dim row As Integer = Math.Min(lootGridRows, Math.Max(1, CInt(Math.Floor(matchedCell.Top * lootGridRows / CDbl(Math.Max(1, lootScanFrame.Height)))) + 1))
+                        If clicked Then
+                            SetLastAction($"Loot grid click {row},{column}: {matchedItem}")
+                            RaiseEvent LogLine($"LOOT CLICK: Found {matchedItem}; clicked grid row {row}, column {column} at ({clickX},{clickY}).")
+                        Else
+                            RaiseEvent LogLine($"LOOT ALARM: Found {matchedItem} in grid row {row}, column {column}, but click failed. {clickDiagnostic}")
+                        End If
+                        RaiseEvent LootGridDetected(New LootGridDetection With {
+                            .ItemName = matchedItem,
+                            .Cell = New Rectangle(lootScanBounds.X + matchedCell.X, lootScanBounds.Y + matchedCell.Y, matchedCell.Width, matchedCell.Height),
+                            .ClickPoint = New DrawingPoint(clickX, clickY),
+                            .ClickSucceeded = clicked,
+                            .DetectedAtUtc = DateTime.UtcNow
+                        })
 
                         Dim lootNotificationTitle As String = "KathanaBot Loot Finder"
                         Dim lootNotificationCharacterName As String
@@ -10327,6 +10362,71 @@ Public Class BotEngine
 
         If bestScore >= threshold Then
             matchedAllowedName = bestAllowedName
+            Return True
+        End If
+        Return False
+    End Function
+
+    Public Shared Function GetLootGridCellAtPoint(scanWidth As Integer, scanHeight As Integer, point As DrawingPoint, columns As Integer, rows As Integer) As Rectangle
+        Dim width As Integer = Math.Max(1, scanWidth)
+        Dim height As Integer = Math.Max(1, scanHeight)
+        Dim safeColumns As Integer = Math.Max(1, Math.Min(BotConfig.MaxLootGridDimension, columns))
+        Dim safeRows As Integer = Math.Max(1, Math.Min(BotConfig.MaxLootGridDimension, rows))
+        Dim x As Integer = Math.Max(0, Math.Min(width - 1, point.X))
+        Dim y As Integer = Math.Max(0, Math.Min(height - 1, point.Y))
+        Dim column As Integer = Math.Min(safeColumns - 1, CInt(Math.Floor(x * safeColumns / CDbl(width))))
+        Dim row As Integer = Math.Min(safeRows - 1, CInt(Math.Floor(y * safeRows / CDbl(height))))
+        Dim left As Integer = CInt(Math.Floor(column * width / CDbl(safeColumns)))
+        Dim top As Integer = CInt(Math.Floor(row * height / CDbl(safeRows)))
+        Dim right As Integer = CInt(Math.Floor((column + 1) * width / CDbl(safeColumns)))
+        Dim bottom As Integer = CInt(Math.Floor((row + 1) * height / CDbl(safeRows)))
+        Return New Rectangle(left, top, Math.Max(1, right - left), Math.Max(1, bottom - top))
+    End Function
+
+    Private Shared Function TryFindAllowedLootGridMatch(regions As List(Of OcrReader.OcrTextRegion), allowList As List(Of String), thresholdPercent As Integer, scanWidth As Integer, scanHeight As Integer, columns As Integer, rows As Integer, ByRef matchedAllowedName As String, ByRef matchedCell As Rectangle) As Boolean
+        matchedAllowedName = ""
+        matchedCell = Rectangle.Empty
+        If regions Is Nothing OrElse regions.Count = 0 OrElse allowList Is Nothing OrElse allowList.Count = 0 Then
+            Return False
+        End If
+
+        Dim cells As New Dictionary(Of String, List(Of OcrReader.OcrTextRegion))(StringComparer.Ordinal)
+        For Each region As OcrReader.OcrTextRegion In regions
+            If region Is Nothing OrElse region.Bounds = Rectangle.Empty OrElse String.IsNullOrWhiteSpace(region.Text) Then
+                Continue For
+            End If
+            Dim center As New DrawingPoint(region.Bounds.Left + (region.Bounds.Width \ 2), region.Bounds.Top + (region.Bounds.Height \ 2))
+            Dim cell As Rectangle = GetLootGridCellAtPoint(scanWidth, scanHeight, center, columns, rows)
+            Dim key As String = $"{cell.X}:{cell.Y}:{cell.Width}:{cell.Height}"
+            Dim cellRegions As List(Of OcrReader.OcrTextRegion) = Nothing
+            If Not cells.TryGetValue(key, cellRegions) Then
+                cellRegions = New List(Of OcrReader.OcrTextRegion)()
+                cells(key) = cellRegions
+            End If
+            cellRegions.Add(region)
+        Next
+
+        Dim bestScore As Double = 0.0R
+        Dim bestName As String = ""
+        Dim bestCell As Rectangle = Rectangle.Empty
+        For Each cellRegions As List(Of OcrReader.OcrTextRegion) In cells.Values
+            Dim ordered As IEnumerable(Of OcrReader.OcrTextRegion) = cellRegions.OrderBy(Function(region) region.Bounds.Top).ThenBy(Function(region) region.Bounds.Left)
+            Dim observedText As String = String.Join(" ", ordered.Select(Function(region) region.Text.Trim()))
+            Dim localName As String = ""
+            Dim localScore As Double = 0.0R
+            TryFindBestAllowedLootMatch(observedText, allowList, thresholdPercent, localName, localScore)
+            If localScore > bestScore Then
+                bestScore = localScore
+                bestName = localName
+                Dim firstRegion As OcrReader.OcrTextRegion = ordered.First()
+                Dim center As New DrawingPoint(firstRegion.Bounds.Left + (firstRegion.Bounds.Width \ 2), firstRegion.Bounds.Top + (firstRegion.Bounds.Height \ 2))
+                bestCell = GetLootGridCellAtPoint(scanWidth, scanHeight, center, columns, rows)
+            End If
+        Next
+
+        If bestCell <> Rectangle.Empty AndAlso bestScore >= ClampLootMatchThresholdPercent(thresholdPercent) / 100.0R Then
+            matchedAllowedName = bestName
+            matchedCell = bestCell
             Return True
         End If
         Return False

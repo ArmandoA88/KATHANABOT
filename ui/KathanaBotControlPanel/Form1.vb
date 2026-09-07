@@ -52,6 +52,7 @@ Partial Public Class Form1
     Private ReadOnly _liveSnapshotTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _persistDebounceTimer As New System.Windows.Forms.Timer()
     Private ReadOnly _persistFileLock As New Object()
+    Private _persistWriteRevision As Long
     Private _pendingPersistState As PersistedAppState = Nothing
     Private Const PersistDebounceIntervalMs As Integer = 400
     Private ReadOnly _logQueueSync As New Object()
@@ -1836,6 +1837,9 @@ Partial Public Class Form1
     Private btnChatMessageInputMode As Button
     Private btnVisionLootScanner As Button
     Private btnLootScanner As Button
+    Private btnLootGridOverlay As Button
+    Private nudLootGridColumns As NumericUpDown
+    Private nudLootGridRows As NumericUpDown
     Private tblNotificationSettings As TableLayoutPanel
     Private cboNotificationProvider As ComboBox
     Private lblDiscordGlobalWebhook As Label
@@ -1941,6 +1945,7 @@ Partial Public Class Form1
     Private _autoRelaunchClickOverlayForm As AutoRelaunchClickOverlayForm
     Private _arrowUnbundleOverlayForm As AutoRelaunchClickOverlayForm
     Private _chatTranslationOverlayForm As ChatTranslationOverlayForm
+    Private _lootDetectionOverlayForm As LootDetectionOverlayForm
     Private _inGameBotToggleForm As InGameBotToggleForm
     Private _inGameBotToggleX As Integer = -1
     Private _inGameBotToggleY As Integer = 10
@@ -2364,6 +2369,8 @@ Partial Public Class Form1
         Public Property AskForResurrectText As String
         Public Property AskForResurrectMapCoordsEnabled As Boolean = True
         Public Property LootScannerEnabled As Boolean = True
+        Public Property LootGridColumns As Integer = 6
+        Public Property LootGridRows As Integer = 4
         Public Property NotificationProvider As String = NotificationProviderNtfy
         Public Property DiscordWebhookUrl As String = ""
         Public Property DiscordGlobalWebhookUrl As String = ""
@@ -2480,6 +2487,7 @@ Partial Public Class Form1
         AddHandler _fullEngine.LogLine, Sub(line As String) OnEngineLogLine(BotEdition.Full, line)
         AddHandler _liteEngine.LogLine, Sub(line As String) OnEngineLogLine(BotEdition.Lite, line)
         AddHandler _fullEngine.LootAwardDetected, AddressOf OnLootAwardDetected
+        AddHandler _fullEngine.LootGridDetected, AddressOf OnLootGridDetected
         InitializeInGameBotToggle()
 
         _uiTimer.Interval = 1000
@@ -2689,6 +2697,14 @@ Partial Public Class Form1
         If nudLootScannerIntervalMs IsNot Nothing Then
             AddHandler nudLootScannerIntervalMs.ValueChanged, AddressOf LiveConfigChanged
             AddHandler nudLootScannerIntervalMs.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudLootGridColumns IsNot Nothing Then
+            AddHandler nudLootGridColumns.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler nudLootGridColumns.ValueChanged, AddressOf PersistListSettingsChanged
+        End If
+        If nudLootGridRows IsNot Nothing Then
+            AddHandler nudLootGridRows.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler nudLootGridRows.ValueChanged, AddressOf PersistListSettingsChanged
         End If
         If nudMapScanMs IsNot Nothing Then
             AddHandler nudMapScanMs.ValueChanged, AddressOf LiveConfigChanged
@@ -5558,6 +5574,8 @@ Partial Public Class Form1
         End If
 
         Try
+            ' Flush edits to the outgoing profile before replacing the live settings.
+            SavePersistedListState(True, True)
             ' Same atomic temp-file-then-replace approach as SavePersistedListState, so a failed
             ' load can never leave the live settings file half-written.
             _persistDebounceTimer.Stop()
@@ -6964,9 +6982,10 @@ Partial Public Class Form1
 
     Private Function BuildLootScanSettingsGroup() As GroupBox
         Dim group As New GroupBox() With {.Text = "Loot Scan Matching", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
-        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 5}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 6}
         layout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 220.0F))
         layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 40.0F))
@@ -6988,8 +7007,18 @@ Partial Public Class Form1
         }
         layout.Controls.Add(nudLootScannerIntervalMs, 1, 1)
 
-        layout.Controls.Add(New Label() With {.Text = "Loot Scan Area", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
-        layout.Controls.Add(New Label() With {.Text = "Configured in Vision tab", .Dock = DockStyle.Fill, .ForeColor = Color.LightSteelBlue, .TextAlign = ContentAlignment.MiddleLeft}, 1, 2)
+        layout.Controls.Add(New Label() With {.Text = "Loot Grid Mesh", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 2)
+        Dim gridMeshRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(0)}
+        gridMeshRow.Controls.Add(New Label() With {.Text = "Columns", .AutoSize = True, .Padding = New Padding(0, 8, 5, 0)})
+        nudLootGridColumns = New NumericUpDown() With {.Minimum = 1, .Maximum = BotConfig.MaxLootGridDimension, .Value = 6, .Width = 58, .Margin = New Padding(0, 5, 12, 0)}
+        gridMeshRow.Controls.Add(nudLootGridColumns)
+        gridMeshRow.Controls.Add(New Label() With {.Text = "Rows", .AutoSize = True, .Padding = New Padding(0, 8, 5, 0)})
+        nudLootGridRows = New NumericUpDown() With {.Minimum = 1, .Maximum = BotConfig.MaxLootGridDimension, .Value = 4, .Width = 58, .Margin = New Padding(0, 5, 0, 0)}
+        gridMeshRow.Controls.Add(nudLootGridRows)
+        layout.Controls.Add(gridMeshRow, 1, 2)
+
+        layout.Controls.Add(New Label() With {.Text = "Loot Scan Area", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 3)
+        layout.Controls.Add(New Label() With {.Text = "Use Loot Grid Overlay below to move/resize", .Dock = DockStyle.Fill, .ForeColor = Color.LightSteelBlue, .TextAlign = ContentAlignment.MiddleLeft}, 1, 3)
 
         btnLootScanner = New Button() With {
             .Text = If(_lootScannerEnabled, "Loot Scanner (Alt): ON", "Loot Scanner (Alt): OFF"),
@@ -7000,16 +7029,27 @@ Partial Public Class Form1
             .ForeColor = Color.White
         }
         AddHandler btnLootScanner.Click, AddressOf ToggleLootScannerClicked
-        layout.Controls.Add(btnLootScanner, 0, 3)
-        layout.SetColumnSpan(btnLootScanner, 2)
+        Dim scannerButtons As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(0)}
+        scannerButtons.Controls.Add(btnLootScanner)
+        btnLootGridOverlay = New Button() With {
+            .Text = "Show Loot Grid Overlay",
+            .Width = 190,
+            .Height = 34,
+            .BackColor = Color.FromArgb(45, 95, 140),
+            .ForeColor = Color.White
+        }
+        AddHandler btnLootGridOverlay.Click, AddressOf ToggleOverlayClicked
+        scannerButtons.Controls.Add(btnLootGridOverlay)
+        layout.Controls.Add(scannerButtons, 0, 4)
+        layout.SetColumnSpan(scannerButtons, 2)
 
         Dim note As New Label() With {
-            .Text = "Loot Scanner (Alt) presses Alt and takes a new screenshot at the frequency above (100-20,000 ms). It reads the Vision tab loot area and raises an alarm/notification when an allowed name matches. Lower values scan faster but use more CPU.",
+            .Text = "Open the Loot Grid Overlay here to drag the loot polygon or its corners. On each Alt scan the bot reads item labels, finds the matching grid square for an allowed item name, and left-clicks that square's center. Columns and rows control mesh detail; lower scan intervals react faster but use more CPU.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.TopLeft
         }
-        layout.Controls.Add(note, 0, 4)
+        layout.Controls.Add(note, 0, 5)
         layout.SetColumnSpan(note, 2)
         group.Controls.Add(layout)
         Return group
@@ -9090,7 +9130,7 @@ Partial Public Class Form1
         If edition = BotEdition.Full AndAlso _overlayForm IsNot Nothing AndAlso Not _overlayForm.IsDisposed Then
             _overlayForm.Close()
             _overlayForm = Nothing
-            btnOverlayToggle.Text = "Show Overlay"
+            UpdateCalibrationOverlayButtonText(False)
             AppendLog("Overlay hidden while bot is running.")
         End If
         If edition = BotEdition.Lite AndAlso _liteOverlayForm IsNot Nothing AndAlso Not _liteOverlayForm.IsDisposed Then
@@ -13498,7 +13538,7 @@ Partial Public Class Form1
         If _overlayForm IsNot Nothing AndAlso Not _overlayForm.IsDisposed Then
             _overlayForm.Close()
             _overlayForm = Nothing
-            btnOverlayToggle.Text = "Show Overlay"
+            UpdateCalibrationOverlayButtonText(False)
             UpdateMainTabIndicators()
             AppendLog("Calibration overlay hidden.")
             Return
@@ -13512,15 +13552,22 @@ Partial Public Class Form1
         AddHandler _overlayForm.FormClosed,
             Sub(_s As Object, _e As FormClosedEventArgs)
                 _overlayForm = Nothing
-                If btnOverlayToggle IsNot Nothing AndAlso Not btnOverlayToggle.IsDisposed Then
-                    btnOverlayToggle.Text = "Show Overlay"
-                End If
+                UpdateCalibrationOverlayButtonText(False)
                 UpdateMainTabIndicators()
             End Sub
         _overlayForm.Show(Me)
-        btnOverlayToggle.Text = "Hide Overlay"
+        UpdateCalibrationOverlayButtonText(True)
         UpdateMainTabIndicators()
         AppendLog("Calibration overlay shown.")
+    End Sub
+
+    Private Sub UpdateCalibrationOverlayButtonText(visible As Boolean)
+        If btnOverlayToggle IsNot Nothing AndAlso Not btnOverlayToggle.IsDisposed Then
+            btnOverlayToggle.Text = If(visible, "Hide Overlay", "Show Overlay")
+        End If
+        If btnLootGridOverlay IsNot Nothing AndAlso Not btnLootGridOverlay.IsDisposed Then
+            btnLootGridOverlay.Text = If(visible, "Hide Loot Grid Overlay", "Show Loot Grid Overlay")
+        End If
     End Sub
 
     Private Sub OverlayRegionChanged(regionName As String, region As RectRegion)
@@ -15743,6 +15790,26 @@ Partial Public Class Form1
         End If
     End Sub
 
+    Private Sub OnLootGridDetected(detection As LootGridDetection)
+        If detection Is Nothing OrElse IsDisposed OrElse Disposing Then
+            Return
+        End If
+        If InvokeRequired Then
+            BeginInvoke(New Action(Of LootGridDetection)(AddressOf OnLootGridDetected), detection)
+            Return
+        End If
+
+        If _lootDetectionOverlayForm Is Nothing OrElse _lootDetectionOverlayForm.IsDisposed Then
+            _lootDetectionOverlayForm = New LootDetectionOverlayForm(AddressOf GetFullGameWindowHandle)
+        End If
+        _lootDetectionOverlayForm.ShowDetection(detection)
+    End Sub
+
+    Private Function GetFullGameWindowHandle() As IntPtr
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+        Return If(selected Is Nothing, IntPtr.Zero, selected.MainWindowHandle)
+    End Function
+
     Private Sub ClearItemAwardsClicked(sender As Object, e As EventArgs)
         _itemAwardReads.Clear()
         RefreshItemAwardsGrid()
@@ -16079,6 +16146,8 @@ Partial Public Class Form1
         cfg.AskForResurrectText = GetAskForResurrectCommandText()
         cfg.AskForResurrectIncludeMapCoordinates = (chkAskForResurrectMapCoords IsNot Nothing AndAlso chkAskForResurrectMapCoords.Checked)
         cfg.LootScannerEnabled = _lootScannerEnabled
+        cfg.LootGridColumns = CInt(If(nudLootGridColumns IsNot Nothing, nudLootGridColumns.Value, 6D))
+        cfg.LootGridRows = CInt(If(nudLootGridRows IsNot Nothing, nudLootGridRows.Value, 4D))
         cfg.NotificationProvider = GetNotificationProviderName()
         cfg.DiscordWebhookUrl = GetDiscordWebhookUrl()
         cfg.DiscordGlobalWebhookUrl = GetDiscordGlobalWebhookUrl()
@@ -17208,6 +17277,8 @@ Partial Public Class Form1
             UpdateAskForResurrectUi()
 
             _lootScannerEnabled = state.LootScannerEnabled
+            SetNumericControlValue(nudLootGridColumns, CDec(Math.Max(1, If(state.LootGridColumns > 0, state.LootGridColumns, 6))))
+            SetNumericControlValue(nudLootGridRows, CDec(Math.Max(1, If(state.LootGridRows > 0, state.LootGridRows, 4))))
             UpdateLootScannerButtons()
             If txtNtfyTopic IsNot Nothing Then
                 Dim topic As String = If(state.NtfyTopic, "").Trim()
@@ -17356,6 +17427,8 @@ Partial Public Class Form1
                 .AskForResurrectText = GetAskForResurrectCommandText(),
                 .AskForResurrectMapCoordsEnabled = (chkAskForResurrectMapCoords IsNot Nothing AndAlso chkAskForResurrectMapCoords.Checked),
                 .LootScannerEnabled = _lootScannerEnabled,
+                .LootGridColumns = CInt(If(nudLootGridColumns IsNot Nothing, nudLootGridColumns.Value, 6D)),
+                .LootGridRows = CInt(If(nudLootGridRows IsNot Nothing, nudLootGridRows.Value, 4D)),
                 .NotificationProvider = GetNotificationProviderName(),
                 .DiscordWebhookUrl = GetDiscordWebhookUrl(),
                 .DiscordGlobalWebhookUrl = GetDiscordGlobalWebhookUrl(),
@@ -17431,7 +17504,7 @@ Partial Public Class Form1
             ' the moment this call returns, so write synchronously right here.
             _persistDebounceTimer.Stop()
             _pendingPersistState = Nothing
-            WritePersistedStateToDisk(appState, logFailure)
+            WritePersistedStateToDisk(appState, logFailure, Threading.Interlocked.Increment(_persistWriteRevision))
         Else
             ' This path runs on nearly every keystroke/click across the whole settings UI. Serializing
             ' the entire app state and writing it to disk synchronously here used to block the UI thread
@@ -17452,12 +17525,14 @@ Partial Public Class Form1
         If stateToWrite Is Nothing Then
             Return
         End If
-        Task.Run(Sub() WritePersistedStateToDisk(stateToWrite, False))
+        Dim revision As Long = Threading.Interlocked.Increment(_persistWriteRevision)
+        Task.Run(Sub() WritePersistedStateToDisk(stateToWrite, False, revision))
     End Sub
 
-    Private Sub WritePersistedStateToDisk(appState As PersistedAppState, logFailure As Boolean)
+    Private Sub WritePersistedStateToDisk(appState As PersistedAppState, logFailure As Boolean, revision As Long)
         Try
             SyncLock _persistFileLock
+                If revision <> Threading.Interlocked.Read(_persistWriteRevision) Then Return
                 If Not Directory.Exists(PersistDirectoryPath) Then
                     Directory.CreateDirectory(PersistDirectoryPath)
                 End If
@@ -17474,6 +17549,9 @@ Partial Public Class Form1
                     File.Replace(tempFilePath, PersistFilePath, backupFilePath, ignoreMetadataErrors:=True)
                 Else
                     File.Move(tempFilePath, PersistFilePath)
+                End If
+                If Not String.IsNullOrWhiteSpace(appState.ActiveProfileName) Then
+                    SaveCurrentSettingsToProfile(appState.ActiveProfileName)
                 End If
             End SyncLock
         Catch ex As Exception
@@ -17655,6 +17733,8 @@ Partial Public Class Form1
         UpdateAskForResurrectUi()
 
         _lootScannerEnabled = cfg.LootScannerEnabled
+        SetNumericControlValue(nudLootGridColumns, CDec(Math.Max(1, Math.Min(BotConfig.MaxLootGridDimension, If(cfg.LootGridColumns > 0, cfg.LootGridColumns, 6)))))
+        SetNumericControlValue(nudLootGridRows, CDec(Math.Max(1, Math.Min(BotConfig.MaxLootGridDimension, If(cfg.LootGridRows > 0, cfg.LootGridRows, 4)))))
         UpdateLootScannerButtons()
         If cboNotificationProvider IsNot Nothing Then
             cboNotificationProvider.SelectedItem = NormalizeNotificationProviderName(cfg.NotificationProvider)
@@ -20022,12 +20102,16 @@ Partial Public Class Form1
         If _autoPartyOverlayForm IsNot Nothing AndAlso Not _autoPartyOverlayForm.IsDisposed Then
             _autoPartyOverlayForm.Close()
         End If
+        If _lootDetectionOverlayForm IsNot Nothing AndAlso Not _lootDetectionOverlayForm.IsDisposed Then
+            _lootDetectionOverlayForm.Close()
+        End If
         If _inGameBotToggleForm IsNot Nothing AndAlso Not _inGameBotToggleForm.IsDisposed Then
             RemoveHandler _inGameBotToggleForm.ToggleRequested, AddressOf InGameBotToggleRequested
             RemoveHandler _inGameBotToggleForm.OverlayLayoutChanged, AddressOf InGameBotToggleLayoutChanged
             _inGameBotToggleForm.Close()
         End If
         RemoveHandler _fullEngine.LootAwardDetected, AddressOf OnLootAwardDetected
+        RemoveHandler _fullEngine.LootGridDetected, AddressOf OnLootGridDetected
         _fullEngine.Stop()
         _liteEngine.Stop()
         MyBase.OnFormClosing(e)

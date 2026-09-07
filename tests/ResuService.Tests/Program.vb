@@ -31,6 +31,7 @@ Module Program
         Test("manual character-name list parsing", AddressOf ManualNames)
         Test("resurrection burst schedule", AddressOf ResurrectionBurst)
         Test("retarget toggles and configured role survive JSON roundtrip", AddressOf RetargetSettingsPersistence)
+        Test("loot grid maps OCR points to stable mesh cells", AddressOf LootGridGeometry)
         Test("invalid message patterns rejected", AddressOf InvalidPatterns)
         Test("settings and blacklist survive JSON roundtrip", AddressOf Persistence)
         Console.WriteLine($"Passed {_passed} RESU tests.")
@@ -44,6 +45,21 @@ Module Program
 
     Private Sub Check(condition As Boolean, message As String)
         If Not condition Then Throw New Exception(message)
+    End Sub
+
+    Private Sub LootGridGeometry()
+        Dim dense = BotEngine.GetLootGridCellAtPoint(800, 800, New System.Drawing.Point(799, 799), 40, 40)
+        Check(dense = New System.Drawing.Rectangle(780, 780, 20, 20), "40x40 must retain all 1600 cells")
+        Dim capped = BotEngine.GetLootGridCellAtPoint(800, 800, New System.Drawing.Point(799, 799), 99, 99)
+        Check(capped = dense, "Oversized grids must clamp to 40x40")
+        Dim middle As System.Drawing.Rectangle = BotEngine.GetLootGridCellAtPoint(600, 400, New System.Drawing.Point(350, 250), 6, 4)
+        Check(middle = New System.Drawing.Rectangle(300, 200, 100, 100), "Point must map to its 6x4 cell")
+
+        Dim last As System.Drawing.Rectangle = BotEngine.GetLootGridCellAtPoint(603, 401, New System.Drawing.Point(9999, 9999), 6, 4)
+        Check(last.Right = 603 AndAlso last.Bottom = 401, "Out-of-range OCR points must clamp to the final cell")
+
+        Dim first As System.Drawing.Rectangle = BotEngine.GetLootGridCellAtPoint(603, 401, New System.Drawing.Point(-50, -50), 6, 4)
+        Check(first.Left = 0 AndAlso first.Top = 0, "Negative OCR points must clamp to the first cell")
     End Sub
 
     Private Function Tick(service As ResuService, Optional chat As String = "", Optional messages As String = "", Optional trade As String = "", Optional target As String = "Alice", Optional seconds As Double = 1) As ResuDecision
@@ -323,6 +339,8 @@ Module Program
         Check(defaults.NormalRetargetEnabled AndAlso defaults.ForcedRetargetEnabled, "Both automatic retarget modes must default to enabled")
         defaults.NormalRetargetEnabled = False
         defaults.ForcedRetargetEnabled = False
+        defaults.LootGridColumns = 40
+        defaults.LootGridRows = 40
         defaults.ResuHoldPlaceOnlyModeEnabled = True
         defaults.Actions = New List(Of ActionRule) From {
             New ActionRule With {.Enabled = True, .KeyName = "E", .Role = "retarget", .CooldownMs = 750, .Priority = 1}
@@ -330,6 +348,7 @@ Module Program
         Dim json As String = JsonSerializer.Serialize(defaults)
         Dim loaded As BotConfig = JsonSerializer.Deserialize(Of BotConfig)(json)
         Check(Not loaded.NormalRetargetEnabled AndAlso Not loaded.ForcedRetargetEnabled, "Disabled automatic retarget modes must persist")
+        Check(loaded.LootGridColumns = 40 AndAlso loaded.LootGridRows = 40, "Loot mesh dimensions must persist in the profile config")
         Check(Not json.Contains(NameOf(BotConfig.ResuHoldPlaceOnlyModeEnabled), StringComparison.Ordinal) AndAlso Not loaded.ResuHoldPlaceOnlyModeEnabled, "Runtime RESU Hold-only mode must never persist in a profile")
         Check(loaded.Actions.Count = 1 AndAlso loaded.Actions(0).Enabled AndAlso loaded.Actions(0).KeyName = "E" AndAlso loaded.Actions(0).Role = "retarget", "Configured retarget action must persist")
     End Sub
