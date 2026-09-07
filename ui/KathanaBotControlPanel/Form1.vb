@@ -140,6 +140,9 @@ Partial Public Class Form1
     Private btnScanSpeedLow As Button
     Private nudRetargetMs As NumericUpDown
     Private nudForcedRetargetMs As NumericUpDown
+    Private chkNormalRetargetEnabled As CheckBox
+    Private chkForcedRetargetEnabled As CheckBox
+    Private lblRetargetDisabledWarning As Label
     Private nudMobHpThreshold As NumericUpDown
     Private chkHighMaxHpSpecial As CheckBox
     Private nudHighMaxHpThreshold As NumericUpDown
@@ -2706,8 +2709,14 @@ Partial Public Class Form1
         AddHandler nudLoopMs.ValueChanged, AddressOf LiveConfigChanged
         AddHandler nudLoopMs.ValueChanged, Sub(_s As Object, _e As EventArgs) UpdateScanSpeedButtonsUi()
         AddHandler nudRetargetMs.ValueChanged, AddressOf LiveConfigChanged
+        If chkNormalRetargetEnabled IsNot Nothing Then
+            AddHandler chkNormalRetargetEnabled.CheckedChanged, AddressOf RetargetEnabledChanged
+        End If
         If nudForcedRetargetMs IsNot Nothing Then
             AddHandler nudForcedRetargetMs.ValueChanged, AddressOf LiveConfigChanged
+        End If
+        If chkForcedRetargetEnabled IsNot Nothing Then
+            AddHandler chkForcedRetargetEnabled.CheckedChanged, AddressOf RetargetEnabledChanged
         End If
         AddHandler nudMobHpThreshold.ValueChanged, AddressOf LiveConfigChanged
         If chkHighMaxHpSpecial IsNot Nothing Then
@@ -5661,8 +5670,24 @@ Partial Public Class Form1
         Dim generalLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 4, .RowCount = 12}
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 130.0F))
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
-        generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 130.0F))
+        generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 158.0F))
         generalLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
+        For rowIndex As Integer = 0 To 11
+            Dim rowHeight As Single
+            Select Case rowIndex
+                Case 3
+                    rowHeight = 30.0F
+                Case 6
+                    rowHeight = 32.0F
+                Case 7
+                    rowHeight = 38.0F
+                Case 11
+                    rowHeight = 31.0F
+                Case Else
+                    rowHeight = 28.0F
+            End Select
+            generalLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, rowHeight))
+        Next
 
         Dim lblSelectedProcessCaption As New Label() With {.Text = "Selected Process", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
         generalLayout.Controls.Add(lblSelectedProcessCaption, 0, 0)
@@ -5677,32 +5702,54 @@ Partial Public Class Form1
         generalLayout.Controls.Add(lblSelectedProcess, 1, 0)
         generalLayout.SetColumnSpan(lblSelectedProcess, 3)
 
-        Dim lblLoopMsCaption As New Label() With {.Text = "Loop (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        Dim lblLoopMsCaption As New Label() With {.Text = "Loop (ms)", .AutoSize = True, .Anchor = AnchorStyles.Top Or AnchorStyles.Left, .Margin = New Padding(0, 5, 0, 0)}
         generalLayout.Controls.Add(lblLoopMsCaption, 0, 1)
-        nudLoopMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 20, .Maximum = 1000, .Value = 80}
+        nudLoopMs = New NumericUpDown() With {.Width = 100, .Anchor = AnchorStyles.Top Or AnchorStyles.Left, .Minimum = 20, .Maximum = 1000, .Value = 80}
         generalLayout.Controls.Add(nudLoopMs, 1, 1)
 
-        Dim lblNormalRetargetCaption As New Label() With {.Text = "Normal Retarget (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        Dim lblNormalRetargetCaption As New Label() With {.Text = "Normal Retarget (ms)", .AutoSize = True, .Anchor = AnchorStyles.Top Or AnchorStyles.Left, .Margin = New Padding(0, 5, 0, 0)}
         generalLayout.Controls.Add(lblNormalRetargetCaption, 2, 1)
-        nudRetargetMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 100, .Maximum = 5000, .Value = 550}
-        generalLayout.Controls.Add(nudRetargetMs, 3, 1)
+        Dim normalRetargetControls As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1, .Margin = New Padding(0)}
+        normalRetargetControls.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 46.0F))
+        normalRetargetControls.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        chkNormalRetargetEnabled = New CheckBox() With {.Text = "ON", .Appearance = Appearance.Button, .Checked = True, .AutoSize = False, .Width = 40, .Height = 23, .Anchor = AnchorStyles.Top Or AnchorStyles.Left, .TextAlign = ContentAlignment.MiddleCenter, .Margin = New Padding(0, 0, 4, 0)}
+        nudRetargetMs = New NumericUpDown() With {.Width = 100, .Anchor = AnchorStyles.Top Or AnchorStyles.Left, .Minimum = 100, .Maximum = 5000, .Value = 550}
+        normalRetargetControls.Controls.Add(chkNormalRetargetEnabled, 0, 0)
+        normalRetargetControls.Controls.Add(nudRetargetMs, 1, 0)
+        generalLayout.Controls.Add(normalRetargetControls, 3, 1)
 
-        Dim lblMobHpCaption As New Label() With {.Text = "Mob HP Presence %", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        Dim lblMobHpCaption As New Label() With {.Text = "Mob HP Presence %", .AutoSize = True, .Anchor = AnchorStyles.Top Or AnchorStyles.Left, .Margin = New Padding(0, 5, 0, 0)}
         generalLayout.Controls.Add(lblMobHpCaption, 0, 2)
-        nudMobHpThreshold = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 0.1D, .Maximum = 100, .DecimalPlaces = 1, .Increment = 0.1D, .Value = 1.0D}
+        nudMobHpThreshold = New NumericUpDown() With {.Width = 100, .Anchor = AnchorStyles.Top Or AnchorStyles.Left, .Minimum = 0.1D, .Maximum = 100, .DecimalPlaces = 1, .Increment = 0.1D, .Value = 1.0D}
         generalLayout.Controls.Add(nudMobHpThreshold, 1, 2)
 
-        Dim lblForcedRetargetCaption As New Label() With {.Text = "Forced Retarget (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}
+        Dim lblForcedRetargetCaption As New Label() With {.Text = "Forced Retarget (ms)", .AutoSize = True, .Anchor = AnchorStyles.Top Or AnchorStyles.Left, .Margin = New Padding(0, 5, 0, 0)}
         generalLayout.Controls.Add(lblForcedRetargetCaption, 2, 2)
-        nudForcedRetargetMs = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 100, .Maximum = 5000, .Value = 550}
-        generalLayout.Controls.Add(nudForcedRetargetMs, 3, 2)
+        Dim forcedRetargetControls As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1, .Margin = New Padding(0)}
+        forcedRetargetControls.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 46.0F))
+        forcedRetargetControls.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        chkForcedRetargetEnabled = New CheckBox() With {.Text = "ON", .Appearance = Appearance.Button, .Checked = True, .AutoSize = False, .Width = 40, .Height = 23, .Anchor = AnchorStyles.Top Or AnchorStyles.Left, .TextAlign = ContentAlignment.MiddleCenter, .Margin = New Padding(0, 0, 4, 0)}
+        nudForcedRetargetMs = New NumericUpDown() With {.Width = 100, .Anchor = AnchorStyles.Top Or AnchorStyles.Left, .Minimum = 100, .Maximum = 5000, .Value = 550}
+        forcedRetargetControls.Controls.Add(chkForcedRetargetEnabled, 0, 0)
+        forcedRetargetControls.Controls.Add(nudForcedRetargetMs, 1, 0)
+        generalLayout.Controls.Add(forcedRetargetControls, 3, 2)
+
+        lblRetargetDisabledWarning = New Label() With {
+            .Dock = DockStyle.Fill,
+            .ForeColor = Color.Orange,
+            .TextAlign = ContentAlignment.MiddleLeft,
+            .Visible = False
+        }
+        generalLayout.Controls.Add(lblRetargetDisabledWarning, 0, 3)
+        generalLayout.SetColumnSpan(lblRetargetDisabledWarning, 2)
+        UpdateRetargetToggleUi()
 
         _developerOnlyControls.AddRange({
             CType(lblSelectedProcessCaption, Control), lblSelectedProcess,
             lblLoopMsCaption, nudLoopMs,
-            lblNormalRetargetCaption, nudRetargetMs,
+            lblNormalRetargetCaption, normalRetargetControls,
             lblMobHpCaption, nudMobHpThreshold,
-            lblForcedRetargetCaption, nudForcedRetargetMs
+            lblForcedRetargetCaption, forcedRetargetControls
         })
 
         btnOverlayToggle = New Button() With {.Text = "Show Overlay", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(70, 70, 70), .ForeColor = Color.White}
@@ -5886,6 +5933,40 @@ Partial Public Class Form1
         AddTabExplanationButton(tab, HelpScopeVision)
         Return tab
     End Function
+
+    Private Sub RetargetEnabledChanged(sender As Object, e As EventArgs)
+        UpdateRetargetToggleUi()
+        PushLiveConfig()
+        SavePersistedListState(False)
+    End Sub
+
+    Private Sub UpdateRetargetToggleUi()
+        Dim normalEnabled As Boolean = chkNormalRetargetEnabled Is Nothing OrElse chkNormalRetargetEnabled.Checked
+        Dim forcedEnabled As Boolean = chkForcedRetargetEnabled Is Nothing OrElse chkForcedRetargetEnabled.Checked
+
+        If chkNormalRetargetEnabled IsNot Nothing Then
+            chkNormalRetargetEnabled.Text = If(normalEnabled, "ON", "OFF")
+            chkNormalRetargetEnabled.BackColor = If(normalEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+        End If
+        If chkForcedRetargetEnabled IsNot Nothing Then
+            chkForcedRetargetEnabled.Text = If(forcedEnabled, "ON", "OFF")
+            chkForcedRetargetEnabled.BackColor = If(forcedEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+        End If
+        If nudRetargetMs IsNot Nothing Then nudRetargetMs.Enabled = normalEnabled
+        If nudForcedRetargetMs IsNot Nothing Then nudForcedRetargetMs.Enabled = forcedEnabled
+
+        If lblRetargetDisabledWarning Is Nothing Then Return
+        lblRetargetDisabledWarning.Visible = Not normalEnabled OrElse Not forcedEnabled
+        If Not normalEnabled AndAlso Not forcedEnabled Then
+            lblRetargetDisabledWarning.Text = "AUTO RETARGET OFF: enable a Combat Full row with your target key and Role=retarget."
+        ElseIf Not normalEnabled Then
+            lblRetargetDisabledWarning.Text = "NORMAL RETARGET OFF: configure an enabled Combat Full Role=retarget row for target search."
+        ElseIf Not forcedEnabled Then
+            lblRetargetDisabledWarning.Text = "FORCED RETARGET OFF: configure an enabled Combat Full Role=retarget row for recovery."
+        Else
+            lblRetargetDisabledWarning.Text = ""
+        End If
+    End Sub
 
     Private Function BuildPeriodicScreenshotGroup() As GroupBox
         Dim group As New GroupBox() With {.Text = "Automatic Screenshots", .Dock = DockStyle.Fill}
@@ -6354,7 +6435,7 @@ Partial Public Class Form1
     End Function
 
     Private Function BuildFullSupportTab() As TabPage
-        Dim tab As New TabPage("Full Support") With {.BackColor = ThemeBg, .AutoScroll = True}
+        Dim tab As New TabPage("Full Support (Vidya only)") With {.BackColor = ThemeBg, .AutoScroll = True}
         Dim root As New TableLayoutPanel() With {
             .Dock = DockStyle.Top,
             .AutoSize = True,
@@ -6375,12 +6456,12 @@ Partial Public Class Form1
         header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 210.0F))
         header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 250.0F))
         Dim titleHost As New Panel() With {.Dock = DockStyle.Fill, .BackColor = ThemeBg}
-        titleHost.Controls.Add(New Label() With {.Text = "Full Support", .Left = 0, .Top = 3, .Width = 500, .Height = 32, .Font = New Font("Segoe UI Semibold", 18.0F, FontStyle.Bold), .ForeColor = Color.White})
+        titleHost.Controls.Add(New Label() With {.Text = "Full Support (Vidya only)", .Left = 0, .Top = 3, .Width = 500, .Height = 32, .Font = New Font("Segoe UI Semibold", 18.0F, FontStyle.Bold), .ForeColor = Color.White})
         titleHost.Controls.Add(New Label() With {.Text = "Calibrated party healing with confirmed HP reads", .Left = 2, .Top = 42, .Width = 620, .Height = 24, .ForeColor = ThemeTextSecondary})
         header.Controls.Add(titleHost, 0, 0)
 
         chkFullSupportEnabled = New CheckBox() With {
-            .Text = "Enable Full Support",
+            .Text = "Enable Full Support (Vidya only)",
             .Dock = DockStyle.Fill,
             .ForeColor = ThemeGood,
             .Font = New Font("Segoe UI Semibold", 10.0F, FontStyle.Bold),
@@ -8136,7 +8217,7 @@ Partial Public Class Form1
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Key", .ReadOnly = True, .FillWeight = 60.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "CooldownSec", .FillWeight = 90.0F})
         Dim roleColumn As New DataGridViewComboBoxColumn() With {.Name = "Role", .FillWeight = 80.0F}
-        roleColumn.Items.AddRange(New Object() {"attack", "heal", "max_health", "mana", "buff", "high_max_hp", "repair", "stop"})
+        roleColumn.Items.AddRange(New Object() {"attack", "retarget", "heal", "max_health", "mana", "buff", "high_max_hp", "repair", "stop"})
         dgvCombat.Columns.Add(roleColumn)
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Priority", .FillWeight = 75.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "TriggerPercent", .HeaderText = "Trigger%", .FillWeight = 62.0F})
@@ -8342,7 +8423,7 @@ Partial Public Class Form1
         btnAttack = CreateResponsiveCenterButton("Attack", Color.FromArgb(40, 180, 80), 42)
         btnSaveSettings = CreateResponsiveCenterButton("Save Settings", Color.FromArgb(55, 55, 55))
         btnStopBot = CreateResponsiveCenterButton("Stop Bot", Color.FromArgb(20, 130, 210))
-        btnFullSupport = CreateResponsiveCenterButton("FS (Full Support): OFF", Color.FromArgb(110, 45, 45))
+        btnFullSupport = CreateResponsiveCenterButton("FS (Full Support - Vidya only): OFF", Color.FromArgb(110, 45, 45))
         btnBypassStuck = New Button() With {
             .Text = If(_bypassStuckTarget, "Auto Retarget If Stuck: ON", "Auto Retarget If Stuck: OFF"),
             .Dock = DockStyle.Fill,
@@ -8806,7 +8887,9 @@ Partial Public Class Form1
             txtMapOpenKey.Text = DefaultMapOpenKey
         End If
         nudMobHpThreshold.Value = 1.0D
+        If chkNormalRetargetEnabled IsNot Nothing Then chkNormalRetargetEnabled.Checked = True
         nudRetargetMs.Value = 550D
+        If chkForcedRetargetEnabled IsNot Nothing Then chkForcedRetargetEnabled.Checked = True
         If nudForcedRetargetMs IsNot Nothing Then
             nudForcedRetargetMs.Value = 550D
         End If
@@ -12312,7 +12395,7 @@ Partial Public Class Form1
 
     Private Sub ApplyFullSupportModeAppearance()
         If btnFullSupport IsNot Nothing Then
-            btnFullSupport.Text = If(_fullSupportModeEnabled, "FS (Full Support): ON", "FS (Full Support): OFF")
+            btnFullSupport.Text = If(_fullSupportModeEnabled, "FS (Full Support - Vidya only): ON", "FS (Full Support - Vidya only): OFF")
             btnFullSupport.BackColor = If(_fullSupportModeEnabled, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
         End If
         If btnBypassStuck IsNot Nothing Then
@@ -12637,7 +12720,8 @@ Partial Public Class Form1
             "- Enabled: if checked, action is available.",
             "- Key: keyboard key sent to game (1-0, F1-F10 plus 3 custom rows after F10).",
             "- CooldownSec: minimum seconds between sends of this key.",
-            "- Role: attack, heal, max_health, mana, buff, high_max_hp, repair, stop.",
+            "- Role: attack, retarget, heal, max_health, mana, buff, high_max_hp, repair, stop.",
+            "- retarget is the fallback when Normal or Forced Retarget is OFF. Put your target key (usually E) in a custom row, enable it, choose retarget, and set its cooldown.",
             "- Priority: lower values act first inside same category checks.",
             "- TriggerPercent: role threshold (heal/mana/max_health use this heavily).",
             "- high_max_hp only fires when enabled in Vision and mob_life_rect OCR reads Max HP above your threshold.",
@@ -12672,7 +12756,7 @@ Partial Public Class Form1
             "6) VISION TAB - VISION + WINDOW SETUP",
             "- Selected Process: read-only status showing the process used by Vision and combat.",
             "- Loop (ms): bot loop delay.",
-            "- Retarget (ms): baseline retarget interval.",
+            "- Normal and Forced Retarget each have an ON/OFF toggle and interval. When either is OFF, an orange notice explains that a Combat Full retarget row is required.",
             "- Mob HP Presence %: threshold for valid target HP bar signal.",
             "- Show Overlay: live region calibration overlay.",
             "- Capture Snapshot: captures current client image.",
@@ -15934,8 +16018,11 @@ Partial Public Class Form1
         Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
         cfg.WindowTitle = If(selected IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(selected.WindowTitle), selected.WindowTitle.Trim(), DefaultGameWindowTitle)
         cfg.SelectedWindowHandle = If(selected IsNot Nothing, selected.MainWindowHandle, IntPtr.Zero)
+        cfg.ResuHoldPlaceOnlyModeEnabled = _resuRunning AndAlso chkHoldPlaceEnabled IsNot Nothing AndAlso chkHoldPlaceEnabled.Checked
         cfg.LoopMs = CInt(nudLoopMs.Value)
+        cfg.NormalRetargetEnabled = (chkNormalRetargetEnabled Is Nothing OrElse chkNormalRetargetEnabled.Checked)
         cfg.RetargetMs = CInt(nudRetargetMs.Value)
+        cfg.ForcedRetargetEnabled = (chkForcedRetargetEnabled Is Nothing OrElse chkForcedRetargetEnabled.Checked)
         cfg.ForcedRetargetMs = CInt(If(nudForcedRetargetMs IsNot Nothing, nudForcedRetargetMs.Value, nudRetargetMs.Value))
         cfg.StuckTargetMs = CInt(If(nudStuckTargetMs IsNot Nothing, nudStuckTargetMs.Value, 2200D))
         cfg.StuckTargetNoProgressRetargetMs = CInt(If(nudStuckNoProgressRetargetMs IsNot Nothing, nudStuckNoProgressRetargetMs.Value, 6000D))
@@ -17457,8 +17544,11 @@ Partial Public Class Form1
 
         SetNumericControlValue(nudLoopMs, cfg.LoopMs)
         UpdateScanSpeedButtonsUi()
+        If chkNormalRetargetEnabled IsNot Nothing Then chkNormalRetargetEnabled.Checked = cfg.NormalRetargetEnabled
         SetNumericControlValue(nudRetargetMs, cfg.RetargetMs)
+        If chkForcedRetargetEnabled IsNot Nothing Then chkForcedRetargetEnabled.Checked = cfg.ForcedRetargetEnabled
         SetNumericControlValue(nudForcedRetargetMs, If(cfg.ForcedRetargetMs > 0, cfg.ForcedRetargetMs, cfg.RetargetMs))
+        UpdateRetargetToggleUi()
         SetNumericControlValue(nudStuckTargetMs, cfg.StuckTargetMs)
         SetNumericControlValue(nudStuckNoProgressRetargetMs, If(cfg.StuckTargetNoProgressRetargetMs > 0, cfg.StuckTargetNoProgressRetargetMs, 6000))
         SetNumericControlValue(nudMobHpThreshold, CDec(cfg.MobHpPresenceThreshold))
@@ -18040,7 +18130,7 @@ Partial Public Class Form1
         Select Case role
             Case "special"
                 Return "buff"
-            Case "attack", "heal", "max_health", "mana", "buff", "high_max_hp", "repair", "stop"
+            Case "attack", "retarget", "heal", "max_health", "mana", "buff", "high_max_hp", "repair", "stop"
                 Return role
             Case Else
                 Return "attack"

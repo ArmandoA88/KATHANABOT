@@ -247,6 +247,8 @@ Public Class BotConfig
     <JsonIgnore>
     Public Property SelectedWindowHandle As IntPtr = IntPtr.Zero
     Public Property LiteModeEnabled As Boolean = False
+    <JsonIgnore>
+    Public Property ResuHoldPlaceOnlyModeEnabled As Boolean = False
     Public Property LiteHpCheckPointX As Integer = -1
     Public Property LiteHpCheckPointY As Integer = -1
     Public Property LiteHpCheckColorEnabled As Boolean = False
@@ -256,7 +258,9 @@ Public Class BotConfig
     Public Property LiteMpCheckColorEnabled As Boolean = False
     Public Property LiteMpCheckColorArgb As Integer = 0
     Public Property LoopMs As Integer = 80
+    Public Property NormalRetargetEnabled As Boolean = True
     Public Property RetargetMs As Integer = 550
+    Public Property ForcedRetargetEnabled As Boolean = True
     Public Property ForcedRetargetMs As Integer = 550
     Public Property MobHpPresenceThreshold As Double = 1.0
     Public Property HighMaxHpSpecialEnabled As Boolean = True
@@ -2413,6 +2417,7 @@ Public Class BotEngine
             End If
             Dim captureGlitch As Boolean = If(frame IsNot Nothing, IsLikelyVisionCaptureGlitch(frame, hpRegion, mpRegion, hpPct, mpPct), (Not fullHpScanOk OrElse Not fullMpScanOk))
             Dim gameDisconnected As Boolean =
+                (Not cfg.ResuHoldPlaceOnlyModeEnabled) AndAlso
                 If(frame IsNot Nothing,
                    TryHandleDisconnectMessage(cfg, hwnd, frame, now, disconnectMessageRegion),
                    TryHandleDisconnectMessageFromClientRegion(cfg, hwnd, now, disconnectMessageRegion))
@@ -2445,15 +2450,17 @@ Public Class BotEngine
                 Continue While
             End If
 
-            Dim lootScanWatch As Stopwatch = Stopwatch.StartNew()
-            TryHandlePendingLootScannerCapture(cfg, hwnd, activeHwnd, frame, lootScanPolygon, now)
-            lootScanWatch.Stop()
-            RecordTiming(_lootScanTiming, lootScanWatch.Elapsed.TotalMilliseconds)
-            TryHandlePendingLootPickupVerification(cfg, hwnd, frame, now, mobNameRegion)
-            If cfg.LootScannerEnabled AndAlso deferOptionalWork AndAlso activeHwnd = hwnd AndAlso (Not _lootScannerCapturePending) Then
-                MarkOptionalWorkDeferred()
-            ElseIf cfg.LootScannerEnabled AndAlso activeHwnd = hwnd AndAlso (Not _lootScannerCapturePending) AndAlso (now - _lastRightAltAt).TotalMilliseconds >= Math.Max(100, Math.Min(20000, cfg.LootScannerIntervalMs)) Then
-                BeginLootScannerCapture(now)
+            If Not cfg.ResuHoldPlaceOnlyModeEnabled Then
+                Dim lootScanWatch As Stopwatch = Stopwatch.StartNew()
+                TryHandlePendingLootScannerCapture(cfg, hwnd, activeHwnd, frame, lootScanPolygon, now)
+                lootScanWatch.Stop()
+                RecordTiming(_lootScanTiming, lootScanWatch.Elapsed.TotalMilliseconds)
+                TryHandlePendingLootPickupVerification(cfg, hwnd, frame, now, mobNameRegion)
+                If cfg.LootScannerEnabled AndAlso deferOptionalWork AndAlso activeHwnd = hwnd AndAlso (Not _lootScannerCapturePending) Then
+                    MarkOptionalWorkDeferred()
+                ElseIf cfg.LootScannerEnabled AndAlso activeHwnd = hwnd AndAlso (Not _lootScannerCapturePending) AndAlso (now - _lastRightAltAt).TotalMilliseconds >= Math.Max(100, Math.Min(20000, cfg.LootScannerIntervalMs)) Then
+                    BeginLootScannerCapture(now)
+                End If
             End If
             Dim mobOcrWatch As Stopwatch = Stopwatch.StartNew()
             Dim monsterFilterActive As Boolean = (cfg.DeniedMobs IsNot Nothing AndAlso cfg.DeniedMobs.Count > 0)
@@ -2591,7 +2598,7 @@ Public Class BotEngine
             Dim missingNameBlockedByPreference As Boolean = preferredMobFilterActive AndAlso targetWindowVisible AndAlso normMobName = ""
             Dim preferredTargetMismatch As Boolean = preferredMobFilterActive AndAlso normMobName <> "" AndAlso Not IsPreferredMob(mobName, cfg.LevelingPreferredMobs)
             Dim unreachableTriggered As Boolean =
-                If(startupCombatPriorityActive,
+                If(startupCombatPriorityActive OrElse cfg.ResuHoldPlaceOnlyModeEnabled,
                    False,
                    If(frame IsNot Nothing,
                       TryHandleUnreachableTarget(cfg, hwnd, frame, now, unreachableTextRegion),
@@ -2770,6 +2777,28 @@ Public Class BotEngine
                 targetSignalHoldActive = False
             End If
             Dim effectiveTargetValid As Boolean = targetValid OrElse targetSignalHoldActive OrElse ((Not nameOnlyNonMobTarget) AndAlso combatLockActive AndAlso Not targetActionBlocked)
+            If cfg.ResuHoldPlaceOnlyModeEnabled Then
+                Dim holdReason As String = ""
+                Dim holdBlocksRetarget As Boolean = False
+                Dim holdMoved As Boolean = TryHandleHoldPlace(cfg, hwnd, now, False, holdReason, holdBlocksRetarget)
+                Dim coexistenceStatus As String = If(String.IsNullOrWhiteSpace(holdReason), "RESU active; Hold on Place is monitoring the anchor.", "RESU + Hold on Place: " & holdReason)
+                SetStatus(Sub(s)
+                              s.WindowFound = True
+                              s.HpPercent = Math.Round(hpPct, 1)
+                              s.MpPercent = Math.Round(mpPct, 1)
+                              s.MobHpPercent = Math.Round(mobHpPct, 1)
+                              s.MobName = mobName
+                              s.TargetValid = False
+                              s.NotAttackingReason = coexistenceStatus
+                              s.ErrorMessage = visionWarning
+                              s.GameDisconnected = False
+                          End Sub)
+                If frame IsNot Nothing Then frame.Dispose()
+                If mobHpRegionFrame IsNot Nothing Then mobHpRegionFrame.Dispose()
+                RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
+                Await Task.Delay(loopDelayMs, token)
+                Continue While
+            End If
             TrackSessionKill(targetHasHpSignal, (Not captureGlitch) AndAlso mobHpScanOk, now)
             TrackMobHpMovement(targetValid, mobHpPct, now)
             TryHandleLootAfterKill(cfg, hwnd, targetHasHpSignal, now)
@@ -10606,6 +10635,11 @@ Public Class BotEngine
             Return False
         End If
 
+        Dim automaticRetargetEnabled As Boolean = cfg Is Nothing OrElse If(forced, cfg.ForcedRetargetEnabled, cfg.NormalRetargetEnabled)
+        If Not automaticRetargetEnabled Then
+            Return TrySendConfiguredRetargetAction(hwnd, cfg, actionText)
+        End If
+
         Dim cooldownMs As Integer = GetRetargetCooldownMs(cfg, 1, forced)
         Dim lastRetargetAt As DateTime = If(forced, _lastForcedRetarget, _lastNormalRetarget)
         If lastRetargetAt <> DateTime.MinValue AndAlso (now - lastRetargetAt).TotalMilliseconds < cooldownMs Then
@@ -10627,6 +10661,25 @@ Public Class BotEngine
         End If
 
         Return False
+    End Function
+
+    Private Function TrySendConfiguredRetargetAction(hwnd As IntPtr, cfg As BotConfig, context As String) As Boolean
+        If cfg Is Nothing OrElse cfg.Actions Is Nothing Then Return False
+
+        Dim action As ActionRule = cfg.Actions.
+            Where(Function(item) item IsNot Nothing AndAlso item.Enabled AndAlso String.Equals(item.Role, "retarget", StringComparison.OrdinalIgnoreCase)).
+            OrderBy(Function(item) item.Priority).
+            FirstOrDefault(Function(item) IsReady(item))
+        If action Is Nothing OrElse String.IsNullOrWhiteSpace(action.KeyName) Then Return False
+        If Not SendKey(hwnd, action.KeyName, FastKeyPressMs) Then Return False
+
+        MarkActionUsed(action)
+        DisarmSessionKillTracking()
+        ClearCombatLock()
+        ClearMobMaxHpTracking()
+        ResetMobNameTrackingAfterRetarget()
+        SetLastAction($"{action.KeyName} (configured retarget: {context})")
+        Return True
     End Function
 
     ' Whatever mob name/confirmation state was built up for the PREVIOUS target must never survive

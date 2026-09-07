@@ -30,6 +30,7 @@ Module Program
         Test("manual blacklist during a transaction stops input", AddressOf BlockDuringTrade)
         Test("manual character-name list parsing", AddressOf ManualNames)
         Test("resurrection burst schedule", AddressOf ResurrectionBurst)
+        Test("retarget toggles and configured role survive JSON roundtrip", AddressOf RetargetSettingsPersistence)
         Test("invalid message patterns rejected", AddressOf InvalidPatterns)
         Test("settings and blacklist survive JSON roundtrip", AddressOf Persistence)
         Console.WriteLine($"Passed {_passed} RESU tests.")
@@ -317,11 +318,28 @@ Module Program
         Check(ResuService.ResurrectionBurstOffsetMs(4, 5, 0D) = 0, "Zero duration should schedule the fastest burst")
     End Sub
 
+    Private Sub RetargetSettingsPersistence()
+        Dim defaults As New BotConfig()
+        Check(defaults.NormalRetargetEnabled AndAlso defaults.ForcedRetargetEnabled, "Both automatic retarget modes must default to enabled")
+        defaults.NormalRetargetEnabled = False
+        defaults.ForcedRetargetEnabled = False
+        defaults.ResuHoldPlaceOnlyModeEnabled = True
+        defaults.Actions = New List(Of ActionRule) From {
+            New ActionRule With {.Enabled = True, .KeyName = "E", .Role = "retarget", .CooldownMs = 750, .Priority = 1}
+        }
+        Dim json As String = JsonSerializer.Serialize(defaults)
+        Dim loaded As BotConfig = JsonSerializer.Deserialize(Of BotConfig)(json)
+        Check(Not loaded.NormalRetargetEnabled AndAlso Not loaded.ForcedRetargetEnabled, "Disabled automatic retarget modes must persist")
+        Check(Not json.Contains(NameOf(BotConfig.ResuHoldPlaceOnlyModeEnabled), StringComparison.Ordinal) AndAlso Not loaded.ResuHoldPlaceOnlyModeEnabled, "Runtime RESU Hold-only mode must never persist in a profile")
+        Check(loaded.Actions.Count = 1 AndAlso loaded.Actions(0).Enabled AndAlso loaded.Actions(0).KeyName = "E" AndAlso loaded.Actions(0).Role = "retarget", "Configured retarget action must persist")
+    End Sub
+
     Private Sub Persistence()
-        Dim settings As New ResuSettings With {.SelectKey = "1", .SelectKeyIntervalMs = 750, .ResurrectKey = "F7", .PeriodicMessageEnabled = True, .PeriodicMessageText = "Selling resurrection service", .PeriodicMessageIntervalSeconds = 45, .ResurrectPressCount = 25, .ResurrectBurstSeconds = 3.5D, .ReferenceWidth = 1024, .ReferenceHeight = 768, .AcceptPoint = New System.Drawing.Point(400, 500), .TradeRegion = New RectRegion(300, 200, 400, 400), .OpenTradeRegion = New RectRegion(100, 120, 700, 500)}
+        Dim settings As New ResuSettings With {.SelectKey = "1", .SelectKeyIntervalMs = 750, .ResurrectKey = "F7", .BuffKeys = New List(Of ResuBuffKeySetting) From {New ResuBuffKeySetting With {.Enabled = True, .KeyName = "F8"}, New ResuBuffKeySetting With {.Enabled = False, .KeyName = "F9"}, New ResuBuffKeySetting With {.Enabled = True, .KeyName = "0"}}, .PeriodicMessageEnabled = True, .PeriodicMessageText = "Selling resurrection service", .PeriodicMessageIntervalSeconds = 45, .ResurrectPressCount = 25, .ResurrectBurstSeconds = 3.5D, .ReferenceWidth = 1024, .ReferenceHeight = 768, .AcceptPoint = New System.Drawing.Point(400, 500), .TradeRegion = New RectRegion(300, 200, 400, 400), .OpenTradeRegion = New RectRegion(100, 120, 700, 500)}
         settings.Blacklist.Add(New ResuBlacklistEntry With {.Username = "Alice", .Reason = "Unpaid", .AddedUtc = _clock})
         Dim loaded = JsonSerializer.Deserialize(Of ResuSettings)(JsonSerializer.Serialize(settings))
         Check(loaded.SelectKey = "1" AndAlso loaded.ResurrectKey = "F7", "Keys must persist")
+        Check(loaded.BuffKeys.Count = 3 AndAlso loaded.BuffKeys(0).Enabled AndAlso loaded.BuffKeys(0).KeyName = "F8" AndAlso Not loaded.BuffKeys(1).Enabled AndAlso loaded.BuffKeys(2).KeyName = "0", "Optional RESU buff keys and toggles must persist")
         Check(loaded.SelectKeyIntervalMs = 750, "Select target key interval must persist")
         Check(loaded.PeriodicMessageEnabled AndAlso loaded.PeriodicMessageText = "Selling resurrection service" AndAlso loaded.PeriodicMessageIntervalSeconds = 45, "Periodic message settings must persist")
         Check(loaded.ResurrectPressCount = 25 AndAlso loaded.ResurrectBurstSeconds = 3.5D, "Resurrection spam settings must persist")

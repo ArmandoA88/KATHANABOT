@@ -24,6 +24,8 @@ Partial Public Class Form1
     Private _resuSelectKey As ComboBox
     Private _resuSelectKeyIntervalMs As NumericUpDown
     Private _resuCastKey As TextBox
+    Private _resuBuffEnabled(2) As CheckBox
+    Private _resuBuffKey(2) As TextBox
     Private _resuPeriodicMessageEnabled As CheckBox
     Private _resuPeriodicMessageText As TextBox
     Private _resuPeriodicMessageIntervalSeconds As NumericUpDown
@@ -57,14 +59,33 @@ Partial Public Class Form1
         _resuSelectKey = ResuKeyPicker("TAB")
         _resuSelectKeyIntervalMs = New NumericUpDown With {.Minimum = 50, .Maximum = 10000, .Increment = 50, .Value = 500, .Dock = DockStyle.Fill, .ThousandsSeparator = True}
         _resuCastKey = New TextBox With {
-            .Dock = DockStyle.Fill,
+            .Width = 165,
             .CharacterCasing = CharacterCasing.Upper,
             .MaxLength = 10,
-            .PlaceholderText = "Type the resurrection key, for example 3 or F5"
+            .PlaceholderText = "Resurrection key"
         }
+        Dim resurrectionAndBuffKeys As New FlowLayoutPanel With {.Dock = DockStyle.Fill, .AutoSize = True, .WrapContents = True}
+        resurrectionAndBuffKeys.Controls.Add(_resuCastKey)
+        For index As Integer = 0 To 2
+            Dim capturedIndex As Integer = index
+            _resuBuffEnabled(index) = New CheckBox With {.Text = $"Buff {index + 1}", .AutoSize = True, .Margin = New Padding(14, 7, 3, 0)}
+            _resuBuffKey(index) = New TextBox With {
+                .Width = 72,
+                .CharacterCasing = CharacterCasing.Upper,
+                .MaxLength = 10,
+                .Enabled = False,
+                .PlaceholderText = "Key"
+            }
+            AddHandler _resuBuffEnabled(index).CheckedChanged,
+                Sub()
+                    _resuBuffKey(capturedIndex).Enabled = _resuBuffEnabled(capturedIndex).Checked
+                End Sub
+            resurrectionAndBuffKeys.Controls.Add(_resuBuffEnabled(index))
+            resurrectionAndBuffKeys.Controls.Add(_resuBuffKey(index))
+        Next
         AddResuRow("1. Select target key", _resuSelectKey)
         AddResuRow("Select target key interval (ms)", _resuSelectKeyIntervalMs)
-        AddResuRow("2. Resurrection key", _resuCastKey)
+        AddResuRow("2. Resurrection + buff keys", resurrectionAndBuffKeys)
         _resuCastPressCount = New NumericUpDown With {.Minimum = 1, .Maximum = 100, .Value = 10, .Dock = DockStyle.Fill}
         _resuCastBurstSeconds = New NumericUpDown With {.Minimum = 0D, .Maximum = 30D, .DecimalPlaces = 1, .Increment = 0.1D, .Value = 1D, .Dock = DockStyle.Fill}
         AddResuRow("Resurrection key presses", _resuCastPressCount)
@@ -181,6 +202,13 @@ Partial Public Class Form1
         settings.SelectKey = CStr(_resuSelectKey.SelectedItem)
         settings.SelectKeyIntervalMs = CInt(_resuSelectKeyIntervalMs.Value)
         settings.ResurrectKey = _resuCastKey.Text.Trim().ToUpperInvariant()
+        settings.BuffKeys = New List(Of ResuBuffKeySetting)()
+        For index As Integer = 0 To 2
+            settings.BuffKeys.Add(New ResuBuffKeySetting With {
+                .Enabled = _resuBuffEnabled(index).Checked,
+                .KeyName = _resuBuffKey(index).Text.Trim().ToUpperInvariant()
+            })
+        Next
         settings.PeriodicMessageEnabled = _resuPeriodicMessageEnabled.Checked
         settings.PeriodicMessageText = _resuPeriodicMessageText.Text.Replace(vbCr, " ").Replace(vbLf, " ").Trim()
         settings.PeriodicMessageIntervalSeconds = CInt(_resuPeriodicMessageIntervalSeconds.Value)
@@ -215,6 +243,13 @@ Partial Public Class Form1
         If Not BotEngine.IsSupportedKeyName(settings.ResurrectKey) Then Throw New InvalidOperationException("Type a valid resurrection key, such as 3, F5, SPACE, ENTER, or a letter.")
         If String.Equals(settings.ResurrectKey, "F12", StringComparison.OrdinalIgnoreCase) Then Throw New InvalidOperationException("F12 is reserved for stopping RESU. Type a different resurrection key.")
         If String.Equals(settings.SelectKey, settings.ResurrectKey, StringComparison.OrdinalIgnoreCase) Then Throw New InvalidOperationException("Choose different target-selection and resurrection keys.")
+        Dim buffKeys As List(Of ResuBuffKeySetting) = If(settings.BuffKeys, New List(Of ResuBuffKeySetting)())
+        For index As Integer = 0 To Math.Min(2, buffKeys.Count - 1)
+            Dim buff As ResuBuffKeySetting = buffKeys(index)
+            If buff Is Nothing OrElse Not buff.Enabled Then Continue For
+            If Not BotEngine.IsSupportedKeyName(buff.KeyName) Then Throw New InvalidOperationException($"Type a valid key for Buff {index + 1}, or turn that buff off.")
+            If String.Equals(buff.KeyName, "F12", StringComparison.OrdinalIgnoreCase) Then Throw New InvalidOperationException($"F12 is reserved for stopping RESU. Choose a different key for Buff {index + 1}.")
+        Next
     End Sub
 
     Private Sub ApplyPersistedResuState(settings As ResuSettings)
@@ -235,6 +270,13 @@ Partial Public Class Form1
         _resuSelectKey.SelectedItem = If(_resuSelectKey.Items.Contains(_resuSettings.SelectKey), _resuSettings.SelectKey, "TAB")
         _resuSelectKeyIntervalMs.Value = Math.Clamp(_resuSettings.SelectKeyIntervalMs, 50, 10000)
         _resuCastKey.Text = If(_resuSettings.ResurrectKey, "").Trim().ToUpperInvariant()
+        Dim savedBuffKeys As List(Of ResuBuffKeySetting) = If(_resuSettings.BuffKeys, New List(Of ResuBuffKeySetting)())
+        For index As Integer = 0 To 2
+            Dim savedBuff As ResuBuffKeySetting = If(index < savedBuffKeys.Count AndAlso savedBuffKeys(index) IsNot Nothing, savedBuffKeys(index), New ResuBuffKeySetting())
+            _resuBuffEnabled(index).Checked = savedBuff.Enabled
+            _resuBuffKey(index).Text = If(savedBuff.KeyName, "").Trim().ToUpperInvariant()
+            _resuBuffKey(index).Enabled = savedBuff.Enabled
+        Next
         _resuPeriodicMessageEnabled.Checked = _resuSettings.PeriodicMessageEnabled
         _resuPeriodicMessageText.Text = If(_resuSettings.PeriodicMessageText, "")
         _resuPeriodicMessageIntervalSeconds.Value = Math.Clamp(_resuSettings.PeriodicMessageIntervalSeconds, 1, 86400)
@@ -320,7 +362,7 @@ Partial Public Class Form1
         End If
         Try
             If Not _quizUnlocked Then Return
-            If GetRunningEdition().HasValue Then Throw New InvalidOperationException("Stop the main bot before starting RESU. The Quiz solver may remain enabled.")
+            If Not IsResuCompatibleBotState(ResuSelectedWindow()) Then Throw New InvalidOperationException("Stop Lite or the main Full bot before starting RESU. Full may remain running only when Hold on Place is enabled; RESU then pauses its combat, retarget, loot, and other automation.")
             Dim settings = ReadResuOptions()
             ValidateResuCalibration(settings)
             ValidateResuKeys(settings)
@@ -330,6 +372,7 @@ Partial Public Class Form1
             _resuSettings = settings
             _resuGeneration += 1
             _resuRunning = True
+            PushLiveConfig()
             _resuOptions.Enabled = False
             _resuStart.Text = "Stop RESU"
             _resuNextScan = DateTime.MinValue
@@ -339,7 +382,7 @@ Partial Public Class Form1
             SavePersistedListState(False)
             _resuTimer.Start()
             UpdateMainTabIndicators()
-            AppendLog("RESU started. F12 stops; RESU input is posted directly to the selected game window and does not require foreground focus.")
+            AppendLog("RESU started. F12 stops; background input is enabled. If Full is running with Hold on Place, only anchor monitoring/correction remains active in the main engine.")
         Catch ex As Exception
             MessageBox.Show(Me, ex.Message, "RESU")
         End Try
@@ -352,9 +395,19 @@ Partial Public Class Form1
         _resuOptions.Enabled = True
         _resuStart.Text = "Start RESU"
         _resuStatus.Text = reason
+        If Not IsDisposed AndAlso Not Disposing AndAlso _fullEngine.IsRunning() Then PushLiveConfig()
         UpdateMainTabIndicators()
         AppendLog(reason)
     End Sub
+
+    Private Function IsResuCompatibleBotState(hwnd As IntPtr) As Boolean
+        Dim runningEdition As BotEdition? = GetRunningEdition()
+        If Not runningEdition.HasValue Then Return True
+        If runningEdition.Value <> BotEdition.Full OrElse hwnd = IntPtr.Zero Then Return False
+        If chkHoldPlaceEnabled Is Nothing OrElse Not chkHoldPlaceEnabled.Checked Then Return False
+        Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
+        Return selected IsNot Nothing AndAlso selected.MainWindowHandle = hwnd
+    End Function
 
     Private Shared Function ReadResuRegion(frame As Bitmap, region As RectRegion) As String
         Using crop = QuizImageTools.Crop(frame, New Rectangle(region.X, region.Y, region.W, region.H))
@@ -424,7 +477,7 @@ Partial Public Class Form1
     Private Function CanResuAct(generation As Integer, hwnd As IntPtr) As Boolean
         If Not _resuRunning OrElse generation <> _resuGeneration OrElse IsDisposed OrElse Disposing Then Return False
         If ResuSelectedWindow() <> hwnd OrElse NativeMethods.IsIconic(hwnd) Then Return False
-        If GetRunningEdition().HasValue Then Return False
+        If Not IsResuCompatibleBotState(hwnd) Then Return False
         Dim rect As NativeMethods.RECT
         Return NativeMethods.GetClientRect(hwnd, rect) AndAlso rect.Right - rect.Left = _resuSettings.ReferenceWidth AndAlso rect.Bottom - rect.Top = _resuSettings.ReferenceHeight
     End Function
@@ -437,8 +490,8 @@ Partial Public Class Form1
         If Not _resuRunning Then Return
         Dim generation = _resuGeneration
         Dim hwnd = _resuWindow
-        If ResuSelectedWindow() <> hwnd OrElse GetRunningEdition().HasValue Then
-            StopResu("RESU stopped: the selected window changed or the main bot started.")
+        If ResuSelectedWindow() <> hwnd OrElse Not IsResuCompatibleBotState(hwnd) Then
+            StopResu("RESU stopped: the selected window changed, Lite started, or Full is running without Hold on Place.")
             Return
         End If
         If Not CanResuAct(generation, hwnd) Then
@@ -559,6 +612,33 @@ Partial Public Class Form1
                 AppendLog("RESU: " & _resuService.Status)
             End If
             _resuStatus.Text = $"Sending resurrection key for {decision.Username}: {sent}/{settings.ResurrectPressCount} press(es)."
+        Next
+        Dim buffKeysSent As Integer = Await SendResuBuffKeysAsync(hwnd, settings, decision, generation)
+        If buffKeysSent > 0 Then AppendLog($"RESU: sent {buffKeysSent} enabled buff key(s) to {decision.Username} after resurrection.")
+        Return sent
+    End Function
+
+    Private Async Function SendResuBuffKeysAsync(hwnd As IntPtr, settings As ResuSettings, decision As ResuDecision, generation As Integer) As Task(Of Integer)
+        Dim enabledBuffs As List(Of ResuBuffKeySetting) = If(settings.BuffKeys, New List(Of ResuBuffKeySetting)()).
+            Where(Function(buff) buff IsNot Nothing AndAlso buff.Enabled AndAlso Not String.IsNullOrWhiteSpace(buff.KeyName)).
+            Take(3).
+            ToList()
+        If enabledBuffs.Count = 0 Then Return 0
+
+        ' Give the game a brief moment to apply the resurrection while keeping the resurrected
+        ' character selected, then cast each enabled buff once through background window input.
+        Await Task.Delay(250)
+        Dim sent As Integer = 0
+        For Each buff As ResuBuffKeySetting In enabledBuffs
+            If (GetAsyncKeyState(CInt(Keys.F12)) And &H8000S) <> 0 Then
+                StopResu("RESU stopped with F12 during the buff-key sequence.")
+                Return sent
+            End If
+            If Not CanResuAct(generation, hwnd) OrElse _resuService.IsBlocked(decision.Username) Then Return sent
+            If Not BotEngine.SendKey(hwnd, buff.KeyName.Trim().ToUpperInvariant(), 30, forceBackgroundPost:=True) Then Return sent
+            sent += 1
+            _resuStatus.Text = $"Buffing {decision.Username}: {sent}/{enabledBuffs.Count} key(s)."
+            If sent < enabledBuffs.Count Then Await Task.Delay(100)
         Next
         Return sent
     End Function

@@ -7,6 +7,7 @@ Friend Class ResuSettings
     Public Property SelectKey As String = "TAB"
     Public Property SelectKeyIntervalMs As Integer = 500
     Public Property ResurrectKey As String = ""
+    Public Property BuffKeys As New List(Of ResuBuffKeySetting)
     Public Property PeriodicMessageEnabled As Boolean
     Public Property PeriodicMessageText As String = ""
     Public Property PeriodicMessageIntervalSeconds As Integer = 60
@@ -33,6 +34,11 @@ Friend Class ResuSettings
     Public Property UnpaidPattern As String = "^(?<user>[\p{L}\p{N}_-]+) did not pay\.?$"
     Public Property TradeClosedPattern As String = "^Trade (completed|cancelled|canceled)\.?$"
     Public Property Blacklist As New List(Of ResuBlacklistEntry)
+End Class
+
+Friend Class ResuBuffKeySetting
+    Public Property Enabled As Boolean
+    Public Property KeyName As String = ""
 End Class
 
 Friend Class ResuBlacklistEntry

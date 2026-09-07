@@ -56,7 +56,7 @@ Public Class FullSupportCalibrationForm
             Next
         End If
 
-        Text = "Full Support Party Calibration"
+        Text = "Full Support (Vidya only) Party Calibration"
         StartPosition = FormStartPosition.CenterParent
         MinimumSize = New Size(980, 700)
         Size = New Size(1180, 780)
@@ -163,7 +163,7 @@ Public Class FullSupportCalibrationForm
             BuildPartyAreaHelp()
         Else
             _titleLabel.Text = "2  Calibrate each member HP bar"
-            _hintLabel.Text = "Move rows individually, or use ALL X and GAP for optional bulk alignment. Width and height changes resize every row together."
+            _hintLabel.Text = "Blue dots are member click points for buffs and auras. Move HP rows individually, or use ALL X and GAP for bulk alignment."
             _nextButton.Text = "Save calibration"
             ScaleMembersToCurrentPartyRect()
             EnsureMemberCount(Math.Max(1, If(_members.Count = 0, 7, _members.Count)), _members.Count = 0)
