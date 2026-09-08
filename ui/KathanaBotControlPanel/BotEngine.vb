@@ -375,7 +375,7 @@ Public Class BotConfig
     Public Property BuffWatchSlots As List(Of BuffWatchSlot) = New List(Of BuffWatchSlot)()
     Public Property BuffAreaRect As RectRegion = New RectRegion(0, 0, 300, 40)
     Public Property BuffWatchSelfClickEnabled As Boolean = False
-    Public Property LootAllowedNames As List(Of String) = New List(Of String)()
+    Public Property LootAllowedNames As List(Of String) = DefaultLootItems.Create()
     Public Property LootAwardSkipTerms As List(Of String) = New List(Of String) From {"Rupiah"}
     Public Property LootNameMatchThresholdPercent As Integer = 80
     Public Property PartyInviteAutoAcceptEnabled As Boolean = True
@@ -1174,6 +1174,11 @@ Public Class BotEngine
     Private _lootPickupFrameSize As Size
     Private _lootPickupWindow As IntPtr
     Private _lootPickupGeneration As Long = -1
+    Private _lastLootInteractionCell As Rectangle = Rectangle.Empty
+    Private _lastLootInteractionItem As String = ""
+    Private _lastLootInteractionAt As DateTime = DateTime.MinValue
+    Private _lastLootUnavailableHandledInteractionAt As DateTime = DateTime.MinValue
+    Private _deprioritizedLootCell As Rectangle = Rectangle.Empty
     Private _lastLootPickup As DateTime = DateTime.MinValue
     Private _pendingLootPickupVerifyAt As DateTime = DateTime.MinValue
     Private _lootAfterKillArmed As Boolean = False
@@ -1629,6 +1634,11 @@ Public Class BotEngine
             _lastCharacterNameOcrAt = DateTime.MinValue
             _lootPickupDetection = Nothing
             _lootPickupGeneration = -1
+            _lastLootInteractionCell = Rectangle.Empty
+            _lastLootInteractionItem = ""
+            _lastLootInteractionAt = DateTime.MinValue
+            _lastLootUnavailableHandledInteractionAt = DateTime.MinValue
+            _deprioritizedLootCell = Rectangle.Empty
             _lastLootPickup = DateTime.MinValue
             _pendingLootPickupVerifyAt = DateTime.MinValue
             _lootAfterKillArmed = False
@@ -1903,6 +1913,11 @@ Public Class BotEngine
             _lootScannerAltHeld = False
             _lootScannerProcessingTask = Nothing
             _pendingLootPickupVerifyAt = DateTime.MinValue
+            _lastLootInteractionCell = Rectangle.Empty
+            _lastLootInteractionItem = ""
+            _lastLootInteractionAt = DateTime.MinValue
+            _lastLootUnavailableHandledInteractionAt = DateTime.MinValue
+            _deprioritizedLootCell = Rectangle.Empty
             _lastArrowUnbundleAt = DateTime.MinValue
             _arrowUnbundleNextIndex = 0
             ' Drop references to any still-in-flight detached OCR tasks so a late completion
@@ -3300,6 +3315,10 @@ Public Class BotEngine
         Dim lootGridRows As Integer = Math.Max(1, Math.Min(BotConfig.MaxLootGridDimension, cfg.LootGridRows))
         Dim scanGeneration As Long = _runGeneration
         Dim capturedAtUtc As DateTime = _latestLoopFrameCapturedAt
+        Dim deprioritizedCellClient As Rectangle
+        SyncLock _sync
+            deprioritizedCellClient = _deprioritizedLootCell
+        End SyncLock
         _lootScannerProcessingTask = Task.Run(Sub()
             Dim scanFrame As Bitmap = frameClone
             Dim lootScanFrame As Bitmap = Nothing
@@ -3326,14 +3345,26 @@ Public Class BotEngine
                     Dim matchedItem As String = ""
                     Dim matchedCell As Rectangle = Rectangle.Empty
                     Dim matchedLabelCenter As DrawingPoint
-                    If TryFindAllowedLootGridMatch(ocrRegions, allowedNames, lootMatchThresholdPercent, lootScanFrame.Width, lootScanFrame.Height, lootGridColumns, lootGridRows, matchedItem, matchedCell, matchedLabelCenter) Then
+                    Dim deprioritizedCellInScan As Rectangle = Rectangle.Empty
+                    If deprioritizedCellClient <> Rectangle.Empty Then
+                        deprioritizedCellInScan = New Rectangle(
+                            deprioritizedCellClient.X - lootScanBounds.X,
+                            deprioritizedCellClient.Y - lootScanBounds.Y,
+                            deprioritizedCellClient.Width,
+                            deprioritizedCellClient.Height)
+                    End If
+                    Dim characterPointInScan As New DrawingPoint(
+                        (scanFrame.Width \ 2) - lootScanBounds.X,
+                        (scanFrame.Height \ 2) - lootScanBounds.Y)
+                    If TryFindAllowedLootGridMatch(ocrRegions, allowedNames, lootMatchThresholdPercent, lootScanFrame.Width, lootScanFrame.Height, lootGridColumns, lootGridRows, matchedItem, matchedCell, matchedLabelCenter, deprioritizedCellInScan, characterPointInScan) Then
                         Dim clickX As Integer = lootScanBounds.X + matchedCell.Left + (matchedCell.Width \ 2)
                         Dim clickY As Integer = lootScanBounds.Y + matchedCell.Top + (matchedCell.Height \ 2)
+                        Dim clientCell As New Rectangle(lootScanBounds.X + matchedCell.X, lootScanBounds.Y + matchedCell.Y, matchedCell.Width, matchedCell.Height)
                         Dim labelPoint As New DrawingPoint(lootScanBounds.X + matchedLabelCenter.X, lootScanBounds.Y + matchedLabelCenter.Y)
                         Dim centered As Boolean = IsLootPickupCentered(labelPoint, scanFrame.Size)
                         SyncLock _sync
                             If scanGeneration = _runGeneration AndAlso centered Then
-                                _lootPickupDetection = New LootGridDetection With {.ItemName = matchedItem, .ClickPoint = labelPoint, .DetectedAtUtc = capturedAtUtc}
+                                _lootPickupDetection = New LootGridDetection With {.ItemName = matchedItem, .Cell = clientCell, .ClickPoint = labelPoint, .DetectedAtUtc = capturedAtUtc}
                                 _lootPickupFrameSize = scanFrame.Size
                                 _lootPickupWindow = hwnd
                                 _lootPickupGeneration = scanGeneration
@@ -3343,6 +3374,7 @@ Public Class BotEngine
                         Dim clickDiagnostic As String = ""
                         If scanGeneration = _runGeneration AndAlso Not centered AndAlso Threading.Volatile.Read(_heldAutoLootArrow) = 0 Then
                             clicked = LeftClickVerifiedAtClientPoint(hwnd, clickX, clickY, clickDiagnostic, restoreCursor:=True, pressHoldMs:=25)
+                            If clicked Then RecordLootInteraction(clientCell, matchedItem, DateTime.UtcNow)
                         End If
                         Dim column As Integer = Math.Min(lootGridColumns, Math.Max(1, CInt(Math.Floor(matchedCell.Left * lootGridColumns / CDbl(Math.Max(1, lootScanFrame.Width)))) + 1))
                         Dim row As Integer = Math.Min(lootGridRows, Math.Max(1, CInt(Math.Floor(matchedCell.Top * lootGridRows / CDbl(Math.Max(1, lootScanFrame.Height)))) + 1))
@@ -3356,7 +3388,7 @@ Public Class BotEngine
                         End If
                         RaiseEvent LootGridDetected(New LootGridDetection With {
                             .ItemName = matchedItem,
-                            .Cell = New Rectangle(lootScanBounds.X + matchedCell.X, lootScanBounds.Y + matchedCell.Y, matchedCell.Width, matchedCell.Height),
+                            .Cell = clientCell,
                             .ClickPoint = New DrawingPoint(clickX, clickY),
                             .ClickSucceeded = clicked,
                             .DetectedAtUtc = DateTime.UtcNow
@@ -7729,6 +7761,57 @@ Public Class BotEngine
         Return capturedAtUtc <> DateTime.MinValue AndAlso ageMs >= 0 AndAlso ageMs <= 1500
     End Function
 
+    Public Shared Function IsLootPickupUnavailablePrompt(rawText As String) As Boolean
+        If String.IsNullOrWhiteSpace(rawText) Then Return False
+        Dim normalized As String = NormalizeMobName(rawText)
+        Dim compact As String = normalized.Replace(" ", "")
+        Return compact.Contains("cannotpickupitemyet", StringComparison.OrdinalIgnoreCase) OrElse
+            compact.Contains("cantpickupitemyet", StringComparison.OrdinalIgnoreCase) OrElse
+            AreTextsClose(normalized, "cannot pick up item yet")
+    End Function
+
+    Private Sub RecordLootInteraction(cell As Rectangle, itemName As String, now As DateTime)
+        If cell = Rectangle.Empty Then Return
+        SyncLock _sync
+            _lastLootInteractionCell = cell
+            _lastLootInteractionItem = If(itemName, "").Trim()
+            _lastLootInteractionAt = now
+        End SyncLock
+    End Sub
+
+    Private Sub ProcessLootPickupUnavailablePrompt(rawText As String, now As DateTime)
+        Dim blockedItem As String = ""
+        SyncLock _sync
+            If Not IsLootPickupUnavailablePrompt(rawText) Then
+                ' A new interaction followed by a clear OCR sample means pickup became available.
+                ' Wait briefly so a frame captured before the warning rendered cannot clear it.
+                If _deprioritizedLootCell <> Rectangle.Empty AndAlso
+                    _lastLootInteractionAt > _lastLootUnavailableHandledInteractionAt AndAlso
+                    (now - _lastLootInteractionAt).TotalMilliseconds >= 500 Then
+                    _deprioritizedLootCell = Rectangle.Empty
+                    _lastLootUnavailableHandledInteractionAt = _lastLootInteractionAt
+                End If
+                Return
+            End If
+
+            If _lastLootInteractionCell = Rectangle.Empty OrElse
+                _lastLootInteractionAt = DateTime.MinValue OrElse
+                _lastLootInteractionAt <= _lastLootUnavailableHandledInteractionAt OrElse
+                (now - _lastLootInteractionAt).TotalSeconds > 5 Then
+                Return
+            End If
+
+            _deprioritizedLootCell = _lastLootInteractionCell
+            blockedItem = _lastLootInteractionItem
+            _lastLootUnavailableHandledInteractionAt = _lastLootInteractionAt
+            _lootPickupDetection = Nothing
+            ' Do not wait for the normal scanner interval before looking for another item.
+            _lastRightAltAt = DateTime.MinValue
+        End SyncLock
+
+        RaiseEvent LogLine($"AUTO-LOOT WAIT: {If(blockedItem = "", "Current item", blockedItem)} cannot be picked up yet; trying the nearest different allowed item.")
+    End Sub
+
     Private Function TryConsumeCenteredLoot(cfg As BotConfig, hwnd As IntPtr, now As DateTime) As Boolean
         SyncLock _sync
             If _heldAutoLootArrow <> 0 Then Return False
@@ -7744,6 +7827,7 @@ Public Class BotEngine
                 Return False
             End If
             ' One scan permits one F press. A later pickup needs a new centered detection.
+            RecordLootInteraction(detection.Cell, detection.ItemName, DateTime.UtcNow)
             _lootPickupDetection = Nothing
             Return True
         End SyncLock
@@ -9752,6 +9836,7 @@ Public Class BotEngine
 
             If isCurrent AndAlso Not harvestFailed Then
                 ProcessLootAwardOcrText(_lastUnreachableCandidate, now, cfg.LootAwardSkipTerms)
+                ProcessLootPickupUnavailablePrompt(_lastUnreachableCandidate, now)
                 Dim matched As Boolean = IsUnreachablePrompt(_lastUnreachableCandidate)
                 Dim repairMatched As Boolean = IsRepairPrompt(_lastUnreachableCandidate)
                 If matched Then
@@ -10533,7 +10618,7 @@ Public Class BotEngine
         Return New Rectangle(left, top, Math.Max(1, right - left), Math.Max(1, bottom - top))
     End Function
 
-    Private Shared Function TryFindAllowedLootGridMatch(regions As List(Of OcrReader.OcrTextRegion), allowList As List(Of String), thresholdPercent As Integer, scanWidth As Integer, scanHeight As Integer, columns As Integer, rows As Integer, ByRef matchedAllowedName As String, ByRef matchedCell As Rectangle, ByRef matchedLabelCenter As DrawingPoint) As Boolean
+    Private Shared Function TryFindAllowedLootGridMatch(regions As List(Of OcrReader.OcrTextRegion), allowList As List(Of String), thresholdPercent As Integer, scanWidth As Integer, scanHeight As Integer, columns As Integer, rows As Integer, ByRef matchedAllowedName As String, ByRef matchedCell As Rectangle, ByRef matchedLabelCenter As DrawingPoint, Optional deprioritizedCell As Rectangle = Nothing, Optional characterPoint As DrawingPoint = Nothing) As Boolean
         matchedLabelCenter = DrawingPoint.Empty
         matchedAllowedName = ""
         matchedCell = Rectangle.Empty
@@ -10557,28 +10642,70 @@ Public Class BotEngine
             cellRegions.Add(region)
         Next
 
+        If characterPoint = DrawingPoint.Empty Then
+            characterPoint = New DrawingPoint(scanWidth \ 2, scanHeight \ 2)
+        End If
+
+        Dim bestDistanceSquared As Double = Double.MaxValue
         Dim bestScore As Double = 0.0R
         Dim bestName As String = ""
         Dim bestCell As Rectangle = Rectangle.Empty
+        Dim bestCenter As DrawingPoint = DrawingPoint.Empty
+        Dim alternativeDistanceSquared As Double = Double.MaxValue
+        Dim alternativeScore As Double = 0.0R
+        Dim alternativeName As String = ""
+        Dim alternativeCell As Rectangle = Rectangle.Empty
+        Dim alternativeCenter As DrawingPoint = DrawingPoint.Empty
+        Dim threshold As Double = ClampLootMatchThresholdPercent(thresholdPercent) / 100.0R
         For Each cellRegions As List(Of OcrReader.OcrTextRegion) In cells.Values
             Dim ordered As IEnumerable(Of OcrReader.OcrTextRegion) = cellRegions.OrderBy(Function(region) region.Bounds.Top).ThenBy(Function(region) region.Bounds.Left)
             Dim observedText As String = String.Join(" ", ordered.Select(Function(region) region.Text.Trim()))
             Dim localName As String = ""
             Dim localScore As Double = 0.0R
             TryFindBestAllowedLootMatch(observedText, allowList, thresholdPercent, localName, localScore)
-            If localScore > bestScore Then
+            If localScore < threshold Then Continue For
+
+            Dim firstRegion As OcrReader.OcrTextRegion = ordered.First()
+            Dim center As New DrawingPoint(firstRegion.Bounds.Left + (firstRegion.Bounds.Width \ 2), firstRegion.Bounds.Top + (firstRegion.Bounds.Height \ 2))
+            Dim cell As Rectangle = GetLootGridCellAtPoint(scanWidth, scanHeight, center, columns, rows)
+            Dim dxFromCharacter As Double = center.X - characterPoint.X
+            Dim dyFromCharacter As Double = center.Y - characterPoint.Y
+            Dim distanceFromCharacterSquared As Double = dxFromCharacter * dxFromCharacter + dyFromCharacter * dyFromCharacter
+
+            If distanceFromCharacterSquared < bestDistanceSquared OrElse
+                (distanceFromCharacterSquared = bestDistanceSquared AndAlso localScore > bestScore) Then
+                bestDistanceSquared = distanceFromCharacterSquared
                 bestScore = localScore
                 bestName = localName
-                Dim firstRegion As OcrReader.OcrTextRegion = ordered.First()
-                Dim center As New DrawingPoint(firstRegion.Bounds.Left + (firstRegion.Bounds.Width \ 2), firstRegion.Bounds.Top + (firstRegion.Bounds.Height \ 2))
-                bestCell = GetLootGridCellAtPoint(scanWidth, scanHeight, center, columns, rows)
-                matchedLabelCenter = center
+                bestCell = cell
+                bestCenter = center
+            End If
+
+            If deprioritizedCell <> Rectangle.Empty Then
+                If cell <> deprioritizedCell Then
+                    If distanceFromCharacterSquared < alternativeDistanceSquared OrElse
+                        (distanceFromCharacterSquared = alternativeDistanceSquared AndAlso localScore > alternativeScore) Then
+                        alternativeDistanceSquared = distanceFromCharacterSquared
+                        alternativeScore = localScore
+                        alternativeName = localName
+                        alternativeCell = cell
+                        alternativeCenter = center
+                    End If
+                End If
             End If
         Next
 
-        If bestCell <> Rectangle.Empty AndAlso bestScore >= ClampLootMatchThresholdPercent(thresholdPercent) / 100.0R Then
+        If alternativeCell <> Rectangle.Empty Then
+            matchedAllowedName = alternativeName
+            matchedCell = alternativeCell
+            matchedLabelCenter = alternativeCenter
+            Return True
+        End If
+
+        If bestCell <> Rectangle.Empty Then
             matchedAllowedName = bestName
             matchedCell = bestCell
+            matchedLabelCenter = bestCenter
             Return True
         End If
         Return False

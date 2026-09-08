@@ -4,6 +4,7 @@ Module Program
     Private _passed As Integer
     Private _clock As DateTime = New DateTime(2026, 9, 4, 0, 0, 0, DateTimeKind.Utc)
 
+    <STAThread>
     Sub Main()
         Test("stable target required", AddressOf StableTarget)
         Test("blank target OCR waits before selecting again", AddressOf BlankTargetWaits)
@@ -32,11 +33,15 @@ Module Program
         Test("resurrection burst schedule", AddressOf ResurrectionBurst)
         Test("retarget toggles and configured role survive JSON roundtrip", AddressOf RetargetSettingsPersistence)
         Test("loot grid maps OCR points to stable mesh cells", AddressOf LootGridGeometry)
+        Test("loot pickup unavailable prompt tolerates OCR variants", AddressOf LootUnavailablePrompt)
+        Test("blocked loot cell yields to nearest alternative then retries", AddressOf LootAlternativeSelection)
         Test("loot pickup requires a centered fresh observation", AddressOf CenteredLootPickup)
         Test("pickup timer cannot fire without a scanner observation", AddressOf PickupTimerWaitsForScanner)
         Test("arrow holds serialize directions and use release-based intervals", AddressOf ArrowHoldSchedule)
         Test("arrow hold settings persist and clamp invalid timings", AddressOf ArrowHoldPersistence)
         Test("auto-loot foreground toggle requires active Full auto-loot", AddressOf AutoLootForegroundToggle)
+        Test("default loot list merges without losing custom entries", AddressOf DefaultLootCatalog)
+        Test("dashboard icon ignores stale telemetry from either edition", AddressOf DashboardRunIcon)
         Test("invalid message patterns rejected", AddressOf InvalidPatterns)
         Test("settings and blacklist survive JSON roundtrip", AddressOf Persistence)
         Console.WriteLine($"Passed {_passed} RESU tests.")
@@ -50,6 +55,49 @@ Module Program
 
     Private Sub Check(condition As Boolean, message As String)
         If Not condition Then Throw New Exception(message)
+    End Sub
+
+    Private Sub DashboardRunIcon()
+        ' Exercise the real refresh path without starting engines or loading personal settings.
+        Dim flags = Reflection.BindingFlags.Instance Or Reflection.BindingFlags.NonPublic
+        Dim formType = GetType(Form1)
+        Dim form = Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(formType)
+        Dim full As New BotEngine()
+        Dim lite As New BotEngine()
+        formType.GetField("_fullEngine", flags).SetValue(form, full)
+        formType.GetField("_liteEngine", flags).SetValue(form, lite)
+        Dim buttonType = formType.GetNestedType("CircleButton", Reflection.BindingFlags.NonPublic)
+        Using button = DirectCast(Activator.CreateInstance(buttonType, True), System.Windows.Forms.Control)
+            formType.GetField("btnDashPlayPause", flags).SetValue(form, button)
+            Dim refresh = formType.GetMethod("UpdateDashboardUi", flags)
+            Dim playing = buttonType.GetProperty("IsPlaying")
+            Dim fullState = DirectCast(GetType(BotEngine).GetField("_status", flags).GetValue(full), BotStatus)
+            Dim liteState = DirectCast(GetType(BotEngine).GetField("_status", flags).GetValue(lite), BotStatus)
+            fullState.Running = True
+            refresh.Invoke(form, New Object() {New BotStatus With {.Running = False}, BotEdition.Lite})
+            Check(CBool(playing.GetValue(button)), "Stopped Lite telemetry cannot turn a running Full button into Start")
+            fullState.Running = False
+            refresh.Invoke(form, New Object() {New BotStatus With {.Running = True}, BotEdition.Full})
+            Check(Not CBool(playing.GetValue(button)), "Queued running telemetry cannot leave Stop visible after stopping")
+            liteState.Running = True
+            refresh.Invoke(form, New Object() {New BotStatus With {.Running = False}, BotEdition.Full})
+            Check(CBool(playing.GetValue(button)), "Running Lite must show Stop even when viewing Full")
+            liteState.Running = False
+            refresh.Invoke(form, New Object() {Nothing, BotEdition.Lite})
+            Check(Not CBool(playing.GetValue(button)), "Missing telemetry must still synchronize the button")
+        End Using
+    End Sub
+
+    Private Sub DefaultLootCatalog()
+        Dim defaults = DefaultLootItems.Create()
+        Check(defaults.Count = 81 AndAlso defaults.Distinct(StringComparer.OrdinalIgnoreCase).Count() = 81, "All 81 requested defaults must be unique")
+        Dim merged = DefaultLootItems.Merge(New String() {"My Custom Item", "kindjal of thunder", "Mara's Kaja"})
+        Check(merged.Count = 82 AndAlso merged.Contains("My Custom Item"), "Merge must retain custom items without duplicate default names or apostrophe variants")
+        Check(DefaultLootItems.Merge(merged).SequenceEqual(merged), "Migration must be idempotent")
+        Dim config As New BotConfig()
+        Check(config.LootAllowedNames.SequenceEqual(defaults), "New configurations must contain all defaults")
+        config.LootAllowedNames.Clear()
+        Check(New BotConfig().LootAllowedNames.Count = 81, "Configurations must have independent editable lists")
     End Sub
 
     Private Sub AutoLootForegroundToggle()
@@ -144,6 +192,37 @@ Module Program
 
         Dim first As System.Drawing.Rectangle = BotEngine.GetLootGridCellAtPoint(603, 401, New System.Drawing.Point(-50, -50), 6, 4)
         Check(first.Left = 0 AndAlso first.Top = 0, "Negative OCR points must clamp to the first cell")
+    End Sub
+
+    Private Sub LootUnavailablePrompt()
+        Check(BotEngine.IsLootPickupUnavailablePrompt("Cannot pick up item yet"), "Exact pickup warning must match")
+        Check(BotEngine.IsLootPickupUnavailablePrompt("Cannot pickup item yet."), "Missing space and punctuation must match")
+        Check(BotEngine.IsLootPickupUnavailablePrompt("Cannot pick up itern yet"), "Minor OCR errors must match fuzzily")
+        Check(Not BotEngine.IsLootPickupUnavailablePrompt("Unable to reach target"), "Combat unreachable text must stay separate")
+    End Sub
+
+    Private Sub LootAlternativeSelection()
+        Dim method = GetType(BotEngine).GetMethod("TryFindAllowedLootGridMatch", Reflection.BindingFlags.NonPublic Or Reflection.BindingFlags.Static)
+        Dim regions As New List(Of OcrReader.OcrTextRegion) From {
+            New OcrReader.OcrTextRegion With {.Text = "Strong Ara", .Bounds = New System.Drawing.Rectangle(40, 40, 20, 10)},
+            New OcrReader.OcrTextRegion With {.Text = "Agni Kisu", .Bounds = New System.Drawing.Rectangle(240, 40, 20, 10)},
+            New OcrReader.OcrTextRegion With {.Text = "Hima Zalas", .Bounds = New System.Drawing.Rectangle(440, 40, 20, 10)}
+        }
+        Dim allowed As New List(Of String) From {"Strong Ara", "Agni Kisu", "Hima Zalas"}
+        Dim blocked As New System.Drawing.Rectangle(0, 0, 100, 100)
+        Dim characterPoint As New System.Drawing.Point(500, 50)
+        Dim nearestArgs As Object() = {regions, allowed, 80, 1000, 100, 10, 1, "", System.Drawing.Rectangle.Empty, System.Drawing.Point.Empty, System.Drawing.Rectangle.Empty, characterPoint}
+        Check(CBool(method.Invoke(Nothing, nearestArgs)), "A valid nearest item must be selected")
+        Check(CStr(nearestArgs(7)) = "Hima Zalas", "Normal scans must select the allowed item closest to screen center")
+
+        Dim args As Object() = {regions, allowed, 80, 1000, 100, 10, 1, "", System.Drawing.Rectangle.Empty, System.Drawing.Point.Empty, blocked, characterPoint}
+        Check(CBool(method.Invoke(Nothing, args)), "A valid alternative must be selected")
+        Check(CStr(args(7)) = "Hima Zalas" AndAlso DirectCast(args(8), System.Drawing.Rectangle).X = 400, "Alternative closest to the character at screen center must win")
+
+        Dim onlyBlocked As New List(Of OcrReader.OcrTextRegion) From {regions(0)}
+        args = New Object() {onlyBlocked, allowed, 80, 1000, 100, 10, 1, "", System.Drawing.Rectangle.Empty, System.Drawing.Point.Empty, blocked, characterPoint}
+        Check(CBool(method.Invoke(Nothing, args)), "Blocked item must remain retryable when no alternative exists")
+        Check(CStr(args(7)) = "Strong Ara" AndAlso DirectCast(args(8), System.Drawing.Rectangle) = blocked, "The same blocked cell must be retried")
     End Sub
 
     Private Function Tick(service As ResuService, Optional chat As String = "", Optional messages As String = "", Optional trade As String = "", Optional target As String = "Alice", Optional seconds As Double = 1) As ResuDecision

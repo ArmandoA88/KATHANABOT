@@ -400,7 +400,7 @@
         "H": 32
       },
       "BuffWatchSelfClickEnabled": false,
-      "LootAllowedNames": [],
+      "LootAllowedNames": ["Kindjal of Thunder", "Kindjal of Deadly Poison", "Ara of Deadly Poison", "Strong Ara", "Bisa Dantaka", "Talwar of Origin Warrior", "Talwar of Warrior", "Strong Pattra", "Pattra of Curse", "Rauti Kukri", "Hima Kinjar", "Suraka of the Muscle", "Suraka of the Wild Beast", "Trizika of Life", "Trizika of Destruction", "Yakatu Engkus", "Kisu of Origin Warrior", "Strong Kisu", "Agni Kisu", "Hirana of Deadly Poison", "Lu Berdysh", "Hima Berdysh", "Strong Berdysh", "Dead Person\u2019s Rohiparaz", "Mara\u2019s Kaja", "Tapas Lagda", "Hima Ghana", "Ghana of Muscle", "Ghana of Mantra", "Mara\u2019s Nakhara", "Tapas Karasna", "Karasuna of Gushu", "Lu Vajradhara", "Agni Vajradhara", "Vajra of the Dead", "Hima Zalas", "Rauti Zalas", "Agni Vera", "Pataka of Flame", "Hard Hastacapa", "Hastacapa of Deadly Poison", "Agni Urnacapa", "Rada Bakurakava of Gurapa", "Bahamut\u2019s Jirastra", "Turate of Adana", "Shuipara of Gurapa", "Bahamut\u2019s Gana", "Achada Armor of Adhana", "Varman Armor of Grava", "Bahamut\u2019s Zvas", "Achada Pants of Adana", "Varman Pants of Gurapa", "Bahamut\u2019s Nakha", "Achada Glove of Adana", "Baruman Gloves of Gurapa", "Bahamut\u2019s Patika", "Leather Upana of Adana", "Arapada of Adana", "Leather Hira of Caulitara", "Rohachavi of Life", "Rohachavi of Spells", "Savitri Phalaka", "Yakatu Phalaka", "Wild Carman", "Karna of Brave", "Karna of Magic", "Karna of Sorcery", "Karna of Life", "Bangle of Sorcery", "Strong Kamvu", "Kamvu of Spell", "Ran of Brave", "Ran of Luck", "Ran of Life", "Hima Mudra", "Rucaka of Wind", "Rucaka of Warrior", "Rucaka of Magic", "Rucaka of Life", "Agni Rucaka", "Strong Dechanda"],
       "LootNameMatchThresholdPercent": 60,
       "PartyInviteAutoAcceptEnabled": true,
       "PartyRessAutoAcceptEnabled": true,
@@ -696,7 +696,8 @@
       "Dadati",
       "Kemsa Tonyo"
     ],
-    "LootNames": [],
+    "LootDefaultsVersion": 1,
+    "LootNames": ["Kindjal of Thunder", "Kindjal of Deadly Poison", "Ara of Deadly Poison", "Strong Ara", "Bisa Dantaka", "Talwar of Origin Warrior", "Talwar of Warrior", "Strong Pattra", "Pattra of Curse", "Rauti Kukri", "Hima Kinjar", "Suraka of the Muscle", "Suraka of the Wild Beast", "Trizika of Life", "Trizika of Destruction", "Yakatu Engkus", "Kisu of Origin Warrior", "Strong Kisu", "Agni Kisu", "Hirana of Deadly Poison", "Lu Berdysh", "Hima Berdysh", "Strong Berdysh", "Dead Person\u2019s Rohiparaz", "Mara\u2019s Kaja", "Tapas Lagda", "Hima Ghana", "Ghana of Muscle", "Ghana of Mantra", "Mara\u2019s Nakhara", "Tapas Karasna", "Karasuna of Gushu", "Lu Vajradhara", "Agni Vajradhara", "Vajra of the Dead", "Hima Zalas", "Rauti Zalas", "Agni Vera", "Pataka of Flame", "Hard Hastacapa", "Hastacapa of Deadly Poison", "Agni Urnacapa", "Rada Bakurakava of Gurapa", "Bahamut\u2019s Jirastra", "Turate of Adana", "Shuipara of Gurapa", "Bahamut\u2019s Gana", "Achada Armor of Adhana", "Varman Armor of Grava", "Bahamut\u2019s Zvas", "Achada Pants of Adana", "Varman Pants of Gurapa", "Bahamut\u2019s Nakha", "Achada Glove of Adana", "Baruman Gloves of Gurapa", "Bahamut\u2019s Patika", "Leather Upana of Adana", "Arapada of Adana", "Leather Hira of Caulitara", "Rohachavi of Life", "Rohachavi of Spells", "Savitri Phalaka", "Yakatu Phalaka", "Wild Carman", "Karna of Brave", "Karna of Magic", "Karna of Sorcery", "Karna of Life", "Bangle of Sorcery", "Strong Kamvu", "Kamvu of Spell", "Ran of Brave", "Ran of Luck", "Ran of Life", "Hima Mudra", "Rucaka of Wind", "Rucaka of Warrior", "Rucaka of Magic", "Rucaka of Life", "Agni Rucaka", "Strong Dechanda"],
     "CombatActions": [
       {
         "ActionKey": "0",

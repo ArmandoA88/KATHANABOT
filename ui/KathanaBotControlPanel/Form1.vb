@@ -1508,6 +1508,7 @@ Partial Public Class Form1
         Private _hoverAmount As Double = 0.0R
 
         Public Sub New()
+            SetStyle(ControlStyles.UserPaint Or ControlStyles.AllPaintingInWmPaint Or ControlStyles.OptimizedDoubleBuffer Or ControlStyles.ResizeRedraw, True)
             FlatStyle = FlatStyle.Flat
             FlatAppearance.BorderSize = 0
             BackColor = ThemeBg
@@ -2399,6 +2400,7 @@ Partial Public Class Form1
         Public Property AutoRelaunchClicks As List(Of PersistedAutoRelaunchClick) = New List(Of PersistedAutoRelaunchClick)()
         Public Property SavedConfig As BotConfig = Nothing
         Public Property MonsterNames As List(Of String) = New List(Of String)()
+        Public Property LootDefaultsVersion As Integer = 0
         Public Property LootNames As List(Of String) = New List(Of String)()
         Public Property CombatActions As List(Of PersistedCombatAction) = New List(Of PersistedCombatAction)()
     End Class
@@ -3883,6 +3885,13 @@ Partial Public Class Form1
         Return tab
     End Function
 
+    Private Sub UpdateDashboardRunButton()
+        If btnDashPlayPause Is Nothing OrElse btnDashPlayPause.IsDisposed Then Return
+        ' Use the same live state as the click action. Queued telemetry and the selected tab
+        ' can describe a stopped/previous edition and must never overwrite this control.
+        btnDashPlayPause.IsPlaying = GetRunningEdition().HasValue
+    End Sub
+
     Private Sub DashboardPlayPauseClicked(sender As Object, e As EventArgs)
         If GetRunningEdition().HasValue Then
             StopClicked(Nothing, e)
@@ -4022,6 +4031,7 @@ Partial Public Class Form1
     End Sub
 
     Private Sub UpdateDashboardUi(status As BotStatus, Optional edition As BotEdition = BotEdition.Full)
+        UpdateDashboardRunButton()
         If cardDashStatus Is Nothing OrElse cardDashSession Is Nothing OrElse status Is Nothing Then
             Return
         End If
@@ -4142,9 +4152,6 @@ Partial Public Class Form1
         End If
         UpdateDashboardAnalyticsCards(status, killsPerHour)
 
-        If btnDashPlayPause IsNot Nothing Then
-            btnDashPlayPause.IsPlaying = status.Running
-        End If
         If lblDashSubtitle IsNot Nothing Then
             Dim characterName As String = If(String.IsNullOrWhiteSpace(status.CharacterName), "Waiting for character", status.CharacterName)
             Dim clientState As String = If(status.GameDisconnected, "Disconnected", If(status.WindowFound, "Client online", "Waiting for client"))
@@ -7127,7 +7134,7 @@ Partial Public Class Form1
         layout.SetColumnSpan(scannerButtons, 2)
 
         Dim note As New Label() With {
-            .Text = "Open the Loot Grid Overlay here to drag the loot polygon or its corners. On each Alt scan the bot reads item labels, finds the matching grid square for an allowed item name, and left-clicks that square's center. Columns and rows control mesh detail; lower scan intervals react faster but use more CPU.",
+            .Text = "Open the Loot Grid Overlay here to drag the loot polygon or its corners. On each Alt scan the bot reads allowed item labels and selects the one closest to the middle of the game window, where the character stands, then clicks that grid square. Columns and rows control mesh detail; lower scan intervals react faster but use more CPU.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .TextAlign = ContentAlignment.TopLeft
@@ -8486,6 +8493,7 @@ Partial Public Class Form1
         layout.Controls.Add(chkAutoLootForceForeground, 0, 2)
         UpdateAutoLootForegroundButton()
         lstLootFilter = New ListBox() With {.Dock = DockStyle.Fill}
+        lstLootFilter.Items.AddRange(DefaultLootItems.Create().ToArray())
         layout.Controls.Add(lstLootFilter, 0, 3)
 
         Dim actionRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
@@ -13299,6 +13307,8 @@ Partial Public Class Form1
                     "- Loot Name Match % is the fuzzy OCR threshold used to decide whether text matches an allowed loot name.",
                     "- Loot Scan Area comes from the Vision tab.",
                     "- Loot Scanner (Alt) toggles the OCR-based loot scanner. Alt + Screenshot Every (ms) controls its frequency from 100 to 20,000 ms; lower values scan faster but use more CPU.",
+                    "- When several allowed items are visible, Auto-Loot always selects the item label closest to the middle of the game window, where the character stands.",
+                    "- If unreachable_text_rect reads 'Cannot pick up item yet', the scanner tries the nearest different allowed item. If none is visible, it keeps retrying the same item until pickup becomes available.",
                     "- Auto Party Invite presses the selected key (1-0 or F1-F10) then clicks the fixed point below, on its own loop timer.",
                     "- Auto Party Message types the text above into chat (Enter, type, Enter) on its own separate loop timer.",
                     "- Items Won reads Auto Division awards from unreachable_text_rect, lists player + item + raw OCR text, normalizes Forb/Kanada OCR variants, and skips Rupiah entries."
@@ -13849,6 +13859,7 @@ Partial Public Class Form1
     End Sub
 
     Private Sub UiTimerTick(sender As Object, e As EventArgs)
+        UpdateDashboardRunButton()
         Dim uiWatch As Stopwatch = Stopwatch.StartNew()
         MonitorEngineWorkers()
         PushLiveConfig()
@@ -17451,6 +17462,9 @@ Partial Public Class Form1
                 Next
             End If
 
+            If state.LootDefaultsVersion < DefaultLootItems.Version Then
+                state.LootNames = DefaultLootItems.Merge(state.LootNames)
+            End If
             If state.LootNames IsNot Nothing AndAlso lstLootFilter IsNot Nothing Then
                 lstLootFilter.Items.Clear()
                 For Each entry As String In state.LootNames
@@ -17549,6 +17563,7 @@ Partial Public Class Form1
                 .AutoRelaunchClicks = GetAutoRelaunchClickSteps(),
                 .SavedConfig = If(includeFullConfig, BuildFullConfig(), Nothing),
                 .MonsterNames = GetListBoxItems(lstMonsterFilter),
+                .LootDefaultsVersion = DefaultLootItems.Version,
                 .LootNames = GetListBoxItems(lstLootFilter),
                 .CombatActions = GetPersistedCombatActions()
             }
@@ -18892,9 +18907,7 @@ Partial Public Class Form1
         ' Flip the header action immediately on Start/Stop. The richer status card normally comes
         ' from UpdateDashboardUi; only seed it here while a newly-started engine has not published
         ' its first running snapshot yet, so an error/disconnect message is never overwritten.
-        If btnDashPlayPause IsNot Nothing Then
-            btnDashPlayPause.IsPlaying = runningEdition.HasValue
-        End If
+        UpdateDashboardRunButton()
         If cardDashStatus IsNot Nothing Then
             If Not runningEdition.HasValue Then
                 cardDashStatus.AccentColor = ThemeTextSecondary
