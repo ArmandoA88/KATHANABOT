@@ -360,6 +360,8 @@ Public Class BotConfig
     Public Property LootRejectClickEnabled As Boolean = False
     Public Property LootRejectPointX As Integer = -1
     Public Property LootRejectPointY As Integer = -1
+    Public Property AutoLootForceForeground As Boolean = False
+    Public Property AutoLootArrowHolds As New AutoLootArrowHoldSettings()
     Public Property ArrowUnbundleEnabled As Boolean = False
     Public Property ArrowUnbundleIntervalMs As Integer = 60000
     Public Property ArrowUnbundlePoints As List(Of LootScanPoint) = New List(Of LootScanPoint)()
@@ -1168,9 +1170,18 @@ Public Class BotEngine
     Private _latestLoopFrame As Bitmap = Nothing
     Private _latestLoopFrameCapturedAt As DateTime = DateTime.MinValue
     Private _lastFullFrameCaptureAttemptAt As DateTime = DateTime.MinValue
+    Private _lootPickupDetection As LootGridDetection
+    Private _lootPickupFrameSize As Size
+    Private _lootPickupWindow As IntPtr
+    Private _lootPickupGeneration As Long = -1
     Private _lastLootPickup As DateTime = DateTime.MinValue
     Private _pendingLootPickupVerifyAt As DateTime = DateTime.MinValue
     Private _lootAfterKillArmed As Boolean = False
+    Private _autoLootArrowSchedule As New AutoLootArrowHoldSchedule()
+    Private _autoLootArrowTask As Task
+    Private _lastAutoLootForegroundAttempt As DateTime = DateTime.MinValue
+    Private _lastAutoLootArrowMotionAt As DateTime = DateTime.MinValue
+    Private _heldAutoLootArrow As Integer
     Private _lastArrowUnbundleAt As DateTime = DateTime.MinValue
     Private _arrowUnbundleNextIndex As Integer = 0
     Private _cachedArrowBundleIconBase64 As String = ""
@@ -1529,6 +1540,7 @@ Public Class BotEngine
         ' Release any held movement/loot modifier after blocking new output, so opening chat cannot
         ' leave the character walking or ALT held while another loop action races with the pause.
         If paused AndAlso gameWindow <> IntPtr.Zero Then
+            ReleaseAutoLootArrowKey()
             ReleaseMovementKeys(gameWindow)
             ReleaseLootScannerAltKey()
         End If
@@ -1580,6 +1592,7 @@ Public Class BotEngine
             SetChatInputPaused(False, IntPtr.Zero)
             _runGeneration += 1L
             _cts = New CancellationTokenSource()
+            _autoLootArrowSchedule = New AutoLootArrowHoldSchedule()
             _status.Running = True
             _status.ErrorMessage = ""
             _lastNormalRetarget = DateTime.MinValue
@@ -1614,6 +1627,8 @@ Public Class BotEngine
             _hardcodedVisionStatsInFlight = False
             _lastCharacterName = ""
             _lastCharacterNameOcrAt = DateTime.MinValue
+            _lootPickupDetection = Nothing
+            _lootPickupGeneration = -1
             _lastLootPickup = DateTime.MinValue
             _pendingLootPickupVerifyAt = DateTime.MinValue
             _lootAfterKillArmed = False
@@ -1848,6 +1863,7 @@ Public Class BotEngine
             ' recognized as belonging to a stopped session and its result is discarded on harvest,
             ' even if the field-level reset below hasn't run yet.
             _runGeneration += 1L
+            ReleaseAutoLootArrowKey()
             localTask = _task
         End SyncLock
 
@@ -2086,6 +2102,7 @@ Public Class BotEngine
                 End If
 
                 Dim now As DateTime = DateTime.UtcNow
+                TryForceAutoLootForeground(cfg, hwnd, now)
                 Dim startupCombatPriorityActive As Boolean =
                     _loopStartedAt <> DateTime.MinValue AndAlso
                     (now - _loopStartedAt).TotalMilliseconds < StartupCombatPriorityMs
@@ -3148,6 +3165,7 @@ Public Class BotEngine
                 End If
             End If
 
+            If Not deathPaused Then TryHandleAutoLootArrowHold(cfg, hwnd, token)
             TryHandleLootPickup(cfg, hwnd, now, actionSent OrElse _firstHitPending)
             TryHandleArrowUnbundle(cfg, hwnd, fullClientWidth, fullClientHeight, now, actionSent OrElse _firstHitPending)
             TryHandleBuffWatch(cfg, hwnd, now)
@@ -3281,7 +3299,7 @@ Public Class BotEngine
         Dim lootGridColumns As Integer = Math.Max(1, Math.Min(BotConfig.MaxLootGridDimension, cfg.LootGridColumns))
         Dim lootGridRows As Integer = Math.Max(1, Math.Min(BotConfig.MaxLootGridDimension, cfg.LootGridRows))
         Dim scanGeneration As Long = _runGeneration
-
+        Dim capturedAtUtc As DateTime = _latestLoopFrameCapturedAt
         _lootScannerProcessingTask = Task.Run(Sub()
             Dim scanFrame As Bitmap = frameClone
             Dim lootScanFrame As Bitmap = Nothing
@@ -3300,21 +3318,37 @@ Public Class BotEngine
                 ' This scan runs once per the configured LootScannerIntervalMs, so always re-read
                 ' when the user-selected timer requests a new Alt + screenshot cycle.
                 Dim ocrRegions As List(Of OcrReader.OcrTextRegion) = OcrReader.ReadScreenTextRegionsIsolated(lootScanFrame)
+                SyncLock _sync
+                    If scanGeneration = _runGeneration Then _lootPickupDetection = Nothing
+                End SyncLock
                 Dim ocrText As String = String.Join(Environment.NewLine, ocrRegions.Select(Function(region) region.Text))
                 If Not String.IsNullOrWhiteSpace(ocrText) AndAlso allowedNames IsNot Nothing Then
                     Dim matchedItem As String = ""
                     Dim matchedCell As Rectangle = Rectangle.Empty
-                    If TryFindAllowedLootGridMatch(ocrRegions, allowedNames, lootMatchThresholdPercent, lootScanFrame.Width, lootScanFrame.Height, lootGridColumns, lootGridRows, matchedItem, matchedCell) Then
+                    Dim matchedLabelCenter As DrawingPoint
+                    If TryFindAllowedLootGridMatch(ocrRegions, allowedNames, lootMatchThresholdPercent, lootScanFrame.Width, lootScanFrame.Height, lootGridColumns, lootGridRows, matchedItem, matchedCell, matchedLabelCenter) Then
                         Dim clickX As Integer = lootScanBounds.X + matchedCell.Left + (matchedCell.Width \ 2)
                         Dim clickY As Integer = lootScanBounds.Y + matchedCell.Top + (matchedCell.Height \ 2)
+                        Dim labelPoint As New DrawingPoint(lootScanBounds.X + matchedLabelCenter.X, lootScanBounds.Y + matchedLabelCenter.Y)
+                        Dim centered As Boolean = IsLootPickupCentered(labelPoint, scanFrame.Size)
+                        SyncLock _sync
+                            If scanGeneration = _runGeneration AndAlso centered Then
+                                _lootPickupDetection = New LootGridDetection With {.ItemName = matchedItem, .ClickPoint = labelPoint, .DetectedAtUtc = capturedAtUtc}
+                                _lootPickupFrameSize = scanFrame.Size
+                                _lootPickupWindow = hwnd
+                                _lootPickupGeneration = scanGeneration
+                            End If
+                        End SyncLock
                         Dim clicked As Boolean = False
                         Dim clickDiagnostic As String = ""
-                        If scanGeneration = _runGeneration Then
+                        If scanGeneration = _runGeneration AndAlso Not centered AndAlso Threading.Volatile.Read(_heldAutoLootArrow) = 0 Then
                             clicked = LeftClickVerifiedAtClientPoint(hwnd, clickX, clickY, clickDiagnostic, restoreCursor:=True, pressHoldMs:=25)
                         End If
                         Dim column As Integer = Math.Min(lootGridColumns, Math.Max(1, CInt(Math.Floor(matchedCell.Left * lootGridColumns / CDbl(Math.Max(1, lootScanFrame.Width)))) + 1))
                         Dim row As Integer = Math.Min(lootGridRows, Math.Max(1, CInt(Math.Floor(matchedCell.Top * lootGridRows / CDbl(Math.Max(1, lootScanFrame.Height)))) + 1))
-                        If clicked Then
+                        If centered Then
+                            RaiseEvent LogLine($"LOOT READY: Found {matchedItem} near the center; waiting for pickup cooldown.")
+                        ElseIf clicked Then
                             SetLastAction($"Loot grid click {row},{column}: {matchedItem}")
                             RaiseEvent LogLine($"LOOT CLICK: Found {matchedItem}; clicked grid row {row}, column {column} at ({clickX},{clickY}).")
                         Else
@@ -7683,6 +7717,38 @@ Public Class BotEngine
         Return normalized
     End Function
 
+    Public Shared Function IsLootPickupCentered(labelPoint As DrawingPoint, frameSize As Size) As Boolean
+        If frameSize.Width <= 0 OrElse frameSize.Height <= 0 Then Return False
+        ' Use the actual label position, not the center of a potentially very large grid cell.
+        Return Math.Abs(labelPoint.X - frameSize.Width / 2.0) <= frameSize.Width * 0.05 AndAlso
+            Math.Abs(labelPoint.Y - frameSize.Height / 2.0) <= frameSize.Height * 0.05
+    End Function
+
+    Public Shared Function IsLootPickupObservationFresh(capturedAtUtc As DateTime, now As DateTime) As Boolean
+        Dim ageMs As Double = (now - capturedAtUtc).TotalMilliseconds
+        Return capturedAtUtc <> DateTime.MinValue AndAlso ageMs >= 0 AndAlso ageMs <= 1500
+    End Function
+
+    Private Function TryConsumeCenteredLoot(cfg As BotConfig, hwnd As IntPtr, now As DateTime) As Boolean
+        SyncLock _sync
+            If _heldAutoLootArrow <> 0 Then Return False
+            Dim detection As LootGridDetection = _lootPickupDetection
+            If Not cfg.LootScannerEnabled OrElse detection Is Nothing Then Return False
+            If detection.DetectedAtUtc <= _lastAutoLootArrowMotionAt OrElse
+                _lootPickupGeneration <> _runGeneration OrElse _lootPickupWindow <> hwnd OrElse
+                NativeMethods.GetForegroundWindow() <> hwnd OrElse
+                Not IsLootPickupObservationFresh(detection.DetectedAtUtc, DateTime.UtcNow) OrElse
+                Not IsLootPickupCentered(detection.ClickPoint, _lootPickupFrameSize) OrElse
+                Not IsAllowedLootName(detection.ItemName, cfg.LootAllowedNames, cfg.LootNameMatchThresholdPercent) Then
+                _lootPickupDetection = Nothing
+                Return False
+            End If
+            ' One scan permits one F press. A later pickup needs a new centered detection.
+            _lootPickupDetection = Nothing
+            Return True
+        End SyncLock
+    End Function
+
     Private Sub TryHandleLootPickup(cfg As BotConfig, hwnd As IntPtr, now As DateTime, actionSent As Boolean)
         If Not cfg.LootPickupEnabled Then
             Return
@@ -7709,12 +7775,13 @@ Public Class BotEngine
             Return
         End If
 
+        If Not TryConsumeCenteredLoot(cfg, hwnd, now) Then Return
         _lastLootPickup = now
         If Not SendKey(hwnd, "F", FastKeyPressMs) Then
             Return
         End If
 
-        RaiseEvent LogLine("Loot scan sent (F).")
+        RaiseEvent LogLine("Loot pickup sent (F): allowed item confirmed near screen center.")
         _pendingLootPickupVerifyAt = now.AddMilliseconds(Math.Max(120, cfg.LootPickupVerifyDelayMs))
     End Sub
 
@@ -7768,18 +7835,15 @@ Public Class BotEngine
             (now - _sessionKillLastLivingSignalAt).TotalMilliseconds <= recentLivingSignalWindowMs
     End Function
 
-    ' Loot After Kill: independent of the interval-based Loot Pickup (F) above - this presses F the
-    ' moment the current target disappears right after we were actively attacking it, rather than
-    ' waiting on a timer.
+    ' Loot After Kill also requires a fresh centered loot detection so it cannot stop an approach.
     '
     ' This used to wait for the target's HP reading to hit (or come near) 0 before treating a vanish
     ' as a kill, but HasTargetWindowSignal (what targetHasHpSignal is built from) requires either a
     ' non-trivial amount of the HP bar's own color still on screen, or mobHpPct > 0.0 outright - so
     ' the instant a mob's bar actually empties, the rest of the targeting logic already stops
     ' reporting a target at all, and no HP-based threshold on the way down ever reliably matched what
-    ' was on screen right before the vanish. Since pressing F when there's nothing to loot is a no-op,
-    ' there's no need to be clever about confirming a kill specifically: any target that disappears
-    ' within a couple seconds of our last attack is worth trying to loot for.
+    ' was on screen right before the vanish. A recent target disappearance arms a pickup attempt,
+    ' but the center check below must confirm that an allowed item is within reach.
     Private Sub TryHandleLootAfterKill(cfg As BotConfig, hwnd As IntPtr, targetHasHpSignal As Boolean, now As DateTime)
         If cfg Is Nothing OrElse Not cfg.LootAfterKillEnabled OrElse hwnd = IntPtr.Zero Then
             _lootAfterKillArmed = False
@@ -7793,13 +7857,99 @@ Public Class BotEngine
 
         Const recentAttackWindowMs As Double = 3000.0
         If _lootAfterKillArmed AndAlso _lastAttackAction <> DateTime.MinValue AndAlso (now - _lastAttackAction).TotalMilliseconds <= recentAttackWindowMs Then
-            If SendKey(hwnd, "F", FastKeyPressMs) Then
+            If TryConsumeCenteredLoot(cfg, hwnd, now) AndAlso SendKey(hwnd, "F", FastKeyPressMs) Then
+                _lastLootPickup = now
                 SetLastAction("F (Loot After Kill)")
-                RaiseEvent LogLine("Loot After Kill: target gone right after combat, pressed F.")
+                RaiseEvent LogLine("Loot After Kill: target gone and allowed loot confirmed at screen center, pressed F.")
             End If
         End If
 
         _lootAfterKillArmed = False
+    End Sub
+
+    Public Shared Function ShouldForceAutoLootForeground(cfg As BotConfig) As Boolean
+        Return cfg IsNot Nothing AndAlso cfg.AutoLootForceForeground AndAlso Not cfg.LiteModeEnabled AndAlso
+            Not cfg.ResuHoldPlaceOnlyModeEnabled AndAlso
+            (cfg.LootScannerEnabled OrElse cfg.LootPickupEnabled OrElse cfg.LootAfterKillEnabled OrElse
+             (cfg.AutoLootArrowHolds IsNot Nothing AndAlso (cfg.AutoLootArrowHolds.LeftEnabled OrElse cfg.AutoLootArrowHolds.RightEnabled)))
+    End Function
+
+    Private Sub TryForceAutoLootForeground(cfg As BotConfig, hwnd As IntPtr, now As DateTime)
+        If Not ShouldForceAutoLootForeground(cfg) OrElse hwnd = IntPtr.Zero OrElse IsChatInputPaused() Then Return
+        If NativeMethods.GetForegroundWindow() = hwnd OrElse (now - _lastAutoLootForegroundAttempt).TotalMilliseconds < 2000 Then Return
+        _lastAutoLootForegroundAttempt = now
+        Dim currentThread As UInteger = NativeMethods.GetCurrentThreadId()
+        Dim foregroundThread As UInteger = 0
+        Dim attached As Boolean = False
+        Try
+            Dim processId As UInteger = 0
+            foregroundThread = NativeMethods.GetWindowThreadProcessId(NativeMethods.GetForegroundWindow(), processId)
+            If foregroundThread <> 0 AndAlso foregroundThread <> currentThread Then
+                attached = NativeMethods.AttachThreadInput(currentThread, foregroundThread, True)
+            End If
+            If NativeMethods.IsIconic(hwnd) Then NativeMethods.ShowWindow(hwnd, 9)
+            NativeMethods.SetForegroundWindow(hwnd)
+        Finally
+            If attached Then NativeMethods.AttachThreadInput(currentThread, foregroundThread, False)
+        End Try
+    End Sub
+
+    Private Sub ReleaseAutoLootArrowKey()
+        SyncLock _sync
+            If _heldAutoLootArrow = 0 Then Return
+            Dim key = _heldAutoLootArrow
+            _heldAutoLootArrow = 0
+            _lastAutoLootArrowMotionAt = DateTime.UtcNow
+            keybd_event(CByte(key), CByte(NativeMethods.MapVirtualKey(CUInt(key), 0UI)), &H1UI Or &H2UI, UIntPtr.Zero)
+        End SyncLock
+    End Sub
+
+    Private Sub TryHandleAutoLootArrowHold(cfg As BotConfig, hwnd As IntPtr, token As CancellationToken)
+        If hwnd = IntPtr.Zero OrElse NativeMethods.GetForegroundWindow() <> hwnd OrElse cfg.ResuHoldPlaceOnlyModeEnabled Then Return
+        SyncLock _sync
+            If token.IsCancellationRequested OrElse _chatInputPaused OrElse Not _status.Running Then Return
+            If _autoLootArrowTask IsNot Nothing AndAlso Not _autoLootArrowTask.IsCompleted Then Return
+            Dim key = _autoLootArrowSchedule.TryStart(cfg.AutoLootArrowHolds, DateTime.UtcNow)
+            If key = 0 Then Return
+            Dim generation = _runGeneration
+            Dim schedule = _autoLootArrowSchedule
+            _autoLootArrowTask = Task.Run(Async Function()
+                Dim holdWatch As Stopwatch = Stopwatch.StartNew()
+                Try
+                    SyncLock _sync
+                        If token.IsCancellationRequested OrElse generation <> _runGeneration OrElse _chatInputPaused OrElse
+                            NativeMethods.GetForegroundWindow() <> hwnd Then Return
+                        _heldAutoLootArrow = key
+                        _lastAutoLootArrowMotionAt = DateTime.UtcNow
+                        keybd_event(CByte(key), CByte(NativeMethods.MapVirtualKey(CUInt(key), 0UI)), &H1UI, UIntPtr.Zero)
+                        holdWatch.Restart()
+                    End SyncLock
+                    RaiseEvent LogLine($"Auto-loot: holding {If(key = &H25, "Left", "Right")} arrow.")
+                    While Not token.IsCancellationRequested
+                        SyncLock _sync
+                            Dim settings = _config.AutoLootArrowHolds
+                            If generation <> _runGeneration OrElse Not _status.Running OrElse _chatInputPaused OrElse
+                                _combatPausedForDeath OrElse Not _status.WindowFound OrElse _config.ResuHoldPlaceOnlyModeEnabled OrElse
+                                settings Is Nothing OrElse Not settings.Enabled(key) OrElse
+                                holdWatch.ElapsedMilliseconds >= settings.HoldMs(key) OrElse _heldAutoLootArrow = 0 Then Exit While
+                        End SyncLock
+                        If NativeMethods.GetForegroundWindow() <> hwnd Then Exit While
+                        Await Task.Delay(20, token)
+                    End While
+                Catch ex As OperationCanceledException
+                    ' Stopping the bot interrupts the hold immediately.
+                Catch ex As Exception
+                    RaiseEvent LogLine("Auto-loot arrow hold failed: " & ex.Message)
+                Finally
+                    ReleaseAutoLootArrowKey()
+                    SyncLock _sync
+                        schedule.Complete(DateTime.UtcNow)
+                        ' Camera movement makes any previous centered-item location obsolete.
+                        _lootPickupDetection = Nothing
+                    End SyncLock
+                End Try
+            End Function)
+        End SyncLock
     End Sub
 
     Private Sub TryHandleArrowUnbundle(cfg As BotConfig, hwnd As IntPtr, clientWidth As Integer, clientHeight As Integer, now As DateTime, actionSent As Boolean)
@@ -10383,7 +10533,8 @@ Public Class BotEngine
         Return New Rectangle(left, top, Math.Max(1, right - left), Math.Max(1, bottom - top))
     End Function
 
-    Private Shared Function TryFindAllowedLootGridMatch(regions As List(Of OcrReader.OcrTextRegion), allowList As List(Of String), thresholdPercent As Integer, scanWidth As Integer, scanHeight As Integer, columns As Integer, rows As Integer, ByRef matchedAllowedName As String, ByRef matchedCell As Rectangle) As Boolean
+    Private Shared Function TryFindAllowedLootGridMatch(regions As List(Of OcrReader.OcrTextRegion), allowList As List(Of String), thresholdPercent As Integer, scanWidth As Integer, scanHeight As Integer, columns As Integer, rows As Integer, ByRef matchedAllowedName As String, ByRef matchedCell As Rectangle, ByRef matchedLabelCenter As DrawingPoint) As Boolean
+        matchedLabelCenter = DrawingPoint.Empty
         matchedAllowedName = ""
         matchedCell = Rectangle.Empty
         If regions Is Nothing OrElse regions.Count = 0 OrElse allowList Is Nothing OrElse allowList.Count = 0 Then
@@ -10421,6 +10572,7 @@ Public Class BotEngine
                 Dim firstRegion As OcrReader.OcrTextRegion = ordered.First()
                 Dim center As New DrawingPoint(firstRegion.Bounds.Left + (firstRegion.Bounds.Width \ 2), firstRegion.Bounds.Top + (firstRegion.Bounds.Height \ 2))
                 bestCell = GetLootGridCellAtPoint(scanWidth, scanHeight, center, columns, rows)
+                matchedLabelCenter = center
             End If
         Next
 

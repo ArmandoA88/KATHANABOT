@@ -161,3 +161,11 @@ The default game window is `Kathana - The Reign of Shadow` from process `Kathana
 - Party status uses the seven fixed party rows, long HP/MP bar runs, and member-name pixels to count members and distinguish nonzero HP from dead rows without mistaking terrain or buff colors for party bars.
 - If the EXE is already running, rebuild can warn about locked files.
 - Keep EXE builds serialized/versioned. Do not replace an older EXE with a new one using the same filename.
+
+## Centered auto-loot pickup
+
+Enable Loot Scanner (Alt) and Centered Loot Pickup (F). The scanner clicks distant allowed loot to approach it. F is permitted only when a fresh OCR label is inside the central 10% of the game client, using the actual label position even with a coarse grid or an offset scan area. Cooldown (sec) is a minimum delay, not a repeating F timer. Each detection permits one pickup; stale detections expire after 1.5 seconds. Loot After Kill uses the same center check. Scanner frequency still controls how often arrival is checked. Auto-loot settings continue to save automatically to the active profile.
+
+## Timed arrow key holds
+
+In Auto-Loot, enable Left arrow and/or Right arrow under Timed Arrow Key Holds. Each direction has an independent Hold (sec), from 0.1 to 60 seconds, and Wait (sec), from 0.1 to 3600 seconds. Wait begins after release; the first hold is due when enabled. Both directions take turns when due and never overlap. Holds run while the Full bot and game window are active and release on stop, chat pause, focus loss, or disabling that direction. All settings save automatically with the active profile. After an arrow hold, centered pickup requires a new scan.

@@ -1675,6 +1675,13 @@ Partial Public Class Form1
     Private txtItemAwardSkipTerms As TextBox
     Private txtAutoPartyMessageText As TextBox
     Private nudAutoPartyMessageSeconds As NumericUpDown
+    Private chkAutoLootForceForeground As CheckBox
+    Private chkLootLeftArrow As CheckBox
+    Private chkLootRightArrow As CheckBox
+    Private nudLootLeftHold As NumericUpDown
+    Private nudLootRightHold As NumericUpDown
+    Private nudLootLeftInterval As NumericUpDown
+    Private nudLootRightInterval As NumericUpDown
     Private chkArrowUnbundleEnabled As CheckBox
     Private nudLootPickupSeconds As NumericUpDown
     Private nudLootPickupVerifyMs As NumericUpDown
@@ -2340,6 +2347,8 @@ Partial Public Class Form1
         Public Property LootRejectPointEnabled As Boolean = False
         Public Property LootRejectPointX As Integer = -1
         Public Property LootRejectPointY As Integer = -1
+        Public Property AutoLootForceForeground As Boolean = False
+        Public Property AutoLootArrowHolds As AutoLootArrowHoldSettings
         Public Property ArrowUnbundleEnabled As Boolean = False
         Public Property ArrowUnbundleSeconds As Decimal = 60D
         Public Property ArrowUnbundleOverlayEnabled As Boolean = False
@@ -6962,7 +6971,13 @@ Partial Public Class Form1
         Dim left As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
         left.RowStyles.Add(New RowStyle(SizeType.Percent, 58.0F))
         left.RowStyles.Add(New RowStyle(SizeType.Percent, 42.0F))
-        left.Controls.Add(BuildLootFilterGroup(), 0, 0)
+        ' Take the arrow controls' space from the pickup list, preserving the scanner panel height.
+        Dim pickupAndArrows As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2, .Margin = New Padding(0)}
+        pickupAndArrows.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+        pickupAndArrows.RowStyles.Add(New RowStyle(SizeType.Absolute, 180.0F))
+        pickupAndArrows.Controls.Add(BuildLootFilterGroup(), 0, 0)
+        pickupAndArrows.Controls.Add(BuildLootArrowHoldGroup(), 0, 1)
+        left.Controls.Add(pickupAndArrows, 0, 0)
         left.Controls.Add(BuildLootScanSettingsGroup(), 0, 1)
 
         Dim right As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
@@ -6979,6 +6994,74 @@ Partial Public Class Form1
         AddTabExplanationButton(tab, HelpScopeAutoLoot)
         Return tab
     End Function
+
+    Private Function BuildLootArrowHoldGroup() As GroupBox
+        Dim group As New GroupBox With {.Text = "Timed Arrow Key Holds", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
+        Dim layout As New TableLayoutPanel With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 4}
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 34))
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 33))
+        layout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 33))
+        For i As Integer = 0 To 2
+            layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 30))
+        Next
+        layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100))
+        layout.Controls.Add(New Label With {.Text = "Enable direction", .Dock = DockStyle.Fill}, 0, 0)
+        layout.Controls.Add(New Label With {.Text = "Hold (sec)", .Dock = DockStyle.Fill}, 1, 0)
+        layout.Controls.Add(New Label With {.Text = "Wait (sec)", .Dock = DockStyle.Fill}, 2, 0)
+        chkLootLeftArrow = New CheckBox With {.Text = "Left arrow", .Dock = DockStyle.Fill}
+        chkLootRightArrow = New CheckBox With {.Text = "Right arrow", .Dock = DockStyle.Fill}
+        nudLootLeftHold = New NumericUpDown With {.Minimum = 0.1D, .Maximum = 60D, .DecimalPlaces = 1, .Increment = 0.1D, .Value = 0.5D, .Dock = DockStyle.Fill}
+        nudLootRightHold = New NumericUpDown With {.Minimum = 0.1D, .Maximum = 60D, .DecimalPlaces = 1, .Increment = 0.1D, .Value = 0.5D, .Dock = DockStyle.Fill}
+        nudLootLeftInterval = New NumericUpDown With {.Minimum = 0.1D, .Maximum = 3600D, .DecimalPlaces = 1, .Increment = 0.1D, .Value = 10D, .Dock = DockStyle.Fill}
+        nudLootRightInterval = New NumericUpDown With {.Minimum = 0.1D, .Maximum = 3600D, .DecimalPlaces = 1, .Increment = 0.1D, .Value = 10D, .Dock = DockStyle.Fill}
+        layout.Controls.Add(chkLootLeftArrow, 0, 1)
+        layout.Controls.Add(nudLootLeftHold, 1, 1)
+        layout.Controls.Add(nudLootLeftInterval, 2, 1)
+        layout.Controls.Add(chkLootRightArrow, 0, 2)
+        layout.Controls.Add(nudLootRightHold, 1, 2)
+        layout.Controls.Add(nudLootRightInterval, 2, 2)
+        Dim note As New Label With {.Text = "Wait starts after release. Directions run one at a time while the Full bot and game window are active.", .Dock = DockStyle.Fill, .ForeColor = Color.LightSteelBlue}
+        layout.Controls.Add(note, 0, 3)
+        layout.SetColumnSpan(note, 3)
+        For Each toggle In New CheckBox() {chkLootLeftArrow, chkLootRightArrow}
+            AddHandler toggle.CheckedChanged, AddressOf LiveConfigChanged
+            AddHandler toggle.CheckedChanged, AddressOf PersistListSettingsChanged
+        Next
+        For Each value In New NumericUpDown() {nudLootLeftHold, nudLootRightHold, nudLootLeftInterval, nudLootRightInterval}
+            AddHandler value.ValueChanged, AddressOf LiveConfigChanged
+            AddHandler value.ValueChanged, AddressOf PersistListSettingsChanged
+        Next
+        group.Controls.Add(layout)
+        Return group
+    End Function
+
+    Private Sub UpdateAutoLootForegroundButton()
+        If chkAutoLootForceForeground Is Nothing Then Return
+        chkAutoLootForceForeground.Text = "Force Game Foreground: " & If(chkAutoLootForceForeground.Checked, "ON", "OFF")
+        chkAutoLootForceForeground.BackColor = If(chkAutoLootForceForeground.Checked, Color.FromArgb(35, 130, 80), Color.FromArgb(65, 65, 65))
+        chkAutoLootForceForeground.ForeColor = Color.White
+    End Sub
+
+    Private Function BuildLootArrowHoldSettings() As AutoLootArrowHoldSettings
+        Return New AutoLootArrowHoldSettings With {
+            .LeftEnabled = chkLootLeftArrow IsNot Nothing AndAlso chkLootLeftArrow.Checked,
+            .RightEnabled = chkLootRightArrow IsNot Nothing AndAlso chkLootRightArrow.Checked,
+            .LeftHoldMs = CInt(If(nudLootLeftHold IsNot Nothing, nudLootLeftHold.Value, 0.5D) * 1000D),
+            .RightHoldMs = CInt(If(nudLootRightHold IsNot Nothing, nudLootRightHold.Value, 0.5D) * 1000D),
+            .LeftIntervalMs = CInt(If(nudLootLeftInterval IsNot Nothing, nudLootLeftInterval.Value, 10D) * 1000D),
+            .RightIntervalMs = CInt(If(nudLootRightInterval IsNot Nothing, nudLootRightInterval.Value, 10D) * 1000D)
+        }
+    End Function
+
+    Private Sub ApplyLootArrowHoldSettings(settings As AutoLootArrowHoldSettings)
+        Dim source = If(settings, New AutoLootArrowHoldSettings())
+        If chkLootLeftArrow IsNot Nothing Then chkLootLeftArrow.Checked = source.LeftEnabled
+        If chkLootRightArrow IsNot Nothing Then chkLootRightArrow.Checked = source.RightEnabled
+        SetNumericControlValue(nudLootLeftHold, source.HoldMs(&H25) / 1000D)
+        SetNumericControlValue(nudLootRightHold, source.HoldMs(&H27) / 1000D)
+        SetNumericControlValue(nudLootLeftInterval, source.IntervalMs(&H25) / 1000D)
+        SetNumericControlValue(nudLootRightInterval, source.IntervalMs(&H27) / 1000D)
+    End Sub
 
     Private Function BuildLootScanSettingsGroup() As GroupBox
         Dim group As New GroupBox() With {.Text = "Loot Scan Matching", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
@@ -8364,18 +8447,19 @@ Partial Public Class Form1
 
     Private Function BuildLootFilterGroup() As GroupBox
         Dim group As New GroupBox() With {.Text = "Loot Filter", .Dock = DockStyle.Fill}
-        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 4}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 5}
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 30.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 30.0F))
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 35.0F))
         group.Controls.Add(layout)
 
-        chkLootPickup = New CheckBox() With {.Text = "Enable Loot Pickup (F)", .Dock = DockStyle.Fill, .Checked = False}
+        chkLootPickup = New CheckBox() With {.Text = "Enable Centered Loot Pickup (F)", .Dock = DockStyle.Fill, .Checked = False}
         layout.Controls.Add(chkLootPickup, 0, 0)
 
         Dim intervalRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
-        intervalRow.Controls.Add(New Label() With {.Text = "Every (sec):", .AutoSize = True, .Padding = New Padding(0, 6, 0, 0)})
+        intervalRow.Controls.Add(New Label() With {.Text = "Cooldown (sec):", .AutoSize = True, .Padding = New Padding(0, 6, 0, 0)})
         nudLootPickupSeconds = New NumericUpDown() With {.Minimum = 1, .Maximum = 20, .Value = 4, .Width = 55}
         intervalRow.Controls.Add(nudLootPickupSeconds)
         Dim lblLootPickupVerifyMs As New Label() With {.Text = "Verify (ms):", .AutoSize = True, .Padding = New Padding(10, 6, 0, 0)}
@@ -8385,14 +8469,24 @@ Partial Public Class Form1
         If _scanTimerToolTip Is Nothing Then
             _scanTimerToolTip = New ToolTip() With {.AutoPopDelay = 15000, .InitialDelay = 300, .ReshowDelay = 300}
         End If
+        _scanTimerToolTip.SetToolTip(chkLootPickup, "Requires Loot Scanner (Alt). F is pressed only after a fresh allowed-item label is detected in the central 10% of the game window. Cooldown is the minimum time between pickups.")
         Dim lootVerifyHint As String = "Recommended: 220ms. After pressing F, the picked-up item's name appears in the same nameplate area used for monster names - this is how long the bot waits before reading it and deciding to keep or reject it. Raise it if the name doesn't render in time on your connection/game; lower it for a faster reject."
         _scanTimerToolTip.SetToolTip(lblLootPickupVerifyMs, lootVerifyHint)
         _scanTimerToolTip.SetToolTip(nudLootPickupVerifyMs, lootVerifyHint)
         _developerOnlyControls.AddRange({CType(lblLootPickupVerifyMs, Control), nudLootPickupVerifyMs})
         layout.Controls.Add(intervalRow, 0, 1)
 
+        chkAutoLootForceForeground = New CheckBox With {.Appearance = Appearance.Button, .Text = "Force Game Foreground: OFF", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleCenter}
+        AddHandler chkAutoLootForceForeground.CheckedChanged, Sub()
+            UpdateAutoLootForegroundButton()
+            LiveConfigChanged(chkAutoLootForceForeground, EventArgs.Empty)
+            PersistListSettingsChanged(chkAutoLootForceForeground, EventArgs.Empty)
+        End Sub
+        _scanTimerToolTip.SetToolTip(chkAutoLootForceForeground, "While auto-loot is active in the Full bot, bring the selected game window to the front. Turn off to allow other windows to stay in front.")
+        layout.Controls.Add(chkAutoLootForceForeground, 0, 2)
+        UpdateAutoLootForegroundButton()
         lstLootFilter = New ListBox() With {.Dock = DockStyle.Fill}
-        layout.Controls.Add(lstLootFilter, 0, 2)
+        layout.Controls.Add(lstLootFilter, 0, 3)
 
         Dim actionRow As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False}
         txtLootName = New TextBox() With {.Width = 140, .PlaceholderText = "item1, item2, item3"}
@@ -8403,7 +8497,7 @@ Partial Public Class Form1
         actionRow.Controls.Add(txtLootName)
         actionRow.Controls.Add(btnAddLoot)
         actionRow.Controls.Add(btnRemoveLoot)
-        layout.Controls.Add(actionRow, 0, 3)
+        layout.Controls.Add(actionRow, 0, 4)
         Return group
     End Function
 
@@ -12787,7 +12881,7 @@ Partial Public Class Form1
             "- Stop Bot: sends hard stop macro then stops engine.",
             "- FS (Full Support): a support-only role that never presses E - normal retargeting, forced retargeting, manual Retarget Now, and Dadati evade are all disabled, so the character never selects or changes a target.",
             "- Auto Retarget If Stuck: allows stuck-target bypass logic. Disabled while FS is on.",
-            "- Loot After Kill: presses F immediately the instant the current target's life reads 0, instead of waiting on Loot Pickup's timer.",
+            "- Loot After Kill: attempts F after combat only when a fresh allowed item is detected near screen center.",
             "- Retarget Now (E): manual retarget key.",
             "- Auto Accept Party/Ress: toggle OCR prompt auto accept.",
             "- Ask Party Every (sec) + Auto Ask Party Text + Auto Ask Party: periodic custom command.",
@@ -13199,8 +13293,8 @@ Partial Public Class Form1
                     "KATHANABOT - AUTO-LOOT TAB EXPLANATION (ENGLISH)",
                     "============================================================",
                     "",
-                    "- Enable Loot Pickup (F) turns on timed F pickup.",
-                    "- Every (sec) sets that basic pickup interval.",
+                    "- Enable Centered Loot Pickup (F) requires Loot Scanner (Alt) and a fresh allowed item in the central 10% of the game window.",
+                    "- Cooldown (sec) sets the minimum delay between pickups; it never triggers F by itself.",
                     "- The loot name list is an allow-list. Add names you want and remove names you do not want.",
                     "- Loot Name Match % is the fuzzy OCR threshold used to decide whether text matches an allowed loot name.",
                     "- Loot Scan Area comes from the Vision tab.",
@@ -13336,8 +13430,8 @@ Partial Public Class Form1
                     "KATHANABOT - EXPLICACION DE LA PESTANA AUTO-LOOT (ESPANOL)",
                     "============================================================",
                     "",
-                    "- Enable Loot Pickup (F) activa el pickup temporizado con F.",
-                    "- Every (sec) define ese intervalo basico.",
+                    "- Enable Centered Loot Pickup (F) requiere Loot Scanner (Alt) y un item permitido en el 10% central de la ventana.",
+                    "- Cooldown (sec) es el tiempo minimo entre pickups; el temporizador por si solo no pulsa F.",
                     "- La lista de nombres de loot es una allow-list.",
                     "- Loot Name Match % es el umbral de OCR difuso para aceptar coincidencias.",
                     "- Loot Scan Area se configura en Vision.",
@@ -13471,8 +13565,8 @@ Partial Public Class Form1
                     "KATHANABOT - PALIWANAG NG AUTO-LOOT TAB (FILIPINO)",
                     "============================================================",
                     "",
-                    "- Enable Loot Pickup (F) nagpapapindot ng F sa takdang interval.",
-                    "- Every (sec) ang basic pickup interval.",
+                    "- Enable Centered Loot Pickup (F) kailangan ang Loot Scanner (Alt) at allowed item sa gitnang 10% ng game window.",
+                    "- Cooldown (sec) ang minimum na pagitan ng pickup; hindi ito kusang pipindot ng F.",
                     "- Ang loot name list ay allow-list ng mga gusto mong pulutin.",
                     "- Loot Name Match % ang fuzzy OCR threshold para sa loot text.",
                     "- Sa Vision tine-setup ang Loot Scan Area.",
@@ -16146,6 +16240,8 @@ Partial Public Class Form1
         cfg.AskForResurrectText = GetAskForResurrectCommandText()
         cfg.AskForResurrectIncludeMapCoordinates = (chkAskForResurrectMapCoords IsNot Nothing AndAlso chkAskForResurrectMapCoords.Checked)
         cfg.LootScannerEnabled = _lootScannerEnabled
+        cfg.AutoLootForceForeground = chkAutoLootForceForeground IsNot Nothing AndAlso chkAutoLootForceForeground.Checked
+        cfg.AutoLootArrowHolds = BuildLootArrowHoldSettings()
         cfg.LootGridColumns = CInt(If(nudLootGridColumns IsNot Nothing, nudLootGridColumns.Value, 6D))
         cfg.LootGridRows = CInt(If(nudLootGridRows IsNot Nothing, nudLootGridRows.Value, 4D))
         cfg.NotificationProvider = GetNotificationProviderName()
@@ -17126,11 +17222,14 @@ Partial Public Class Form1
             End If
             ConfigurePeriodicScreenshotTimer()
 
+            ApplyLootArrowHoldSettings(If(state.AutoLootArrowHolds, state.SavedConfig?.AutoLootArrowHolds))
             If state.SavedConfig IsNot Nothing Then
                 BotConfig.MigrateLegacyVisionLayout(state.SavedConfig)
                 ApplySavedConfigToUi(state.SavedConfig)
             End If
 
+            If chkAutoLootForceForeground IsNot Nothing Then chkAutoLootForceForeground.Checked = state.AutoLootForceForeground
+            If state.AutoLootArrowHolds IsNot Nothing Then ApplyLootArrowHoldSettings(state.AutoLootArrowHolds)
             If chkMonsterFilter IsNot Nothing Then
                 chkMonsterFilter.Checked = state.MonsterFilterEnabled
             End If
@@ -17427,6 +17526,8 @@ Partial Public Class Form1
                 .AskForResurrectText = GetAskForResurrectCommandText(),
                 .AskForResurrectMapCoordsEnabled = (chkAskForResurrectMapCoords IsNot Nothing AndAlso chkAskForResurrectMapCoords.Checked),
                 .LootScannerEnabled = _lootScannerEnabled,
+                .AutoLootForceForeground = chkAutoLootForceForeground IsNot Nothing AndAlso chkAutoLootForceForeground.Checked,
+                .AutoLootArrowHolds = BuildLootArrowHoldSettings(),
                 .LootGridColumns = CInt(If(nudLootGridColumns IsNot Nothing, nudLootGridColumns.Value, 6D)),
                 .LootGridRows = CInt(If(nudLootGridRows IsNot Nothing, nudLootGridRows.Value, 4D)),
                 .NotificationProvider = GetNotificationProviderName(),
@@ -17732,6 +17833,8 @@ Partial Public Class Form1
         End If
         UpdateAskForResurrectUi()
 
+        If chkAutoLootForceForeground IsNot Nothing Then chkAutoLootForceForeground.Checked = cfg.AutoLootForceForeground
+        ApplyLootArrowHoldSettings(cfg.AutoLootArrowHolds)
         _lootScannerEnabled = cfg.LootScannerEnabled
         SetNumericControlValue(nudLootGridColumns, CDec(Math.Max(1, Math.Min(BotConfig.MaxLootGridDimension, If(cfg.LootGridColumns > 0, cfg.LootGridColumns, 6)))))
         SetNumericControlValue(nudLootGridRows, CDec(Math.Max(1, Math.Min(BotConfig.MaxLootGridDimension, If(cfg.LootGridRows > 0, cfg.LootGridRows, 4)))))

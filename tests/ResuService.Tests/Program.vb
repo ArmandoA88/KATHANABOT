@@ -32,6 +32,11 @@ Module Program
         Test("resurrection burst schedule", AddressOf ResurrectionBurst)
         Test("retarget toggles and configured role survive JSON roundtrip", AddressOf RetargetSettingsPersistence)
         Test("loot grid maps OCR points to stable mesh cells", AddressOf LootGridGeometry)
+        Test("loot pickup requires a centered fresh observation", AddressOf CenteredLootPickup)
+        Test("pickup timer cannot fire without a scanner observation", AddressOf PickupTimerWaitsForScanner)
+        Test("arrow holds serialize directions and use release-based intervals", AddressOf ArrowHoldSchedule)
+        Test("arrow hold settings persist and clamp invalid timings", AddressOf ArrowHoldPersistence)
+        Test("auto-loot foreground toggle requires active Full auto-loot", AddressOf AutoLootForegroundToggle)
         Test("invalid message patterns rejected", AddressOf InvalidPatterns)
         Test("settings and blacklist survive JSON roundtrip", AddressOf Persistence)
         Console.WriteLine($"Passed {_passed} RESU tests.")
@@ -45,6 +50,85 @@ Module Program
 
     Private Sub Check(condition As Boolean, message As String)
         If Not condition Then Throw New Exception(message)
+    End Sub
+
+    Private Sub AutoLootForegroundToggle()
+        Dim config As New BotConfig()
+        Check(Not BotEngine.ShouldForceAutoLootForeground(config), "Foreground forcing defaults off")
+        config.AutoLootForceForeground = True
+        Check(BotEngine.ShouldForceAutoLootForeground(config), "Enabled scanner permits foreground forcing")
+        config.LootScannerEnabled = False
+        Check(Not BotEngine.ShouldForceAutoLootForeground(config), "Inactive auto-loot must not take focus")
+        config.LootPickupEnabled = True
+        Check(BotEngine.ShouldForceAutoLootForeground(config), "Enabled pickup permits foreground forcing")
+        config.LiteModeEnabled = True
+        Check(Not BotEngine.ShouldForceAutoLootForeground(config), "Lite mode must not take focus for Full auto-loot")
+        Dim loaded = JsonSerializer.Deserialize(Of BotConfig)(JsonSerializer.Serialize(config))
+        Check(loaded.AutoLootForceForeground, "Foreground toggle must survive profile JSON")
+    End Sub
+
+    Private Sub ArrowHoldSchedule()
+        Dim schedule As New AutoLootArrowHoldSchedule()
+        Dim settings As New AutoLootArrowHoldSettings With {.LeftEnabled = True, .RightEnabled = True, .LeftIntervalMs = 2000, .RightIntervalMs = 5000}
+        Dim now As New DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc)
+        Check(schedule.TryStart(settings, now) = &H25, "Left starts first when both are initially due")
+        Check(schedule.TryStart(settings, now.AddSeconds(1)) = 0, "Right cannot start while Left is held")
+        schedule.Complete(now.AddSeconds(1))
+        Check(schedule.TryStart(settings, now.AddSeconds(1)) = &H27, "Right starts after Left releases")
+        schedule.Complete(now.AddSeconds(2))
+        Check(schedule.TryStart(settings, now.AddSeconds(2.9)) = 0, "Left interval starts at release, not press")
+        Check(schedule.TryStart(settings, now.AddSeconds(3)) = &H25, "Left uses its shorter independent interval")
+        schedule.Complete(now.AddSeconds(3.5))
+        settings.LeftEnabled = False
+        Check(schedule.TryStart(settings, now.AddSeconds(6.9)) = 0, "Disabled Left stays off and Right waits its full interval")
+        Check(schedule.TryStart(settings, now.AddSeconds(7)) = &H27, "Right uses its own five-second interval")
+        schedule.Complete(now.AddSeconds(8))
+        settings.RightEnabled = False
+        Check(schedule.TryStart(settings, now.AddHours(1)) = 0, "Both disabled must produce no holds")
+    End Sub
+
+    Private Sub ArrowHoldPersistence()
+        Dim config As New BotConfig With {.AutoLootArrowHolds = New AutoLootArrowHoldSettings With {
+            .LeftEnabled = True, .RightEnabled = True, .LeftHoldMs = 700, .RightHoldMs = 1500,
+            .LeftIntervalMs = 3300, .RightIntervalMs = 12900}}
+        Dim loaded = JsonSerializer.Deserialize(Of BotConfig)(JsonSerializer.Serialize(config)).AutoLootArrowHolds
+        Check(loaded.LeftEnabled AndAlso loaded.RightEnabled, "Enable switches must survive profile JSON")
+        Check(loaded.LeftHoldMs = 700 AndAlso loaded.RightHoldMs = 1500 AndAlso loaded.LeftIntervalMs = 3300 AndAlso loaded.RightIntervalMs = 12900, "All independent timing values must survive profile JSON")
+        Dim legacy = JsonSerializer.Deserialize(Of BotConfig)("{}")
+        Check(Not legacy.AutoLootArrowHolds.LeftEnabled AndAlso Not legacy.AutoLootArrowHolds.RightEnabled, "Older profiles must leave arrow holds disabled")
+        loaded.LeftHoldMs = -1
+        loaded.RightHoldMs = Integer.MaxValue
+        loaded.LeftIntervalMs = 0
+        loaded.RightIntervalMs = Integer.MaxValue
+        Check(loaded.HoldMs(&H25) = 100 AndAlso loaded.HoldMs(&H27) = 60000, "Hold duration must be bounded")
+        Check(loaded.IntervalMs(&H25) = 100 AndAlso loaded.IntervalMs(&H27) = 3600000, "Wait interval must be bounded")
+    End Sub
+
+    Private Sub PickupTimerWaitsForScanner()
+        Dim engine As New BotEngine()
+        Dim config As New BotConfig With {.LootPickupEnabled = True, .LootScannerEnabled = True, .LootPickupIntervalMs = 1000,
+            .LootAllowedNames = New List(Of String) From {"Test loot"}}
+        Dim flags = Reflection.BindingFlags.Instance Or Reflection.BindingFlags.NonPublic
+        Dim pickup = GetType(BotEngine).GetMethod("TryHandleLootPickup", flags)
+        Dim lastPickup = GetType(BotEngine).GetField("_lastLootPickup", flags)
+        pickup.Invoke(engine, New Object() {config, New IntPtr(-1), DateTime.UtcNow, False})
+        Check(DirectCast(lastPickup.GetValue(engine), DateTime) = DateTime.MinValue, "An elapsed timer alone must not attempt F")
+    End Sub
+
+    Private Sub CenteredLootPickup()
+        Dim size As New System.Drawing.Size(1000, 800)
+        Check(BotEngine.IsLootPickupCentered(New System.Drawing.Point(500, 400), size), "Screen center must permit pickup")
+        Check(BotEngine.IsLootPickupCentered(New System.Drawing.Point(550, 440), size), "Central 10% boundary must permit pickup")
+        Check(Not BotEngine.IsLootPickupCentered(New System.Drawing.Point(551, 400), size), "Distant horizontal loot must not interrupt walking")
+        Check(Not BotEngine.IsLootPickupCentered(New System.Drawing.Point(500, 441), size), "Distant vertical loot must not interrupt walking")
+        Check(Not BotEngine.IsLootPickupCentered(New System.Drawing.Point(100, 100), size), "An offset scan area's center is not the screen center")
+        Check(Not BotEngine.IsLootPickupCentered(System.Drawing.Point.Empty, System.Drawing.Size.Empty), "Missing frame must not permit pickup")
+        Check(BotEngine.IsLootPickupCentered(New System.Drawing.Point(960, 540), New System.Drawing.Size(1920, 1080)), "Center must scale with window resolution")
+        Dim now = DateTime.UtcNow
+        Check(BotEngine.IsLootPickupObservationFresh(now.AddMilliseconds(-500), now), "Fresh OCR must permit pickup")
+        Check(Not BotEngine.IsLootPickupObservationFresh(now.AddSeconds(-2), now), "Old OCR must not trigger F during later movement")
+        Check(Not BotEngine.IsLootPickupObservationFresh(DateTime.MinValue, now), "No detection must never permit timed F")
+        Check(Not BotEngine.IsLootPickupObservationFresh(now.AddSeconds(1), now), "Future timestamps must be rejected")
     End Sub
 
     Private Sub LootGridGeometry()
