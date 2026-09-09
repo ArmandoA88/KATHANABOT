@@ -714,6 +714,7 @@ Friend Module NativeMethods
     Friend Const MOUSEEVENTF_RIGHTUP As UInteger = &H10UI
     Friend Const SW_RESTORE As Integer = 9
     Friend Const SW_MINIMIZE As Integer = 6
+    Friend Const WDA_NONE As UInteger = 0UI
     Friend Const WDA_EXCLUDEFROMCAPTURE As UInteger = &H11UI
 
     <DllImport("user32.dll", SetLastError:=True)>

@@ -44,7 +44,9 @@ Friend Class LootDetectionOverlayForm
     Protected Overrides Sub OnHandleCreated(e As EventArgs)
         MyBase.OnHandleCreated(e)
         Try
-            NativeMethods.SetWindowDisplayAffinity(Handle, NativeMethods.WDA_EXCLUDEFROMCAPTURE)
+            ' Keep the overlay visible to desktop/display capture software so loot detections
+            ' appear in recorded videos. The click-through and no-activate styles remain active.
+            NativeMethods.SetWindowDisplayAffinity(Handle, NativeMethods.WDA_NONE)
         Catch
         End Try
     End Sub
