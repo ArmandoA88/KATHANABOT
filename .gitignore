@@ -44,8 +44,15 @@ patch*.ps1
 patch*.py
 Automatic.exe
 
-# Personal automation script with a hardcoded PIN, device IDs, and computer names - never commit
+# Personal Remote Desktop Mosaic tool - unrelated to KathanaBot, holds real session links/settings, never commit
 OpenAllRemoteDesktops.ps1
+OpenAllRemoteDesktops-README.txt
+RemoteDesktopLinks.txt
+RemoteDesktopNicknames.json
+RemoteDesktopMosaic.settings.json
+RemoteDesktopMosaic*.exe
+RemoteDesktopMosaic*.exe.bak*
+tools/RemoteDesktopMosaic/
 
 # Obsolete Python backend
 backend/
