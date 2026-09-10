@@ -188,11 +188,23 @@ Public Class BotConfig
     End Function
 
     Public Shared Function DefaultDisconnectMessageRect() As RectRegion
-        Return New RectRegion(0, 0, 360, 130)
+        Return New RectRegion(518, 319, 328, 125)
     End Function
 
     Public Shared Function DefaultDisconnectOkRect() As RectRegion
-        Return New RectRegion(151, 98, 59, 22)
+        Return New RectRegion(741, 415, 54, 15)
+    End Function
+
+    Public Shared Function DefaultResurrectDialogScanRect() As RectRegion
+        Return New RectRegion(522, 319, 328, 124)
+    End Function
+
+    Public Shared Function DefaultDeathMessageScanRect() As RectRegion
+        Return New RectRegion(515, 322, 328, 124)
+    End Function
+
+    Public Shared Function DefaultPartyListRect() As RectRegion
+        Return New RectRegion(2, 107, 168, 244)
     End Function
 
     Public Shared Function DefaultMapCoordinateRect() As RectRegion
@@ -281,15 +293,15 @@ Public Class BotConfig
     ' auto-accept above, because the resurrection confirmation dialog appears at a different screen
     ' position than party invites in this game and a single shared region can't cover both.
     Public Property ResurrectAutoAcceptEnabled As Boolean = False
-    Public Property ResurrectDialogScanRect As RectRegion = New RectRegion(349, 318, 328, 124)
+    Public Property ResurrectDialogScanRect As RectRegion = DefaultResurrectDialogScanRect()
     Public Property ResurrectDialogOkPointX As Integer = -1
     Public Property ResurrectDialogOkPointY As Integer = -1
     ' Death message: "If you click 'OK', you will respawn at the last saved location." Confirmed
     ' after 3 consecutive OCR reads, this pauses every combat-skill row (attack/buff/heal/mana/etc.)
     ' until HP is back to near-full - Auto Resurrect and everything else keep running during the pause.
     Public Property DeathMessagePauseEnabled As Boolean = False
-    Public Property DeathMessageScanRect As RectRegion = New RectRegion(349, 318, 328, 124)
-    Public Property PartyListRect As RectRegion = New RectRegion(0, 24, 168, 244)
+    Public Property DeathMessageScanRect As RectRegion = DefaultDeathMessageScanRect()
+    Public Property PartyListRect As RectRegion = DefaultPartyListRect()
     Public Property DisconnectMessageRect As RectRegion = DefaultDisconnectMessageRect()
     Public Property DisconnectOkRect As RectRegion = DefaultDisconnectOkRect()
     Public Property MapRect As RectRegion = New RectRegion(0, 0, 1024, 768)
@@ -536,6 +548,13 @@ Public Class BotConfig
         If cfg Is Nothing Then
             Return
         End If
+
+        ' Fill absent regions only. A saved calibration, even an older default, belongs to the user.
+        If cfg.ResurrectDialogScanRect Is Nothing Then cfg.ResurrectDialogScanRect = DefaultResurrectDialogScanRect()
+        If cfg.DeathMessageScanRect Is Nothing Then cfg.DeathMessageScanRect = DefaultDeathMessageScanRect()
+        If cfg.PartyListRect Is Nothing Then cfg.PartyListRect = DefaultPartyListRect()
+        If cfg.DisconnectMessageRect Is Nothing Then cfg.DisconnectMessageRect = DefaultDisconnectMessageRect()
+        If cfg.DisconnectOkRect Is Nothing Then cfg.DisconnectOkRect = DefaultDisconnectOkRect()
 
         If cfg.FullSupportSelfActions Is Nothing OrElse cfg.FullSupportSelfActions.Count = 0 Then
             cfg.FullSupportSelfActions = CreateDefaultFullSupportSelfActions()
@@ -1462,6 +1481,14 @@ Public Class BotEngine
             _config = cfg
         End SyncLock
         SetCaptureBackendPreference(If(cfg?.CaptureBackendPreference, "auto"))
+        _windowResponsivenessMonitor.UpdateTarget(cfg)
+    End Sub
+
+    Public Event GameResponsivenessChanged(unresponsive As Boolean)
+    Private ReadOnly _windowResponsivenessMonitor As New GameWindowResponsivenessMonitor(AddressOf OnGameResponsivenessChanged)
+
+    Private Sub OnGameResponsivenessChanged(unresponsive As Boolean)
+        RaiseEvent GameResponsivenessChanged(unresponsive)
     End Sub
 
     Public Function GetStatus() As BotStatus
@@ -1862,9 +1889,11 @@ Public Class BotEngine
         End SyncLock
         ClearLatestLoopFrame()
         RaiseEvent LogLine("Bot loop started.")
+        _windowResponsivenessMonitor.Start(_config)
     End Sub
 
     Public Sub [Stop]()
+        _windowResponsivenessMonitor.Stop()
         Dim localTask As Task = Nothing
         SyncLock _sync
             If _cts IsNot Nothing Then
@@ -2501,9 +2530,7 @@ Public Class BotEngine
                 lootScanWatch.Stop()
                 RecordTiming(_lootScanTiming, lootScanWatch.Elapsed.TotalMilliseconds)
                 TryHandlePendingLootPickupVerification(cfg, hwnd, frame, now, mobNameRegion)
-                If cfg.LootScannerEnabled AndAlso deferOptionalWork AndAlso activeHwnd = hwnd AndAlso (Not _lootScannerCapturePending) Then
-                    MarkOptionalWorkDeferred()
-                ElseIf cfg.LootScannerEnabled AndAlso activeHwnd = hwnd AndAlso (Not _lootScannerCapturePending) AndAlso (now - _lastRightAltAt).TotalMilliseconds >= Math.Max(100, Math.Min(20000, cfg.LootScannerIntervalMs)) Then
+                If IsLootScannerCaptureDue(cfg, hwnd, activeHwnd, now) Then
                     BeginLootScannerCapture(now)
                 End If
             End If
@@ -3246,6 +3273,16 @@ Public Class BotEngine
 
         ReleaseLootScannerAltKey()
         ClearLatestLoopFrame()
+    End Function
+
+    Private Function IsLootScannerCaptureDue(cfg As BotConfig, hwnd As IntPtr, activeHwnd As IntPtr, now As DateTime) As Boolean
+        ' Hold-place coordinate OCR and movement can keep adaptive mode active indefinitely.
+        ' Loot is user-scheduled work: never starve it behind the optional-work gate.
+        ' Keep only one capture/OCR in flight even when OCR takes longer than the interval.
+        Return cfg.LootScannerEnabled AndAlso hwnd <> IntPtr.Zero AndAlso activeHwnd = hwnd AndAlso
+            Not _lootScannerCapturePending AndAlso
+            (_lootScannerProcessingTask Is Nothing OrElse _lootScannerProcessingTask.IsCompleted) AndAlso
+            (now - _lastRightAltAt).TotalMilliseconds >= Math.Max(100, Math.Min(20000, cfg.LootScannerIntervalMs))
     End Function
 
     Private Sub BeginLootScannerCapture(now As DateTime)
@@ -9122,7 +9159,7 @@ Public Class BotEngine
             Return False
         End If
 
-        Dim region As RectRegion = If(cfg.ResurrectDialogScanRect, New RectRegion(349, 318, 328, 124))
+        Dim region As RectRegion = If(cfg.ResurrectDialogScanRect, BotConfig.DefaultResurrectDialogScanRect())
         Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
         If rect.Width <= 1 OrElse rect.Height <= 1 Then
             Return False
@@ -9230,7 +9267,7 @@ Public Class BotEngine
             Return _combatPausedForDeath
         End If
 
-        Dim region As RectRegion = If(cfg.DeathMessageScanRect, New RectRegion(349, 318, 328, 124))
+        Dim region As RectRegion = If(cfg.DeathMessageScanRect, BotConfig.DefaultDeathMessageScanRect())
         Dim rect As Rectangle = region.Clamp(frame.Width, frame.Height)
         If rect.Width <= 1 OrElse rect.Height <= 1 Then
             Return _combatPausedForDeath
@@ -13130,8 +13167,8 @@ Public Class BotEngine
         pranaExpRect = CloneRegion(cfg.PranaExpRect)
         rupiahsRect = CloneRegion(cfg.RupiahsRect)
         partyInviteScanRect = CloneRegion(cfg.PartyInviteScanRect)
-        partyListRect = CloneRegion(cfg.PartyListRect)
-        disconnectMessageRect = CloneRegion(cfg.DisconnectMessageRect)
+        partyListRect = CloneRegion(If(cfg.PartyListRect, BotConfig.DefaultPartyListRect()))
+        disconnectMessageRect = CloneRegion(If(cfg.DisconnectMessageRect, BotConfig.DefaultDisconnectMessageRect()))
         mapCoordinateXRect = CloneRegion(GetEffectiveMapCoordinateXRect(cfg))
         mapCoordinateYRect = CloneRegion(GetEffectiveMapCoordinateYRect(cfg))
         chatRect = CloneRegion(cfg.ChatRect)
@@ -13157,8 +13194,7 @@ Public Class BotEngine
         pranaExpRect = ScaleRegionLeftTop(cfg.PranaExpRect, sx, sy)
         rupiahsRect = ScaleRegionLeftTop(cfg.RupiahsRect, sx, sy)
         partyInviteScanRect = ScaleRegionLeftTop(cfg.PartyInviteScanRect, sx, sy)
-        partyListRect = ScaleRegionLeftTop(cfg.PartyListRect, sx, sy)
-        disconnectMessageRect = ScaleRegionLeftTop(cfg.DisconnectMessageRect, sx, sy)
+        ' These calibrated overlays use the exact client-pixel coordinates shown in Vision.
         mapCoordinateXRect = ScaleRegionLeftTop(GetEffectiveMapCoordinateXRect(cfg), sx, sy)
         mapCoordinateYRect = ScaleRegionLeftTop(GetEffectiveMapCoordinateYRect(cfg), sx, sy)
         chatRect = ScaleRegionLeftTop(cfg.ChatRect, sx, sy)
@@ -13167,17 +13203,7 @@ Public Class BotEngine
     Public Shared Function ResolveDisconnectOkRegion(cfg As BotConfig, clientWidth As Integer, clientHeight As Integer) As RectRegion
         Dim effectiveConfig As BotConfig = If(cfg, BotConfig.CreateDefault())
         Dim source As RectRegion = If(effectiveConfig.DisconnectOkRect, BotConfig.DefaultDisconnectOkRect())
-        If clientWidth <= 0 OrElse clientHeight <= 0 Then
-            Return CloneRegion(source)
-        End If
-
-        If IsDefaultVisionLayout(effectiveConfig) AndAlso
-           Not (clientWidth = BaseClientWidth AndAlso clientHeight = BaseClientHeight) Then
-            Dim sx As Double = clientWidth / CDbl(BaseClientWidth)
-            Dim sy As Double = clientHeight / CDbl(BaseClientHeight)
-            Return ScaleRegionLeftTop(source, sx, sy)
-        End If
-
+        ' Match the overlay table exactly, for both factory and user-calibrated coordinates.
         Return CloneRegion(source)
     End Function
 
@@ -13259,7 +13285,7 @@ Public Class BotEngine
                SameRegion(cfg.PranaExpRect, New RectRegion(472, 745, 78, 21)) AndAlso
                SameRegion(cfg.RupiahsRect, New RectRegion(560, 745, 110, 21)) AndAlso
                SameRegion(cfg.PartyInviteScanRect, New RectRegion(349, 318, 328, 124)) AndAlso
-               SameRegion(cfg.PartyListRect, New RectRegion(0, 24, 168, 244)) AndAlso
+               SameRegion(cfg.PartyListRect, BotConfig.DefaultPartyListRect()) AndAlso
                SameRegion(cfg.DisconnectMessageRect, BotConfig.DefaultDisconnectMessageRect()) AndAlso
                SameRegion(cfg.DisconnectOkRect, BotConfig.DefaultDisconnectOkRect()) AndAlso
                SameRegion(cfg.MapCoordinateRect, BotConfig.DefaultMapCoordinateRect()) AndAlso

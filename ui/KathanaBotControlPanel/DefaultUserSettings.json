@@ -221,7 +221,7 @@
       "ResurrectAutoAcceptEnabled": true,
       "ResurrectDialogScanRect": {
         "X": 522,
-        "Y": 318,
+        "Y": 319,
         "W": 328,
         "H": 124
       },
@@ -229,27 +229,27 @@
       "ResurrectDialogOkPointY": 426,
       "DeathMessagePauseEnabled": true,
       "DeathMessageScanRect": {
-        "X": 520,
-        "Y": 324,
+        "X": 515,
+        "Y": 322,
         "W": 328,
         "H": 124
       },
       "PartyListRect": {
-        "X": 0,
-        "Y": 230,
-        "W": 167,
-        "H": 270
+        "X": 2,
+        "Y": 107,
+        "W": 168,
+        "H": 244
       },
       "DisconnectMessageRect": {
-        "X": 516,
-        "Y": 323,
-        "W": 326,
-        "H": 121
+        "X": 518,
+        "Y": 319,
+        "W": 328,
+        "H": 125
       },
       "DisconnectOkRect": {
-        "X": 745,
-        "Y": 414,
-        "W": 40,
+        "X": 741,
+        "Y": 415,
+        "W": 54,
         "H": 15
       },
       "MapRect": {

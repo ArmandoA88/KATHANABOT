@@ -37,6 +37,13 @@ Module Program
         Test("blocked loot cell yields to nearest alternative then retries", AddressOf LootAlternativeSelection)
         Test("loot pickup requires a centered fresh observation", AddressOf CenteredLootPickup)
         Test("pickup timer cannot fire without a scanner observation", AddressOf PickupTimerWaitsForScanner)
+        Test("hold-place slow loops cannot starve scheduled loot scans", AddressOf LootScannerSurvivesSlowLoops)
+        Test("window freeze alerts confirm, deduplicate, recover and rearm", AddressOf WindowFreezeTransitions)
+        Test("window freeze monitoring resets across gaps and target changes", AddressOf WindowFreezeResets)
+        Test("window responsiveness monitor starts and stops independently", AddressOf WindowFreezeLifecycle)
+        Test("native hung window triggers background freeze and recovery alerts", AddressOf NativeWindowFreeze)
+        Test("overlay defaults match factory and embedded settings and preserve saved edits", AddressOf OverlayDefaultsAndPersistence)
+        Test("overlay runtime coordinates stay equal to the calibration table", AddressOf OverlayRuntimeCoordinates)
         Test("arrow holds serialize directions and use release-based intervals", AddressOf ArrowHoldSchedule)
         Test("arrow hold settings persist and clamp invalid timings", AddressOf ArrowHoldPersistence)
         Test("auto-loot foreground toggle requires active Full auto-loot", AddressOf AutoLootForegroundToggle)
@@ -98,6 +105,187 @@ Module Program
         Check(config.LootAllowedNames.SequenceEqual(defaults), "New configurations must contain all defaults")
         config.LootAllowedNames.Clear()
         Check(New BotConfig().LootAllowedNames.Count = 81, "Configurations must have independent editable lists")
+    End Sub
+
+    Private Sub CheckOverlayDefaults(cfg As BotConfig)
+        Dim actual = New RectRegion() {cfg.ResurrectDialogScanRect, cfg.DeathMessageScanRect, cfg.PartyListRect, cfg.DisconnectMessageRect, cfg.DisconnectOkRect}
+        Dim expected = New String() {"522,319,328,124", "515,322,328,124", "2,107,168,244", "518,319,328,125", "741,415,54,15"}
+        For i = 0 To actual.Length - 1
+            Dim r = actual(i)
+            Check($"{r.X},{r.Y},{r.W},{r.H}" = expected(i), "Overlay default mismatch at index " & i)
+        Next
+    End Sub
+
+    Private Sub OverlayDefaultsAndPersistence()
+        CheckOverlayDefaults(New BotConfig())
+        CheckOverlayDefaults(BotConfig.CreateDefault())
+        CheckOverlayDefaults(JsonSerializer.Deserialize(Of BotConfig)("{}"))
+        Using stream = GetType(BotConfig).Assembly.GetManifestResourceStream("KathanaBotControlPanel.DefaultUserSettings.json")
+            Using json = JsonDocument.Parse(stream)
+                CheckOverlayDefaults(JsonSerializer.Deserialize(Of BotConfig)(json.RootElement.GetProperty("Full").GetProperty("SavedConfig").GetRawText()))
+            End Using
+        End Using
+        Dim cfg As New BotConfig()
+        Dim properties = New String() {"ResurrectDialogScanRect", "DeathMessageScanRect", "PartyListRect", "DisconnectMessageRect", "DisconnectOkRect"}
+        For Each name In properties
+            GetType(BotConfig).GetProperty(name).SetValue(cfg, New RectRegion(41, 52, 63, 74))
+        Next
+        Dim loaded = JsonSerializer.Deserialize(Of BotConfig)(JsonSerializer.Serialize(cfg))
+        BotConfig.MigrateLegacyVisionLayout(loaded)
+        For Each name In properties
+            Dim r = DirectCast(GetType(BotConfig).GetProperty(name).GetValue(loaded), RectRegion)
+            Check($"{r.X},{r.Y},{r.W},{r.H}" = "41,52,63,74", "Saved user values must survive loading/migration for " & name)
+            GetType(BotConfig).GetProperty(name).SetValue(loaded, Nothing)
+        Next
+        BotConfig.MigrateLegacyVisionLayout(loaded)
+        CheckOverlayDefaults(loaded)
+        loaded.PartyListRect.X = 99
+        CheckOverlayDefaults(New BotConfig())
+    End Sub
+
+    Private Sub OverlayRuntimeCoordinates()
+        Dim cfg As New BotConfig()
+        Dim flags = Reflection.BindingFlags.Static Or Reflection.BindingFlags.NonPublic
+        For Each size In New Integer() {1024, 1366, 1920}
+            Dim args As Object() = {cfg, size, 1080, Nothing, Nothing, Nothing, Nothing, Nothing, Nothing, Nothing, Nothing, Nothing, Nothing, Nothing, Nothing, Nothing}
+            GetType(BotEngine).GetMethod("ResolveVisionRegions", flags).Invoke(Nothing, args)
+            Dim party = DirectCast(args(11), RectRegion)
+            Dim disconnect = DirectCast(args(12), RectRegion)
+            Check($"{party.X},{party.Y},{party.W},{party.H}" = "2,107,168,244", "Party region must not silently scale")
+            Check($"{disconnect.X},{disconnect.Y},{disconnect.W},{disconnect.H}" = "518,319,328,125", "Disconnect region must not silently scale")
+            Dim ok = BotEngine.ResolveDisconnectOkRegion(cfg, size, 1080)
+            Check($"{ok.X},{ok.Y},{ok.W},{ok.H}" = "741,415,54,15", "Disconnect OK must not silently scale")
+        Next
+    End Sub
+
+    Private Sub NativeWindowFreeze()
+        Using ready As New System.Threading.ManualResetEventSlim(), release As New System.Threading.ManualResetEventSlim(),
+              frozen As New System.Threading.ManualResetEventSlim(), recovered As New System.Threading.ManualResetEventSlim()
+            Dim window As System.Windows.Forms.Form = Nothing
+            Dim hwnd As IntPtr
+            Dim worker As New System.Threading.Thread(Sub()
+                                                         Using testWindow As New System.Windows.Forms.Form()
+                                                             window = testWindow
+                                                             hwnd = testWindow.Handle
+                                                             testWindow.BeginInvoke(New Action(Sub()
+                                                                                                  ready.Set()
+                                                                                                  Dim limit = Environment.TickCount64 + 50000
+                                                                                                  While Not release.IsSet AndAlso Environment.TickCount64 < limit
+                                                                                                      System.Threading.Thread.Sleep(20)
+                                                                                                  End While
+                                                                                              End Sub))
+                                                             System.Windows.Forms.Application.Run()
+                                                         End Using
+                                                     End Sub)
+            worker.IsBackground = True
+            worker.SetApartmentState(System.Threading.ApartmentState.STA)
+            Dim monitor As New GameWindowResponsivenessMonitor(Sub(hung)
+                                                                   If hung Then
+                                                                       frozen.Set()
+                                                                   Else
+                                                                       recovered.Set()
+                                                                   End If
+                                                               End Sub)
+            worker.Start()
+            Try
+                Check(ready.Wait(TimeSpan.FromSeconds(5)), "Test window must start")
+                monitor.Start(New BotConfig With {.SelectedWindowHandle = hwnd})
+                Check(frozen.Wait(TimeSpan.FromSeconds(35)), "Independent timer must detect an actually hung Windows message loop")
+                release.Set()
+                Check(recovered.Wait(TimeSpan.FromSeconds(10)), "Resumed message loop must trigger recovery")
+            Finally
+                monitor.Stop()
+                release.Set()
+                If window IsNot Nothing AndAlso window.IsHandleCreated Then
+                    window.BeginInvoke(New Action(Sub() System.Windows.Forms.Application.ExitThread()))
+                End If
+                worker.Join(5000)
+            End Try
+        End Using
+    End Sub
+
+    Private Sub WindowFreezeTransitions()
+        Dim state As New GameWindowResponsivenessState()
+        Dim hwnd As New IntPtr(123)
+        For Each at In New Long() {0, 5000, 10000}
+            Check(state.Observe(hwnd, True, at) = 0, "Short stalls must not alert")
+        Next
+        Check(state.Observe(hwnd, True, 15000) = 1, "Continuous 15-second hang must alert")
+        For Each at In New Long() {20000, 25000, 30000}
+            Check(state.Observe(hwnd, True, at) = 0, "One alert per incident")
+        Next
+        Check(state.Observe(hwnd, False, 35000) = -1, "Recovery must notify once")
+        Check(state.Observe(hwnd, False, 40000) = 0, "Healthy window must not repeat recovery")
+        For Each at In New Long() {45000, 50000, 55000}
+            Check(state.Observe(hwnd, True, at) = 0, "New incident needs confirmation")
+        Next
+        Check(state.Observe(hwnd, True, 60000) = 1, "New incident must rearm")
+    End Sub
+
+    Private Sub WindowFreezeResets()
+        Dim state As New GameWindowResponsivenessState()
+        Dim hwnd As New IntPtr(123)
+        state.Observe(hwnd, True, 0)
+        state.Observe(hwnd, True, 5000)
+        Check(state.Observe(hwnd, False, 10000) = 0, "Brief stall recovery must not alert")
+        state.Observe(hwnd, True, 15000)
+        Check(state.Observe(hwnd, True, 60000) = 0, "Sleep or missing samples must not count as a hang")
+        state.Observe(hwnd, True, 65000)
+        Check(state.Observe(New IntPtr(456), True, 70000) = 0, "Switching window must reset confirmation")
+        Check(state.Observe(IntPtr.Zero, False, 75000) = 0, "Closed window is not a recovered window")
+        Check(state.Observe(hwnd, True, 80000) = 0, "Reappearing window needs fresh confirmation")
+        state.Reset()
+        Check(state.Observe(hwnd, False, 85000) = 0, "Stopped monitoring must not send recovery")
+    End Sub
+
+    Private Sub WindowFreezeLifecycle()
+        Dim notifications As Integer = 0
+        Dim monitor As New GameWindowResponsivenessMonitor(Sub(hung) notifications += 1)
+        Dim flags = Reflection.BindingFlags.Instance Or Reflection.BindingFlags.NonPublic
+        Dim monitorType = GetType(GameWindowResponsivenessMonitor)
+        Using window As New System.Windows.Forms.Form()
+            Dim cfg As New BotConfig With {.SelectedWindowHandle = window.Handle}
+            monitor.Start(cfg)
+            Check(monitorType.GetField("_timer", flags).GetValue(monitor) IsNot Nothing, "Start must create an independent timer")
+            monitorType.GetMethod("CheckWindow", flags).Invoke(monitor, New Object() {Nothing})
+            Check(notifications = 0, "Responsive native window must not alert")
+            monitor.Stop()
+            Check(monitorType.GetField("_timer", flags).GetValue(monitor) Is Nothing, "Stop must dispose timer")
+            monitorType.GetMethod("CheckWindow", flags).Invoke(monitor, New Object() {Nothing})
+            Check(notifications = 0, "Queued callback after stop must not alert")
+        End Using
+    End Sub
+
+    Private Sub LootScannerSurvivesSlowLoops()
+        Dim engine As New BotEngine()
+        Dim flags = Reflection.BindingFlags.Instance Or Reflection.BindingFlags.NonPublic
+        Dim engineType = GetType(BotEngine)
+        Dim cfg As New BotConfig With {.HoldPlaceEnabled = True, .LootScannerEnabled = True, .LootScannerIntervalMs = 1000}
+        engineType.GetField("_config", flags).SetValue(engine, cfg)
+        Dim completeLoop = engineType.GetMethod("RecordLoopCompletion", flags)
+        Dim due = engineType.GetMethod("IsLootScannerCaptureDue", flags)
+        Dim hwnd As New IntPtr(123)
+        Dim now = _clock
+        For scan = 1 To 30
+            completeLoop.Invoke(engine, New Object() {750.0R, 80})
+            now = now.AddSeconds(1)
+            Check(CBool(due.Invoke(engine, New Object() {cfg, hwnd, hwnd, now})), "Scheduled loot must continue throughout slow hold-place loops")
+            engineType.GetField("_lastRightAltAt", flags).SetValue(engine, now)
+            Check(Not CBool(due.Invoke(engine, New Object() {cfg, hwnd, hwnd, now.AddMilliseconds(999)})), "Scanner must respect its interval")
+        Next
+        Check(CBool(engineType.GetField("_adaptivePerformanceActive", flags).GetValue(engine)), "Regression must exercise sustained adaptive mode")
+        now = now.AddSeconds(1)
+        Check(Not CBool(due.Invoke(engine, New Object() {cfg, hwnd, IntPtr.Zero, now})), "Focus loss must block scans")
+        engineType.GetField("_lootScannerCapturePending", flags).SetValue(engine, True)
+        Check(Not CBool(due.Invoke(engine, New Object() {cfg, hwnd, hwnd, now})), "Pending capture must not overlap")
+        engineType.GetField("_lootScannerCapturePending", flags).SetValue(engine, False)
+        Dim pending As New System.Threading.Tasks.TaskCompletionSource(Of Boolean)()
+        engineType.GetField("_lootScannerProcessingTask", flags).SetValue(engine, pending.Task)
+        Check(Not CBool(due.Invoke(engine, New Object() {cfg, hwnd, hwnd, now})), "Busy OCR must not overlap")
+        pending.SetResult(True)
+        Check(CBool(due.Invoke(engine, New Object() {cfg, hwnd, hwnd, now})), "Completed OCR must allow the next scan")
+        cfg.LootScannerEnabled = False
+        Check(Not CBool(due.Invoke(engine, New Object() {cfg, hwnd, hwnd, now})), "Disabled scanner must stay off")
     End Sub
 
     Private Sub AutoLootForegroundToggle()

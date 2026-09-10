@@ -2499,6 +2499,8 @@ Partial Public Class Form1
         AddHandler _liteEngine.LogLine, Sub(line As String) OnEngineLogLine(BotEdition.Lite, line)
         AddHandler _fullEngine.LootAwardDetected, AddressOf OnLootAwardDetected
         AddHandler _fullEngine.LootGridDetected, AddressOf OnLootGridDetected
+        AddHandler _fullEngine.GameResponsivenessChanged, Sub(hung) OnGameResponsivenessChanged(BotEdition.Full, hung)
+        AddHandler _liteEngine.GameResponsivenessChanged, Sub(hung) OnGameResponsivenessChanged(BotEdition.Lite, hung)
         InitializeInGameBotToggle()
 
         _uiTimer.Interval = 1000
@@ -9009,9 +9011,9 @@ Partial Public Class Form1
         dgvRegions.Rows.Add(True, "prana_exp_rect", "472", "745", "78", "21")
         dgvRegions.Rows.Add(True, "rupiahs_rect", "560", "745", "110", "21")
         dgvRegions.Rows.Add(True, "party_invite_scan_rect", "349", "318", "328", "124")
-        dgvRegions.Rows.Add(True, "resurrect_scan_rect", "349", "318", "328", "124")
-        dgvRegions.Rows.Add(True, "death_message_rect", "349", "318", "328", "124")
-        dgvRegions.Rows.Add(True, "party_list_rect", "0", "24", "168", "244")
+        UpsertRegionRow("resurrect_scan_rect", BotConfig.DefaultResurrectDialogScanRect())
+        UpsertRegionRow("death_message_rect", BotConfig.DefaultDeathMessageScanRect())
+        UpsertRegionRow("party_list_rect", BotConfig.DefaultPartyListRect())
         Dim defaultDisconnect As RectRegion = BotConfig.DefaultDisconnectMessageRect()
         dgvRegions.Rows.Add(True, "disconnect_message_rect", defaultDisconnect.X.ToString(), defaultDisconnect.Y.ToString(), defaultDisconnect.W.ToString(), defaultDisconnect.H.ToString())
         Dim defaultDisconnectOk As RectRegion = BotConfig.DefaultDisconnectOkRect()
@@ -15540,6 +15542,28 @@ Partial Public Class Form1
         Return IntPtr.Zero
     End Function
 
+    Private Sub OnGameResponsivenessChanged(edition As BotEdition, unresponsive As Boolean)
+        If IsDisposed OrElse Disposing OrElse Not IsHandleCreated Then Return
+        Try
+            BeginInvoke(New Action(Async Sub()
+                                       If IsDisposed OrElse Disposing Then Return
+                                       Dim title = $"KathanaBot {edition}: Game " & If(unresponsive, "Not Responding", "Responding Again")
+                                       Dim body = If(unresponsive,
+                                           "The game window has been reported unresponsive for at least 15 seconds. Please check the game.",
+                                           "The game window is responding again after the freeze alert.")
+                                       AppendLog(title & ". " & body)
+                                       Try
+                                           Dim sent = Await SendPhoneNotificationAsync(title, body, DeathNotificationRetryCount)
+                                           AppendLogSafe(If(sent, "Game responsiveness notification sent.", "Game responsiveness notification failed; check notification settings and connection."))
+                                       Catch ex As Exception
+                                           AppendLogSafe("Game responsiveness notification failed: " & ex.Message)
+                                       End Try
+                                   End Sub))
+        Catch ex As InvalidOperationException
+            ' Form is closing while a background check completes.
+        End Try
+    End Sub
+
     Private Sub HandleGameDisconnectedAlert(status As BotStatus)
         If status Is Nothing Then
             Return
@@ -16336,9 +16360,9 @@ Partial Public Class Form1
         cfg.PranaExpRect = BuildRect("prana_exp_rect")
         cfg.RupiahsRect = BuildRect("rupiahs_rect")
         cfg.PartyInviteScanRect = BuildRect("party_invite_scan_rect")
-        cfg.ResurrectDialogScanRect = BuildRect("resurrect_scan_rect")
-        cfg.DeathMessageScanRect = BuildRect("death_message_rect")
-        cfg.PartyListRect = BuildRect("party_list_rect")
+        cfg.ResurrectDialogScanRect = BuildRectOrFallback("resurrect_scan_rect", BotConfig.DefaultResurrectDialogScanRect())
+        cfg.DeathMessageScanRect = BuildRectOrFallback("death_message_rect", BotConfig.DefaultDeathMessageScanRect())
+        cfg.PartyListRect = BuildRectOrFallback("party_list_rect", BotConfig.DefaultPartyListRect())
         cfg.DisconnectMessageRect = BuildRectOrFallback("disconnect_message_rect", BotConfig.DefaultDisconnectMessageRect())
         cfg.DisconnectOkRect = BuildRectOrFallback("disconnect_ok_rect", BotConfig.DefaultDisconnectOkRect())
         cfg.MapRect = BuildRectOrFallback("map_rect", New RectRegion(0, 0, 1024, 768))
@@ -18083,9 +18107,9 @@ Partial Public Class Form1
         UpsertRegionRow("prana_exp_rect", cfg.PranaExpRect)
         UpsertRegionRow("rupiahs_rect", cfg.RupiahsRect)
         UpsertRegionRow("party_invite_scan_rect", cfg.PartyInviteScanRect)
-        UpsertRegionRow("resurrect_scan_rect", If(cfg.ResurrectDialogScanRect, New RectRegion(349, 318, 328, 124)))
-        UpsertRegionRow("death_message_rect", If(cfg.DeathMessageScanRect, New RectRegion(349, 318, 328, 124)))
-        UpsertRegionRow("party_list_rect", cfg.PartyListRect)
+        UpsertRegionRow("resurrect_scan_rect", If(cfg.ResurrectDialogScanRect, BotConfig.DefaultResurrectDialogScanRect()))
+        UpsertRegionRow("death_message_rect", If(cfg.DeathMessageScanRect, BotConfig.DefaultDeathMessageScanRect()))
+        UpsertRegionRow("party_list_rect", If(cfg.PartyListRect, BotConfig.DefaultPartyListRect()))
         UpsertRegionRow("disconnect_message_rect", If(cfg.DisconnectMessageRect, BotConfig.DefaultDisconnectMessageRect()))
         UpsertRegionRow("disconnect_ok_rect", If(cfg.DisconnectOkRect, BotConfig.DefaultDisconnectOkRect()))
         RemoveRegionRow("map_rect")
