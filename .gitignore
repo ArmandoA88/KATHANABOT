@@ -4,6 +4,10 @@
 dist/
 standalone-exe/
 
+# Raw research/scraped data used to build the quiz knowledge index - not code, includes a nested
+# third-party clone with its own .git; the compiled/encrypted output is what actually ships.
+research/
+
 # User files
 **/*.user
 **/*.suo

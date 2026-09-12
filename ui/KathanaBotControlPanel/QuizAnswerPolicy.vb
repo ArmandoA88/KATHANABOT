@@ -7,6 +7,11 @@ Friend NotInheritable Class QuizAnswerPolicy
             answer.AnswerBasis = "web" AndAlso Not String.IsNullOrWhiteSpace(answer.Evidence)
     End Function
 
+    Public Shared Function HasLocalEvidence(answer As QuizSolveResult) As Boolean
+        Return answer IsNot Nothing AndAlso answer.SourceVerified AndAlso answer.AnswerBasis = "local" AndAlso
+            Not String.IsNullOrWhiteSpace(answer.Evidence) AndAlso Not String.IsNullOrWhiteSpace(answer.SourceUrl)
+    End Function
+
     Public Shared Function CanClick(answer As QuizSolveResult, buttonCount As Integer, ByRef reason As String) As Boolean
         reason = ""
         If answer Is Nothing OrElse Not answer.CanAnswer OrElse String.IsNullOrWhiteSpace(answer.QuestionText) OrElse String.IsNullOrWhiteSpace(answer.AnswerText) Then
@@ -29,8 +34,8 @@ Friend NotInheritable Class QuizAnswerPolicy
                 End If
                 Return True
             Case "game"
-                If answer.IsGuess OrElse Not HasWebEvidence(answer) OrElse answer.Confidence < 0.75 Then
-                    reason = "Kathana/Tantra answer could not be supported by a web source."
+                If answer.IsGuess OrElse (Not HasWebEvidence(answer) AndAlso Not HasLocalEvidence(answer)) OrElse answer.Confidence < 0.75 Then
+                    reason = "Kathana/Tantra answer could not be supported by the bundled index or a web source."
                     Return False
                 End If
             Case "general"
@@ -49,6 +54,7 @@ Friend NotInheritable Class QuizAnswerPolicy
 
     Public Shared Function MethodLabel(answer As QuizSolveResult) As String
         If answer.IsGuess Then Return "GM guess"
+        If HasLocalEvidence(answer) Then Return "Local Kathana index"
         If HasWebEvidence(answer) Then Return "Web-sourced"
         Return If(answer.Category = "general" AndAlso answer.AnswerBasis = "knowledge", "General knowledge", "Unverified")
     End Function

@@ -4,6 +4,7 @@ Imports System.Text.Json
 Imports System.Text.Json.Nodes
 Imports System.Threading
 Imports System.Threading.Tasks
+Imports System.Diagnostics
 
 Module Program
     Private _passed As Integer
@@ -11,6 +12,17 @@ Module Program
 
     Sub Main()
         Test("game answer needs real web evidence", AddressOf GameEvidence)
+        Test("game answer can use bundled local evidence", AddressOf LocalGameEvidence)
+        Test("bundled index matches NPC coordinates", AddressOf LocalNpcMatch)
+        Test("bundled index matches map monster levels", AddressOf LocalMonsterMatch)
+        Test("bundled index matches skill descriptions", AddressOf LocalSkillMatch)
+        Test("bundled index matches Chaturanga bosses", AddressOf LocalChaturangaMatch)
+        Test("bundled index matches caste master points", AddressOf LocalCasteMatch)
+        Test("bundled index matches refining stones", AddressOf LocalRefiningMatch)
+        Test("bundled index matches Tantra mythology", AddressOf LocalMythologyMatch)
+        Test("bundled index tolerates a one-character OCR error", AddressOf LocalOcrErrorMatch)
+        Test("bundled index understands alternative question wording", AddressOf LocalAliasMatch)
+        Test("bundled index stays fast after preload", AddressOf LocalIndexPerformance)
         Test("general knowledge can avoid search when confident", AddressOf GeneralKnowledge)
         Test("only personal GM trivia may be guessed", AddressOf GmGuesses)
         Test("invalid mappings cannot cause random clicks", AddressOf InvalidMapping)
@@ -85,6 +97,74 @@ Module Program
         result = Answer()
         result.Evidence = ""
         Check(Not Allowed(result), "A URL without supporting evidence is insufficient")
+    End Sub
+
+    Private Sub LocalGameEvidence()
+        Dim result = Answer("game", "local")
+        result.SearchPerformed = False
+        result.SourceVerified = True
+        result.SourceUrl = "https://kathana.gitbook.io/wiki"
+        result.Evidence = "Bundled Kathana index directly supports this choice."
+        Check(Allowed(result), "Bundled local evidence should answer without a web request")
+        Check(QuizAnswerPolicy.MethodLabel(result) = "Local Kathana index", "Local answers need a clear method label")
+        result.SourceVerified = False
+        Check(Not Allowed(result), "Unverified local data must not be accepted")
+    End Sub
+
+    Private Sub CheckLocalMatch(question As String, choices As String(), expected As Integer)
+        Dim chosen = -1
+        Dim evidence = ""
+        Dim source = ""
+        Dim confidence = 0.0R
+        Check(QuizLocalKnowledge.TryMatch(question, choices, chosen, evidence, source, confidence), "Expected a confident local match")
+        Check(chosen = expected, $"Expected choice {expected}, got {chosen}")
+        Check(confidence >= 0.75R AndAlso evidence.Length > 0 AndAlso source.StartsWith("https://"), "Local match must retain evidence and provenance")
+    End Sub
+
+    Private Sub LocalNpcMatch()
+        CheckLocalMatch("Which NPC is located at coordinates 482 274?", {"Blacksmith Vartan", "Security Soldier Abhei", "Tradesman Buvan", "Yena"}, 1)
+    End Sub
+
+    Private Sub LocalMonsterMatch()
+        CheckLocalMatch("Which Mandara monster is level 19?", {"Vasabhum", "Asidra", "Mlecchas", "Yena"}, 1)
+    End Sub
+
+    Private Sub LocalSkillMatch()
+        CheckLocalMatch("Which skill increases physical damage?", {"BALUKA", "DIBANDA", "PRAPAD", "SAMAYOGA"}, 0)
+    End Sub
+
+    Private Sub LocalChaturangaMatch()
+        CheckLocalMatch("Which Chaturanga boss is level 84?", {"Kibyo", "Byonmu", "Sangbyo", "Bubyo"}, 2)
+    End Sub
+
+    Private Sub LocalCasteMatch()
+        CheckLocalMatch("Which caste rank begins at 60001 Master Points?", {"Ksatriya 1", "Braman 3", "Avatara 3", "Mijung 3"}, 1)
+    End Sub
+
+    Private Sub LocalRefiningMatch()
+        CheckLocalMatch("Which refining stone covers levels plus 1 through plus 5?", {"Dipa Illa", "Illa", "Surapa", "Prajati"}, 1)
+    End Sub
+
+    Private Sub LocalMythologyMatch()
+        CheckLocalMatch("Which Hindu god carries a discus and conch and rides Garuda?", {"Brahma", "Vishnu", "Shiva", "Indra"}, 1)
+    End Sub
+
+    Private Sub LocalOcrErrorMatch()
+        CheckLocalMatch("Which refining stone covers levels plus 1 through plus 5?", {"Dipa llla", "llla", "Surapa", "Prajati"}, 1)
+    End Sub
+
+    Private Sub LocalAliasMatch()
+        CheckLocalMatch("Which NPC can be found at coordinate 482 274?", {"Blacksmith Vartan", "Security Soldier Abhei", "Tradesman Buvan", "Yena"}, 1)
+    End Sub
+
+    Private Sub LocalIndexPerformance()
+        QuizLocalKnowledge.WarmUpAsync().GetAwaiter().GetResult()
+        Dim watch = Stopwatch.StartNew()
+        For iteration = 1 To 20
+            CheckLocalMatch("Which Chaturanga boss is level 84?", {"Kibyo", "Byonmu", "Sangbyo", "Bubyo"}, 2)
+        Next
+        watch.Stop()
+        Check(watch.ElapsedMilliseconds < 1000, $"Twenty indexed searches took {watch.ElapsedMilliseconds} ms")
     End Sub
 
     Private Sub GeneralKnowledge()

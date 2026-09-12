@@ -4,17 +4,23 @@ The Quiz tab now distinguishes three kinds of question:
 
 | Question | Behavior |
 | --- | --- |
-| Kathana / Tantra Online game facts | Search online before answering. Require supporting evidence, a URL actually returned by search, and confidence of at least 75%. Skip unresolved or conflicting answers. |
+| Kathana / Tantra Online game facts | Read the question and choices with local Windows OCR, then search the bundled Kathana index first. A confident local match avoids the API entirely. Unresolved questions use the existing OpenAI/web lookup. |
 | General knowledge | Answer directly at 85% confidence or higher; use search for uncertain, obscure, or time-sensitive facts. Sourced answers require at least 75% confidence. |
 | Personal trivia about GMs/admins | Allow a best-effort choice among visible answers and label it **GM guess** unless supported by web evidence. Game mechanics or event rules mentioning a GM still require a game-fact lookup. |
 
-The prompt prioritizes the [Kathana wiki](https://kathana.gitbook.io/wiki) and official Kathana announcements, then relevant Tantra guides. It explicitly warns against using another private server's custom facts for Kathana or confusing game terminology with religious Tantra.
+The embedded `QuizKnowledge.dat` includes the full text published by the [Kathana wiki](https://kathana.gitbook.io/wiki), 124 joined wiki quest records, NPC coordinates and portals, and the server parameter export: 813 monster/boss records, 3,042 item records, and 591 quest definitions. It covers maps, jobs, skills, item descriptions and equip requirements, quest objectives and rewards, refining, Chaturanga, Kruma/caste Master Points, Biryu siege, gods, and a curated Tantra mythology reference. Server records come from the [Kathana data repository](https://github.com/dBuena/Kathana) linked by the wiki. Shared Tantra and mythology material is labeled by source and does not claim to be a Kathana-specific rate or mechanic.
+
+The knowledge payload is GZip-compressed, AES-encrypted, and included as a managed assembly resource. The published single-file application contains it inside the EXE and decrypts it only in memory. It is obfuscation against casual extraction rather than protection against a determined reverse engineer, because an offline application must also contain the decryption material. Runtime answer history must remain writable, so it is stored outside the immutable EXE as one Windows DPAPI-encrypted field; old plaintext history is migrated to that field during the next save.
+
+The local matcher requires one answer choice and the distinctive question terms to occur together in the same indexed fact, with a clear score margin over every other visible choice. Ambiguous OCR or evidence falls through to the API instead of causing a speculative click. Local results appear as **Local Kathana index** in the current answer and history.
+
+When Quiz Solver is enabled, it decrypts and indexes the bundled data in the background and prewarms Windows OCR before scanning. Each quiz normally uses one OCR pass for the question and every choice; an unreadable region alone receives a separate retry. An inverted token index, wording aliases, and unique one-character OCR corrections make local matching fast while retaining the confidence-margin safety check. After a click, the status and log show detection, OCR, database search, verification, click, and total timings.
 
 ## Speed and request limits
 
 The default remains `gpt-5.4-mini`; the existing `gpt-5-mini` selection is preserved. Both now use low reasoning rather than the old `none` setting. The response budget is 1,600 tokens, including reasoning and structured answer output; the previous 220-token limit left very little room to assess evidence.
 
-The normal path uses a single Responses API request with both existing images and the hosted `web_search` tool. Search context is `low`, with at most two tool actions. The model can avoid searches for straightforward general knowledge and personal GM guesses. If it returns a game answer without executing search, one additional request makes search mandatory. There is no silent fallback to an unsourced game guess.
+When local lookup is inconclusive, the fallback uses a single Responses API request with both existing images and the hosted `web_search` tool. Search context is `low`, with at most two tool actions. If it returns a game answer without executing search, one additional request makes search mandatory. There is no silent fallback to an unsourced game guess.
 
 All requests in one solve share a 30-second client deadline, including the existing fallback from Priority to standard processing if Priority is unavailable. A timeout, unsupported search, rate limit, incomplete response, or unresolved answer causes no click. Automatic retries wait 15 seconds; **Solve Now** can explicitly retry sooner. The local preview continues refreshing during requests and retry delays.
 

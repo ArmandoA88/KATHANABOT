@@ -191,6 +191,16 @@ Public NotInheritable Class OcrReader
         Return ReadScreenTextRegionsStaFallback(source, True)
     End Function
 
+    Public Shared Function ReadScreenTextRegions(source As Bitmap) As List(Of OcrTextRegion)
+        If source Is Nothing Then Return New List(Of OcrTextRegion)()
+        Try
+            Dim direct = ReadScreenTextRegionsInternal(source)
+            If direct IsNot Nothing AndAlso direct.Count > 0 Then Return direct
+        Catch
+        End Try
+        Return ReadScreenTextRegionsStaFallback(source)
+    End Function
+
     Private Shared Function ReadHpFractionStaFallback(source As Bitmap) As String
         Return RunOnStaWorker(Function() ReadHpFractionInternal(source), 900, "")
     End Function

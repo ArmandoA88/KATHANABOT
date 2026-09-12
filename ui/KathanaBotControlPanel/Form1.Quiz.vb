@@ -1,5 +1,8 @@
 Imports System.Threading
 Imports System.Threading.Tasks
+Imports System.Text.Json
+Imports System.Text.Json.Serialization
+Imports System.Diagnostics
 
 Partial Public Class Form1
     Private Const QuizUnlockSequence As String = "126974"
@@ -55,7 +58,9 @@ Partial Public Class Form1
         Public Property ReferenceClientHeight As Integer
         Public Property QuizRegion As RectRegion
         Public Property AnswersRegion As RectRegion
-        Public Property AnswerDatabase As List(Of PersistedQuizAnswer) = New List(Of PersistedQuizAnswer)()
+        Public Property EncryptedAnswerDatabase As String = ""
+        <JsonPropertyName("AnswerDatabase"), JsonIgnore(Condition:=JsonIgnoreCondition.WhenWritingNull)>
+        Public Property LegacyAnswerDatabase As List(Of PersistedQuizAnswer)
     End Class
 
     Private Function BuildQuizTab() As TabPage
@@ -303,7 +308,7 @@ Partial Public Class Form1
         End Try
     End Sub
 
-    Private Sub QuizSolverEnabledChanged(sender As Object, e As EventArgs)
+    Private Async Sub QuizSolverEnabledChanged(sender As Object, e As EventArgs)
         If _quizSettingsLoading Then Return
         If chkQuizSolverEnabled.Checked Then
             If Not ValidateQuizSetup(True) Then
@@ -312,10 +317,13 @@ Partial Public Class Form1
                 _quizSettingsLoading = False
                 Return
             End If
+            SetQuizStatus("Loading and indexing the encrypted quiz database...", ThemeAccent)
+            Await QuizLocalKnowledge.WarmUpAsync()
+            If Not chkQuizSolverEnabled.Checked Then Return
             _quizScanTimer.Interval = CInt(nudQuizScanMs.Value)
             _quizScanTimer.Start()
-            SetQuizStatus("Solver is watching for a quiz.", ThemeGood)
-            BeginInvoke(New Action(Async Sub() Await RunQuizSolverOnceAsync(False)))
+            SetQuizStatus("Solver is watching for a quiz; local database is ready.", ThemeGood)
+            Await RunQuizSolverOnceAsync(False)
         Else
             _quizScanTimer.Stop()
             If _quizCancellation IsNot Nothing Then _quizCancellation.Cancel()
@@ -330,10 +338,6 @@ Partial Public Class Form1
     End Sub
 
     Private Function ValidateQuizSetup(showMessages As Boolean) As Boolean
-        If String.IsNullOrWhiteSpace(_quizApiKey) Then
-            If showMessages Then ConfigureQuizApiKey()
-            If String.IsNullOrWhiteSpace(_quizApiKey) Then Return False
-        End If
         If _quizReferenceWidth <= 0 OrElse _quizReferenceHeight <= 0 OrElse _quizRegion Is Nothing OrElse _quizAnswersRegion Is Nothing Then
             If showMessages Then
                 MessageBox.Show(Me, "Calibrate the quiz and answer areas before enabling the solver.", "Quiz Solver", MessageBoxButtons.OK, MessageBoxIcon.Information)
@@ -367,6 +371,12 @@ Partial Public Class Form1
         Dim cancellationToken = _quizCancellation.Token
         Dim lookupStarted As Boolean = False
         Dim answerClicked As Boolean = False
+        Dim totalWatch = Stopwatch.StartNew()
+        Dim detectionWatch = Stopwatch.StartNew()
+        Dim detectionMs As Long = 0
+        Dim localTiming As New QuizLocalKnowledge.SolveTiming()
+        Dim verificationMs As Long = 0
+        Dim clickMs As Long = 0
         Try
             Dim selected = GetSelectedProcessWindowForEdition(BotEdition.Full)
             Dim hwnd = selected.MainWindowHandle
@@ -384,6 +394,7 @@ Partial Public Class Form1
                   quizImage = QuizImageTools.Crop(frame, quizArea),
                   answerImage = QuizImageTools.Crop(frame, answersArea)
                 buttons = QuizImageTools.DetectAnswerButtons(answerImage)
+                detectionMs = detectionWatch.ElapsedMilliseconds
                 Dim relativeAnswers As New Rectangle(answersArea.X - quizArea.X, answersArea.Y - quizArea.Y, answersArea.Width, answersArea.Height)
                 Dim marker = GetQuizClickMarker(quizArea, clientWidth, clientHeight)
                 Dim markedButton = If(marker.HasValue, _quizLastClickedButtonNumber, 0)
@@ -404,12 +415,21 @@ Partial Public Class Form1
                 End If
                 Using annotated = QuizImageTools.CreateAnnotatedQuiz(quizImage, relativeAnswers, buttons)
                     SetQuizPreview(annotated)
-                    SetQuizStatus($"Reading {buttons.Count} choices; checking Kathana / Tantra sources when needed...", ThemeAccent)
+                    SetQuizStatus($"Reading {buttons.Count} choices; checking the local Kathana index first...", ThemeAccent)
                     lblQuizEvidence.Links.Clear()
-                    lblQuizEvidence.Text = "Looking up the current question..."
+                    lblQuizEvidence.Text = "Reading locally; the API is used only if the bundled index cannot answer confidently."
                     Dim model = If(cboQuizModel.SelectedItem?.ToString(), DefaultQuizModel)
-                    lookupStarted = True
-                    Dim answer = Await QuizOpenAiClient.SolveAsync(_quizApiKey, model, quizImage, annotated, cancellationToken)
+                    Dim answer As QuizSolveResult = Nothing
+                    If Not QuizLocalKnowledge.TrySolve(quizImage, relativeAnswers, buttons, answer, localTiming) Then
+                        If manual AndAlso String.IsNullOrWhiteSpace(_quizApiKey) Then ConfigureQuizApiKey()
+                        If String.IsNullOrWhiteSpace(_quizApiKey) Then
+                            lookupStarted = True
+                            Throw New InvalidOperationException("No confident local answer was found and no OpenAI API key is configured for fallback.")
+                        End If
+                        SetQuizStatus("Local index was inconclusive; querying the API and web fallback...", ThemeAccent)
+                        lookupStarted = True
+                        answer = Await QuizOpenAiClient.SolveAsync(_quizApiKey, model, quizImage, annotated, cancellationToken)
+                    End If
                     cancellationToken.ThrowIfCancellationRequested()
                     ShowQuizEvidence(answer)
                     Dim skipReason As String = ""
@@ -431,7 +451,7 @@ Partial Public Class Form1
                     End If
 
                     Dim clickedClientPoint As System.Drawing.Point
-                    If Not RevalidateAndClickQuizAnswer(hwnd, quizArea, answersArea, targetIndex, visualHash, expectedQuizHash, clickedClientPoint) Then
+                    If Not RevalidateAndClickQuizAnswer(hwnd, quizArea, answersArea, targetIndex, visualHash, expectedQuizHash, clickedClientPoint, verificationMs, clickMs) Then
                         SetQuizStatus("Quiz changed before the click; skipped it and will scan again.", ThemeWarn)
                         Return
                     End If
@@ -442,9 +462,12 @@ Partial Public Class Form1
                     _quizLastClickNormalizedY = clickedClientPoint.Y / CDbl(Math.Max(1, clientHeight))
                     _quizLastClickedButtonNumber = targetIndex + 1
                     Dim guessText = $" ({QuizAnswerPolicy.MethodLabel(answer)})"
+                    Dim timingText = $"Detection {detectionMs} ms | OCR {localTiming.OcrMs} ms | Search {localTiming.SearchMs} ms | Verification {verificationMs} ms | Clicking {clickMs} ms | Total {totalWatch.ElapsedMilliseconds} ms"
                     SetQuizStatus($"Clicked answer {targetIndex + 1} x10 (50 ms): {answer.AnswerText}{guessText} — {answer.Confidence:P0} confidence", ThemeGood)
                     AppendLog($"Quiz solver: {answer.QuestionText} -> {answer.AnswerText}; button {targetIndex + 1}; sent 10 left-clicks 50 ms apart; confidence {answer.Confidence:P0}{guessText}. {answer.Evidence} {answer.SourceUrl}")
                     AddQuizDatabaseEntry(answer, targetIndex + 1)
+                    SetQuizStatus($"Clicked answer {targetIndex + 1}: {answer.AnswerText}{guessText} - {answer.Confidence:P0}. {timingText}", ThemeGood)
+                    AppendLog("Quiz timing: " & timingText)
                     RefreshQuizLivePreview(False)
                 End Using
             End Using
@@ -465,8 +488,11 @@ Partial Public Class Form1
                                                   targetIndex As Integer,
                                                   expectedHash As String,
                                                   expectedQuizHash As String,
-                                                  ByRef clickedClientPoint As System.Drawing.Point) As Boolean
+                                                  ByRef clickedClientPoint As System.Drawing.Point,
+                                                  ByRef verificationMs As Long,
+                                                  ByRef clickMs As Long) As Boolean
         clickedClientPoint = System.Drawing.Point.Empty
+        Dim phaseWatch = Stopwatch.StartNew()
         Dim selected = GetSelectedProcessWindowForEdition(BotEdition.Full)
         If selected Is Nothing OrElse selected.MainWindowHandle <> hwnd OrElse Not IsUsableQuizWindow(hwnd) Then Return False
         Using liveQuiz = BotEngine.CaptureClientRegion(hwnd, New RectRegion(quizArea.X, quizArea.Y, quizArea.Width, quizArea.Height)),
@@ -483,7 +509,11 @@ Partial Public Class Form1
             }
             clickedClientPoint = New System.Drawing.Point(clientPoint.X, clientPoint.Y)
             If Not NativeMethods.ClientToScreen(hwnd, clientPoint) Then Return False
-            Return PerformQuizClickBurst(hwnd, clientPoint)
+            verificationMs = phaseWatch.ElapsedMilliseconds
+            phaseWatch.Restart()
+            Dim clicked = PerformQuizClickBurst(hwnd, clientPoint)
+            clickMs = phaseWatch.ElapsedMilliseconds
+            Return clicked
         End Using
     End Function
 
@@ -677,8 +707,19 @@ Partial Public Class Form1
             _quizRegion = CloneQuizRegion(state.QuizRegion)
             _quizAnswersRegion = CloneQuizRegion(state.AnswersRegion)
             _quizAnswerDatabase.Clear()
-            If state.AnswerDatabase IsNot Nothing Then
-                _quizAnswerDatabase.AddRange(state.AnswerDatabase.Where(Function(entry) entry IsNot Nothing).Take(2000).Select(Function(entry) CloneQuizAnswer(entry)))
+            Dim savedAnswers As List(Of PersistedQuizAnswer) = Nothing
+            If Not String.IsNullOrWhiteSpace(state.EncryptedAnswerDatabase) Then
+                Dim clearDatabase = QuizSecretStore.Unprotect(state.EncryptedAnswerDatabase)
+                If Not String.IsNullOrWhiteSpace(clearDatabase) Then
+                    Try
+                        savedAnswers = JsonSerializer.Deserialize(Of List(Of PersistedQuizAnswer))(clearDatabase)
+                    Catch
+                    End Try
+                End If
+            End If
+            If savedAnswers Is Nothing Then savedAnswers = state.LegacyAnswerDatabase
+            If savedAnswers IsNot Nothing Then
+                _quizAnswerDatabase.AddRange(savedAnswers.Where(Function(entry) entry IsNot Nothing).Take(2000).Select(Function(entry) CloneQuizAnswer(entry)))
             End If
             If nudQuizScanMs IsNot Nothing Then nudQuizScanMs.Value = Math.Max(nudQuizScanMs.Minimum, Math.Min(nudQuizScanMs.Maximum, state.ScanIntervalMs))
             If cboQuizModel IsNot Nothing Then
@@ -704,7 +745,8 @@ Partial Public Class Form1
             .ReferenceClientHeight = _quizReferenceHeight,
             .QuizRegion = CloneQuizRegion(_quizRegion),
             .AnswersRegion = CloneQuizRegion(_quizAnswersRegion),
-            .AnswerDatabase = _quizAnswerDatabase.Where(Function(entry) entry IsNot Nothing).Take(2000).Select(Function(entry) CloneQuizAnswer(entry)).ToList()
+            .EncryptedAnswerDatabase = QuizSecretStore.Protect(JsonSerializer.Serialize(_quizAnswerDatabase.Where(Function(entry) entry IsNot Nothing).Take(2000).Select(Function(entry) CloneQuizAnswer(entry)).ToList())),
+            .LegacyAnswerDatabase = Nothing
         }
     End Function
 
