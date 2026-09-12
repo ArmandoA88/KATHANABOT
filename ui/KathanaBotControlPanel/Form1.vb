@@ -1693,6 +1693,8 @@ Partial Public Class Form1
     Private txtMonsterName As TextBox
     Private txtLootName As TextBox
     Private chkLevelingAgent As CheckBox
+    Private btnLevelingRecommendedSetup As Button
+    Private lblLevelingModeBanner As Label
     Private txtLevelingPreferredMobs As TextBox
     Private chkLevelingStopHp As CheckBox
     Private nudLevelingStopHp As NumericUpDown
@@ -2823,6 +2825,10 @@ Partial Public Class Form1
         End If
         If chkLevelingAgent IsNot Nothing Then
             AddHandler chkLevelingAgent.CheckedChanged, AddressOf LiveConfigChanged
+            AddHandler chkLevelingAgent.CheckedChanged, AddressOf LevelingAgentModeChanged
+        End If
+        If btnLevelingRecommendedSetup IsNot Nothing Then
+            AddHandler btnLevelingRecommendedSetup.Click, AddressOf ApplyRecommendedLevelingSetupClicked
         End If
         If txtLevelingPreferredMobs IsNot Nothing Then
             AddHandler txtLevelingPreferredMobs.TextChanged, AddressOf LiveConfigChanged
@@ -3515,6 +3521,62 @@ Partial Public Class Form1
     Private Sub LevelingGuardrailToggleChanged(_sender As Object, _e As EventArgs)
         UpdateLevelingGuardrailToggleUi()
         LiveConfigChanged(_sender, _e)
+    End Sub
+
+    Private Sub ApplyRecommendedLevelingSetupClicked(_sender As Object, _e As EventArgs)
+        If chkLevelingAgent IsNot Nothing Then chkLevelingAgent.Checked = True
+        If chkNormalRetargetEnabled IsNot Nothing Then chkNormalRetargetEnabled.Checked = True
+        If chkForcedRetargetEnabled IsNot Nothing Then chkForcedRetargetEnabled.Checked = True
+        If nudRetargetMs IsNot Nothing Then nudRetargetMs.Value = 300D
+        If nudForcedRetargetMs IsNot Nothing Then nudForcedRetargetMs.Value = 300D
+        If chkLevelingMaxNoTarget IsNot Nothing Then chkLevelingMaxNoTarget.Checked = True
+        If nudLevelingMaxNoTargetSeconds IsNot Nothing Then nudLevelingMaxNoTargetSeconds.Value = 30D
+        If chkLevelingStopOnRepeatedUnreachable IsNot Nothing Then chkLevelingStopOnRepeatedUnreachable.Checked = True
+        If nudLevelingUnreachableLimit IsNot Nothing Then nudLevelingUnreachableLimit.Value = 6D
+        If nudNavigationWaypointRadius IsNot Nothing Then nudNavigationWaypointRadius.Value = 6D
+        If nudNavigationMoveBurstMs IsNot Nothing Then nudNavigationMoveBurstMs.Value = 240D
+        If nudNavigationResampleMs IsNot Nothing Then nudNavigationResampleMs.Value = 500D
+        If nudNavigationStallTimeoutMs IsNot Nothing Then nudNavigationStallTimeoutMs.Value = 3500D
+        If nudMapScanMs IsNot Nothing Then nudMapScanMs.Value = 250D
+        If chkNavigationRepathOnStuck IsNot Nothing Then chkNavigationRepathOnStuck.Checked = True
+
+        Dim hasDestination As Boolean = cboNavigationTargetNode IsNot Nothing AndAlso cboNavigationTargetNode.SelectedIndex >= 0 AndAlso cboNavigationTargetNode.Items.Count > 0
+        If hasDestination Then
+            If chkNavigationEnabled IsNot Nothing Then chkNavigationEnabled.Checked = True
+            If chkTravelPreview IsNot Nothing Then chkTravelPreview.Checked = True
+            If chkTravelExecute IsNot Nothing Then chkTravelExecute.Checked = True
+        End If
+
+        UpdateRetargetToggleUi()
+        UpdateLevelingGuardrailToggleUi()
+        PushLiveConfig()
+        SavePersistedListState(False)
+        AppendLog(If(hasDestination,
+                     "Recommended leveling setup applied: fast targeting and guarded travel enabled for the selected route.",
+                     "Recommended leveling setup applied: fast targeting enabled. Record/select a route destination to enable travel."))
+    End Sub
+
+    Private Sub LevelingAgentModeChanged(_sender As Object, _e As EventArgs)
+        UpdateLevelingModeUi()
+    End Sub
+
+    Private Sub UpdateLevelingModeUi()
+        Dim enabled As Boolean = chkLevelingAgent IsNot Nothing AndAlso chkLevelingAgent.Checked
+        If lblLevelingModeBanner IsNot Nothing Then
+            lblLevelingModeBanner.Text = If(enabled,
+                                              "●  LEVELING AGENT ON — route, mob search, and combat automation active",
+                                              "●  REGULAR BOT MODE — leveling route automation is off")
+            lblLevelingModeBanner.BackColor = If(enabled, Color.FromArgb(24, 130, 70), Color.FromArgb(45, 75, 115))
+            lblLevelingModeBanner.ForeColor = Color.White
+        End If
+        If chkLevelingAgent IsNot Nothing Then
+            chkLevelingAgent.Text = If(enabled, "✓  LEVELING AGENT ENABLED", "ENABLE LEVELING AGENT")
+            chkLevelingAgent.BackColor = If(enabled, Color.FromArgb(30, 155, 80), Color.FromArgb(65, 70, 82))
+            chkLevelingAgent.ForeColor = Color.White
+        End If
+        If _levelingTab IsNot Nothing Then
+            _levelingTab.Text = If(enabled, "● LEVELING ON", "Leveling (OFF)")
+        End If
     End Sub
 
     Private Sub UpdateLevelingGuardrailToggleUi()
@@ -5749,7 +5811,7 @@ Partial Public Class Form1
         normalRetargetControls.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 46.0F))
         normalRetargetControls.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
         chkNormalRetargetEnabled = New CheckBox() With {.Text = "ON", .Appearance = Appearance.Button, .Checked = True, .AutoSize = False, .Width = 40, .Height = 23, .Anchor = AnchorStyles.Top Or AnchorStyles.Left, .TextAlign = ContentAlignment.MiddleCenter, .Margin = New Padding(0, 0, 4, 0)}
-        nudRetargetMs = New NumericUpDown() With {.Width = 100, .Anchor = AnchorStyles.Top Or AnchorStyles.Left, .Minimum = 100, .Maximum = 5000, .Value = 550}
+        nudRetargetMs = New NumericUpDown() With {.Width = 100, .Anchor = AnchorStyles.Top Or AnchorStyles.Left, .Minimum = 100, .Maximum = 5000, .Value = 300}
         normalRetargetControls.Controls.Add(chkNormalRetargetEnabled, 0, 0)
         normalRetargetControls.Controls.Add(nudRetargetMs, 1, 0)
         generalLayout.Controls.Add(normalRetargetControls, 3, 1)
@@ -5765,7 +5827,7 @@ Partial Public Class Form1
         forcedRetargetControls.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 46.0F))
         forcedRetargetControls.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
         chkForcedRetargetEnabled = New CheckBox() With {.Text = "ON", .Appearance = Appearance.Button, .Checked = True, .AutoSize = False, .Width = 40, .Height = 23, .Anchor = AnchorStyles.Top Or AnchorStyles.Left, .TextAlign = ContentAlignment.MiddleCenter, .Margin = New Padding(0, 0, 4, 0)}
-        nudForcedRetargetMs = New NumericUpDown() With {.Width = 100, .Anchor = AnchorStyles.Top Or AnchorStyles.Left, .Minimum = 100, .Maximum = 5000, .Value = 550}
+        nudForcedRetargetMs = New NumericUpDown() With {.Width = 100, .Anchor = AnchorStyles.Top Or AnchorStyles.Left, .Minimum = 100, .Maximum = 5000, .Value = 300}
         forcedRetargetControls.Controls.Add(chkForcedRetargetEnabled, 0, 0)
         forcedRetargetControls.Controls.Add(nudForcedRetargetMs, 1, 0)
         generalLayout.Controls.Add(forcedRetargetControls, 3, 2)
@@ -7528,7 +7590,7 @@ Partial Public Class Form1
 
         Dim scanTimerPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .AutoScroll = True, .Margin = New Padding(0)}
         nudFullFrameScanMs = AddScanTimerInput(scanTimerPanel, "Full ms", 100, 5000, 50, 500D)
-        nudMapScanMs = AddScanTimerInput(scanTimerPanel, "Map ms", 250, 10000, 50, 900D)
+        nudMapScanMs = AddScanTimerInput(scanTimerPanel, "Map ms", 250, 10000, 50, 250D)
         nudPartyScanMs = AddScanTimerInput(scanTimerPanel, "Party ms", 250, 10000, 50, 700D)
         nudMobNameScanMs = AddScanTimerInput(scanTimerPanel, "Mob OCR ms", 120, 5000, 25, 650D, "How often the mob's name is re-read from mob_name_rect.")
         nudMobHpTextScanMs = AddScanTimerInput(scanTimerPanel, "Mob Life OCR ms", 120, 5000, 25, 450D, "How often the mob's max-HP text is re-read from mob_life_rect.")
@@ -7735,14 +7797,17 @@ Partial Public Class Form1
         ' 1. Getting started - the only two things required to turn the agent on.
         Dim setupLayout As TableLayoutPanel = Nothing
         Dim setupGroup As GroupBox = BuildLevelingSectionGroup(
-            "1. Getting Started", "Turn the agent on and (optionally) limit it to specific monster names.", 2, setupLayout)
-        chkLevelingAgent = New CheckBox() With {.Text = "Enable leveling agent", .Dock = DockStyle.Fill, .Margin = New Padding(2)}
-        setupLayout.Controls.Add(chkLevelingAgent, 0, 1)
+            "1. Quick Setup", "Apply responsive defaults, then optionally limit attacks to specific monster names.", 3, setupLayout)
+        btnLevelingRecommendedSetup = New Button() With {.Text = "Apply Recommended Leveling Setup", .Dock = DockStyle.Fill, .Height = 34, .BackColor = Color.FromArgb(35, 120, 80), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat, .Font = New Font("Segoe UI", 9.0F, FontStyle.Bold), .Margin = New Padding(2, 2, 2, 6)}
+        setupLayout.Controls.Add(btnLevelingRecommendedSetup, 0, 1)
+        setupLayout.SetColumnSpan(btnLevelingRecommendedSetup, 2)
+        chkLevelingAgent = New CheckBox() With {.Text = "ENABLE LEVELING AGENT", .Appearance = Appearance.Button, .Dock = DockStyle.Fill, .Height = 38, .TextAlign = ContentAlignment.MiddleCenter, .FlatStyle = FlatStyle.Flat, .BackColor = Color.FromArgb(65, 70, 82), .ForeColor = Color.White, .Font = New Font("Segoe UI", 9.5F, FontStyle.Bold), .Margin = New Padding(2)}
+        setupLayout.Controls.Add(chkLevelingAgent, 0, 2)
         setupLayout.SetColumnSpan(chkLevelingAgent, 2)
 
-        setupLayout.Controls.Add(New Label() With {.Text = "Only Attack These Mobs", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 2)
+        setupLayout.Controls.Add(New Label() With {.Text = "Only Attack These Mobs", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 3)
         txtLevelingPreferredMobs = New TextBox() With {.Dock = DockStyle.Fill, .PlaceholderText = "Leave blank to attack anything: mob1, mob2, mob3", .Margin = New Padding(2)}
-        setupLayout.Controls.Add(txtLevelingPreferredMobs, 1, 2)
+        setupLayout.Controls.Add(txtLevelingPreferredMobs, 1, 3)
         sections.Controls.Add(setupGroup, 0, 0)
 
         ' 2. Safety pauses - guardrails suspend actions without cancelling the engine, then resume
@@ -7765,7 +7830,7 @@ Partial Public Class Form1
         safetyLayout.Controls.Add(New Label() With {.Text = "Pause If No Target For (sec)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 2)
         Dim maxNoTargetPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .Margin = New Padding(2)}
         chkLevelingMaxNoTarget = New CheckBox() With {.Text = "On", .AutoSize = True, .Checked = True, .Margin = New Padding(0, 4, 8, 0)}
-        nudLevelingMaxNoTargetSeconds = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 5, .Maximum = 600, .Value = 45, .Width = 90, .Margin = New Padding(2)}
+        nudLevelingMaxNoTargetSeconds = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 5, .Maximum = 600, .Value = 30, .Width = 90, .Margin = New Padding(2)}
         maxNoTargetPanel.Controls.Add(chkLevelingMaxNoTarget)
         maxNoTargetPanel.Controls.Add(nudLevelingMaxNoTargetSeconds)
         safetyLayout.Controls.Add(maxNoTargetPanel, 1, 2)
@@ -7827,19 +7892,19 @@ Partial Public Class Form1
         travelLayout.SetColumnSpan(advancedTravelHeader, 2)
 
         travelLayout.Controls.Add(New Label() With {.Text = "Waypoint Radius", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 10)
-        nudNavigationWaypointRadius = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0, .Maximum = 250, .Value = 36, .Width = 90, .Margin = New Padding(2)}
+        nudNavigationWaypointRadius = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 0, .Maximum = 250, .Value = 6, .Width = 90, .Margin = New Padding(2)}
         travelLayout.Controls.Add(nudNavigationWaypointRadius, 1, 10)
 
         travelLayout.Controls.Add(New Label() With {.Text = "Move Burst (ms)", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}, 0, 11)
-        nudNavigationMoveBurstMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 10, .Maximum = 1500, .Increment = 25, .Value = 350, .Width = 90, .Margin = New Padding(2)}
+        nudNavigationMoveBurstMs = New NumericUpDown() With {.Dock = DockStyle.Left, .Minimum = 10, .Maximum = 1500, .Increment = 25, .Value = 240, .Width = 90, .Margin = New Padding(2)}
         travelLayout.Controls.Add(nudNavigationMoveBurstMs, 1, 11)
 
         Dim resampleStallPanel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .Margin = New Padding(2)}
         resampleStallPanel.Controls.Add(New Label() With {.Text = "Re-sample (ms)", .AutoSize = True, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(0, 6, 2, 0)})
-        nudNavigationResampleMs = New NumericUpDown() With {.Minimum = 50, .Maximum = 10000, .Increment = 50, .Value = 1800, .Width = 90, .Margin = New Padding(2)}
+        nudNavigationResampleMs = New NumericUpDown() With {.Minimum = 50, .Maximum = 10000, .Increment = 50, .Value = 500, .Width = 90, .Margin = New Padding(2)}
         resampleStallPanel.Controls.Add(nudNavigationResampleMs)
         resampleStallPanel.Controls.Add(New Label() With {.Text = "Stall Timeout (ms)", .AutoSize = True, .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(8, 6, 2, 0)})
-        nudNavigationStallTimeoutMs = New NumericUpDown() With {.Minimum = 1500, .Maximum = 30000, .Increment = 250, .Value = 6500, .Width = 90, .Margin = New Padding(2)}
+        nudNavigationStallTimeoutMs = New NumericUpDown() With {.Minimum = 1500, .Maximum = 30000, .Increment = 250, .Value = 3500, .Width = 90, .Margin = New Padding(2)}
         resampleStallPanel.Controls.Add(nudNavigationStallTimeoutMs)
         travelLayout.Controls.Add(resampleStallPanel, 0, 12)
         travelLayout.SetColumnSpan(resampleStallPanel, 2)
@@ -7918,12 +7983,13 @@ Partial Public Class Form1
         rightPanel.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
 
         Dim statusGroup As New GroupBox() With {.Text = "Agent Runtime", .Dock = DockStyle.Top, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .Padding = New Padding(4)}
-        Dim statusLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 1, .RowCount = 11, .Padding = New Padding(2)}
-        For i As Integer = 0 To 10
+        Dim statusLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 1, .RowCount = 12, .Padding = New Padding(2)}
+        For i As Integer = 0 To 11
             statusLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
         Next
         statusGroup.Controls.Add(statusLayout)
 
+        lblLevelingModeBanner = New Label() With {.Text = "●  REGULAR BOT MODE — leveling route automation is off", .Dock = DockStyle.Fill, .Height = 38, .BackColor = Color.FromArgb(45, 75, 115), .ForeColor = Color.White, .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold), .TextAlign = ContentAlignment.MiddleCenter, .Margin = New Padding(2, 2, 2, 6)}
         lblLevelingState = New Label() With {.Text = "Agent State: Disabled", .Dock = DockStyle.Fill, .ForeColor = Color.Khaki, .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold), .TextAlign = ContentAlignment.MiddleLeft, .Margin = New Padding(2)}
         lblLevelingReason = New Label() With {.Text = "Reason: Leveling agent is disabled.", .Dock = DockStyle.Fill, .ForeColor = Color.Gainsboro, .AutoSize = True, .Margin = New Padding(2)}
         lblMapCoordinate = New Label() With {.Text = "Coordinates X axis: n/a | Coordinates Y axis: n/a | Route node: n/a", .Dock = DockStyle.Fill, .ForeColor = Color.LightGreen, .AutoSize = True, .Margin = New Padding(2)}
@@ -7935,17 +8001,18 @@ Partial Public Class Form1
         lblRouteRecording = New Label() With {.Text = "Route Recording: idle", .Dock = DockStyle.Fill, .ForeColor = Color.Plum, .AutoSize = True, .Margin = New Padding(2)}
         Dim hintLabel As New Label() With {.Text = "Mobs filter: agent skips non-matching targets when set.", .Dock = DockStyle.Fill, .ForeColor = Color.LightSkyBlue, .AutoSize = True, .Margin = New Padding(2)}
         Dim guardrailLabel As New Label() With {.Text = "Travel is guarded: map samples, waypoint routes, short bursts when combat idle.", .Dock = DockStyle.Fill, .ForeColor = Color.Silver, .AutoSize = True, .Margin = New Padding(2)}
-        statusLayout.Controls.Add(lblLevelingState, 0, 0)
-        statusLayout.Controls.Add(lblLevelingReason, 0, 1)
-        statusLayout.Controls.Add(lblMapCoordinate, 0, 2)
-        statusLayout.Controls.Add(lblMapHeading, 0, 3)
-        statusLayout.Controls.Add(lblMapMarker, 0, 4)
-        statusLayout.Controls.Add(lblMapLocalizationConfidence, 0, 5)
-        statusLayout.Controls.Add(lblTravelStatus, 0, 6)
-        statusLayout.Controls.Add(lblRoutePreview, 0, 7)
-        statusLayout.Controls.Add(lblRouteRecording, 0, 8)
-        statusLayout.Controls.Add(hintLabel, 0, 9)
-        statusLayout.Controls.Add(guardrailLabel, 0, 10)
+        statusLayout.Controls.Add(lblLevelingModeBanner, 0, 0)
+        statusLayout.Controls.Add(lblLevelingState, 0, 1)
+        statusLayout.Controls.Add(lblLevelingReason, 0, 2)
+        statusLayout.Controls.Add(lblMapCoordinate, 0, 3)
+        statusLayout.Controls.Add(lblMapHeading, 0, 4)
+        statusLayout.Controls.Add(lblMapMarker, 0, 5)
+        statusLayout.Controls.Add(lblMapLocalizationConfidence, 0, 6)
+        statusLayout.Controls.Add(lblTravelStatus, 0, 7)
+        statusLayout.Controls.Add(lblRoutePreview, 0, 8)
+        statusLayout.Controls.Add(lblRouteRecording, 0, 9)
+        statusLayout.Controls.Add(hintLabel, 0, 10)
+        statusLayout.Controls.Add(guardrailLabel, 0, 11)
 
         rightPanel.Controls.Add(statusGroup, 0, 0)
 
@@ -7970,6 +8037,9 @@ Partial Public Class Form1
         dgvBreadcrumbs.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "X", .HeaderText = "X", .FillWeight = 35.0F})
         dgvBreadcrumbs.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Y", .HeaderText = "Y", .FillWeight = 35.0F})
         dgvBreadcrumbs.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "At", .HeaderText = "Captured At", .FillWeight = 70.0F, .ReadOnly = True})
+        dgvBreadcrumbs.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "WalkStatus", .HeaderText = "Walking", .FillWeight = 55.0F, .ReadOnly = True})
+        dgvBreadcrumbs.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "CoordinateDifference", .HeaderText = "Difference", .FillWeight = 70.0F, .ReadOnly = True})
+        dgvBreadcrumbs.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "MapDistance", .HeaderText = "Distance", .FillWeight = 50.0F, .ReadOnly = True})
         breadcrumbGroup.Controls.Add(dgvBreadcrumbs)
         rightPanel.Controls.Add(breadcrumbGroup, 0, 1)
 
@@ -9032,10 +9102,10 @@ Partial Public Class Form1
         End If
         nudMobHpThreshold.Value = 1.0D
         If chkNormalRetargetEnabled IsNot Nothing Then chkNormalRetargetEnabled.Checked = True
-        nudRetargetMs.Value = 550D
+        nudRetargetMs.Value = 300D
         If chkForcedRetargetEnabled IsNot Nothing Then chkForcedRetargetEnabled.Checked = True
         If nudForcedRetargetMs IsNot Nothing Then
-            nudForcedRetargetMs.Value = 550D
+            nudForcedRetargetMs.Value = 300D
         End If
         If chkHighMaxHpSpecial IsNot Nothing Then
             chkHighMaxHpSpecial.Checked = True
@@ -14240,7 +14310,8 @@ Partial Public Class Form1
         End If
         If lblMapCoordinate IsNot Nothing Then
             If status.MapCoordinateX >= 0 AndAlso status.MapCoordinateY >= 0 Then
-                lblMapCoordinate.Text = $"Coordinates X axis: {status.MapCoordinateX:000} | Coordinates Y axis: {status.MapCoordinateY:000} | Route node: {status.MapCoordinateX:000}/{status.MapCoordinateY:000} (confidence {status.MapCoordinateConfidence}%)"
+                Dim waypointDifference As String = FormatWaypointDifference(status.MapCoordinateX, status.MapCoordinateY, status.NavigationNextWaypointX, status.NavigationNextWaypointY)
+                lblMapCoordinate.Text = $"Coordinates X axis: {status.MapCoordinateX:000} | Coordinates Y axis: {status.MapCoordinateY:000} | Route node: {status.MapCoordinateX:000}/{status.MapCoordinateY:000} (confidence {status.MapCoordinateConfidence}%){waypointDifference}"
             Else
                 Dim rawCoordinateText As String = If(String.IsNullOrWhiteSpace(status.MapCoordinateText), "n/a", status.MapCoordinateText)
                 lblMapCoordinate.Text = $"Coordinates X axis: n/a | Coordinates Y axis: n/a | Route node waits for both 3-digit reads ({rawCoordinateText})"
@@ -14333,6 +14404,7 @@ Partial Public Class Form1
         End If
         UpdateRouteRecordingButtonStates()
         UpdateBreadcrumbsGrid(status.RouteRecordingSamples)
+        HighlightNextBreadcrumb(status.NavigationNextWaypointX, status.NavigationNextWaypointY, status.MapCoordinateX, status.MapCoordinateY, status.NavigationRouteReady)
         If lblChatTranslationStatus IsNot Nothing Then
             Dim chatState As String
             If chkChatTranslationEnabled Is Nothing OrElse Not chkChatTranslationEnabled.Checked Then
@@ -15547,11 +15619,17 @@ Partial Public Class Form1
         Try
             BeginInvoke(New Action(Async Sub()
                                        If IsDisposed OrElse Disposing Then Return
-                                       Dim title = $"KathanaBot {edition}: Game " & If(unresponsive, "Not Responding", "Responding Again")
+                                       Dim status As BotStatus = If(edition = BotEdition.Full, _fullEngine.GetStatus(), _liteEngine.GetStatus())
+                                       Dim characterName As String = If(status?.CharacterName, "").Trim()
+                                       Dim title = WithCharacterName($"KathanaBot {edition}: Game " & If(unresponsive, "Not Responding", "Responding Again"), characterName)
+                                       Dim characterText As String = If(characterName = "", "selected character", $"character '{characterName}'")
                                        Dim body = If(unresponsive,
-                                           "The game window has been reported unresponsive for at least 15 seconds. Please check the game.",
-                                           "The game window is responding again after the freeze alert.")
+                                           $"The game window for the {characterText} is still unresponsive. This alarm repeats every 5 minutes until the game responds again.",
+                                           $"The game window for the {characterText} is responding again. Freeze reminders have stopped.")
                                        AppendLog(title & ". " & body)
+                                       If unresponsive Then
+                                           Dim alarmTask As Task = Task.Run(Sub() PlayAlarmPulse(AlarmVolumePercent))
+                                       End If
                                        Try
                                            Dim sent = Await SendPhoneNotificationAsync(title, body, DeathNotificationRetryCount)
                                            AppendLogSafe(If(sent, "Game responsiveness notification sent.", "Game responsiveness notification failed; check notification settings and connection."))
@@ -16293,7 +16371,7 @@ Partial Public Class Form1
         cfg.LevelingStopMpEnabled = (chkLevelingStopMp Is Nothing OrElse chkLevelingStopMp.Checked)
         cfg.LevelingStopMpPercent = CInt(If(nudLevelingStopMp IsNot Nothing, nudLevelingStopMp.Value, 10D))
         cfg.LevelingMaxNoTargetEnabled = (chkLevelingMaxNoTarget Is Nothing OrElse chkLevelingMaxNoTarget.Checked)
-        cfg.LevelingMaxNoTargetSeconds = CInt(If(nudLevelingMaxNoTargetSeconds IsNot Nothing, nudLevelingMaxNoTargetSeconds.Value, 45D))
+        cfg.LevelingMaxNoTargetSeconds = CInt(If(nudLevelingMaxNoTargetSeconds IsNot Nothing, nudLevelingMaxNoTargetSeconds.Value, 30D))
         cfg.LevelingStopOnLowExpRate = (chkLevelingStopOnLowExp IsNot Nothing AndAlso chkLevelingStopOnLowExp.Checked)
         cfg.LevelingMinExpPerHour = CDbl(If(nudLevelingMinExpPerHour IsNot Nothing, nudLevelingMinExpPerHour.Value, DefaultLevelingMinExpPerHour))
         cfg.LevelingStopOnRepeatedUnreachable = (chkLevelingStopOnRepeatedUnreachable IsNot Nothing AndAlso chkLevelingStopOnRepeatedUnreachable.Checked)
@@ -16312,10 +16390,10 @@ Partial Public Class Form1
         cfg.RouteRecordingSampleIntervalMs = CInt(If(nudRouteRecordingIntervalMs IsNot Nothing, nudRouteRecordingIntervalMs.Value, 250D))
         cfg.RouteRecordingMinConfidencePercent = CInt(If(nudRouteRecordingMinConfidence IsNot Nothing, nudRouteRecordingMinConfidence.Value, 90D))
         cfg.RouteRecordingMinNodeSpacing = CInt(If(nudRouteRecordingNodeSpacing IsNot Nothing, nudRouteRecordingNodeSpacing.Value, 2D))
-        cfg.NavigationWaypointReachRadius = CInt(If(nudNavigationWaypointRadius IsNot Nothing, nudNavigationWaypointRadius.Value, 36D))
-        cfg.NavigationMoveBurstMs = CInt(If(nudNavigationMoveBurstMs IsNot Nothing, nudNavigationMoveBurstMs.Value, 350D))
-        cfg.NavigationResampleIntervalMs = CInt(If(nudNavigationResampleMs IsNot Nothing, nudNavigationResampleMs.Value, 1800D))
-        cfg.NavigationStallTimeoutMs = CInt(If(nudNavigationStallTimeoutMs IsNot Nothing, nudNavigationStallTimeoutMs.Value, 6500D))
+        cfg.NavigationWaypointReachRadius = CInt(If(nudNavigationWaypointRadius IsNot Nothing, nudNavigationWaypointRadius.Value, 6D))
+        cfg.NavigationMoveBurstMs = CInt(If(nudNavigationMoveBurstMs IsNot Nothing, nudNavigationMoveBurstMs.Value, 240D))
+        cfg.NavigationResampleIntervalMs = CInt(If(nudNavigationResampleMs IsNot Nothing, nudNavigationResampleMs.Value, 500D))
+        cfg.NavigationStallTimeoutMs = CInt(If(nudNavigationStallTimeoutMs IsNot Nothing, nudNavigationStallTimeoutMs.Value, 3500D))
         cfg.NavigationRepathOnStuck = (chkNavigationRepathOnStuck IsNot Nothing AndAlso chkNavigationRepathOnStuck.Checked)
         cfg.NavigationReturnToStartEnabled = (chkNavigationReturnToStart IsNot Nothing AndAlso chkNavigationReturnToStart.Checked)
         cfg.HoldPlaceEnabled = (chkHoldPlaceEnabled IsNot Nothing AndAlso chkHoldPlaceEnabled.Checked)
@@ -16346,7 +16424,7 @@ Partial Public Class Form1
         cfg.CaptureBackendPreference = GetSelectedCaptureBackendCode()
         cfg.FullFrameRefreshIntervalMs = CInt(If(nudFullFrameScanMs IsNot Nothing, nudFullFrameScanMs.Value, 500D))
         cfg.LootScannerIntervalMs = CInt(If(nudLootScannerIntervalMs IsNot Nothing, nudLootScannerIntervalMs.Value, 10000D))
-        cfg.MapCoordinateScanIntervalMs = CInt(If(nudMapScanMs IsNot Nothing, nudMapScanMs.Value, 900D))
+        cfg.MapCoordinateScanIntervalMs = CInt(If(nudMapScanMs IsNot Nothing, nudMapScanMs.Value, 250D))
         cfg.PartyListScanIntervalMs = CInt(If(nudPartyScanMs IsNot Nothing, nudPartyScanMs.Value, 700D))
         cfg.PartyInviteScanIntervalMs = CInt(If(nudPartyScanMs IsNot Nothing, nudPartyScanMs.Value, 900D))
         cfg.MobNameScanIntervalMs = CInt(If(nudMobNameScanMs IsNot Nothing, nudMobNameScanMs.Value, 650D))
@@ -16793,6 +16871,11 @@ Partial Public Class Form1
     Private Sub StartRouteRecordingClicked(sender As Object, e As EventArgs)
         _routeRecordingActive = True
         _breadcrumbsManualEditMode = False
+        If dgvBreadcrumbs IsNot Nothing Then
+            _updatingBreadcrumbsGrid = True
+            dgvBreadcrumbs.Rows.Clear()
+            _updatingBreadcrumbsGrid = False
+        End If
         ' Auto-enable navigation if not already enabled (needed for coordinate OCR)
         If chkNavigationEnabled IsNot Nothing AndAlso Not chkNavigationEnabled.Checked Then
             chkNavigationEnabled.Checked = True
@@ -16836,8 +16919,8 @@ Partial Public Class Form1
         If _breadcrumbsManualEditMode AndAlso Not _routeRecordingActive Then
             Return
         End If
-        ' Only update if count changed to avoid flicker during editing
-        If CountBreadcrumbDataRows() = src.Count AndAlso Not _routeRecordingActive Then
+        ' A recorded sample is immutable, so an equal count means the visible rows are current.
+        If CountBreadcrumbDataRows() = src.Count Then
             Return
         End If
         _updatingBreadcrumbsGrid = True
@@ -16851,6 +16934,49 @@ Partial Public Class Form1
         End If
         dgvBreadcrumbs.ResumeLayout()
         _updatingBreadcrumbsGrid = False
+    End Sub
+
+    Private Shared Function FormatWaypointDifference(currentX As Integer, currentY As Integer, nextX As Integer, nextY As Integer) As String
+        If currentX < 0 OrElse currentY < 0 OrElse nextX < 0 OrElse nextY < 0 Then Return ""
+        Dim dx As Integer = nextX - currentX
+        Dim dy As Integer = nextY - currentY
+        Dim distance As Double = Math.Sqrt((CDbl(dx) * dx) + (CDbl(dy) * dy))
+        Return $" | Next breadcrumb: {nextX:000}/{nextY:000} | Difference: ΔX {dx:+0;-0;0}, ΔY {dy:+0;-0;0} | Distance: {distance:0.0}"
+    End Function
+
+    Private Sub HighlightNextBreadcrumb(nextX As Integer, nextY As Integer, currentX As Integer, currentY As Integer, routeReady As Boolean)
+        If dgvBreadcrumbs Is Nothing OrElse Not dgvBreadcrumbs.Columns.Contains("WalkStatus") Then Return
+
+        Dim matchedRow As DataGridViewRow = Nothing
+        For Each row As DataGridViewRow In dgvBreadcrumbs.Rows
+            If row.IsNewRow Then Continue For
+            row.Cells("WalkStatus").Value = ""
+            row.Cells("CoordinateDifference").Value = ""
+            row.Cells("MapDistance").Value = ""
+            row.DefaultCellStyle.BackColor = dgvBreadcrumbs.DefaultCellStyle.BackColor
+            row.DefaultCellStyle.ForeColor = dgvBreadcrumbs.DefaultCellStyle.ForeColor
+
+            Dim rowX As Integer
+            Dim rowY As Integer
+            If routeReady AndAlso Integer.TryParse(Convert.ToString(row.Cells("X").Value), rowX) AndAlso
+               Integer.TryParse(Convert.ToString(row.Cells("Y").Value), rowY) AndAlso
+               rowX = nextX AndAlso rowY = nextY Then
+                matchedRow = row
+            End If
+        Next
+
+        If matchedRow Is Nothing Then Return
+        matchedRow.Cells("WalkStatus").Value = "NEXT  →"
+        If currentX >= 0 AndAlso currentY >= 0 Then
+            Dim dx As Integer = nextX - currentX
+            Dim dy As Integer = nextY - currentY
+            Dim distance As Double = Math.Sqrt((CDbl(dx) * dx) + (CDbl(dy) * dy))
+            matchedRow.Cells("CoordinateDifference").Value = $"ΔX {dx:+0;-0;0}, ΔY {dy:+0;-0;0}"
+            matchedRow.Cells("MapDistance").Value = distance.ToString("0.0")
+        End If
+        matchedRow.DefaultCellStyle.BackColor = Color.FromArgb(190, 140, 25)
+        matchedRow.DefaultCellStyle.ForeColor = Color.White
+        If matchedRow.Index >= 0 Then dgvBreadcrumbs.FirstDisplayedScrollingRowIndex = matchedRow.Index
     End Sub
 
     Private Sub AppendBreadcrumbRow(x As Integer, y As Integer, capturedAt As String)
@@ -17913,6 +18039,7 @@ Partial Public Class Form1
         If chkLevelingAgent IsNot Nothing Then
             chkLevelingAgent.Checked = cfg.LevelingAgentEnabled
         End If
+        UpdateLevelingModeUi()
         If txtLevelingPreferredMobs IsNot Nothing Then
             txtLevelingPreferredMobs.Text = String.Join(", ", If(cfg.LevelingPreferredMobs, New List(Of String)()))
         End If

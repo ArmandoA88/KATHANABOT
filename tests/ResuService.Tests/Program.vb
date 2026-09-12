@@ -32,6 +32,11 @@ Module Program
         Test("manual character-name list parsing", AddressOf ManualNames)
         Test("resurrection burst schedule", AddressOf ResurrectionBurst)
         Test("retarget toggles and configured role survive JSON roundtrip", AddressOf RetargetSettingsPersistence)
+        Test("leveling navigation uses waypoint radius", AddressOf LevelingWaypointRadius)
+        Test("leveling defaults are responsive and persist", AddressOf LevelingResponsiveDefaults)
+        Test("leveling travel immediately learns map direction", AddressOf LevelingTravelDirectionCorrection)
+        Test("leveling travel requires new coordinates between movement bursts", AddressOf LevelingTravelFreshCoordinateGate)
+        Test("route recording samples survive status snapshots", AddressOf RouteRecordingSamplesInStatus)
         Test("loot grid maps OCR points to stable mesh cells", AddressOf LootGridGeometry)
         Test("loot pickup unavailable prompt tolerates OCR variants", AddressOf LootUnavailablePrompt)
         Test("blocked loot cell yields to nearest alternative then retries", AddressOf LootAlternativeSelection)
@@ -220,6 +225,14 @@ Module Program
             Check(state.Observe(hwnd, True, at) = 0, "New incident needs confirmation")
         Next
         Check(state.Observe(hwnd, True, 60000) = 1, "New incident must rearm")
+        Dim reminderState As New GameWindowResponsivenessState()
+        reminderState.Observe(hwnd, True, 0)
+        reminderState.Observe(hwnd, True, 5000)
+        reminderState.Observe(hwnd, True, 10000)
+        Check(reminderState.Observe(hwnd, True, 15000) = 1, "Reminder test must confirm the initial freeze")
+        Check(reminderState.Observe(hwnd, True, 314999) = 0, "An unresolved freeze must wait the full five minutes")
+        Check(reminderState.Observe(hwnd, True, 315000) = 1, "An unresolved freeze must repeat after five minutes")
+        Check(reminderState.Observe(hwnd, True, 320000) = 0, "A freeze reminder must not repeat early")
     End Sub
 
     Private Sub WindowFreezeResets()
@@ -683,6 +696,97 @@ Module Program
         Check(ResuService.ResurrectionBurstOffsetMs(5, 11, 2D) = 1000, "Intermediate presses should be spread evenly")
         Check(ResuService.ResurrectionBurstOffsetMs(0, 1, 30D) = 0, "A single press should not wait")
         Check(ResuService.ResurrectionBurstOffsetMs(4, 5, 0D) = 0, "Zero duration should schedule the fastest burst")
+    End Sub
+
+    Private Sub LevelingWaypointRadius()
+        Dim node As New NavigationNode With {.X = 100, .Y = 100}
+        Check(BotEngine.IsNavigationNodeReached(103, 104, node, 5), "A 3-4-5 offset must count as reached")
+        Check(Not BotEngine.IsNavigationNodeReached(104, 104, node, 5), "A point outside the radius must not count as reached")
+        Check(BotEngine.IsNavigationNodeReached(100, 100, node, 0), "Zero radius must still permit exact matches")
+        Check(Not BotEngine.IsNavigationNodeReached(-1, 100, node, 100), "Unknown coordinates must never count as reached")
+    End Sub
+
+    Private Sub LevelingResponsiveDefaults()
+        Dim cfg As New BotConfig()
+        Check(cfg.RetargetMs = 300 AndAlso cfg.ForcedRetargetMs = 300, "Default targeting must respond quickly")
+        Check(cfg.LevelingMaxNoTargetSeconds = 30, "No-target guardrail must not wait ten minutes")
+        Check(cfg.NavigationWaypointReachRadius = 6, "Navigation needs a small arrival tolerance")
+        Check(cfg.NavigationMoveBurstMs = 240 AndAlso cfg.NavigationResampleIntervalMs = 500, "Travel must use short, frequently corrected movement")
+        Check(cfg.NavigationStallTimeoutMs = 3500 AndAlso cfg.NavigationRepathOnStuck, "Travel must recover promptly")
+        Dim loaded = JsonSerializer.Deserialize(Of BotConfig)(JsonSerializer.Serialize(cfg))
+        Check(loaded.NavigationMoveBurstMs = 240 AndAlso loaded.NavigationResampleIntervalMs = 500 AndAlso loaded.NavigationWaypointReachRadius = 6, "Recommended values must persist")
+        Using stream = GetType(BotConfig).Assembly.GetManifestResourceStream("KathanaBotControlPanel.DefaultUserSettings.json")
+            Using json = JsonDocument.Parse(stream)
+                Dim embedded = JsonSerializer.Deserialize(Of BotConfig)(json.RootElement.GetProperty("Full").GetProperty("SavedConfig").GetRawText())
+                Check(embedded.RetargetMs = 300 AndAlso embedded.ForcedRetargetMs = 300, "First-run targeting defaults must match")
+                Check(embedded.LevelingMaxNoTargetSeconds = 30 AndAlso embedded.NavigationWaypointReachRadius = 6, "First-run leveling defaults must match")
+                Check(embedded.NavigationMoveBurstMs = 240 AndAlso embedded.NavigationResampleIntervalMs = 500 AndAlso embedded.NavigationStallTimeoutMs = 3500, "First-run travel defaults must match")
+            End Using
+        End Using
+    End Sub
+
+    Private Sub LevelingTravelDirectionCorrection()
+        Dim engine As New BotEngine()
+        Dim flags = Reflection.BindingFlags.Instance Or Reflection.BindingFlags.NonPublic
+        Dim engineType As Type = GetType(BotEngine)
+        Dim cfg As New BotConfig With {
+            .LevelingAgentEnabled = True,
+            .NavigationEnabled = True,
+            .NavigationTravelExecutionEnabled = True
+        }
+        engineType.GetField("_config", flags).SetValue(engine, cfg)
+        engineType.GetField("_lastTravelInputKey", flags).SetValue(engine, "W")
+        engineType.GetField("_lastTravelInputDesiredDirection", flags).SetValue(engine, "N")
+        engineType.GetField("_lastTravelInputPoseX", flags).SetValue(engine, 100)
+        engineType.GetField("_lastTravelInputPoseY", flags).SetValue(engine, 100)
+        engineType.GetField("_lastTravelInputAt", flags).SetValue(engine, _clock)
+        engineType.GetField("_lastTravelInputIsHoldCorrection", flags).SetValue(engine, False)
+
+        engineType.GetMethod("ObserveNavigationOrientation", flags).Invoke(engine, New Object() {_clock.AddMilliseconds(100), 101, 100})
+
+        Check(CInt(engineType.GetField("_navigationRotationQuarterTurns", flags).GetValue(engine)) = 1,
+              "Leveling must correct its movement mapping after the first reliable coordinate change")
+    End Sub
+
+    Private Sub RouteRecordingSamplesInStatus()
+        Dim engine As New BotEngine()
+        Dim source As New BotStatus With {
+            .NavigationNextWaypointX = 124,
+            .NavigationNextWaypointY = 457,
+            .RouteRecordingSampleCount = 2,
+            .RouteRecordingSamples = New List(Of NavigationRouteSample) From {
+                New NavigationRouteSample With {.X = 123, .Y = 456, .CapturedAtUtc = _clock},
+                New NavigationRouteSample With {.X = 124, .Y = 457, .CapturedAtUtc = _clock.AddSeconds(1)}
+            }
+        }
+        Dim cloneMethod = GetType(BotEngine).GetMethod("CloneStatus", Reflection.BindingFlags.Instance Or Reflection.BindingFlags.NonPublic)
+        Dim snapshot As BotStatus = DirectCast(cloneMethod.Invoke(engine, New Object() {source}), BotStatus)
+
+        Check(snapshot.RouteRecordingSamples.Count = 2, "The UI status snapshot must contain recorded breadcrumb coordinates")
+        Check(snapshot.RouteRecordingSamples(0).X = 123 AndAlso snapshot.RouteRecordingSamples(1).Y = 457,
+              "The breadcrumb coordinates must remain intact")
+        Check(Not Object.ReferenceEquals(snapshot.RouteRecordingSamples, source.RouteRecordingSamples),
+              "The status snapshot must own a safe copy of the breadcrumb list")
+        Check(snapshot.NavigationNextWaypointX = 124 AndAlso snapshot.NavigationNextWaypointY = 457,
+              "The UI status snapshot must identify the breadcrumb the bot is walking toward")
+    End Sub
+
+    Private Sub LevelingTravelFreshCoordinateGate()
+        Dim movedAt As DateTime = _clock.AddSeconds(1)
+        Check(BotEngine.NavigationMovementNeedsFreshCoordinate(movedAt, _clock),
+              "Travel must not repeat a direction from an older coordinate")
+        Check(BotEngine.NavigationMovementNeedsFreshCoordinate(movedAt, movedAt),
+              "Travel must wait when no coordinate was accepted after movement")
+        Check(Not BotEngine.NavigationMovementNeedsFreshCoordinate(movedAt, movedAt.AddMilliseconds(1)),
+              "Travel may steer again after a fresh coordinate is accepted")
+        Dim routeStart As New NavigationNode With {.X = 100, .Y = 100}
+        Dim routeEnd As New NavigationNode With {.X = 120, .Y = 100}
+        Check(Math.Abs(BotEngine.DistanceFromRouteSegment(110, 104, routeStart, routeEnd) - 4.0) < 0.01,
+              "Wander leash distance must be measured from the route segment")
+        Check(Math.Abs(BotEngine.DistanceFromRouteSegment(125, 100, routeStart, routeEnd) - 5.0) < 0.01,
+              "Wander leash must account for passing beyond a route endpoint")
+        Check((New BotConfig()).MapCoordinateScanIntervalMs = 250,
+              "Leveling needs fast coordinate scans for route correction")
     End Sub
 
     Private Sub RetargetSettingsPersistence()

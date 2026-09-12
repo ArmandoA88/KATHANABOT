@@ -186,6 +186,12 @@ Loot Scanner keeps its configured scan interval during adaptive performance mode
 
 Enable Loot Scanner (Alt) and Centered Loot Pickup (F). The scanner clicks distant allowed loot to approach it. F is permitted only when a fresh OCR label is inside the central 10% of the game client, using the actual label position even with a coarse grid or an offset scan area. Cooldown (sec) is a minimum delay, not a repeating F timer. Each detection permits one pickup; stale detections expire after 1.5 seconds. Loot After Kill uses the same center check. Scanner frequency still controls how often arrival is checked. Auto-loot settings continue to save automatically to the active profile.
 
+## Faster leveling and easier setup
+
+The Leveling tab starts with **Apply Recommended Leveling Setup**. It enables the leveling agent, fast 300 ms target search/recovery, a 30-second no-target guardrail, short 240 ms navigation bursts, 500 ms position corrections, 3.5-second stall recovery, and repathing. If a recorded route destination is already selected, the button also enables localization, route preview, and guarded travel. It preserves combat rows, preferred mobs, and recorded routes.
+
+Navigation treats a waypoint as reached when the player enters the configured waypoint radius. It no longer requires an exact OCR coordinate match, which caused overshooting and stale-waypoint wandering. Retarget scans run between movement bursts so the target key cannot cancel movement in the same loop. New profiles and first-run settings use these responsive values; existing profiles keep their saved values until the recommended setup button is used.
+
 ## Timed arrow key holds
 
 In Auto-Loot, enable Left arrow and/or Right arrow under Timed Arrow Key Holds. Each direction has an independent Hold (sec), from 0.1 to 60 seconds, and Wait (sec), from 0.1 to 3600 seconds. Wait begins after release; the first hold is due when enabled. Both directions take turns when due and never overlap. Holds run while the Full bot and game window are active and release on stop, chat pause, focus loss, or disabling that direction. All settings save automatically with the active profile. After an arrow hold, centered pickup requires a new scan.

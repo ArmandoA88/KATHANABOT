@@ -88,16 +88,19 @@ Public NotInheritable Class GameWindowResponsivenessMonitor
 End Class
 
 Public NotInheritable Class GameWindowResponsivenessState
+    Public Const ReminderIntervalMs As Long = 5L * 60L * 1000L
     Private _window As IntPtr
     Private _firstHungAt As Long = -1
     Private _lastSampleAt As Long = -1
     Private _alerted As Boolean
+    Private _lastAlertAt As Long = -1
 
     Public Sub Reset()
         _window = IntPtr.Zero
         _firstHungAt = -1
         _lastSampleAt = -1
         _alerted = False
+        _lastAlertAt = -1
     End Sub
 
     ' 1 = freeze confirmed, -1 = recovered, 0 = no notification.
@@ -116,11 +119,17 @@ Public NotInheritable Class GameWindowResponsivenessState
             Dim recovered = _alerted
             _firstHungAt = -1
             _alerted = False
+            _lastAlertAt = -1
             Return If(recovered, -1, 0)
         End If
         If _firstHungAt < 0 Then _firstHungAt = nowMs
         If Not _alerted AndAlso nowMs - _firstHungAt >= 15000 Then
             _alerted = True
+            _lastAlertAt = nowMs
+            Return 1
+        End If
+        If _alerted AndAlso _lastAlertAt >= 0 AndAlso nowMs - _lastAlertAt >= ReminderIntervalMs Then
+            _lastAlertAt = nowMs
             Return 1
         End If
         Return 0
