@@ -172,7 +172,7 @@ Public Class BotConfig
     Public Const DefaultBarColorTolerance As Integer = 48
 
     Public Shared Function DefaultHpBarRect() As RectRegion
-        Return New RectRegion(1, 22, 218, 14)
+        Return New RectRegion(3, 23, 215, 14)
     End Function
 
     Public Shared Function DefaultMpBarRect() As RectRegion
@@ -180,43 +180,47 @@ Public Class BotConfig
     End Function
 
     Public Shared Function DefaultMobNameRect() As RectRegion
-        Return New RectRegion(0, 53, 218, 22)
+        Return New RectRegion(4, 57, 167, 17)
     End Function
 
     Public Shared Function DefaultMobHpRect() As RectRegion
-        Return New RectRegion(0, 78, 215, 12)
+        Return New RectRegion(3, 75, 215, 12)
+    End Function
+
+    Public Shared Function DefaultMobLifeRect() As RectRegion
+        Return New RectRegion(0, 78, 217, 12)
     End Function
 
     Public Shared Function DefaultDisconnectMessageRect() As RectRegion
-        Return New RectRegion(518, 319, 328, 125)
+        Return New RectRegion(516, 325, 328, 122)
     End Function
 
     Public Shared Function DefaultDisconnectOkRect() As RectRegion
-        Return New RectRegion(741, 415, 54, 15)
+        Return New RectRegion(745, 414, 40, 15)
     End Function
 
     Public Shared Function DefaultResurrectDialogScanRect() As RectRegion
-        Return New RectRegion(522, 319, 328, 124)
+        Return New RectRegion(516, 325, 328, 122)
     End Function
 
     Public Shared Function DefaultDeathMessageScanRect() As RectRegion
-        Return New RectRegion(515, 322, 328, 124)
+        Return New RectRegion(516, 325, 328, 122)
     End Function
 
     Public Shared Function DefaultPartyListRect() As RectRegion
-        Return New RectRegion(2, 107, 168, 244)
+        Return New RectRegion(0, 230, 167, 270)
     End Function
 
     Public Shared Function DefaultMapCoordinateRect() As RectRegion
-        Return New RectRegion(6, 744, 120, 22)
+        Return New RectRegion(859, 499, 58, 18)
     End Function
 
     Public Shared Function DefaultMapCoordinateXRect() As RectRegion
-        Return SplitMapCoordinateRect(DefaultMapCoordinateRect(), True)
+        Return New RectRegion(859, 499, 25, 18)
     End Function
 
     Public Shared Function DefaultMapCoordinateYRect() As RectRegion
-        Return SplitMapCoordinateRect(DefaultMapCoordinateRect(), False)
+        Return New RectRegion(891, 499, 26, 16)
     End Function
 
     Public Shared Function SplitMapCoordinateRect(combined As RectRegion, leftAxis As Boolean) As RectRegion
@@ -284,11 +288,11 @@ Public Class BotConfig
     Public Property MpBar As RectRegion = DefaultMpBarRect()
     Public Property MobNameRect As RectRegion = DefaultMobNameRect()
     Public Property MobHpRect As RectRegion = DefaultMobHpRect()
-    Public Property MobLifeRect As RectRegion = DefaultMobHpRect()
-    Public Property UnreachableTextRect As RectRegion = New RectRegion(15, 582, 430, 22)
-    Public Property PranaExpRect As RectRegion = New RectRegion(472, 745, 78, 21)
-    Public Property RupiahsRect As RectRegion = New RectRegion(560, 745, 110, 21)
-    Public Property PartyInviteScanRect As RectRegion = New RectRegion(349, 318, 328, 124)
+    Public Property MobLifeRect As RectRegion = DefaultMobLifeRect()
+    Public Property UnreachableTextRect As RectRegion = New RectRegion(11, 505, 400, 97)
+    Public Property PranaExpRect As RectRegion = New RectRegion(661, 751, 44, 16)
+    Public Property RupiahsRect As RectRegion = New RectRegion(1222, 268, 71, 12)
+    Public Property PartyInviteScanRect As RectRegion = New RectRegion(516, 325, 328, 122)
     ' Auto Resurrect: a dedicated scan region + OK click point, fully separate from the party/ress
     ' auto-accept above, because the resurrection confirmation dialog appears at a different screen
     ' position than party invites in this game and a single shared region can't cover both.
@@ -308,8 +312,8 @@ Public Class BotConfig
     Public Property MapCoordinateRect As RectRegion = DefaultMapCoordinateRect()
     Public Property MapCoordinateXRect As RectRegion = DefaultMapCoordinateXRect()
     Public Property MapCoordinateYRect As RectRegion = DefaultMapCoordinateYRect()
-    Public Property ChatRect As RectRegion = New RectRegion(18, 548, 430, 144)
-    Public Property LootScanRect As RectRegion = New RectRegion(220, 80, 584, 430)
+    Public Property ChatRect As RectRegion = New RectRegion(13, 604, 392, 104)
+    Public Property LootScanRect As RectRegion = New RectRegion(31, 52, 1331, 684)
     Public Property LootScanPoints As List(Of LootScanPoint) = CreateDefaultLootScanPoints()
     ' Full Support: a character that only heals/buffs and never fights, so it must never select or
     ' change targets - all retargeting (normal, forced, manual, and Dadati evade) is suppressed.
@@ -385,7 +389,7 @@ Public Class BotConfig
     Public Property ArrowBundleIconTolerance As Integer = 45
     Public Property BuffWatchEnabled As Boolean = False
     Public Property BuffWatchSlots As List(Of BuffWatchSlot) = New List(Of BuffWatchSlot)()
-    Public Property BuffAreaRect As RectRegion = New RectRegion(0, 0, 300, 40)
+    Public Property BuffAreaRect As RectRegion = New RectRegion(238, 0, 395, 36)
     Public Property BuffWatchSelfClickEnabled As Boolean = False
     Public Property LootAllowedNames As List(Of String) = DefaultLootItems.Create()
     Public Property LootAwardSkipTerms As List(Of String) = New List(Of String) From {"Rupiah"}
@@ -537,10 +541,10 @@ Public Class BotConfig
 
     Public Shared Function CreateDefaultLootScanPoints() As List(Of LootScanPoint)
         Return New List(Of LootScanPoint) From {
-            New LootScanPoint(220, 80),
-            New LootScanPoint(804, 80),
-            New LootScanPoint(804, 510),
-            New LootScanPoint(220, 510)
+            New LootScanPoint(457, 736),
+            New LootScanPoint(31, 112),
+            New LootScanPoint(1348, 52),
+            New LootScanPoint(1362, 717)
         }
     End Function
 
@@ -595,7 +599,7 @@ Public Class BotConfig
         ' obsolete bottom-right rectangle even after the other target regions were moved.
         If cfg.MobLifeRect Is Nothing OrElse
            (SameRect(cfg.MobLifeRect, legacyMobHp) AndAlso Not SameRect(cfg.MobHpRect, legacyMobHp)) Then
-            cfg.MobLifeRect = CloneRect(cfg.MobHpRect, DefaultMobHpRect())
+            cfg.MobLifeRect = DefaultMobLifeRect()
         End If
     End Sub
 
@@ -13315,31 +13319,8 @@ Public Class BotEngine
         mapCoordinateYRect = CloneRegion(GetEffectiveMapCoordinateYRect(cfg))
         chatRect = CloneRegion(cfg.ChatRect)
 
-        If frameWidth <= 0 OrElse frameHeight <= 0 Then
-            Exit Sub
-        End If
-        If Not IsDefaultVisionLayout(cfg) Then
-            Exit Sub
-        End If
-        If frameWidth = BaseClientWidth AndAlso frameHeight = BaseClientHeight Then
-            Exit Sub
-        End If
-
-        Dim sx As Double = frameWidth / CDbl(BaseClientWidth)
-        Dim sy As Double = frameHeight / CDbl(BaseClientHeight)
-        ' The redesigned HUD keeps these panels at a fixed top-left pixel size.
-        hpBar = CloneRegion(cfg.HpBar)
-        mpBar = CloneRegion(cfg.MpBar)
-        mobNameRect = CloneRegion(cfg.MobNameRect)
-        mobHpRect = CloneRegion(cfg.MobHpRect)
-        unreachableTextRect = ScaleRegionLeftTop(cfg.UnreachableTextRect, sx, sy)
-        pranaExpRect = ScaleRegionLeftTop(cfg.PranaExpRect, sx, sy)
-        rupiahsRect = ScaleRegionLeftTop(cfg.RupiahsRect, sx, sy)
-        partyInviteScanRect = ScaleRegionLeftTop(cfg.PartyInviteScanRect, sx, sy)
-        ' These calibrated overlays use the exact client-pixel coordinates shown in Vision.
-        mapCoordinateXRect = ScaleRegionLeftTop(GetEffectiveMapCoordinateXRect(cfg), sx, sy)
-        mapCoordinateYRect = ScaleRegionLeftTop(GetEffectiveMapCoordinateYRect(cfg), sx, sy)
-        chatRect = ScaleRegionLeftTop(cfg.ChatRect, sx, sy)
+        ' Calibration-table values are exact client-pixel coordinates. Scaling factory values
+        ' moved the EXP and Rupiah crops away from their HUD text on non-reference window sizes.
     End Sub
 
     Public Shared Function ResolveDisconnectOkRegion(cfg As BotConfig, clientWidth As Integer, clientHeight As Integer) As RectRegion
@@ -13350,7 +13331,7 @@ Public Class BotEngine
     End Function
 
     Private Shared Function ResolveMobLifeRegion(cfg As BotConfig, frameWidth As Integer, frameHeight As Integer) As RectRegion
-        Dim source As RectRegion = If(cfg Is Nothing OrElse cfg.MobLifeRect Is Nothing, BotConfig.DefaultMobHpRect(), cfg.MobLifeRect)
+        Dim source As RectRegion = If(cfg Is Nothing OrElse cfg.MobLifeRect Is Nothing, BotConfig.DefaultMobLifeRect(), cfg.MobLifeRect)
         If frameWidth <= 0 OrElse frameHeight <= 0 Then
             Return CloneRegion(source)
         End If
@@ -13422,18 +13403,18 @@ Public Class BotEngine
                SameRegion(cfg.MpBar, BotConfig.DefaultMpBarRect()) AndAlso
                SameRegion(cfg.MobNameRect, BotConfig.DefaultMobNameRect()) AndAlso
                SameRegion(cfg.MobHpRect, BotConfig.DefaultMobHpRect()) AndAlso
-               SameRegion(cfg.MobLifeRect, BotConfig.DefaultMobHpRect()) AndAlso
-               SameRegion(cfg.UnreachableTextRect, New RectRegion(15, 582, 430, 22)) AndAlso
-               SameRegion(cfg.PranaExpRect, New RectRegion(472, 745, 78, 21)) AndAlso
-               SameRegion(cfg.RupiahsRect, New RectRegion(560, 745, 110, 21)) AndAlso
-               SameRegion(cfg.PartyInviteScanRect, New RectRegion(349, 318, 328, 124)) AndAlso
+               SameRegion(cfg.MobLifeRect, BotConfig.DefaultMobLifeRect()) AndAlso
+               SameRegion(cfg.UnreachableTextRect, New RectRegion(11, 505, 400, 97)) AndAlso
+               SameRegion(cfg.PranaExpRect, New RectRegion(661, 751, 44, 16)) AndAlso
+               SameRegion(cfg.RupiahsRect, New RectRegion(1222, 268, 71, 12)) AndAlso
+               SameRegion(cfg.PartyInviteScanRect, New RectRegion(516, 325, 328, 122)) AndAlso
                SameRegion(cfg.PartyListRect, BotConfig.DefaultPartyListRect()) AndAlso
                SameRegion(cfg.DisconnectMessageRect, BotConfig.DefaultDisconnectMessageRect()) AndAlso
                SameRegion(cfg.DisconnectOkRect, BotConfig.DefaultDisconnectOkRect()) AndAlso
                SameRegion(cfg.MapCoordinateRect, BotConfig.DefaultMapCoordinateRect()) AndAlso
                SameRegion(GetEffectiveMapCoordinateXRect(cfg), BotConfig.DefaultMapCoordinateXRect()) AndAlso
                SameRegion(GetEffectiveMapCoordinateYRect(cfg), BotConfig.DefaultMapCoordinateYRect()) AndAlso
-               SameRegion(cfg.ChatRect, New RectRegion(18, 548, 430, 144)) AndAlso
+               SameRegion(cfg.ChatRect, New RectRegion(13, 604, 392, 104)) AndAlso
                SameLootScanPolygon(cfg.LootScanPoints, BotConfig.CreateDefaultLootScanPoints())
     End Function
 

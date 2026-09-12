@@ -113,12 +113,19 @@ Module Program
     End Sub
 
     Private Sub CheckOverlayDefaults(cfg As BotConfig)
-        Dim actual = New RectRegion() {cfg.ResurrectDialogScanRect, cfg.DeathMessageScanRect, cfg.PartyListRect, cfg.DisconnectMessageRect, cfg.DisconnectOkRect}
-        Dim expected = New String() {"522,319,328,124", "515,322,328,124", "2,107,168,244", "518,319,328,125", "741,415,54,15"}
+        Dim actual = New RectRegion() {cfg.HpBar, cfg.MpBar, cfg.MobNameRect, cfg.MobHpRect, cfg.MobLifeRect,
+            cfg.UnreachableTextRect, cfg.PranaExpRect, cfg.RupiahsRect, cfg.PartyInviteScanRect,
+            cfg.ResurrectDialogScanRect, cfg.DeathMessageScanRect, cfg.PartyListRect, cfg.DisconnectMessageRect,
+            cfg.DisconnectOkRect, cfg.MapCoordinateXRect, cfg.MapCoordinateYRect, cfg.ChatRect, cfg.BuffAreaRect}
+        Dim expected = New String() {"3,23,215,14", "3,39,216,10", "4,57,167,17", "3,75,215,12", "0,78,217,12",
+            "11,505,400,97", "661,751,44,16", "1222,268,71,12", "516,325,328,122",
+            "516,325,328,122", "516,325,328,122", "0,230,167,270", "516,325,328,122",
+            "745,414,40,15", "859,499,25,18", "891,499,26,16", "13,604,392,104", "238,0,395,36"}
         For i = 0 To actual.Length - 1
             Dim r = actual(i)
             Check($"{r.X},{r.Y},{r.W},{r.H}" = expected(i), "Overlay default mismatch at index " & i)
         Next
+        Check(String.Join("|", cfg.LootScanPoints.Select(Function(p) $"{p.X},{p.Y}")) = "457,736|31,112|1348,52|1362,717", "Loot Scan Area factory points mismatch")
     End Sub
 
     Private Sub OverlayDefaultsAndPersistence()
@@ -156,10 +163,14 @@ Module Program
             GetType(BotEngine).GetMethod("ResolveVisionRegions", flags).Invoke(Nothing, args)
             Dim party = DirectCast(args(11), RectRegion)
             Dim disconnect = DirectCast(args(12), RectRegion)
-            Check($"{party.X},{party.Y},{party.W},{party.H}" = "2,107,168,244", "Party region must not silently scale")
-            Check($"{disconnect.X},{disconnect.Y},{disconnect.W},{disconnect.H}" = "518,319,328,125", "Disconnect region must not silently scale")
+            Check($"{party.X},{party.Y},{party.W},{party.H}" = "0,230,167,270", "Party region must not silently scale")
+            Check($"{disconnect.X},{disconnect.Y},{disconnect.W},{disconnect.H}" = "516,325,328,122", "Disconnect region must not silently scale")
+            Dim exp = DirectCast(args(8), RectRegion)
+            Dim rupiah = DirectCast(args(9), RectRegion)
+            Check($"{exp.X},{exp.Y},{exp.W},{exp.H}" = "661,751,44,16", "EXP region must not silently scale")
+            Check($"{rupiah.X},{rupiah.Y},{rupiah.W},{rupiah.H}" = "1222,268,71,12", "Rupiah region must not silently scale")
             Dim ok = BotEngine.ResolveDisconnectOkRegion(cfg, size, 1080)
-            Check($"{ok.X},{ok.Y},{ok.W},{ok.H}" = "741,415,54,15", "Disconnect OK must not silently scale")
+            Check($"{ok.X},{ok.Y},{ok.W},{ok.H}" = "745,414,40,15", "Disconnect OK must not silently scale")
         Next
     End Sub
 

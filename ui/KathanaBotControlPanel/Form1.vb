@@ -155,6 +155,7 @@ Partial Public Class Form1
     Private btnOverlayToggle As Button
     Private dgvRegions As DataGridView
     Private txtLootScanAreaPoints As TextBox
+    Private btnRestoreCalibrationRegions As Button
     Private chkChatTranslationEnabled As CheckBox
     Private chkChatTranslationOverlay As CheckBox
     Private cboChatTargetLanguage As ComboBox
@@ -1670,6 +1671,7 @@ Partial Public Class Form1
     Private btnAutoPartyMessage As Button
     Private dgvItemAwards As DataGridView
     Private lblItemAwardsSummary As Label
+    Private btnDeleteItemAward As Button
     Private btnClearItemAwards As Button
     Private txtItemAwardPlayerFilter As TextBox
     Private txtItemAwardItemFilter As TextBox
@@ -5963,13 +5965,23 @@ Partial Public Class Form1
         dgvRegions.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "H"})
         regionLayout.Controls.Add(dgvRegions, 0, 1)
 
-        Dim lootAreaPanel As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 1, .Margin = New Padding(0, 6, 0, 0)}
+        Dim lootAreaPanel As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 4, .RowCount = 1, .Margin = New Padding(0, 6, 0, 0)}
         lootAreaPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 150.0F))
         lootAreaPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+        lootAreaPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 190.0F))
         lootAreaPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 190.0F))
         lootAreaPanel.Controls.Add(New Label() With {.Text = "Loot Scan Area", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 0)
         txtLootScanAreaPoints = New TextBox() With {.Dock = DockStyle.Fill}
         lootAreaPanel.Controls.Add(txtLootScanAreaPoints, 1, 0)
+        btnRestoreCalibrationRegions = New Button() With {
+            .Text = "Restore factory regions",
+            .Dock = DockStyle.Fill,
+            .Margin = New Padding(8, 0, 0, 0),
+            .BackColor = Color.FromArgb(54, 67, 92),
+            .ForeColor = Color.White
+        }
+        AddHandler btnRestoreCalibrationRegions.Click, AddressOf RestoreFactoryCalibrationRegionsClicked
+        lootAreaPanel.Controls.Add(btnRestoreCalibrationRegions, 2, 0)
         btnVisionLootScanner = New Button() With {
             .Text = If(_lootScannerEnabled, "Loot Scan Area: ON", "Loot Scan Area: OFF"),
             .Dock = DockStyle.Fill,
@@ -5978,7 +5990,7 @@ Partial Public Class Form1
             .ForeColor = Color.White
         }
         AddHandler btnVisionLootScanner.Click, AddressOf ToggleLootScannerClicked
-        lootAreaPanel.Controls.Add(btnVisionLootScanner, 2, 0)
+        lootAreaPanel.Controls.Add(btnVisionLootScanner, 3, 0)
         regionLayout.Controls.Add(lootAreaPanel, 0, 2)
         left.Controls.Add(regionGroup, 0, 1)
 
@@ -7316,9 +7328,10 @@ Partial Public Class Form1
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 58.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
 
-        Dim header As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 1, .Margin = New Padding(0)}
+        Dim header As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 4, .RowCount = 1, .Margin = New Padding(0)}
         header.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
         header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 240.0F))
+        header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 116.0F))
         header.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 78.0F))
         Dim title As New Label() With {
             .Text = "ITEMS WON · UNREACHABLE TEXT OCR",
@@ -7340,10 +7353,19 @@ Partial Public Class Form1
             .BackColor = Color.FromArgb(54, 67, 92),
             .ForeColor = Color.White
         }
+        btnDeleteItemAward = New Button() With {
+            .Text = "Delete selected",
+            .Dock = DockStyle.Fill,
+            .Margin = New Padding(6, 3, 0, 3),
+            .BackColor = Color.FromArgb(54, 67, 92),
+            .ForeColor = Color.White
+        }
+        AddHandler btnDeleteItemAward.Click, AddressOf DeleteSelectedItemAwardClicked
         AddHandler btnClearItemAwards.Click, AddressOf ClearItemAwardsClicked
         header.Controls.Add(title, 0, 0)
         header.Controls.Add(lblItemAwardsSummary, 1, 0)
-        header.Controls.Add(btnClearItemAwards, 2, 0)
+        header.Controls.Add(btnDeleteItemAward, 2, 0)
+        header.Controls.Add(btnClearItemAwards, 3, 0)
         layout.Controls.Add(header, 0, 0)
 
         Dim filters As New TableLayoutPanel() With {
@@ -7442,6 +7464,13 @@ Partial Public Class Form1
             .FillWeight = 230.0F,
             .MinimumWidth = 180
         })
+        AddHandler dgvItemAwards.KeyDown,
+            Sub(sender, args)
+                If args.KeyCode = Keys.Delete Then
+                    DeleteSelectedItemAwardClicked(sender, EventArgs.Empty)
+                    args.Handled = True
+                End If
+            End Sub
         layout.Controls.Add(dgvItemAwards, 0, 2)
         container.Controls.Add(layout)
         Return container
@@ -8420,7 +8449,7 @@ Partial Public Class Form1
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Key", .ReadOnly = True, .FillWeight = 60.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "CooldownSec", .FillWeight = 90.0F})
         Dim roleColumn As New DataGridViewComboBoxColumn() With {.Name = "Role", .FillWeight = 80.0F}
-        roleColumn.Items.AddRange(New Object() {"attack", "retarget", "heal", "max_health", "mana", "buff", "high_max_hp", "repair", "stop"})
+        roleColumn.Items.AddRange(New Object() {"attack", "retarget/assist", "heal", "max_health", "mana", "buff", "high_max_hp", "repair", "stop"})
         dgvCombat.Columns.Add(roleColumn)
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Priority", .FillWeight = 75.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "TriggerPercent", .HeaderText = "Trigger%", .FillWeight = 62.0F})
@@ -9073,15 +9102,15 @@ Partial Public Class Form1
 
     Private Sub SeedDefaults()
         UpdateSelectedProcessDisplay(GetSelectedProcessWindow())
-        dgvRegions.Rows.Add(True, "hp_bar", "1", "22", "218", "14")
+        dgvRegions.Rows.Add(True, "hp_bar", "3", "23", "215", "14")
         dgvRegions.Rows.Add(True, "mp_bar", "3", "39", "216", "10")
-        dgvRegions.Rows.Add(True, "mob_name_rect", "0", "53", "218", "22")
-        dgvRegions.Rows.Add(True, "mob_hp_rect", "0", "78", "215", "12")
-        dgvRegions.Rows.Add(True, "mob_life_rect", "0", "78", "215", "12")
-        dgvRegions.Rows.Add(True, "unreachable_text_rect", "15", "582", "430", "22")
-        dgvRegions.Rows.Add(True, "prana_exp_rect", "472", "745", "78", "21")
-        dgvRegions.Rows.Add(True, "rupiahs_rect", "560", "745", "110", "21")
-        dgvRegions.Rows.Add(True, "party_invite_scan_rect", "349", "318", "328", "124")
+        dgvRegions.Rows.Add(True, "mob_name_rect", "4", "57", "167", "17")
+        dgvRegions.Rows.Add(True, "mob_hp_rect", "3", "75", "215", "12")
+        dgvRegions.Rows.Add(True, "mob_life_rect", "0", "78", "217", "12")
+        dgvRegions.Rows.Add(True, "unreachable_text_rect", "11", "505", "400", "97")
+        dgvRegions.Rows.Add(True, "prana_exp_rect", "661", "751", "44", "16")
+        dgvRegions.Rows.Add(True, "rupiahs_rect", "1222", "268", "71", "12")
+        dgvRegions.Rows.Add(True, "party_invite_scan_rect", "516", "325", "328", "122")
         UpsertRegionRow("resurrect_scan_rect", BotConfig.DefaultResurrectDialogScanRect())
         UpsertRegionRow("death_message_rect", BotConfig.DefaultDeathMessageScanRect())
         UpsertRegionRow("party_list_rect", BotConfig.DefaultPartyListRect())
@@ -9093,8 +9122,8 @@ Partial Public Class Form1
         Dim defaultMapY As RectRegion = BotConfig.DefaultMapCoordinateYRect()
         dgvRegions.Rows.Add(True, "map_coordinate_x_rect", defaultMapX.X.ToString(), defaultMapX.Y.ToString(), defaultMapX.W.ToString(), defaultMapX.H.ToString())
         dgvRegions.Rows.Add(True, "map_coordinate_y_rect", defaultMapY.X.ToString(), defaultMapY.Y.ToString(), defaultMapY.W.ToString(), defaultMapY.H.ToString())
-        dgvRegions.Rows.Add(True, "chat_rect", "18", "548", "430", "144")
-        dgvRegions.Rows.Add(True, "buff_area_rect", "0", "0", "300", "40")
+        dgvRegions.Rows.Add(True, "chat_rect", "13", "604", "392", "104")
+        dgvRegions.Rows.Add(True, "buff_area_rect", "238", "0", "395", "36")
         If txtLootScanAreaPoints IsNot Nothing Then
             txtLootScanAreaPoints.Text = FormatLootScanPoints(BotConfig.CreateDefaultLootScanPoints())
         End If
@@ -16027,6 +16056,46 @@ Partial Public Class Form1
         AppendLog("Item-award OCR history cleared.")
     End Sub
 
+    Private Sub RestoreFactoryCalibrationRegionsClicked(sender As Object, e As EventArgs)
+        ApplyFactoryCalibrationRegions()
+        PushLiveConfig()
+        SavePersistedListState(True)
+        CaptureSnapshotIntoPreview(False, True)
+        AppendLog("Calibration regions and Loot Scan Area restored to factory values.")
+    End Sub
+
+    Private Sub ApplyFactoryCalibrationRegions()
+        UpsertRegionRow("hp_bar", BotConfig.DefaultHpBarRect())
+        UpsertRegionRow("mp_bar", BotConfig.DefaultMpBarRect())
+        UpsertRegionRow("mob_name_rect", BotConfig.DefaultMobNameRect())
+        UpsertRegionRow("mob_hp_rect", BotConfig.DefaultMobHpRect())
+        UpsertRegionRow("mob_life_rect", BotConfig.DefaultMobLifeRect())
+        UpsertRegionRow("unreachable_text_rect", New RectRegion(11, 505, 400, 97))
+        UpsertRegionRow("prana_exp_rect", New RectRegion(661, 751, 44, 16))
+        UpsertRegionRow("rupiahs_rect", New RectRegion(1222, 268, 71, 12))
+        UpsertRegionRow("party_invite_scan_rect", New RectRegion(516, 325, 328, 122))
+        UpsertRegionRow("resurrect_scan_rect", BotConfig.DefaultResurrectDialogScanRect())
+        UpsertRegionRow("death_message_rect", BotConfig.DefaultDeathMessageScanRect())
+        UpsertRegionRow("party_list_rect", BotConfig.DefaultPartyListRect())
+        UpsertRegionRow("disconnect_message_rect", BotConfig.DefaultDisconnectMessageRect())
+        UpsertRegionRow("disconnect_ok_rect", BotConfig.DefaultDisconnectOkRect())
+        UpsertRegionRow("map_coordinate_x_rect", BotConfig.DefaultMapCoordinateXRect())
+        UpsertRegionRow("map_coordinate_y_rect", BotConfig.DefaultMapCoordinateYRect())
+        UpsertRegionRow("chat_rect", New RectRegion(13, 604, 392, 104))
+        UpsertRegionRow("buff_area_rect", New RectRegion(238, 0, 395, 36))
+        If txtLootScanAreaPoints IsNot Nothing Then txtLootScanAreaPoints.Text = FormatLootScanPoints(BotConfig.CreateDefaultLootScanPoints())
+    End Sub
+
+    Private Sub DeleteSelectedItemAwardClicked(sender As Object, e As EventArgs)
+        If dgvItemAwards Is Nothing OrElse dgvItemAwards.CurrentRow Is Nothing Then Return
+        Dim award = TryCast(dgvItemAwards.CurrentRow.Tag, LootAwardRead)
+        If award Is Nothing OrElse Not _itemAwardReads.Remove(award) Then Return
+        Dim description = $"{award.PlayerName} - {award.ItemName}"
+        RefreshItemAwardsGrid()
+        If _edition = BotEdition.Full Then UpdateDashboardUi(_fullStatus, BotEdition.Full)
+        AppendLog("Deleted item-award entry: " & description)
+    End Sub
+
     Private Sub ItemAwardFilterChanged(sender As Object, e As EventArgs)
         RefreshItemAwardsGrid()
     End Sub
@@ -16055,7 +16124,8 @@ Partial Public Class Form1
                 End If
 
                 Dim detectedLocal As DateTime = award.DetectedAtUtc.ToLocalTime()
-                dgvItemAwards.Rows.Add(award.PlayerName, award.ItemName, detectedLocal.ToString("HH:mm:ss"), award.RawText)
+                Dim rowIndex = dgvItemAwards.Rows.Add(award.PlayerName, award.ItemName, detectedLocal.ToString("HH:mm:ss"), award.RawText)
+                dgvItemAwards.Rows(rowIndex).Tag = award
                 visibleCount += 1
             Next
         Finally
@@ -16517,7 +16587,7 @@ Partial Public Class Form1
             End Try
 
             Dim cooldownSec As Double = Math.Max(0.05, ParseDouble(SafeCell(row, "CooldownSec", "1.0"), 1.0))
-            Dim role As String = SafeCell(row, "Role", "attack").ToLowerInvariant()
+            Dim role As String = NormalizePersistedRole(SafeCell(row, "Role", "attack"))
             actions.Add(New ActionRule With {
                 .CooldownId = $"full-action:{row.Index}",
                 .KeyName = keyName,
@@ -18461,7 +18531,7 @@ Partial Public Class Form1
                 row.Cells("Key").Value = restoredKey
             End If
             row.Cells("Enabled").Value = item.Enabled
-            row.Cells("Role").Value = NormalizePersistedRole(item.Role)
+            row.Cells("Role").Value = CombatRoleDisplayName(item.Role)
             row.Cells("Priority").Value = Math.Max(1, item.Priority).ToString()
 
             Dim cooldownSec As Double = item.CooldownSec
@@ -18480,11 +18550,18 @@ Partial Public Class Form1
         Select Case role
             Case "special"
                 Return "buff"
+            Case "retarget/assist"
+                Return "retarget"
             Case "attack", "retarget", "heal", "max_health", "mana", "buff", "high_max_hp", "repair", "stop"
                 Return role
             Case Else
                 Return "attack"
         End Select
+    End Function
+
+    Private Shared Function CombatRoleDisplayName(rawRole As String) As String
+        Dim role = NormalizePersistedRole(rawRole)
+        Return If(role = "retarget", "retarget/assist", role)
     End Function
 
     Private Sub AppendLog(message As String)

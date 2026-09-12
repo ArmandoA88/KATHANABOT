@@ -7,6 +7,7 @@ Imports System.Text
 Imports System.Text.RegularExpressions
 Imports System.Diagnostics
 Imports System.Threading.Tasks
+Imports System.Threading
 
 Friend NotInheritable Class QuizLocalKnowledge
     Private Const ResourceName As String = "KathanaBotControlPanel.QuizKnowledge.dat"
@@ -41,12 +42,38 @@ Friend NotInheritable Class QuizLocalKnowledge
         Public Property SearchMs As Long
     End Class
 
+    Friend NotInheritable Class SolveAttempt
+        Public Property Answer As QuizSolveResult
+        Public Property Timing As New SolveTiming()
+    End Class
+
     Private Sub New()
     End Sub
 
     Public Shared Function WarmUpAsync() As Task
         OcrReader.PrewarmAsync()
         Return Task.Run(Sub() WarmUpIndex())
+    End Function
+
+    Public Shared Function SolveAsync(quizImage As Bitmap,
+                                      answerAreaWithinQuiz As Rectangle,
+                                      buttons As IReadOnlyList(Of Rectangle),
+                                      cancellationToken As CancellationToken) As Task(Of SolveAttempt)
+        If quizImage Is Nothing Then Return Task.FromResult(New SolveAttempt())
+        Dim ownedImage = DirectCast(quizImage.Clone(), Bitmap)
+        Dim ownedButtons = buttons.ToArray()
+        Return Task.Run(
+            Function()
+                Using ownedImage
+                    cancellationToken.ThrowIfCancellationRequested()
+                    Dim attempt As New SolveAttempt()
+                    Dim answer As QuizSolveResult = Nothing
+                    If TrySolve(ownedImage, answerAreaWithinQuiz, ownedButtons, answer, attempt.Timing) Then attempt.Answer = answer
+                    cancellationToken.ThrowIfCancellationRequested()
+                    Return attempt
+                End Using
+            End Function,
+            cancellationToken)
     End Function
 
     Private Shared Sub WarmUpIndex()

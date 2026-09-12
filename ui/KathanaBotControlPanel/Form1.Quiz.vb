@@ -197,7 +197,6 @@ Partial Public Class Form1
         ' Keep the visual preview live while an API request is in flight. The solver request itself
         ' remains single-flight, but a 100 ms timer can still refresh the calibrated game image.
         If _quizSolveInProgress Then
-            RefreshQuizLivePreview(False)
             Return
         End If
         Await RunQuizSolverOnceAsync(False)
@@ -420,7 +419,10 @@ Partial Public Class Form1
                     lblQuizEvidence.Text = "Reading locally; the API is used only if the bundled index cannot answer confidently."
                     Dim model = If(cboQuizModel.SelectedItem?.ToString(), DefaultQuizModel)
                     Dim answer As QuizSolveResult = Nothing
-                    If Not QuizLocalKnowledge.TrySolve(quizImage, relativeAnswers, buttons, answer, localTiming) Then
+                    Dim localAttempt = Await QuizLocalKnowledge.SolveAsync(quizImage, relativeAnswers, buttons, cancellationToken)
+                    localTiming = localAttempt.Timing
+                    answer = localAttempt.Answer
+                    If answer Is Nothing Then
                         If manual AndAlso String.IsNullOrWhiteSpace(_quizApiKey) Then ConfigureQuizApiKey()
                         If String.IsNullOrWhiteSpace(_quizApiKey) Then
                             lookupStarted = True
