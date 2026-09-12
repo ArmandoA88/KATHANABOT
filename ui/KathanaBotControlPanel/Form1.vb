@@ -2107,7 +2107,7 @@ Partial Public Class Form1
     Private _achievementBaseExpBasisPoints As Integer = -1
     Private _achievementExpLevelRollovers As Integer = 0
     Private _achievementBaseRupiahsTotal As Long = -1
-    Private ReadOnly _applicationSessionStartedAtUtc As DateTime = DateTime.UtcNow
+    Private _applicationSessionStartedAtUtc As DateTime = DateTime.UtcNow
     Private _dashboardRunBaseRupiahs As Long = -1
     Private _dashboardSessionRupiahsEarned As Long = 0
     Private _dashboardRunBaseExpBasisPoints As Integer = -1
@@ -3966,7 +3966,7 @@ Partial Public Class Form1
 
     Private Sub DashboardResetSessionClicked(sender As Object, e As EventArgs)
         If MessageBox.Show(Me,
-                           "Reset the EXE-session EXP and Rupiah counters? After OK, the next fresh valid OCR readings become the new fixed baselines. This does not change the in-game wallet or EXP.",
+                           "Reset the EXE-session EXP, Rupiah counters, and Runtime? After OK, the next fresh valid OCR readings become the new fixed baselines and the Runtime tile starts counting from 0. This does not change the in-game wallet or EXP.",
                            "Reset Session Stats",
                            MessageBoxButtons.OKCancel,
                            MessageBoxIcon.Question) <> DialogResult.OK Then
@@ -3982,9 +3982,10 @@ Partial Public Class Form1
         _dashboardLastRateSampleAtUtc = DateTime.MinValue
         _dashboardExpRateHistory.Clear()
         _dashboardRupiahRateHistory.Clear()
+        _applicationSessionStartedAtUtc = DateTime.UtcNow
         _fullEngine.ResetStatsTelemetryReadings()
         ResetAchievementTelemetryState()
-        AddDashboardRecentEvent("EXP and Rupiah counters reset; waiting for fresh fixed baselines")
+        AddDashboardRecentEvent("EXP, Rupiah counters, and Runtime reset; waiting for fresh fixed baselines")
     End Sub
 
     Private Sub ResetAchievementTelemetryState()
