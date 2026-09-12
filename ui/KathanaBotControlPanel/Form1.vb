@@ -9903,7 +9903,13 @@ Partial Public Class Form1
             SavePersistedListState(False)
             FlushPendingLogLines()
             StartStandaloneReplacement(currentExecutable, temporaryExecutable)
-            Application.Exit()
+            ' Application.Exit() only requests a cooperative WinForms shutdown; it does not guarantee
+            ' the process (and its lock on this very EXE file) is gone before the helper script's
+            ' Wait-Process/Copy-Item retries give up, which left old installs neither replaced nor
+            ' restarted. Environment.Exit matches what Velopack's own installed-update path already
+            ' does (it ends in the same hard exit) and guarantees this process releases its file
+            ' handle immediately.
+            Environment.Exit(0)
         Catch
             Try
                 If File.Exists(temporaryExecutable) Then
@@ -9920,11 +9926,15 @@ Partial Public Class Form1
         Dim escapedDownloaded As String = downloadedExecutable.Replace("'", "''")
         Dim escapedWorkingDirectory As String = Path.GetDirectoryName(currentExecutable).Replace("'", "''")
         Dim processId As Integer = Environment.ProcessId
+        ' If the copy still can't win the file lock after a full minute (e.g. antivirus holding it
+        ' open), restart the old EXE anyway rather than leave the user with the bot simply not
+        ' running - a missed update is recoverable from inside the app; a bot that never came back
+        ' is not.
         Dim script As String =
             $"$ErrorActionPreference='Stop'; Wait-Process -Id {processId} -ErrorAction SilentlyContinue; " &
             $"$source='{escapedDownloaded}'; $target='{escapedCurrent}'; $copied=$false; " &
             "for($i=0; $i -lt 60 -and -not $copied; $i++){ try { Copy-Item -LiteralPath $source -Destination $target -Force; $copied=$true } catch { Start-Sleep -Milliseconds 500 } }; " &
-            "if(-not $copied){ exit 1 }; Remove-Item -LiteralPath $source -Force -ErrorAction SilentlyContinue; " &
+            "if($copied){ Remove-Item -LiteralPath $source -Force -ErrorAction SilentlyContinue }; " &
             $"Start-Process -FilePath $target -WorkingDirectory '{escapedWorkingDirectory}'"
         Dim encodedCommand As String = Convert.ToBase64String(Encoding.Unicode.GetBytes(script))
         Process.Start(New ProcessStartInfo("powershell.exe") With {
