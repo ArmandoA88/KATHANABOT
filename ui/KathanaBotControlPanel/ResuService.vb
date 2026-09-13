@@ -34,6 +34,11 @@ Friend Class ResuSettings
     Public Property UnpaidPattern As String = "^(?<user>[\p{L}\p{N}_-]+) did not pay\.?$"
     Public Property TradeClosedPattern As String = "^Trade (completed|cancelled|canceled)\.?$"
     Public Property Blacklist As New List(Of ResuBlacklistEntry)
+    ' Independent of the identity/payment patterns above: a simple substring watch over the same
+    ' calibrated chat region, purely to notify the user - it never affects resurrection, invite, or
+    ' trade automation, all of which keep working exactly as calibrated regardless of this toggle.
+    Public Property ChatAlarmEnabled As Boolean = False
+    Public Property ChatAlarmKeywords As New List(Of String) From {"ress", "resu", "res"}
 End Class
 
 Friend Class ResuBuffKeySetting
@@ -161,6 +166,14 @@ Friend NotInheritable Class ResuService
             End If
         Next
         Return names
+    End Function
+
+    ' Case-insensitive substring match against each keyword independently, so word order within
+    ' the chat line never matters. Returns the first configured keyword found, or Nothing.
+    Public Shared Function FindChatAlarmKeyword(chatText As String, keywords As List(Of String)) As String
+        Dim text = If(chatText, "").Trim()
+        If text.Length = 0 OrElse keywords Is Nothing Then Return Nothing
+        Return keywords.FirstOrDefault(Function(word) Not String.IsNullOrWhiteSpace(word) AndAlso text.IndexOf(word.Trim(), StringComparison.OrdinalIgnoreCase) >= 0)
     End Function
 
     ' Scheduled from first key-down to the start of the last key press. Key-hold time may make

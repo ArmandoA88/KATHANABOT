@@ -36,6 +36,11 @@ Partial Public Class Form1
     Private _resuMinimumPayment As NumericUpDown
     Private _resuBlacklist As DataGridView
     Private ReadOnly _resuPatterns As New Dictionary(Of String, TextBox)()
+    Private _resuChatAlarmEnabled As CheckBox
+    Private _resuChatAlarmKeywords As TextBox
+    Private _lastResuChatAlarmText As String = ""
+    Private _lastResuChatAlarmSentAtUtc As DateTime = DateTime.MinValue
+    Private Const ResuChatAlarmCooldownSeconds As Integer = 20
 
     Private Function BuildResuTab() As TabPage
         Dim tab As New TabPage("RESU") With {.BackColor = ThemeBg}
@@ -115,6 +120,11 @@ Partial Public Class Form1
             AddResuRow(item & " pattern", box)
         Next
         AddResuRow("Message matching", New Label With {.Text = "Patterns below are examples. Invitation and player-event patterns use (?<user>...) for the username; payment also uses (?<amount>...). The trade-window pattern only identifies the open window and does not need a username. Resurrection and trade completion are read from the game-message region; payment/nonpayment also use chat.", .AutoSize = True, .MaximumSize = New Size(750, 0)})
+        _resuChatAlarmEnabled = New CheckBox With {.Text = "Notify me when chat mentions any keyword below", .AutoSize = True}
+        _resuChatAlarmKeywords = New TextBox With {.Dock = DockStyle.Fill, .PlaceholderText = "ress, resu, res"}
+        AddResuRow("Chat mention alarm", _resuChatAlarmEnabled)
+        AddResuRow("Alarm keywords (comma-separated)", _resuChatAlarmKeywords)
+        AddResuRow("Chat alarm", New Label With {.Text = "Watches the same calibrated chat region above for these words - case-insensitive, matched anywhere in the line, word order does not matter - and sends a phone notification through your configured Discord webhook or ntfy topic in Settings. Does not affect resurrection, invite, or trade automation. The same line will not re-alert for 20 seconds.", .AutoSize = True, .MaximumSize = New Size(750, 0), .ForeColor = ThemeTextSecondary})
         Dim save As New Button With {.Text = "Save settings", .AutoSize = True}
         AddHandler save.Click, Sub() SaveResuOptions()
         Dim preview As New Button With {.Text = "Read OCR once", .AutoSize = True}
@@ -223,6 +233,8 @@ Partial Public Class Form1
         settings.PaidPattern = _resuPatterns("Payment received").Text
         settings.UnpaidPattern = _resuPatterns("Nonpayment").Text
         settings.TradeClosedPattern = _resuPatterns("Trade completed / cancelled").Text
+        settings.ChatAlarmEnabled = _resuChatAlarmEnabled.Checked
+        settings.ChatAlarmKeywords = ParseBulkFilterNames(_resuChatAlarmKeywords.Text)
         Return settings
     End Function
 
@@ -291,6 +303,8 @@ Partial Public Class Form1
         _resuPatterns("Payment received").Text = _resuSettings.PaidPattern
         _resuPatterns("Nonpayment").Text = _resuSettings.UnpaidPattern
         _resuPatterns("Trade completed / cancelled").Text = _resuSettings.TradeClosedPattern
+        _resuChatAlarmEnabled.Checked = _resuSettings.ChatAlarmEnabled
+        _resuChatAlarmKeywords.Text = String.Join(", ", If(_resuSettings.ChatAlarmKeywords, New List(Of String) From {"ress", "resu", "res"}))
         UpdateResuCalibrationLabel()
         RefreshResuBlacklist()
     End Sub
@@ -513,6 +527,7 @@ Partial Public Class Form1
             tradeVisibleThisScan = ResuService.HasTradeType(settings, observation.InvitationText, True) OrElse ResuService.HasTradeType(settings, observation.TradeText, False)
             _resuTradeVisible = tradeVisibleThisScan
             ShowResuObservation(observation)
+            Await CheckResuChatAlarmAsync(settings, observation.ChatText)
             If _resuService.PendingUsername.Length > 0 AndAlso String.IsNullOrWhiteSpace(observation.ChatText) AndAlso String.IsNullOrWhiteSpace(observation.MessageText) Then
                 _resuService.PauseMonitoring()
                 _resuStatus.Text = "Payment monitoring paused: chat and game-message OCR are empty. Check the calibrated regions."
@@ -660,6 +675,24 @@ Partial Public Class Form1
 
     Private Shared Function ClickResuPoint(hwnd As IntPtr, point As DrawingPoint) As Boolean
         Return BotEngine.ClickClientPoint(hwnd, point.X, point.Y)
+    End Function
+
+    ' Purely a notification: a case-insensitive substring watch over the same calibrated chat OCR
+    ' RESU already reads every scan, independent of the identity/payment patterns above. Word order
+    ' inside the chat line never matters since each keyword is checked as its own substring. Only a
+    ' genuinely new chat line can trigger a new alert, and repeats are further capped by a cooldown
+    ' so a lingering chat line cannot spam notifications.
+    Private Async Function CheckResuChatAlarmAsync(settings As ResuSettings, chatText As String) As Task
+        If Not settings.ChatAlarmEnabled Then Return
+        Dim text As String = If(chatText, "").Trim()
+        If text.Length = 0 OrElse String.Equals(text, _lastResuChatAlarmText, StringComparison.Ordinal) Then Return
+        _lastResuChatAlarmText = text
+        Dim matched As String = ResuService.FindChatAlarmKeyword(text, settings.ChatAlarmKeywords)
+        If matched Is Nothing Then Return
+        If (DateTime.UtcNow - _lastResuChatAlarmSentAtUtc).TotalSeconds < ResuChatAlarmCooldownSeconds Then Return
+        _lastResuChatAlarmSentAtUtc = DateTime.UtcNow
+        AppendLog($"RESU chat alarm: matched ""{matched}"" in chat - ""{text}"".")
+        Await SendPhoneNotificationAsync("RESU chat alarm", $"Chat mentioned ""{matched}"": {text}")
     End Function
 
     Private Sub SetResuOverlay(visible As Boolean)

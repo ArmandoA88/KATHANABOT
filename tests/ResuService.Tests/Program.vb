@@ -56,6 +56,8 @@ Module Program
         Test("dashboard icon ignores stale telemetry from either edition", AddressOf DashboardRunIcon)
         Test("invalid message patterns rejected", AddressOf InvalidPatterns)
         Test("settings and blacklist survive JSON roundtrip", AddressOf Persistence)
+        Test("chat alarm keyword matching ignores word order and case", AddressOf ChatAlarmKeywordMatching)
+        Test("chat alarm keywords and toggle survive JSON roundtrip", AddressOf ChatAlarmSettingsPersistence)
         Console.WriteLine($"Passed {_passed} RESU tests.")
     End Sub
 
@@ -831,5 +833,26 @@ Module Program
         Check(loaded.AcceptPoint.X = 400 AndAlso loaded.AcceptPoint.Y = 500 AndAlso loaded.TradeRegion.W = 400, "Calibration must persist")
         Check(loaded.OpenTradeRegion.X = 100 AndAlso loaded.OpenTradeRegion.W = 700, "Overlay 6 open-trade region must persist separately")
         Check(loaded.Blacklist(0).Username = "Alice" AndAlso loaded.Blacklist(0).Reason = "Unpaid", "Blacklist must persist")
+    End Sub
+
+    Private Sub ChatAlarmKeywordMatching()
+        Dim keywords = New List(Of String) From {"ress", "resu", "res"}
+        Check(ResuService.FindChatAlarmKeyword("someone plz RESS me", keywords) = "ress", "Match must be case-insensitive")
+        Check(ResuService.FindChatAlarmKeyword("need a resu asap", keywords) = "resu", "Different keyword must still match regardless of message wording")
+        Check(ResuService.FindChatAlarmKeyword("res pls anyone here", keywords) = "res", "Word order/position in the line must not matter")
+        Check(ResuService.FindChatAlarmKeyword("hello world", keywords) Is Nothing, "Unrelated chat must not match")
+        Check(ResuService.FindChatAlarmKeyword("", keywords) Is Nothing, "Empty chat text must not match")
+        Check(ResuService.FindChatAlarmKeyword("ress", New List(Of String)()) Is Nothing, "Empty keyword list must never match")
+        Check(ResuService.FindChatAlarmKeyword("ress", New List(Of String) From {" ", ""}) Is Nothing, "Blank keyword entries must be ignored")
+    End Sub
+
+    Private Sub ChatAlarmSettingsPersistence()
+        Dim defaults As New ResuSettings()
+        Check(Not defaults.ChatAlarmEnabled, "Chat alarm must default to off")
+        Check(defaults.ChatAlarmKeywords.Count = 3 AndAlso defaults.ChatAlarmKeywords.Contains("ress") AndAlso defaults.ChatAlarmKeywords.Contains("resu") AndAlso defaults.ChatAlarmKeywords.Contains("res"), "Default keywords must seed ress/resu/res")
+        Dim settings As New ResuSettings With {.ChatAlarmEnabled = True, .ChatAlarmKeywords = New List(Of String) From {"ress", "help me"}}
+        Dim loaded = JsonSerializer.Deserialize(Of ResuSettings)(JsonSerializer.Serialize(settings))
+        Check(loaded.ChatAlarmEnabled, "Chat alarm toggle must persist")
+        Check(loaded.ChatAlarmKeywords.Count = 2 AndAlso loaded.ChatAlarmKeywords(0) = "ress" AndAlso loaded.ChatAlarmKeywords(1) = "help me", "Custom keyword list must persist")
     End Sub
 End Module
