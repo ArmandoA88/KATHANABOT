@@ -3968,7 +3968,7 @@ Partial Public Class Form1
 
     Private Sub DashboardResetSessionClicked(sender As Object, e As EventArgs)
         If MessageBox.Show(Me,
-                           "Reset the EXE-session EXP, Rupiah counters, and Runtime? After OK, the next fresh valid OCR readings become the new fixed baselines and the Runtime tile starts counting from 0. This does not change the in-game wallet or EXP.",
+                           "Reset the EXE-session Mobs Killed, Kills/Hour, EXP, Rupiah counters, and Runtime? After OK, the next fresh valid OCR readings become the new fixed baselines and the Runtime tile starts counting from 0. This does not change the game character.",
                            "Reset Session Stats",
                            MessageBoxButtons.OKCancel,
                            MessageBoxIcon.Question) <> DialogResult.OK Then
@@ -3984,10 +3984,18 @@ Partial Public Class Form1
         _dashboardLastRateSampleAtUtc = DateTime.MinValue
         _dashboardExpRateHistory.Clear()
         _dashboardRupiahRateHistory.Clear()
+        _dashboardLastKillCount = 0
+        _dashboardKillCounterInitialized = True
+        _dashboardKillDurationTotalSeconds = 0
+        _dashboardTrackedKillDurations = 0
+        _dashboardTargetSignature = ""
+        _dashboardTargetStartedAtUtc = DateTime.MinValue
+        _dashboardTargetStartHpPercent = -1
+        _dashboardTargetWasValid = False
         _applicationSessionStartedAtUtc = DateTime.UtcNow
         _fullEngine.ResetStatsTelemetryReadings()
         ResetAchievementTelemetryState()
-        AddDashboardRecentEvent("EXP, Rupiah counters, and Runtime reset; waiting for fresh fixed baselines")
+        AddDashboardRecentEvent("Mobs Killed, Kills/Hour, EXP, Rupiah counters, and Runtime reset; waiting for fresh fixed baselines")
     End Sub
 
     Private Sub ResetAchievementTelemetryState()
@@ -19984,8 +19992,8 @@ Partial Public Class Form1
         AppendLogSafe(message)
     End Sub
 
-    Private Async Function SendPhoneNotificationToTopicAsync(title As String, body As String, topic As String, Optional maxAttempts As Integer = 1, Optional priority As String = "urgent", Optional tags As String = "warning,gamepad", Optional discordWebhookUrl As String = Nothing, Optional discordDestinationLabel As String = "Discord webhook") As Task(Of Boolean)
-        If GetNotificationProviderName() = NotificationProviderDiscord Then
+    Private Async Function SendPhoneNotificationToTopicAsync(title As String, body As String, topic As String, Optional maxAttempts As Integer = 1, Optional priority As String = "urgent", Optional tags As String = "warning,gamepad", Optional discordWebhookUrl As String = Nothing, Optional discordDestinationLabel As String = "Discord webhook", Optional forceNtfy As Boolean = False) As Task(Of Boolean)
+        If Not forceNtfy AndAlso GetNotificationProviderName() = NotificationProviderDiscord Then
             Return Await SendDiscordNotificationAsync(title, body, If(String.IsNullOrWhiteSpace(discordWebhookUrl), GetDiscordGlobalWebhookUrl(), discordWebhookUrl), discordDestinationLabel, maxAttempts)
         End If
 

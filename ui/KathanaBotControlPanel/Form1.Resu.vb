@@ -1,4 +1,4 @@
-Imports System.Threading.Tasks
+﻿Imports System.Threading.Tasks
 Imports System.Text.Json
 Imports DrawingPoint = System.Drawing.Point
 
@@ -12,6 +12,8 @@ Partial Public Class Form1
     Private _resuNextScan As DateTime
     Private _resuNextSelectKeyAt As DateTime
     Private _resuNextPeriodicMessageAt As DateTime
+    Private _resuNextKeepStandingAt As DateTime
+    Private _resuKeywordTriggerUntilUtc As DateTime
     Private _resuTradeVisible As Boolean
     Private _resuWindow As IntPtr
     Private _resuOverlay As AutoRelaunchClickOverlayForm
@@ -19,6 +21,8 @@ Partial Public Class Form1
     Private _resuOptions As TableLayoutPanel
     Private _resuStart As Button
     Private _resuStatus As Label
+    Private ReadOnly _resuStatusHistory As New List(Of String)()
+    Private ReadOnly _resuStatusTimes As New List(Of DateTime)()
     Private _resuCalibrationLabel As Label
     Private _resuOcr As TextBox
     Private _resuSelectKey As ComboBox
@@ -34,10 +38,18 @@ Partial Public Class Form1
     Private _resuScanMs As NumericUpDown
     Private _resuTimeout As NumericUpDown
     Private _resuMinimumPayment As NumericUpDown
+    Private _resuBlacklistEnabled As CheckBox
     Private _resuBlacklist As DataGridView
     Private ReadOnly _resuPatterns As New Dictionary(Of String, TextBox)()
     Private _resuChatAlarmEnabled As CheckBox
     Private _resuChatAlarmKeywords As TextBox
+    Private _resuChatAutoReplyEnabled As CheckBox
+    Private _resuChatAutoReplyText As TextBox
+    Private _resuNtfyTopic As TextBox
+    Private _resuKeywordTriggerSeconds As NumericUpDown
+    Private _resuKeepStandingEnabled As CheckBox
+    Private _resuKeepStandingKey As ComboBox
+    Private _resuKeepStandingIntervalSeconds As NumericUpDown
     Private _lastResuChatAlarmText As String = ""
     Private _lastResuChatAlarmSentAtUtc As DateTime = DateTime.MinValue
     Private Const ResuChatAlarmCooldownSeconds As Integer = 20
@@ -48,7 +60,7 @@ Partial Public Class Form1
         Dim body As New TableLayoutPanel With {.Dock = DockStyle.Top, .AutoSize = True, .ColumnCount = 1}
         body.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
         body.Controls.Add(New Label With {.Text = "RESU / PAID RESURRECTION", .AutoSize = True, .Font = New Font("Segoe UI", 17, FontStyle.Bold), .ForeColor = ThemeAccent, .Margin = New Padding(0, 0, 0, 12)})
-        body.Controls.Add(New Label With {.Text = "Select a player, read their name, and resurrect only if they are not blacklisted. Accept that player's trade and repeat left-clicks on OK while the trade remains visible. Local OCR watches chat and the unreachable-text message region for resurrection, payment, and trade completion.", .AutoSize = True, .MaximumSize = New Size(1050, 0), .ForeColor = ThemeTextSecondary, .Margin = New Padding(0, 0, 0, 12)})
+        body.Controls.Add(New Label With {.Text = "Wait for a RESU request in chat, then select players and resurrect only while the configurable trigger window is active. Blacklisted players are skipped. Trade invitations, payment, and completion remain monitored after a cast.", .AutoSize = True, .MaximumSize = New Size(1050, 0), .ForeColor = ThemeTextSecondary, .Margin = New Padding(0, 0, 0, 12)})
         Dim actions As New FlowLayoutPanel With {.AutoSize = True, .Dock = DockStyle.Top}
         _resuStart = New Button With {.Text = "Start RESU", .Width = 130, .Height = 34}
         AddHandler _resuStart.Click, AddressOf ToggleResu
@@ -62,7 +74,7 @@ Partial Public Class Form1
         _resuOptions.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 235))
         _resuOptions.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
         _resuSelectKey = ResuKeyPicker("TAB")
-        _resuSelectKeyIntervalMs = New NumericUpDown With {.Minimum = 50, .Maximum = 10000, .Increment = 50, .Value = 500, .Dock = DockStyle.Fill, .ThousandsSeparator = True}
+        _resuSelectKeyIntervalMs = New ResuNumericUpDown With {.Minimum = 50, .Maximum = 10000, .Increment = 50, .Value = 500, .Dock = DockStyle.Fill, .ThousandsSeparator = True}
         _resuCastKey = New TextBox With {
             .Width = 165,
             .CharacterCasing = CharacterCasing.Upper,
@@ -91,40 +103,62 @@ Partial Public Class Form1
         AddResuRow("1. Select target key", _resuSelectKey)
         AddResuRow("Select target key interval (ms)", _resuSelectKeyIntervalMs)
         AddResuRow("2. Resurrection + buff keys", resurrectionAndBuffKeys)
-        _resuCastPressCount = New NumericUpDown With {.Minimum = 1, .Maximum = 100, .Value = 10, .Dock = DockStyle.Fill}
-        _resuCastBurstSeconds = New NumericUpDown With {.Minimum = 0D, .Maximum = 30D, .DecimalPlaces = 1, .Increment = 0.1D, .Value = 1D, .Dock = DockStyle.Fill}
+        _resuCastPressCount = New ResuNumericUpDown With {.Minimum = 1, .Maximum = 100, .Value = 10, .Dock = DockStyle.Fill}
+        _resuCastBurstSeconds = New ResuNumericUpDown With {.Minimum = 0D, .Maximum = 30D, .DecimalPlaces = 1, .Increment = 0.1D, .Value = 1D, .Dock = DockStyle.Fill}
         AddResuRow("Resurrection key presses", _resuCastPressCount)
         AddResuRow("Burst duration, first-to-last (sec)", _resuCastBurstSeconds)
         AddResuRow("Resurrection spam", New Label With {.Text = "The selected resurrection key is pressed repeatedly. Example: 10 presses over 1.0 second. Set duration to 0 for the fastest possible burst. F12 can stop a burst.", .AutoSize = True, .MaximumSize = New Size(750, 0), .ForeColor = ThemeTextSecondary})
         _resuPeriodicMessageEnabled = New CheckBox With {.Text = "Send Enter → message → Enter repeatedly", .AutoSize = True}
         _resuPeriodicMessageText = New TextBox With {.Dock = DockStyle.Fill, .MaxLength = 200, .PlaceholderText = "Type the message to send"}
-        _resuPeriodicMessageIntervalSeconds = New NumericUpDown With {.Minimum = 1, .Maximum = 86400, .Value = 60, .Dock = DockStyle.Fill, .ThousandsSeparator = True}
+        _resuPeriodicMessageIntervalSeconds = New ResuNumericUpDown With {.Minimum = 1, .Maximum = 86400, .Value = 60, .Dock = DockStyle.Fill, .ThousandsSeparator = True}
         AddResuRow("Periodic typed message", _resuPeriodicMessageEnabled)
         AddResuRow("Message text", _resuPeriodicMessageText)
         AddResuRow("Message interval (seconds)", _resuPeriodicMessageIntervalSeconds)
         AddResuRow("Message sequence", New Label With {.Text = "At each interval RESU sends Enter, types this message one key at a time into game chat, then sends Enter again. It does not use Ctrl+V or alter the clipboard.", .AutoSize = True, .MaximumSize = New Size(750, 0), .ForeColor = ThemeTextSecondary})
-        _resuScanMs = New NumericUpDown With {.Minimum = 100, .Maximum = 5000, .Increment = 100, .Value = 500, .Dock = DockStyle.Fill}
-        _resuTimeout = New NumericUpDown With {.Minimum = 10, .Maximum = 600, .Value = 60, .Dock = DockStyle.Fill}
-        _resuMinimumPayment = New NumericUpDown With {.Minimum = 1, .Maximum = 1000000000D, .Value = 1, .ThousandsSeparator = True, .Dock = DockStyle.Fill}
+        _resuScanMs = New ResuNumericUpDown With {.Minimum = 100, .Maximum = 5000, .Increment = 100, .Value = 500, .Dock = DockStyle.Fill}
+        _resuTimeout = New ResuNumericUpDown With {.Minimum = 1, .Maximum = 600, .Value = 1, .Dock = DockStyle.Fill}
+        _resuMinimumPayment = New ResuNumericUpDown With {.Minimum = 1, .Maximum = 1000000000D, .Value = 1, .ThousandsSeparator = True, .Dock = DockStyle.Fill}
+        _resuBlacklistEnabled = New CheckBox With {.Text = "Enable blacklist filtering and automatic nonpayment entries", .AutoSize = True, .Checked = True}
         AddResuRow("Scan / click interval (ms)", _resuScanMs)
         AddResuRow("Payment deadline (seconds)", _resuTimeout)
+        AddResuRow("Late payments", New Label With {.Text = "When the deadline passes, RESU continues to other targets without blacklisting the player. A matching payment can still be accepted later.", .AutoSize = True, .MaximumSize = New Size(750, 0), .ForeColor = ThemeTextSecondary})
         AddResuRow("Minimum payment (rupiahs)", _resuMinimumPayment)
+        AddResuRow("Blacklist", _resuBlacklistEnabled)
         Dim calibrate As New Button With {.Text = "Calibrate trade overlay and text regions", .AutoSize = True}
         AddHandler calibrate.Click, AddressOf CalibrateResu
         AddResuRow("Game screen calibration", calibrate)
         _resuCalibrationLabel = New Label With {.AutoSize = True, .MaximumSize = New Size(750, 0)}
         AddResuRow("Saved calibration", _resuCalibrationLabel)
-        For Each item In New String() {"Invitation", "Trade window", "Resurrection confirmed", "Payment received", "Nonpayment", "Trade completed / cancelled"}
+        For Each item In New String() {"Invitation", "Trade window", "Payment received", "Nonpayment", "Trade completed / cancelled"}
             Dim box As New TextBox With {.Dock = DockStyle.Fill}
             _resuPatterns.Add(item, box)
             AddResuRow(item & " pattern", box)
         Next
         AddResuRow("Message matching", New Label With {.Text = "Patterns below are examples. Invitation and player-event patterns use (?<user>...) for the username; payment also uses (?<amount>...). The trade-window pattern only identifies the open window and does not need a username. Resurrection and trade completion are read from the game-message region; payment/nonpayment also use chat.", .AutoSize = True, .MaximumSize = New Size(750, 0)})
         _resuChatAlarmEnabled = New CheckBox With {.Text = "Notify me when chat mentions any keyword below", .AutoSize = True}
-        _resuChatAlarmKeywords = New TextBox With {.Dock = DockStyle.Fill, .PlaceholderText = "ress, resu, res"}
+        _resuChatAlarmKeywords = New TextBox With {.Dock = DockStyle.Fill, .PlaceholderText = "ress, ressu, resu, res"}
+        _resuChatAutoReplyEnabled = New CheckBox With {.Text = "Automatically reply when a keyword is detected", .AutoSize = True, .Checked = True}
+        _resuChatAutoReplyText = New TextBox With {.Dock = DockStyle.Fill, .MaxLength = 200, .Text = "I'm here I'm vidya soy vidya", .PlaceholderText = "Reply sent to game chat"}
         AddResuRow("Chat mention alarm", _resuChatAlarmEnabled)
         AddResuRow("Alarm keywords (comma-separated)", _resuChatAlarmKeywords)
-        AddResuRow("Chat alarm", New Label With {.Text = "Watches the same calibrated chat region above for these words - case-insensitive, matched anywhere in the line, word order does not matter - and sends a phone notification through your configured Discord webhook or ntfy topic in Settings. Does not affect resurrection, invite, or trade automation. The same line will not re-alert for 20 seconds.", .AutoSize = True, .MaximumSize = New Size(750, 0), .ForeColor = ThemeTextSecondary})
+        AddResuRow("Automatic chat reply", _resuChatAutoReplyEnabled)
+        AddResuRow("Reply text", _resuChatAutoReplyText)
+        _resuNtfyTopic = New TextBox With {.Dock = DockStyle.Fill, .MaxLength = 200, .PlaceholderText = "Private ntfy topic for RESU alarms"}
+        Dim resuNtfyRow As New FlowLayoutPanel With {.Dock = DockStyle.Fill, .AutoSize = True, .WrapContents = True}
+        _resuNtfyTopic.Width = 430
+        Dim testResuNtfy As New Button With {.Text = "Test RESU ntfy", .AutoSize = True}
+        AddHandler testResuNtfy.Click, Async Sub() Await TestResuNtfyAsync()
+        resuNtfyRow.Controls.AddRange({_resuNtfyTopic, testResuNtfy})
+        AddResuRow("RESU ntfy channel", resuNtfyRow)
+        _resuKeywordTriggerSeconds = New ResuNumericUpDown With {.Minimum = 1, .Maximum = 3600, .Value = 60, .Dock = DockStyle.Fill, .ThousandsSeparator = True}
+        AddResuRow("Resurrection trigger time (seconds)", _resuKeywordTriggerSeconds)
+        AddResuRow("Chat detection", New Label With {.Text = "RESU waits until one of these words appears in chat. A match enables target selection and resurrection spam for the configured time, sends the editable reply, and can send a phone notification. A new keyword mention refreshes the trigger time.", .AutoSize = True, .MaximumSize = New Size(750, 0), .ForeColor = ThemeTextSecondary})
+        _resuKeepStandingEnabled = New CheckBox With {.Text = "Press one key repeatedly while waiting for a RESU keyword", .AutoSize = True, .Checked = True}
+        _resuKeepStandingKey = ResuKeyPicker("SPACE")
+        _resuKeepStandingIntervalSeconds = New ResuNumericUpDown With {.Minimum = 1, .Maximum = 3600, .Value = 5, .Dock = DockStyle.Fill, .ThousandsSeparator = True}
+        AddResuRow("Keep character standing", _resuKeepStandingEnabled)
+        AddResuRow("Keep-standing key", _resuKeepStandingKey)
+        AddResuRow("Keep-standing interval (seconds)", _resuKeepStandingIntervalSeconds)
         Dim save As New Button With {.Text = "Save settings", .AutoSize = True}
         AddHandler save.Click, Sub() SaveResuOptions()
         Dim preview As New Button With {.Text = "Read OCR once", .AutoSize = True}
@@ -159,7 +193,7 @@ Partial Public Class Form1
                 Next
                 SaveResuBlacklist()
                 username.Clear()
-                _resuStatus.Text = $"Added {added} character name(s) to the blacklist. {names.Count - added} already existed."
+                SetResuStatus($"Added {added} character name(s) to the blacklist. {names.Count - added} already existed.")
                 If invalid.Count > 0 Then MessageBox.Show(Me, "These entries were not added because their names are invalid: " & String.Join(", ", invalid.Take(10)), "RESU blacklist")
             End Sub
         AddHandler remove.Click,
@@ -168,7 +202,7 @@ Partial Public Class Form1
                 Dim name = CStr(_resuBlacklist.SelectedRows(0).Cells(0).Value)
                 _resuSettings.Blacklist.RemoveAll(Function(entry) String.Equals(entry.Username, name, StringComparison.OrdinalIgnoreCase))
                 SaveResuBlacklist()
-                _resuStatus.Text = $"Removed {name} from the blacklist."
+                SetResuStatus($"Removed {name} from the blacklist.")
             End Sub
         blacklistActions.Controls.AddRange({username, add, remove})
         body.Controls.Add(blacklistActions)
@@ -192,6 +226,33 @@ Partial Public Class Form1
         control.Margin = New Padding(0, 4, 0, 7)
         _resuOptions.Controls.Add(control, 1, row)
     End Sub
+
+    Private Sub SetResuStatus(message As String)
+        Dim clean = If(message, "").Trim()
+        If clean.Length = 0 Then Return
+        Dim category = ResuStatusCategory(clean)
+        If _resuStatusHistory.Count > 0 AndAlso String.Equals(ResuStatusCategory(_resuStatusHistory(0)), category, StringComparison.OrdinalIgnoreCase) Then
+            _resuStatusHistory(0) = clean
+            _resuStatusTimes(0) = DateTime.Now
+        Else
+            _resuStatusHistory.Insert(0, clean)
+            _resuStatusTimes.Insert(0, DateTime.Now)
+            If _resuStatusHistory.Count > 5 Then
+                _resuStatusHistory.RemoveRange(5, _resuStatusHistory.Count - 5)
+                _resuStatusTimes.RemoveRange(5, _resuStatusTimes.Count - 5)
+            End If
+        End If
+        _resuStatus.Text = String.Join(Environment.NewLine, _resuStatusHistory.Select(Function(item, index) $"{If(index = 0, "▶", "•")} {_resuStatusTimes(index):HH:mm:ss}  {item}"))
+    End Sub
+
+    Private Shared Function ResuStatusCategory(message As String) As String
+        If message.StartsWith("Waiting for payment from ", StringComparison.OrdinalIgnoreCase) Then Return "waiting-payment"
+        If message.StartsWith("Waiting for a RESU keyword", StringComparison.OrdinalIgnoreCase) Then Return "waiting-keyword"
+        If message.StartsWith("Waiting ", StringComparison.OrdinalIgnoreCase) AndAlso message.EndsWith("target-key interval.", StringComparison.OrdinalIgnoreCase) Then Return "waiting-target-key"
+        If message.StartsWith("Sending resurrection key for ", StringComparison.OrdinalIgnoreCase) Then Return "resurrection-progress"
+        If message.StartsWith("Buffing ", StringComparison.OrdinalIgnoreCase) Then Return "buff-progress"
+        Return message
+    End Function
 
     Private Shared Function ResuKeyPicker(selected As String) As ComboBox
         Dim box As New ComboBox With {.DropDownStyle = ComboBoxStyle.DropDownList, .Dock = DockStyle.Fill}
@@ -227,14 +288,21 @@ Partial Public Class Form1
         settings.ScanMs = CInt(_resuScanMs.Value)
         settings.PaymentTimeoutSeconds = CInt(_resuTimeout.Value)
         settings.MinimumPayment = CLng(_resuMinimumPayment.Value)
+        settings.BlacklistEnabled = _resuBlacklistEnabled.Checked
         settings.InvitePattern = _resuPatterns("Invitation").Text
         settings.TradePattern = _resuPatterns("Trade window").Text
-        settings.ResurrectedPattern = _resuPatterns("Resurrection confirmed").Text
         settings.PaidPattern = _resuPatterns("Payment received").Text
         settings.UnpaidPattern = _resuPatterns("Nonpayment").Text
         settings.TradeClosedPattern = _resuPatterns("Trade completed / cancelled").Text
         settings.ChatAlarmEnabled = _resuChatAlarmEnabled.Checked
         settings.ChatAlarmKeywords = ParseBulkFilterNames(_resuChatAlarmKeywords.Text)
+        settings.ChatAutoReplyEnabled = _resuChatAutoReplyEnabled.Checked
+        settings.ChatAutoReplyText = _resuChatAutoReplyText.Text.Replace(vbCr, " ").Replace(vbLf, " ").Trim()
+        settings.ResuNtfyTopic = _resuNtfyTopic.Text.Trim()
+        settings.KeywordTriggerDurationSeconds = CInt(_resuKeywordTriggerSeconds.Value)
+        settings.KeepStandingEnabled = _resuKeepStandingEnabled.Checked
+        settings.KeepStandingKey = CStr(_resuKeepStandingKey.SelectedItem)
+        settings.KeepStandingIntervalSeconds = CInt(_resuKeepStandingIntervalSeconds.Value)
         Return settings
     End Function
 
@@ -245,7 +313,7 @@ Partial Public Class Form1
             Dim validation As New ResuService(settings)
             _resuSettings = settings
             SavePersistedListState(True)
-            _resuStatus.Text = "RESU settings saved."
+            SetResuStatus("RESU settings saved.")
         Catch ex As Exception
             MessageBox.Show(Me, ex.Message, "RESU settings")
         End Try
@@ -255,6 +323,7 @@ Partial Public Class Form1
         If Not BotEngine.IsSupportedKeyName(settings.ResurrectKey) Then Throw New InvalidOperationException("Type a valid resurrection key, such as 3, F5, SPACE, ENTER, or a letter.")
         If String.Equals(settings.ResurrectKey, "F12", StringComparison.OrdinalIgnoreCase) Then Throw New InvalidOperationException("F12 is reserved for stopping RESU. Type a different resurrection key.")
         If String.Equals(settings.SelectKey, settings.ResurrectKey, StringComparison.OrdinalIgnoreCase) Then Throw New InvalidOperationException("Choose different target-selection and resurrection keys.")
+        If settings.KeepStandingEnabled AndAlso Not BotEngine.IsSupportedKeyName(settings.KeepStandingKey) Then Throw New InvalidOperationException("Choose a valid keep-standing key.")
         Dim buffKeys As List(Of ResuBuffKeySetting) = If(settings.BuffKeys, New List(Of ResuBuffKeySetting)())
         For index As Integer = 0 To Math.Min(2, buffKeys.Count - 1)
             Dim buff As ResuBuffKeySetting = buffKeys(index)
@@ -266,7 +335,7 @@ Partial Public Class Form1
 
     Private Sub ApplyPersistedResuState(settings As ResuSettings)
         _resuSettings = If(settings, New ResuSettings())
-        If String.Equals(_resuSettings.InvitePattern, ResuService.LegacyDefaultInvitePattern, StringComparison.Ordinal) Then
+        If String.Equals(_resuSettings.InvitePattern, ResuService.LegacyDefaultInvitePattern, StringComparison.Ordinal) OrElse String.Equals(_resuSettings.InvitePattern, ResuService.PreviousDefaultInvitePattern, StringComparison.Ordinal) Then
             _resuSettings.InvitePattern = ResuService.DefaultInvitePattern
         End If
         If String.Equals(_resuSettings.TradePattern, ResuService.LegacyDefaultTradePattern, StringComparison.Ordinal) Then
@@ -279,6 +348,10 @@ Partial Public Class Form1
         For Each entry In _resuSettings.Blacklist
             entry.Username = entry.Username.Trim()
         Next
+        Dim savedAlarmKeywords = If(_resuSettings.ChatAlarmKeywords, New List(Of String)())
+        If savedAlarmKeywords.Count = 3 AndAlso savedAlarmKeywords.Any(Function(value) String.Equals(value, "ress", StringComparison.OrdinalIgnoreCase)) AndAlso savedAlarmKeywords.Any(Function(value) String.Equals(value, "resu", StringComparison.OrdinalIgnoreCase)) AndAlso savedAlarmKeywords.Any(Function(value) String.Equals(value, "res", StringComparison.OrdinalIgnoreCase)) Then
+            _resuSettings.ChatAlarmKeywords = New List(Of String) From {"ress", "ressu", "resu", "res"}
+        End If
         _resuSelectKey.SelectedItem = If(_resuSelectKey.Items.Contains(_resuSettings.SelectKey), _resuSettings.SelectKey, "TAB")
         _resuSelectKeyIntervalMs.Value = Math.Clamp(_resuSettings.SelectKeyIntervalMs, 50, 10000)
         _resuCastKey.Text = If(_resuSettings.ResurrectKey, "").Trim().ToUpperInvariant()
@@ -295,16 +368,23 @@ Partial Public Class Form1
         _resuCastPressCount.Value = Math.Clamp(_resuSettings.ResurrectPressCount, 1, 100)
         _resuCastBurstSeconds.Value = Math.Clamp(_resuSettings.ResurrectBurstSeconds, 0D, 30D)
         _resuScanMs.Value = Math.Clamp(_resuSettings.ScanMs, 100, 5000)
-        _resuTimeout.Value = Math.Clamp(_resuSettings.PaymentTimeoutSeconds, 10, 600)
+        _resuTimeout.Value = Math.Clamp(_resuSettings.PaymentTimeoutSeconds, 1, 600)
         _resuMinimumPayment.Value = Math.Clamp(_resuSettings.MinimumPayment, 1L, 1000000000L)
+        _resuBlacklistEnabled.Checked = _resuSettings.BlacklistEnabled
         _resuPatterns("Invitation").Text = _resuSettings.InvitePattern
         _resuPatterns("Trade window").Text = _resuSettings.TradePattern
-        _resuPatterns("Resurrection confirmed").Text = _resuSettings.ResurrectedPattern
         _resuPatterns("Payment received").Text = _resuSettings.PaidPattern
         _resuPatterns("Nonpayment").Text = _resuSettings.UnpaidPattern
         _resuPatterns("Trade completed / cancelled").Text = _resuSettings.TradeClosedPattern
         _resuChatAlarmEnabled.Checked = _resuSettings.ChatAlarmEnabled
-        _resuChatAlarmKeywords.Text = String.Join(", ", If(_resuSettings.ChatAlarmKeywords, New List(Of String) From {"ress", "resu", "res"}))
+        _resuChatAlarmKeywords.Text = String.Join(", ", If(_resuSettings.ChatAlarmKeywords, New List(Of String) From {"ress", "ressu", "resu", "res"}))
+        _resuChatAutoReplyEnabled.Checked = _resuSettings.ChatAutoReplyEnabled
+        _resuChatAutoReplyText.Text = If(_resuSettings.ChatAutoReplyText, "I'm here I'm vidya soy vidya")
+        _resuNtfyTopic.Text = If(_resuSettings.ResuNtfyTopic, "").Trim()
+        _resuKeywordTriggerSeconds.Value = Math.Clamp(_resuSettings.KeywordTriggerDurationSeconds, 1, 3600)
+        _resuKeepStandingEnabled.Checked = _resuSettings.KeepStandingEnabled
+        _resuKeepStandingKey.SelectedItem = If(_resuKeepStandingKey.Items.Contains(_resuSettings.KeepStandingKey), _resuSettings.KeepStandingKey, "SPACE")
+        _resuKeepStandingIntervalSeconds.Value = Math.Clamp(_resuSettings.KeepStandingIntervalSeconds, 1, 3600)
         UpdateResuCalibrationLabel()
         RefreshResuBlacklist()
     End Sub
@@ -376,7 +456,8 @@ Partial Public Class Form1
         End If
         Try
             If Not _quizUnlocked Then Return
-            If Not IsResuCompatibleBotState(ResuSelectedWindow()) Then Throw New InvalidOperationException("Stop Lite or the main Full bot before starting RESU. Full may remain running only when Hold on Place is enabled; RESU then pauses its combat, retarget, loot, and other automation.")
+            If _liteEngine.IsRunning() Then StopEdition(BotEdition.Lite, False, "starting RESU")
+            If _fullEngine.IsRunning() Then StopEdition(BotEdition.Full, False, "starting RESU")
             Dim settings = ReadResuOptions()
             ValidateResuCalibration(settings)
             ValidateResuKeys(settings)
@@ -384,6 +465,8 @@ Partial Public Class Form1
             If _resuWindow = IntPtr.Zero OrElse NativeMethods.IsIconic(_resuWindow) Then Throw New InvalidOperationException("Select and restore the Full game window first.")
             _resuService = New ResuService(settings)
             _resuSettings = settings
+            _resuStatusHistory.Clear()
+            _resuStatusTimes.Clear()
             _resuGeneration += 1
             _resuRunning = True
             PushLiveConfig()
@@ -392,11 +475,16 @@ Partial Public Class Form1
             _resuNextScan = DateTime.MinValue
             _resuNextSelectKeyAt = DateTime.MinValue
             _resuNextPeriodicMessageAt = If(settings.PeriodicMessageEnabled, DateTime.UtcNow.AddSeconds(settings.PeriodicMessageIntervalSeconds), DateTime.MaxValue)
+            _resuNextKeepStandingAt = If(settings.KeepStandingEnabled, DateTime.UtcNow, DateTime.MaxValue)
+            _resuKeywordTriggerUntilUtc = DateTime.MinValue
+            _lastResuChatAlarmText = ""
+            _lastResuChatAlarmSentAtUtc = DateTime.MinValue
             _resuTradeVisible = False
             SavePersistedListState(False)
             _resuTimer.Start()
             UpdateMainTabIndicators()
-            AppendLog("RESU started. F12 stops; background input is enabled. If Full is running with Hold on Place, only anchor monitoring/correction remains active in the main engine.")
+            SetResuStatus("RESU started; waiting for a configured chat keyword.")
+            AppendLog("RESU started. Any running Full or Lite bot was stopped first. F12 stops RESU; background input is enabled.")
         Catch ex As Exception
             MessageBox.Show(Me, ex.Message, "RESU")
         End Try
@@ -408,7 +496,7 @@ Partial Public Class Form1
         _resuTimer.Stop()
         _resuOptions.Enabled = True
         _resuStart.Text = "Start RESU"
-        _resuStatus.Text = reason
+        SetResuStatus(reason)
         If Not IsDisposed AndAlso Not Disposing AndAlso _fullEngine.IsRunning() Then PushLiveConfig()
         UpdateMainTabIndicators()
         AppendLog(reason)
@@ -480,9 +568,9 @@ Partial Public Class Form1
             Dim observation = Await Task.Run(Function() CaptureResuObservation(hwnd, settings))
             If IsDisposed OrElse Disposing Then Return
             ShowResuObservation(observation)
-            _resuStatus.Text = "OCR preview updated. Match the patterns to the exact game messages shown below."
+            SetResuStatus("OCR preview updated. Match the patterns to the exact game messages shown below.")
         Catch ex As Exception
-            If Not IsDisposed AndAlso Not Disposing Then _resuStatus.Text = ex.Message
+            If Not IsDisposed AndAlso Not Disposing Then SetResuStatus(ex.Message)
         Finally
             _resuBusy = False
         End Try
@@ -509,12 +597,13 @@ Partial Public Class Form1
             Return
         End If
         If Not CanResuAct(generation, hwnd) Then
-            _resuStatus.Text = "Paused: restore the selected game at the calibrated client size."
+            SetResuStatus("Paused: restore the selected game at the calibrated client size.")
             ' Invalidate a worker even if the window is restored before its OCR finishes.
             _resuGeneration += 1
             _resuService.PauseMonitoring()
             Return
         End If
+        If Not _resuBusy AndAlso Await TrySendResuKeepStandingKeyAsync(hwnd, generation) Then Return
         If Not _resuBusy AndAlso Await TrySendResuPeriodicMessageAsync(hwnd, generation) Then Return
         If _resuBusy OrElse DateTime.UtcNow < _resuNextScan Then Return
         _resuBusy = True
@@ -527,10 +616,11 @@ Partial Public Class Form1
             tradeVisibleThisScan = ResuService.HasTradeType(settings, observation.InvitationText, True) OrElse ResuService.HasTradeType(settings, observation.TradeText, False)
             _resuTradeVisible = tradeVisibleThisScan
             ShowResuObservation(observation)
-            Await CheckResuChatAlarmAsync(settings, observation.ChatText)
+            Await CheckResuChatAlarmAsync(hwnd, generation, settings, observation.ChatText)
+            observation.ResurrectionTriggered = ResuService.IsKeywordTriggerActive(_resuKeywordTriggerUntilUtc, DateTime.UtcNow)
             If _resuService.PendingUsername.Length > 0 AndAlso String.IsNullOrWhiteSpace(observation.ChatText) AndAlso String.IsNullOrWhiteSpace(observation.MessageText) Then
                 _resuService.PauseMonitoring()
-                _resuStatus.Text = "Payment monitoring paused: chat and game-message OCR are empty. Check the calibrated regions."
+                SetResuStatus("Payment monitoring paused: chat and game-message OCR are empty. Check the calibrated regions.")
                 Return
             End If
             Dim decision = _resuService.Observe(observation, DateTime.UtcNow)
@@ -542,18 +632,27 @@ Partial Public Class Form1
             If decision.Action <> ResuAction.None Then
                 ' OCR is asynchronous. Re-read the relevant region immediately before input and
                 ' check the window, generation, identity and blacklist again after the await.
-                Dim allowed = Await Task.Run(Function() RevalidateResuAction(hwnd, settings, decision))
+                ' Selecting another target has no identity to validate. Avoid two additional OCR
+                ' passes here; they made every configured target-key interval several seconds late.
+                Dim allowed = If(decision.Action = ResuAction.SelectTarget,
+                                 CanResuAct(generation, hwnd),
+                                 Await Task.Run(Function() RevalidateResuAction(hwnd, settings, decision)))
                 If Not CanResuAct(generation, hwnd) Then Return
                 If allowed AndAlso (decision.Username.Length = 0 OrElse Not _resuService.IsBlocked(decision.Username)) Then
                     Dim sent As Boolean
                     Select Case decision.Action
                         Case ResuAction.SelectTarget
-                            If DateTime.UtcNow >= _resuNextSelectKeyAt Then
-                                sent = BotEngine.SendKey(hwnd, settings.SelectKey, 30, forceBackgroundPost:=True)
-                                If sent Then _resuNextSelectKeyAt = DateTime.UtcNow.AddMilliseconds(settings.SelectKeyIntervalMs)
-                            Else
-                                sent = False
-                                _resuStatus.Text = $"Waiting for the {settings.SelectKeyIntervalMs:N0} ms target-key interval."
+                            Dim remainingMs = ResuService.SelectKeyWaitMilliseconds(_resuNextSelectKeyAt, DateTime.UtcNow)
+                            If remainingMs > 0 Then
+                                SetResuStatus($"Waiting {remainingMs:N0} ms for the target-key interval.")
+                                Await Task.Delay(remainingMs)
+                            End If
+                            If Not CanResuAct(generation, hwnd) Then Return
+                            sent = BotEngine.SendKey(hwnd, settings.SelectKey, 30, forceBackgroundPost:=True)
+                            If sent Then
+                                _resuNextSelectKeyAt = DateTime.UtcNow.AddMilliseconds(settings.SelectKeyIntervalMs)
+                                Dim selectionBurst = Await SendUntrackedResurrectionBurstAsync(hwnd, settings, generation)
+                                AppendLog($"RESU: target key sent with {selectionBurst}/{settings.ResurrectPressCount} resurrection-key press(es).")
                             End If
                         Case ResuAction.Resurrect
                             Dim pressesSent = Await SendResurrectionBurstAsync(hwnd, settings, decision, generation)
@@ -571,7 +670,7 @@ Partial Public Class Form1
                     End If
                 End If
             End If
-            _resuStatus.Text = _resuService.Status
+            SetResuStatus(_resuService.Status)
         Catch ex As Exception
             If generation = _resuGeneration AndAlso Not IsDisposed AndAlso Not Disposing Then StopResu("RESU stopped: " & ex.Message)
         Finally
@@ -582,7 +681,10 @@ Partial Public Class Form1
                 _resuNextScan = scanStartedAt.AddMilliseconds(500)
                 If _resuNextScan < DateTime.UtcNow Then _resuNextScan = DateTime.UtcNow
             Else
-                _resuNextScan = DateTime.UtcNow.AddMilliseconds(_resuSettings.ScanMs)
+                ' Anchor the cadence to when this scan started so OCR duration is not added to the
+                ' configured scan and target-selection intervals.
+                _resuNextScan = scanStartedAt.AddMilliseconds(_resuSettings.ScanMs)
+                If _resuNextScan < DateTime.UtcNow Then _resuNextScan = DateTime.UtcNow
             End If
         End Try
     End Function
@@ -596,12 +698,28 @@ Partial Public Class Form1
             Dim sent = Await Task.Run(Function() BotEngine.SendChatMessageSequence(hwnd, settings.PeriodicMessageText))
             If Not CanResuAct(generation, hwnd) Then Return True
             If sent Then
-                _resuStatus.Text = $"Periodic message sent. Next message in {settings.PeriodicMessageIntervalSeconds:N0} second(s)."
+                SetResuStatus($"Periodic message sent. Next message in {settings.PeriodicMessageIntervalSeconds:N0} second(s).")
                 AppendLog("RESU periodic message sent: " & settings.PeriodicMessageText)
             Else
-                _resuStatus.Text = "Periodic message could not be sent; RESU will retry at the next interval."
+                SetResuStatus("Periodic message could not be sent; RESU will retry at the next interval.")
                 AppendLog("RESU periodic message failed to send.")
             End If
+            Return True
+        Finally
+            _resuBusy = False
+        End Try
+    End Function
+
+    Private Async Function TrySendResuKeepStandingKeyAsync(hwnd As IntPtr, generation As Integer) As Task(Of Boolean)
+        Dim settings = _resuSettings
+        Dim now = DateTime.UtcNow
+        If Not ResuService.ShouldPressKeepStanding(settings.KeepStandingEnabled, _resuTradeVisible, _resuKeywordTriggerUntilUtc, _resuNextKeepStandingAt, now) Then Return False
+        _resuBusy = True
+        _resuNextKeepStandingAt = DateTime.UtcNow.AddSeconds(settings.KeepStandingIntervalSeconds)
+        Try
+            Dim sent = Await Task.Run(Function() BotEngine.SendKey(hwnd, settings.KeepStandingKey, 30, forceBackgroundPost:=True))
+            If Not CanResuAct(generation, hwnd) Then Return True
+            If Not sent Then AppendLog($"RESU keep-standing key {settings.KeepStandingKey} could not be sent.")
             Return True
         Finally
             _resuBusy = False
@@ -626,7 +744,7 @@ Partial Public Class Form1
                 _resuService.ActionSucceeded(decision)
                 AppendLog("RESU: " & _resuService.Status)
             End If
-            _resuStatus.Text = $"Sending resurrection key for {decision.Username}: {sent}/{settings.ResurrectPressCount} press(es)."
+            SetResuStatus($"Sending resurrection key for {decision.Username}: {sent}/{settings.ResurrectPressCount} press(es).")
         Next
         Dim buffKeysSent As Integer = Await SendResuBuffKeysAsync(hwnd, settings, decision, generation)
         If buffKeysSent > 0 Then AppendLog($"RESU: sent {buffKeysSent} enabled buff key(s) to {decision.Username} after resurrection.")
@@ -642,18 +760,24 @@ Partial Public Class Form1
 
         ' Give the game a brief moment to apply the resurrection while keeping the resurrected
         ' character selected, then cast each enabled buff once through background window input.
-        Await Task.Delay(250)
+        Dim schedule = Diagnostics.Stopwatch.StartNew()
         Dim sent As Integer = 0
-        For Each buff As ResuBuffKeySetting In enabledBuffs
+        For buffIndex = 0 To enabledBuffs.Count - 1
+            Dim buff = enabledBuffs(buffIndex)
+            Dim dueMs = ResuService.BuffKeyOffsetMs(buffIndex)
+            Dim waitMs = dueMs - CInt(schedule.ElapsedMilliseconds)
+            If waitMs > 0 Then Await Task.Delay(waitMs)
             If (GetAsyncKeyState(CInt(Keys.F12)) And &H8000S) <> 0 Then
                 StopResu("RESU stopped with F12 during the buff-key sequence.")
                 Return sent
             End If
             If Not CanResuAct(generation, hwnd) OrElse _resuService.IsBlocked(decision.Username) Then Return sent
-            If Not BotEngine.SendKey(hwnd, buff.KeyName.Trim().ToUpperInvariant(), 30, forceBackgroundPost:=True) Then Return sent
-            sent += 1
-            _resuStatus.Text = $"Buffing {decision.Username}: {sent}/{enabledBuffs.Count} key(s)."
-            If sent < enabledBuffs.Count Then Await Task.Delay(100)
+            If BotEngine.SendKey(hwnd, buff.KeyName.Trim().ToUpperInvariant(), 30, forceBackgroundPost:=True) Then
+                sent += 1
+                SetResuStatus($"Buffing {decision.Username}: {buffIndex + 1}/{enabledBuffs.Count} key(s).")
+            Else
+                AppendLog($"RESU: Buff {buffIndex + 1} key {buff.KeyName} could not be sent; continuing with the remaining enabled buffs.")
+            End If
         Next
         Return sent
     End Function
@@ -677,22 +801,67 @@ Partial Public Class Form1
         Return BotEngine.ClickClientPoint(hwnd, point.X, point.Y)
     End Function
 
-    ' Purely a notification: a case-insensitive substring watch over the same calibrated chat OCR
-    ' RESU already reads every scan, independent of the identity/payment patterns above. Word order
-    ' inside the chat line never matters since each keyword is checked as its own substring. Only a
-    ' genuinely new chat line can trigger a new alert, and repeats are further capped by a cooldown
-    ' so a lingering chat line cannot spam notifications.
-    Private Async Function CheckResuChatAlarmAsync(settings As ResuSettings, chatText As String) As Task
-        If Not settings.ChatAlarmEnabled Then Return
+    ' A case-insensitive keyword watch over the calibrated chat OCR. A new matching line opens the
+    ' resurrection trigger window immediately. Reply and phone-notification output share a cooldown
+    ' so lingering OCR cannot spam, while another new mention can still refresh the trigger window.
+    Private Async Function CheckResuChatAlarmAsync(hwnd As IntPtr, generation As Integer, settings As ResuSettings, chatText As String) As Task
         Dim text As String = If(chatText, "").Trim()
         If text.Length = 0 OrElse String.Equals(text, _lastResuChatAlarmText, StringComparison.Ordinal) Then Return
         _lastResuChatAlarmText = text
         Dim matched As String = ResuService.FindChatAlarmKeyword(text, settings.ChatAlarmKeywords)
         If matched Is Nothing Then Return
+        _resuKeywordTriggerUntilUtc = DateTime.UtcNow.AddSeconds(settings.KeywordTriggerDurationSeconds)
+        ' Keep-standing pauses during the active resurrection window. Its existing schedule is
+        ' already due by expiry, so waiting-mode key presses resume immediately afterward.
+        SetResuStatus($"RESU keyword detected. Resurrection enabled for {settings.KeywordTriggerDurationSeconds:N0} seconds.")
+        AppendLog($"RESU keyword trigger active for {settings.KeywordTriggerDurationSeconds:N0} seconds after matching ""{matched}"".")
         If (DateTime.UtcNow - _lastResuChatAlarmSentAtUtc).TotalSeconds < ResuChatAlarmCooldownSeconds Then Return
         _lastResuChatAlarmSentAtUtc = DateTime.UtcNow
-        AppendLog($"RESU chat alarm: matched ""{matched}"" in chat - ""{text}"".")
-        Await SendPhoneNotificationAsync("RESU chat alarm", $"Chat mentioned ""{matched}"": {text}")
+        AppendLog($"RESU chat keyword matched ""{matched}"" in chat - ""{text}"".")
+        If settings.ChatAutoReplyEnabled AndAlso CanResuAct(generation, hwnd) Then
+            Dim replySent = Await Task.Run(Function() BotEngine.SendChatMessageSequence(hwnd, settings.ChatAutoReplyText))
+            If replySent Then
+                AppendLog("RESU automatic chat reply sent: " & settings.ChatAutoReplyText)
+            Else
+                AppendLog("RESU automatic chat reply could not be sent.")
+            End If
+        End If
+        If settings.ChatAlarmEnabled Then Await SendResuNotificationAsync("RESU chat alarm", $"Chat mentioned ""{matched}"": {text}")
+    End Function
+
+    Private Async Function SendResuNotificationAsync(title As String, body As String) As Task(Of Boolean)
+        Dim topic = If(_resuSettings.ResuNtfyTopic, "").Trim()
+        If topic.Length = 0 Then Return Await SendPhoneNotificationAsync(title, body)
+        Dim sent = Await SendPhoneNotificationToTopicAsync(title, body, topic, forceNtfy:=True)
+        If sent Then AppendLogSafe($"RESU notification sent to ntfy topic '{topic}'.")
+        Return sent
+    End Function
+
+    Private Async Function TestResuNtfyAsync() As Task
+        Dim topic = If(_resuNtfyTopic.Text, "").Trim()
+        If topic.Length = 0 Then
+            MessageBox.Show(Me, "Enter a private ntfy topic for RESU first.", "RESU ntfy")
+            Return
+        End If
+        Dim sent = Await SendPhoneNotificationToTopicAsync("KathanaBot RESU test", "Your separate RESU ntfy channel is working.", topic, forceNtfy:=True)
+        SetResuStatus(If(sent, $"RESU ntfy test sent to '{topic}'.", $"RESU ntfy test failed for '{topic}'."))
+    End Function
+
+    Private Async Function SendUntrackedResurrectionBurstAsync(hwnd As IntPtr, settings As ResuSettings, generation As Integer) As Task(Of Integer)
+        Dim sent As Integer = 0
+        Dim schedule = Diagnostics.Stopwatch.StartNew()
+        For pressIndex = 0 To settings.ResurrectPressCount - 1
+            Dim waitMs = ResuService.ResurrectionBurstOffsetMs(pressIndex, settings.ResurrectPressCount, settings.ResurrectBurstSeconds) - CInt(schedule.ElapsedMilliseconds)
+            If waitMs > 0 Then Await Task.Delay(waitMs)
+            If (GetAsyncKeyState(CInt(Keys.F12)) And &H8000S) <> 0 Then
+                StopResu("RESU stopped with F12 during the target-selection resurrection burst.")
+                Return sent
+            End If
+            If Not CanResuAct(generation, hwnd) Then Return sent
+            If Not BotEngine.SendKey(hwnd, settings.ResurrectKey, 30, forceBackgroundPost:=True) Then Return sent
+            sent += 1
+        Next
+        Return sent
     End Function
 
     Private Sub SetResuOverlay(visible As Boolean)
@@ -730,3 +899,17 @@ Partial Public Class Form1
         If _resuOverlay IsNot Nothing Then _resuOverlay.Close()
     End Sub
 End Class
+
+' RESU has many closely stacked numeric fields. Ignore wheel input at the control itself so an
+' ordinary tab scroll cannot silently change whichever number happens to be under the pointer.
+Friend NotInheritable Class ResuNumericUpDown
+    Inherits NumericUpDown
+
+    Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
+        Dim handled = TryCast(e, HandledMouseEventArgs)
+        If handled IsNot Nothing Then handled.Handled = True
+        ' Intentionally do not call MyBase: the spinner value must change only through typing or
+        ' its arrow buttons.
+    End Sub
+End Class
+

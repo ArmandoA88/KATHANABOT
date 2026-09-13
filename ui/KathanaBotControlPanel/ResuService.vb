@@ -14,7 +14,7 @@ Friend Class ResuSettings
     Public Property ResurrectPressCount As Integer = 10
     Public Property ResurrectBurstSeconds As Decimal = 1D
     Public Property ScanMs As Integer = 500
-    Public Property PaymentTimeoutSeconds As Integer = 60
+    Public Property PaymentTimeoutSeconds As Integer = 1
     Public Property MinimumPayment As Long = 1
     Public Property ReferenceWidth As Integer
     Public Property ReferenceHeight As Integer
@@ -34,11 +34,19 @@ Friend Class ResuSettings
     Public Property UnpaidPattern As String = "^(?<user>[\p{L}\p{N}_-]+) did not pay\.?$"
     Public Property TradeClosedPattern As String = "^Trade (completed|cancelled|canceled)\.?$"
     Public Property Blacklist As New List(Of ResuBlacklistEntry)
+    Public Property BlacklistEnabled As Boolean = True
     ' Independent of the identity/payment patterns above: a simple substring watch over the same
     ' calibrated chat region, purely to notify the user - it never affects resurrection, invite, or
     ' trade automation, all of which keep working exactly as calibrated regardless of this toggle.
     Public Property ChatAlarmEnabled As Boolean = False
-    Public Property ChatAlarmKeywords As New List(Of String) From {"ress", "resu", "res"}
+    Public Property ChatAlarmKeywords As New List(Of String) From {"ress", "ressu", "resu", "res"}
+    Public Property ChatAutoReplyEnabled As Boolean = True
+    Public Property ChatAutoReplyText As String = "I'm here I'm vidya soy vidya"
+    Public Property ResuNtfyTopic As String = ""
+    Public Property KeywordTriggerDurationSeconds As Integer = 60
+    Public Property KeepStandingEnabled As Boolean = True
+    Public Property KeepStandingKey As String = "SPACE"
+    Public Property KeepStandingIntervalSeconds As Integer = 5
 End Class
 
 Friend Class ResuBuffKeySetting
@@ -58,6 +66,7 @@ Friend Class ResuObservation
     Public Property TradeText As String = ""
     Public Property ChatText As String = ""
     Public Property MessageText As String = ""
+    Public Property ResurrectionTriggered As Boolean = True
 End Class
 
 Friend Enum ResuAction
@@ -75,17 +84,18 @@ End Class
 
 Friend NotInheritable Class ResuService
     Public Const LegacyDefaultInvitePattern As String = "^Trade request from (?<user>[\p{L}\p{N}_-]+)$"
-    Public Const DefaultInvitePattern As String = "\bRequest\s+trade\s+with\s+(?<user>[\p{L}\p{N}_-]+)"
+    Public Const PreviousDefaultInvitePattern As String = "\bRequest\s+trade\s+with\s+(?<user>[\p{L}\p{N}_-]+)"
+    Public Const DefaultInvitePattern As String = "(?:\b(?<user>[\p{L}\p{N}_-]+)\s+requested\s+a\s+trade\b|\bRequest\s+trade\s+with\s+(?<user>[\p{L}\p{N}_-]+))"
     Public Const LegacyDefaultTradePattern As String = "^Trade with (?<user>[\p{L}\p{N}_-]+)$"
     Public Const DefaultTradePattern As String = "^(?!.*\bRequest\s+trade\s+with\b).*\bTrade\b(?=[\s\S]*(?:\bRupiah\b|\bCancel\b))"
     Private ReadOnly _settings As ResuSettings
     Private ReadOnly _invite As Regex
     Private ReadOnly _trade As Regex
-    Private ReadOnly _resurrected As Regex
     Private ReadOnly _paid As Regex
     Private ReadOnly _unpaid As Regex
     Private ReadOnly _closed As Regex
     Private ReadOnly _seen As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+    Private ReadOnly _awaitingPayments As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
     Private _previousLines As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
     Private _initialized As Boolean
     Private _selected As Boolean
@@ -93,7 +103,6 @@ Friend NotInheritable Class ResuService
     Private _targetScans As Integer
     Private _emptyTargetScans As Integer
     Private _pending As String = ""
-    Private _confirmed As Boolean
     Private _waitSeconds As Double
     Private _lastObservation As DateTime
     Private _lastAttempted As String = ""
@@ -107,20 +116,29 @@ Friend NotInheritable Class ResuService
             Return _pending
         End Get
     End Property
+    Public ReadOnly Property OutstandingPaymentCount As Integer
+        Get
+            Return _awaitingPayments.Count
+        End Get
+    End Property
 
     Public Sub New(settings As ResuSettings)
         _settings = settings
         _invite = Compile(settings.InvitePattern, True)
         _trade = Compile(settings.TradePattern, False)
-        _resurrected = Compile(settings.ResurrectedPattern, True)
         _paid = Compile(settings.PaidPattern, True, True)
         _unpaid = Compile(settings.UnpaidPattern, True)
         _closed = Compile(settings.TradeClosedPattern, False)
-        If settings.PaymentTimeoutSeconds < 10 OrElse settings.MinimumPayment < 1 Then Throw New ArgumentException("Set a payment timeout of at least 10 seconds and a positive minimum payment.")
+        If settings.PaymentTimeoutSeconds < 1 OrElse settings.MinimumPayment < 1 Then Throw New ArgumentException("Set a payment deadline of at least 1 second and a positive minimum payment.")
         If settings.SelectKeyIntervalMs < 50 OrElse settings.SelectKeyIntervalMs > 10000 Then Throw New ArgumentException("Select target key interval must be between 50 and 10,000 milliseconds.")
         If settings.PeriodicMessageIntervalSeconds < 1 OrElse settings.PeriodicMessageIntervalSeconds > 86400 Then Throw New ArgumentException("Periodic message interval must be between 1 and 86,400 seconds.")
         If settings.PeriodicMessageEnabled AndAlso String.IsNullOrWhiteSpace(settings.PeriodicMessageText) Then Throw New ArgumentException("Type a periodic message or turn periodic messaging off.")
         If If(settings.PeriodicMessageText, "").Length > 200 Then Throw New ArgumentException("Periodic message text cannot exceed 200 characters.")
+        If settings.ChatAutoReplyEnabled AndAlso String.IsNullOrWhiteSpace(settings.ChatAutoReplyText) Then Throw New ArgumentException("Type a RESU chat auto-reply or turn automatic replies off.")
+        If If(settings.ChatAutoReplyText, "").Length > 200 Then Throw New ArgumentException("The RESU chat auto-reply cannot exceed 200 characters.")
+        If If(settings.ResuNtfyTopic, "").Trim().Length > 200 Then Throw New ArgumentException("The RESU ntfy channel cannot exceed 200 characters.")
+        If settings.KeywordTriggerDurationSeconds < 1 OrElse settings.KeywordTriggerDurationSeconds > 3600 Then Throw New ArgumentException("RESU keyword trigger duration must be between 1 and 3,600 seconds.")
+        If settings.KeepStandingIntervalSeconds < 1 OrElse settings.KeepStandingIntervalSeconds > 3600 Then Throw New ArgumentException("Keep-standing interval must be between 1 and 3,600 seconds.")
         If settings.ResurrectPressCount < 1 OrElse settings.ResurrectPressCount > 100 Then Throw New ArgumentException("Resurrection key presses must be between 1 and 100.")
         If settings.ResurrectBurstSeconds < 0D OrElse settings.ResurrectBurstSeconds > 30D Then Throw New ArgumentException("Resurrection burst duration must be between 0 and 30 seconds.")
     End Sub
@@ -173,7 +191,7 @@ Friend NotInheritable Class ResuService
     Public Shared Function FindChatAlarmKeyword(chatText As String, keywords As List(Of String)) As String
         Dim text = If(chatText, "").Trim()
         If text.Length = 0 OrElse keywords Is Nothing Then Return Nothing
-        Return keywords.FirstOrDefault(Function(word) Not String.IsNullOrWhiteSpace(word) AndAlso text.IndexOf(word.Trim(), StringComparison.OrdinalIgnoreCase) >= 0)
+        Return keywords.Where(Function(word) Not String.IsNullOrWhiteSpace(word)).Select(Function(word) word.Trim()).OrderByDescending(Function(word) word.Length).FirstOrDefault(Function(word) text.IndexOf(word, StringComparison.OrdinalIgnoreCase) >= 0)
     End Function
 
     ' Scheduled from first key-down to the start of the last key press. Key-hold time may make
@@ -186,8 +204,29 @@ Friend NotInheritable Class ResuService
         Return CInt(Math.Round(pressIndex * durationSeconds * 1000D / (pressCount - 1), MidpointRounding.AwayFromZero))
     End Function
 
+    Public Shared Function BuffKeyOffsetMs(buffIndex As Integer) As Integer
+        If buffIndex < 0 OrElse buffIndex > 2 Then Throw New ArgumentOutOfRangeException(NameOf(buffIndex))
+        Return 250 + (buffIndex * 500)
+    End Function
+
+    Public Shared Function SelectKeyWaitMilliseconds(nextAllowedAt As DateTime, now As DateTime) As Integer
+        If nextAllowedAt <= now Then Return 0
+        Dim milliseconds = (nextAllowedAt - now).TotalMilliseconds
+        If Double.IsNaN(milliseconds) OrElse milliseconds <= 0 Then Return 0
+        If milliseconds >= Integer.MaxValue Then Return Integer.MaxValue
+        Return CInt(Math.Ceiling(milliseconds))
+    End Function
+
+    Public Shared Function IsKeywordTriggerActive(triggerUntilUtc As DateTime, nowUtc As DateTime) As Boolean
+        Return triggerUntilUtc > nowUtc
+    End Function
+
+    Public Shared Function ShouldPressKeepStanding(enabled As Boolean, tradeVisible As Boolean, triggerUntilUtc As DateTime, nextPressUtc As DateTime, nowUtc As DateTime) As Boolean
+        Return enabled AndAlso Not tradeVisible AndAlso Not IsKeywordTriggerActive(triggerUntilUtc, nowUtc) AndAlso nowUtc >= nextPressUtc
+    End Function
+
     Public Function IsBlocked(username As String) As Boolean
-        Return _settings.Blacklist.Any(Function(entry) String.Equals(entry.Username, username, StringComparison.OrdinalIgnoreCase))
+        Return _settings.BlacklistEnabled AndAlso _settings.Blacklist.Any(Function(entry) String.Equals(entry.Username, username, StringComparison.OrdinalIgnoreCase))
     End Function
 
     Public Sub PauseMonitoring()
@@ -279,38 +318,24 @@ Friend NotInheritable Class ResuService
                 _initialized = True
                 Return New ResuDecision()
             End If
+            Dim paid = FreshEvent(_paid, allLines)
+            Dim paidAmount As Long
+            Dim paidUser = If(paid.Success, CleanUsername(paid.Groups("user").Value), "")
+            If paidUser.Length > 0 AndAlso _awaitingPayments.Contains(paidUser) AndAlso Long.TryParse(paid.Groups("amount").Value.Replace(",", ""), NumberStyles.None, CultureInfo.InvariantCulture, paidAmount) AndAlso paidAmount >= _settings.MinimumPayment Then
+                _awaitingPayments.Remove(paidUser)
+                Status = $"Payment confirmed: {paidUser}, {paidAmount:N0} rupiahs."
+                If String.Equals(_pending, paidUser, StringComparison.OrdinalIgnoreCase) Then ClearPending()
+                Return New ResuDecision()
+            End If
             If _pending.Length > 0 Then
                 _waitSeconds += elapsed
-                If Not _confirmed Then
-                    If FreshEvent(_resurrected, systemLines, _pending).Success Then
-                        _confirmed = True
-                        _waitSeconds = 0
-                        Status = $"Resurrection confirmed: {_pending}. Waiting for payment."
-                    ElseIf _waitSeconds >= 15 Then
-                        Status = $"No resurrection confirmation for {_pending}; no blacklist entry added."
-                        ClearPending()
-                        Return New ResuDecision()
-                    End If
-                End If
-                If _confirmed Then
-                    Dim paid = FreshEvent(_paid, allLines, _pending)
-                    Dim amount As Long
-                    If paid.Success AndAlso Long.TryParse(paid.Groups("amount").Value.Replace(",", ""), NumberStyles.None, CultureInfo.InvariantCulture, amount) AndAlso amount >= _settings.MinimumPayment Then
-                        Status = $"Payment confirmed: {_pending}, {amount:N0} rupiahs."
-                        ClearPending()
-                        Return New ResuDecision()
-                    End If
-                    If FreshEvent(_unpaid, allLines, _pending).Success Then
-                        BlockPending("Explicit nonpayment message")
-                        Return New ResuDecision()
-                    End If
-                    If _waitSeconds >= _settings.PaymentTimeoutSeconds Then
-                        BlockPending($"No confirmed payment after {_settings.PaymentTimeoutSeconds} seconds of monitoring")
-                        Return New ResuDecision()
-                    End If
+                If FreshEvent(_unpaid, allLines, _pending).Success Then
+                    BlockPending("Explicit nonpayment message")
+                    Return New ResuDecision()
                 End If
                 If IsBlocked(_pending) Then
                     Status = $"Blocked: {_pending}."
+                    _awaitingPayments.Remove(_pending)
                     ClearPending()
                     Return New ResuDecision()
                 End If
@@ -324,15 +349,29 @@ Friend NotInheritable Class ResuService
                     If invite Then Return New ResuDecision With {.Action = ResuAction.AcceptInvite, .Username = _pending}
                     If trade Then Return New ResuDecision With {.Action = ResuAction.AcceptTrade, .Username = _pending}
                 End If
-                If _confirmed Then Status = $"Waiting for {_pending}: {Math.Max(0, _settings.PaymentTimeoutSeconds - CInt(_waitSeconds))}s remaining."
+                If _waitSeconds >= _settings.PaymentTimeoutSeconds Then
+                    Status = $"Payment deadline reached for {_pending}; late payment remains accepted."
+                    ClearPending()
+                    Return New ResuDecision()
+                End If
+                Status = $"Waiting for payment from {_pending}: {Math.Max(0, _settings.PaymentTimeoutSeconds - CInt(_waitSeconds))}s remaining."
                 Return New ResuDecision()
             End If
 
             ' Trade acceptance is intentionally independent from resurrection/payment identity.
             ' Any visible recognized dialog is accepted; payment and blacklist decisions still use
             ' the exact pending resurrection customer.
-            If PatternMatches(_invite, observation.InvitationText) Then Return New ResuDecision With {.Action = ResuAction.AcceptInvite}
-            If PatternMatches(_trade, observation.TradeText) OrElse HasActualTradeWindowText(observation.TradeText) OrElse HasOkButtonText(observation.TradeText) Then Return New ResuDecision With {.Action = ResuAction.AcceptTrade}
+            Dim freeInvite = PatternMatches(_invite, observation.InvitationText)
+            Dim freeTrade = PatternMatches(_trade, observation.TradeText) OrElse HasActualTradeWindowText(observation.TradeText) OrElse HasOkButtonText(observation.TradeText)
+            If Not freeInvite AndAlso Not freeTrade Then _tradeClosed = False
+            If Not _tradeClosed Then
+                If freeInvite Then Return New ResuDecision With {.Action = ResuAction.AcceptInvite}
+                If freeTrade Then Return New ResuDecision With {.Action = ResuAction.AcceptTrade}
+            End If
+            If Not observation.ResurrectionTriggered Then
+                Status = "Waiting for a RESU keyword in chat before selecting and resurrecting targets."
+                Return New ResuDecision()
+            End If
             If Not _selected Then Return New ResuDecision With {.Action = ResuAction.SelectTarget}
             Dim name = ExtractTargetUsername(observation.TargetName)
             Dim coolingDown = String.Equals(name, _lastAttempted, StringComparison.OrdinalIgnoreCase) AndAlso now < _targetRetryAfter
@@ -364,7 +403,7 @@ Friend NotInheritable Class ResuService
             Return New ResuDecision()
         Finally
             ' Seed history outside a transaction as well; delayed/old payments cannot be reused.
-            If _pending.Length = 0 Then _seen.UnionWith(allLines)
+            If _pending.Length = 0 AndAlso _awaitingPayments.Count = 0 Then _seen.UnionWith(allLines)
             _previousLines = allLines
         End Try
     End Function
@@ -380,12 +419,12 @@ Friend NotInheritable Class ResuService
                 _seen.Clear()
                 _seen.UnionWith(_previousLines)
                 _pending = decision.Username
+                _awaitingPayments.Add(_pending)
                 _lastAttempted = _pending
                 _targetRetryAfter = _lastObservation.AddSeconds(30)
-                _confirmed = False
                 _waitSeconds = 0
                 _tradeClosed = False
-                Status = $"Cast on {_pending}; waiting for resurrection confirmation in the message region."
+                Status = $"Cast on {_pending}; waiting for payment."
             Case ResuAction.AcceptInvite, ResuAction.AcceptTrade
                 Status = If(decision.Username.Length > 0,
                     $"Accepting visible trade for {decision.Username}; waiting for completion/payment text.",
@@ -395,7 +434,6 @@ Friend NotInheritable Class ResuService
 
     Private Sub ClearPending()
         _pending = ""
-        _confirmed = False
         _selected = False
         _targetScans = 0
         _emptyTargetScans = 0
@@ -403,11 +441,18 @@ Friend NotInheritable Class ResuService
     End Sub
 
     Private Sub BlockPending(reason As String)
+        If Not _settings.BlacklistEnabled Then
+            Status = $"Nonpayment recorded for {_pending}; blacklist is disabled."
+            _awaitingPayments.Remove(_pending)
+            ClearPending()
+            Return
+        End If
         If Not IsBlocked(_pending) Then
             _settings.Blacklist.Add(New ResuBlacklistEntry With {.Username = _pending, .Reason = reason, .AddedUtc = DateTime.UtcNow})
             BlacklistChanged = True
         End If
         Status = $"Blacklisted {_pending}: {reason}."
+        _awaitingPayments.Remove(_pending)
         ClearPending()
     End Sub
 End Class

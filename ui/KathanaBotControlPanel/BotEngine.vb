@@ -1541,17 +1541,21 @@ Public Class BotEngine
             _lastRupiahsRateSampleTotal = -1
             _lastRupiahsPerHour = -1
 
+            _sessionKilledMobs = 0
+            DisarmSessionKillTracking()
+
             _status.ExpPercent = -1
             _status.ExpPerHour = -1
             _status.RupiahsTotal = -1
             _status.RupiahsPerHour = -1
+            _status.SessionKilledMobs = 0
             _status.UpdatedAt = DateTime.UtcNow
             _lastStatusRaisedAt = DateTime.MinValue
             _lastStatusRaisedSignature = ""
             snapshot = CloneStatus(_status)
         End SyncLock
 
-        RaiseEvent LogLine("EXP and Rupiah OCR cleared; the next valid fresh readings will become the fixed stats baselines.")
+        RaiseEvent LogLine("EXP, Rupiah, and mobs-killed stats cleared; the next valid fresh readings will become the fixed stats baselines.")
         RaiseEvent StatusUpdated(snapshot)
     End Sub
 

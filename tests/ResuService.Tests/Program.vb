@@ -7,9 +7,12 @@ Module Program
     <STAThread>
     Sub Main()
         Test("stable target required", AddressOf StableTarget)
+        Test("resurrection waits for a chat keyword trigger", AddressOf ResuKeywordTriggerGate)
+        Test("keep-standing activity runs only while waiting for a keyword", AddressOf ResuKeywordTriggerTiming)
         Test("blank target OCR waits before selecting again", AddressOf BlankTargetWaits)
         Test("target username extraction tolerates nameplate noise", AddressOf TargetUsernameExtraction)
         Test("blacklisted name skipped, case insensitive", AddressOf BlockedTarget)
+        Test("blacklist can be disabled without deleting entries", AddressOf DisabledBlacklist)
         Test("confirmed payment releases pending customer", AddressOf Payment)
         Test("paying customer remains eligible for future resurrection", AddressOf RepeatCustomer)
         Test("wrong payer and substring name do not pay", AddressOf WrongPayer)
@@ -18,9 +21,7 @@ Module Program
         Test("one OCR scan cannot establish payment", AddressOf SingleScan)
         Test("confirmed nonpayment is persisted as a blacklist entry", AddressOf Nonpayment)
         Test("unrelated nonpayment does not blacklist", AddressOf WrongNonpayment)
-        Test("payment deadline blacklists only confirmed resurrection", AddressOf PaymentTimeout)
-        Test("unconfirmed resurrection never blacklists", AddressOf NoResurrectionConfirmation)
-        Test("resurrection confirmation must name the pending player", AddressOf WrongConfirmation)
+        Test("one-second deadline releases target while accepting late payment", AddressOf PaymentTimeout)
         Test("paused monitoring does not expire payment", AddressOf PausedMonitoring)
         Test("long OCR gaps do not expire payment", AddressOf SlowMonitoring)
         Test("any recognized trade is accepted", AddressOf AnyTradeAccepted)
@@ -31,6 +32,7 @@ Module Program
         Test("manual blacklist during a transaction stops input", AddressOf BlockDuringTrade)
         Test("manual character-name list parsing", AddressOf ManualNames)
         Test("resurrection burst schedule", AddressOf ResurrectionBurst)
+        Test("RESU buff and target-key schedules", AddressOf ResuKeySchedules)
         Test("retarget toggles and configured role survive JSON roundtrip", AddressOf RetargetSettingsPersistence)
         Test("leveling navigation uses waypoint radius", AddressOf LevelingWaypointRadius)
         Test("leveling defaults are responsive and persist", AddressOf LevelingResponsiveDefaults)
@@ -54,6 +56,7 @@ Module Program
         Test("auto-loot foreground toggle requires active Full auto-loot", AddressOf AutoLootForegroundToggle)
         Test("default loot list merges without losing custom entries", AddressOf DefaultLootCatalog)
         Test("dashboard icon ignores stale telemetry from either edition", AddressOf DashboardRunIcon)
+        Test("reset stats clears mobs killed and pending kill tracking", AddressOf ResetStatsClearsKills)
         Test("invalid message patterns rejected", AddressOf InvalidPatterns)
         Test("settings and blacklist survive JSON roundtrip", AddressOf Persistence)
         Test("chat alarm keyword matching ignores word order and case", AddressOf ChatAlarmKeywordMatching)
@@ -282,6 +285,20 @@ Module Program
         End Using
     End Sub
 
+    Private Sub ResetStatsClearsKills()
+        Dim engine As New BotEngine()
+        Dim flags = Reflection.BindingFlags.Instance Or Reflection.BindingFlags.NonPublic
+        Dim engineType = GetType(BotEngine)
+        engineType.GetField("_sessionKilledMobs", flags).SetValue(engine, 7)
+        engineType.GetField("_sessionKillTrackingArmed", flags).SetValue(engine, True)
+        Dim status = DirectCast(engineType.GetField("_status", flags).GetValue(engine), BotStatus)
+        status.SessionKilledMobs = 7
+        engine.ResetStatsTelemetryReadings()
+        Check(engine.GetStatus().SessionKilledMobs = 0, "Reset Stats must immediately publish zero mobs killed")
+        Check(CInt(engineType.GetField("_sessionKilledMobs", flags).GetValue(engine)) = 0, "Internal kill total must reset")
+        Check(Not CBool(engineType.GetField("_sessionKillTrackingArmed", flags).GetValue(engine)), "A pre-reset pending kill must not increment the new stats session")
+    End Sub
+
     Private Sub LootScannerSurvivesSlowLoops()
         Dim engine As New BotEngine()
         Dim flags = Reflection.BindingFlags.Instance Or Reflection.BindingFlags.NonPublic
@@ -439,9 +456,9 @@ Module Program
         Check(CStr(args(7)) = "Strong Ara" AndAlso DirectCast(args(8), System.Drawing.Rectangle) = blocked, "The same blocked cell must be retried")
     End Sub
 
-    Private Function Tick(service As ResuService, Optional chat As String = "", Optional messages As String = "", Optional trade As String = "", Optional target As String = "Alice", Optional seconds As Double = 1) As ResuDecision
+    Private Function Tick(service As ResuService, Optional chat As String = "", Optional messages As String = "", Optional trade As String = "", Optional target As String = "Alice", Optional seconds As Double = 1, Optional triggered As Boolean = True) As ResuDecision
         _clock = _clock.AddSeconds(seconds)
-        Return service.Observe(New ResuObservation With {.TargetName = target, .InvitationText = trade, .ChatText = chat, .MessageText = messages, .TradeText = trade}, _clock)
+        Return service.Observe(New ResuObservation With {.TargetName = target, .InvitationText = trade, .ChatText = chat, .MessageText = messages, .TradeText = trade, .ResurrectionTriggered = triggered}, _clock)
     End Function
 
     Private Function ActualTradeWindowText() As String
@@ -462,8 +479,7 @@ Module Program
     End Function
 
     Private Sub Confirm(service As ResuService, Optional chat As String = "")
-        Tick(service, chat:=chat, messages:="You resurrected Alice.")
-        Tick(service, chat:=chat, messages:="You resurrected Alice.")
+        ' Confirmation is no longer required; casting begins payment monitoring immediately.
     End Sub
 
     Private Sub StableTarget()
@@ -515,7 +531,7 @@ Module Program
     End Sub
 
     Private Sub WrongPayer()
-        Dim service = Casting(New ResuSettings())
+        Dim service = Casting(New ResuSettings With {.PaymentTimeoutSeconds = 600})
         Confirm(service)
         For Each name In {"Bob", "Alice2"}
             Tick(service, chat:=name & " paid 100 rupiahs.")
@@ -536,7 +552,7 @@ Module Program
     End Sub
 
     Private Sub InsufficientPayment()
-        Dim service = Casting(New ResuSettings With {.MinimumPayment = 100})
+        Dim service = Casting(New ResuSettings With {.MinimumPayment = 100, .PaymentTimeoutSeconds = 600})
         Confirm(service)
         For Each amount In {"0", "99", "999999999999999999999999999999"}
             Tick(service, chat:="Alice paid " & amount & " rupiahs.")
@@ -547,7 +563,7 @@ Module Program
 
     Private Sub StalePayment()
         Const history As String = "Alice paid 100 rupiahs."
-        Dim service = Casting(New ResuSettings(), history)
+        Dim service = Casting(New ResuSettings With {.PaymentTimeoutSeconds = 600}, history)
         Confirm(service, history)
         Tick(service, chat:=history)
         Tick(service, chat:=history)
@@ -555,7 +571,7 @@ Module Program
     End Sub
 
     Private Sub SingleScan()
-        Dim service = Casting(New ResuSettings())
+        Dim service = Casting(New ResuSettings With {.PaymentTimeoutSeconds = 600})
         Confirm(service)
         Tick(service, chat:="Alice paid 100 rupiahs.")
         Check(service.PendingUsername = "Alice", "A payment requires two consistent OCR scans")
@@ -565,7 +581,7 @@ Module Program
     End Sub
 
     Private Sub Nonpayment()
-        Dim settings As New ResuSettings()
+        Dim settings As New ResuSettings With {.PaymentTimeoutSeconds = 10}
         Dim service = Casting(settings)
         Confirm(service)
         Tick(service, chat:="Alice did not pay.")
@@ -576,7 +592,7 @@ Module Program
     End Sub
 
     Private Sub WrongNonpayment()
-        Dim service = Casting(New ResuSettings())
+        Dim service = Casting(New ResuSettings With {.PaymentTimeoutSeconds = 10})
         Confirm(service)
         Tick(service, chat:="Bob did not pay.")
         Tick(service, chat:="Bob did not pay.")
@@ -584,30 +600,13 @@ Module Program
     End Sub
 
     Private Sub PaymentTimeout()
-        Dim service = Casting(New ResuSettings With {.PaymentTimeoutSeconds = 10})
+        Dim service = Casting(New ResuSettings With {.PaymentTimeoutSeconds = 1})
         Confirm(service)
-        For index = 1 To 10
-            Tick(service)
-        Next
-        Check(service.IsBlocked("Alice"), "Confirmed resurrection should expire into blacklist")
-    End Sub
-
-    Private Sub NoResurrectionConfirmation()
-        Dim settings As New ResuSettings With {.PaymentTimeoutSeconds = 10}
-        Dim service = Casting(settings)
-        For index = 1 To 16
-            Tick(service)
-        Next
-        Check(service.PendingUsername = "" AndAlso settings.Blacklist.Count = 0, "Failed/unconfirmed casts must not blacklist")
-    End Sub
-
-    Private Sub WrongConfirmation()
-        Dim settings As New ResuSettings With {.PaymentTimeoutSeconds = 10}
-        Dim service = Casting(settings)
-        For index = 1 To 16
-            Tick(service, messages:="You resurrected Bob.")
-        Next
-        Check(settings.Blacklist.Count = 0, "Wrong-player confirmation must not start a debt")
+        Tick(service)
+        Check(service.PendingUsername = "" AndAlso Not service.IsBlocked("Alice") AndAlso service.OutstandingPaymentCount = 1, "Deadline should release the active target without blacklisting or forgetting the payment")
+        Tick(service, chat:="Alice paid 100 rupiahs.")
+        Tick(service, chat:="Alice paid 100 rupiahs.")
+        Check(service.OutstandingPaymentCount = 0 AndAlso service.Status.Contains("Payment confirmed"), "Payment must remain valid after the deadline")
     End Sub
 
     Private Sub PausedMonitoring()
@@ -629,14 +628,16 @@ Module Program
     End Sub
 
     Private Sub AnyTradeAccepted()
-        Dim service = Casting(New ResuSettings())
+        Dim service = Casting(New ResuSettings With {.PaymentTimeoutSeconds = 10})
         Confirm(service)
         Check(Tick(service, trade:="Request trade with Bob?").Action = ResuAction.AcceptInvite, "Accept an invitation regardless of the pending resurrection name")
         Check(Tick(service, trade:="Message" & vbCrLf & "Request trade with Alice?" & vbCrLf & "OK  Cancel").Action = ResuAction.AcceptInvite, "Accept the game's actual invitation wording inside a multi-line dialog")
+        Check(Tick(service, trade:="Message" & vbCrLf & "Risee requested a trade" & vbCrLf & "OK  Cancel").Action = ResuAction.AcceptInvite, "Accept the current requested-a-trade invitation wording")
         Dim actualWindow = ActualTradeWindowText()
         Check(Tick(service, trade:=actualWindow).Action = ResuAction.AcceptTrade, "Recognize the actual trade window whose confirmation button is labeled Trade")
         Check(Tick(service, trade:="Gold  Item" & vbCrLf & "0K  Cancel").Action = ResuAction.AcceptTrade, "An OCR-visible OK button must identify an open trade when its title is unreadable")
         Check(ResuService.MatchesTrade(New ResuSettings(), "Request trade with Alice ?", "Alice", True), "Invitation OCR may insert whitespace before punctuation")
+        Check(ResuService.MatchesTrade(New ResuSettings(), "Risee requested a trade", "Risee", True), "Current invitation wording must extract the requesting player")
         Dim legacy As New ResuSettings With {.InvitePattern = ResuService.LegacyDefaultInvitePattern}
         Check(ResuService.MatchesTrade(legacy, "Trade request from Alice", "Alice", True), "User-supplied legacy patterns must remain usable")
         Check(ResuService.HasTradeType(New ResuSettings(), actualWindow, False), "Trade revalidation must recognize the actual window layout")
@@ -662,7 +663,7 @@ Module Program
     End Sub
 
     Private Sub ClosedTrade(message As String)
-        Dim service = Casting(New ResuSettings())
+        Dim service = Casting(New ResuSettings With {.PaymentTimeoutSeconds = 10})
         Confirm(service)
         Check(Tick(service, trade:=ActualTradeWindowText(), messages:=message).Action = ResuAction.None, "First closure read must stop clicks immediately")
         Check(Tick(service, trade:=ActualTradeWindowText(), messages:=message).Action = ResuAction.None, "Completion/cancellation must stop repeated clicks")
@@ -685,7 +686,7 @@ Module Program
     End Sub
 
     Private Sub InvalidPatterns()
-        For Each settings In {New ResuSettings With {.PaidPattern = "paid"}, New ResuSettings With {.TradePattern = "("}, New ResuSettings With {.MinimumPayment = 0}, New ResuSettings With {.SelectKeyIntervalMs = 49}, New ResuSettings With {.SelectKeyIntervalMs = 10001}, New ResuSettings With {.PeriodicMessageEnabled = True, .PeriodicMessageText = ""}, New ResuSettings With {.PeriodicMessageIntervalSeconds = 0}, New ResuSettings With {.PeriodicMessageIntervalSeconds = 86401}, New ResuSettings With {.PeriodicMessageText = New String("x"c, 201)}, New ResuSettings With {.ResurrectPressCount = 0}, New ResuSettings With {.ResurrectPressCount = 101}, New ResuSettings With {.ResurrectBurstSeconds = 31D}}
+        For Each settings In {New ResuSettings With {.PaidPattern = "paid"}, New ResuSettings With {.TradePattern = "("}, New ResuSettings With {.MinimumPayment = 0}, New ResuSettings With {.PaymentTimeoutSeconds = 0}, New ResuSettings With {.SelectKeyIntervalMs = 49}, New ResuSettings With {.SelectKeyIntervalMs = 10001}, New ResuSettings With {.PeriodicMessageEnabled = True, .PeriodicMessageText = ""}, New ResuSettings With {.PeriodicMessageIntervalSeconds = 0}, New ResuSettings With {.PeriodicMessageIntervalSeconds = 86401}, New ResuSettings With {.PeriodicMessageText = New String("x"c, 201)}, New ResuSettings With {.ResurrectPressCount = 0}, New ResuSettings With {.ResurrectPressCount = 101}, New ResuSettings With {.ResurrectBurstSeconds = 31D}}
             Dim rejected = False
             Try
                 Dim service As New ResuService(settings)
@@ -709,6 +710,53 @@ Module Program
         Check(ResuService.ResurrectionBurstOffsetMs(5, 11, 2D) = 1000, "Intermediate presses should be spread evenly")
         Check(ResuService.ResurrectionBurstOffsetMs(0, 1, 30D) = 0, "A single press should not wait")
         Check(ResuService.ResurrectionBurstOffsetMs(4, 5, 0D) = 0, "Zero duration should schedule the fastest burst")
+    End Sub
+
+    Private Sub DisabledBlacklist()
+        Dim settings As New ResuSettings With {.BlacklistEnabled = False, .PaymentTimeoutSeconds = 10}
+        settings.Blacklist.Add(New ResuBlacklistEntry With {.Username = "Alice"})
+        Dim service As New ResuService(settings)
+        Check(Not service.IsBlocked("Alice"), "Saved entries must be ignored while blacklist is disabled")
+        Tick(service)
+        service.ActionSucceeded(Tick(service))
+        Tick(service)
+        Dim cast = Tick(service)
+        Check(cast.Action = ResuAction.Resurrect, "Disabled blacklist must allow a saved player target")
+        service.ActionSucceeded(cast)
+        Tick(service, chat:="Alice did not pay.")
+        Tick(service, chat:="Alice did not pay.")
+        Check(settings.Blacklist.Count = 1 AndAlso Not service.BlacklistChanged, "Disabled blacklist must not add automatic nonpayment entries")
+    End Sub
+
+    Private Sub ResuKeywordTriggerGate()
+        Dim service As New ResuService(New ResuSettings())
+        Tick(service, triggered:=False)
+        Check(Tick(service, triggered:=False).Action = ResuAction.None, "RESU must not select or spam before a keyword trigger")
+        Check(service.Status.Contains("Waiting for a RESU keyword"), "Waiting status must explain how to trigger resurrection")
+        Check(Tick(service, triggered:=True).Action = ResuAction.SelectTarget, "An active keyword window must enable target selection")
+    End Sub
+
+    Private Sub ResuKeywordTriggerTiming()
+        Dim now = New DateTime(2026, 9, 12, 12, 0, 0, DateTimeKind.Utc)
+        Check(Not ResuService.IsKeywordTriggerActive(DateTime.MinValue, now), "Waiting mode must be active before a keyword trigger")
+        Check(ResuService.IsKeywordTriggerActive(now.AddSeconds(60), now), "Resurrection mode must remain active inside the trigger window")
+        Check(Not ResuService.IsKeywordTriggerActive(now, now), "Waiting mode must resume exactly when the trigger expires")
+        Check(ResuService.ShouldPressKeepStanding(True, False, DateTime.MinValue, now, now), "Keep-standing must press while waiting")
+        Check(Not ResuService.ShouldPressKeepStanding(True, False, now.AddSeconds(60), now, now), "Keep-standing must pause during resurrection mode")
+        Check(ResuService.ShouldPressKeepStanding(True, False, now, now, now), "Keep-standing must resume at trigger expiry")
+        Check(Not ResuService.ShouldPressKeepStanding(True, True, DateTime.MinValue, now, now), "Keep-standing must remain paused over a visible trade")
+    End Sub
+
+    Private Sub ResuKeySchedules()
+        Check(ResuService.BuffKeyOffsetMs(0) = 250, "First buff should follow resurrection after 250 ms")
+        Check(ResuService.BuffKeyOffsetMs(1) = 750 AndAlso ResuService.BuffKeyOffsetMs(2) = 1250, "All three buffs need independent 500 ms slots")
+        Dim now = New DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+        Check(ResuService.SelectKeyWaitMilliseconds(now.AddMilliseconds(500), now) = 500, "Target-key wait must match its configured interval")
+        Check(ResuService.SelectKeyWaitMilliseconds(now.AddMilliseconds(500), now.AddMilliseconds(800)) = 0, "Overdue target selection must run immediately")
+        Check(ResuService.SelectKeyWaitMilliseconds(DateTime.MinValue, now) = 0, "Initial target-key timestamp must not overflow")
+        Check(ResuService.SelectKeyWaitMilliseconds(DateTime.MaxValue, now) = Integer.MaxValue, "Extreme future timestamps must clamp without overflow")
+        Check(ResuService.SelectKeyWaitMilliseconds(DateTime.MinValue, now) = 0, "Initial RESU target timestamp must not overflow")
+        Check(ResuService.SelectKeyWaitMilliseconds(DateTime.MaxValue, now) = Integer.MaxValue, "Extreme future timestamps must clamp without overflow")
     End Sub
 
     Private Sub LevelingWaypointRadius()
@@ -822,12 +870,14 @@ Module Program
     End Sub
 
     Private Sub Persistence()
-        Dim settings As New ResuSettings With {.SelectKey = "1", .SelectKeyIntervalMs = 750, .ResurrectKey = "F7", .BuffKeys = New List(Of ResuBuffKeySetting) From {New ResuBuffKeySetting With {.Enabled = True, .KeyName = "F8"}, New ResuBuffKeySetting With {.Enabled = False, .KeyName = "F9"}, New ResuBuffKeySetting With {.Enabled = True, .KeyName = "0"}}, .PeriodicMessageEnabled = True, .PeriodicMessageText = "Selling resurrection service", .PeriodicMessageIntervalSeconds = 45, .ResurrectPressCount = 25, .ResurrectBurstSeconds = 3.5D, .ReferenceWidth = 1024, .ReferenceHeight = 768, .AcceptPoint = New System.Drawing.Point(400, 500), .TradeRegion = New RectRegion(300, 200, 400, 400), .OpenTradeRegion = New RectRegion(100, 120, 700, 500)}
+        Dim settings As New ResuSettings With {.SelectKey = "1", .SelectKeyIntervalMs = 750, .ResurrectKey = "F7", .BlacklistEnabled = False, .ResuNtfyTopic = "my-private-resu-topic", .BuffKeys = New List(Of ResuBuffKeySetting) From {New ResuBuffKeySetting With {.Enabled = True, .KeyName = "F8"}, New ResuBuffKeySetting With {.Enabled = False, .KeyName = "F9"}, New ResuBuffKeySetting With {.Enabled = True, .KeyName = "0"}}, .PeriodicMessageEnabled = True, .PeriodicMessageText = "Selling resurrection service", .PeriodicMessageIntervalSeconds = 45, .ResurrectPressCount = 25, .ResurrectBurstSeconds = 3.5D, .ReferenceWidth = 1024, .ReferenceHeight = 768, .AcceptPoint = New System.Drawing.Point(400, 500), .TradeRegion = New RectRegion(300, 200, 400, 400), .OpenTradeRegion = New RectRegion(100, 120, 700, 500)}
         settings.Blacklist.Add(New ResuBlacklistEntry With {.Username = "Alice", .Reason = "Unpaid", .AddedUtc = _clock})
         Dim loaded = JsonSerializer.Deserialize(Of ResuSettings)(JsonSerializer.Serialize(settings))
         Check(loaded.SelectKey = "1" AndAlso loaded.ResurrectKey = "F7", "Keys must persist")
         Check(loaded.BuffKeys.Count = 3 AndAlso loaded.BuffKeys(0).Enabled AndAlso loaded.BuffKeys(0).KeyName = "F8" AndAlso Not loaded.BuffKeys(1).Enabled AndAlso loaded.BuffKeys(2).KeyName = "0", "Optional RESU buff keys and toggles must persist")
         Check(loaded.SelectKeyIntervalMs = 750, "Select target key interval must persist")
+        Check(Not loaded.BlacklistEnabled, "Blacklist toggle must persist")
+        Check(loaded.ResuNtfyTopic = "my-private-resu-topic", "Separate RESU ntfy topic must persist")
         Check(loaded.PeriodicMessageEnabled AndAlso loaded.PeriodicMessageText = "Selling resurrection service" AndAlso loaded.PeriodicMessageIntervalSeconds = 45, "Periodic message settings must persist")
         Check(loaded.ResurrectPressCount = 25 AndAlso loaded.ResurrectBurstSeconds = 3.5D, "Resurrection spam settings must persist")
         Check(loaded.AcceptPoint.X = 400 AndAlso loaded.AcceptPoint.Y = 500 AndAlso loaded.TradeRegion.W = 400, "Calibration must persist")
@@ -836,9 +886,10 @@ Module Program
     End Sub
 
     Private Sub ChatAlarmKeywordMatching()
-        Dim keywords = New List(Of String) From {"ress", "resu", "res"}
+        Dim keywords = New List(Of String) From {"ress", "ressu", "resu", "res"}
         Check(ResuService.FindChatAlarmKeyword("someone plz RESS me", keywords) = "ress", "Match must be case-insensitive")
         Check(ResuService.FindChatAlarmKeyword("need a resu asap", keywords) = "resu", "Different keyword must still match regardless of message wording")
+        Check(ResuService.FindChatAlarmKeyword("please ressu", keywords) = "ressu", "Alternate ressu spelling must match")
         Check(ResuService.FindChatAlarmKeyword("res pls anyone here", keywords) = "res", "Word order/position in the line must not matter")
         Check(ResuService.FindChatAlarmKeyword("hello world", keywords) Is Nothing, "Unrelated chat must not match")
         Check(ResuService.FindChatAlarmKeyword("", keywords) Is Nothing, "Empty chat text must not match")
@@ -849,10 +900,14 @@ Module Program
     Private Sub ChatAlarmSettingsPersistence()
         Dim defaults As New ResuSettings()
         Check(Not defaults.ChatAlarmEnabled, "Chat alarm must default to off")
-        Check(defaults.ChatAlarmKeywords.Count = 3 AndAlso defaults.ChatAlarmKeywords.Contains("ress") AndAlso defaults.ChatAlarmKeywords.Contains("resu") AndAlso defaults.ChatAlarmKeywords.Contains("res"), "Default keywords must seed ress/resu/res")
-        Dim settings As New ResuSettings With {.ChatAlarmEnabled = True, .ChatAlarmKeywords = New List(Of String) From {"ress", "help me"}}
+        Check(defaults.ChatAlarmKeywords.Count = 4 AndAlso defaults.ChatAlarmKeywords.Contains("ress") AndAlso defaults.ChatAlarmKeywords.Contains("ressu") AndAlso defaults.ChatAlarmKeywords.Contains("resu") AndAlso defaults.ChatAlarmKeywords.Contains("res"), "Default keywords must seed ress/ressu/resu/res")
+        Check(defaults.ChatAutoReplyEnabled AndAlso defaults.ChatAutoReplyText = "I'm here I'm vidya soy vidya", "Chat auto-reply must use the requested default text")
+        Check(defaults.KeywordTriggerDurationSeconds = 60, "Keyword trigger must default to 60 seconds")
+        Check(defaults.KeepStandingEnabled AndAlso defaults.KeepStandingKey = "SPACE" AndAlso defaults.KeepStandingIntervalSeconds = 5, "Keep-standing key must default to SPACE every 5 seconds")
+        Dim settings As New ResuSettings With {.ChatAlarmEnabled = True, .ChatAlarmKeywords = New List(Of String) From {"ress", "help me"}, .ChatAutoReplyEnabled = False, .ChatAutoReplyText = "Custom reply"}
         Dim loaded = JsonSerializer.Deserialize(Of ResuSettings)(JsonSerializer.Serialize(settings))
         Check(loaded.ChatAlarmEnabled, "Chat alarm toggle must persist")
         Check(loaded.ChatAlarmKeywords.Count = 2 AndAlso loaded.ChatAlarmKeywords(0) = "ress" AndAlso loaded.ChatAlarmKeywords(1) = "help me", "Custom keyword list must persist")
+        Check(Not loaded.ChatAutoReplyEnabled AndAlso loaded.ChatAutoReplyText = "Custom reply", "Custom chat auto-reply settings must persist")
     End Sub
 End Module
