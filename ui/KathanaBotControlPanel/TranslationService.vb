@@ -79,7 +79,7 @@ Public Class TranslationService
 
                 Dim translatedPiece As String = segment(0).GetString()
                 If Not String.IsNullOrWhiteSpace(translatedPiece) Then
-                    parts.Add(translatedPiece.Trim())
+                    parts.Add(translatedPiece)
                 End If
             Next
 

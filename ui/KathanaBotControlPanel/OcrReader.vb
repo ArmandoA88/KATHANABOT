@@ -1,4 +1,4 @@
-﻿Imports System.Drawing
+Imports System.Drawing
 Imports System.Drawing.Drawing2D
 Imports System.Drawing.Imaging
 Imports System.IO
@@ -20,6 +20,7 @@ Public NotInheritable Class OcrReader
     Public NotInheritable Class OcrTextRegion
         Public Property Text As String = ""
         Public Property Bounds As Rectangle = Rectangle.Empty
+        Public Property Words As New List(Of OcrTextRegion)()
     End Class
 
     Private Shared ReadOnly _sync As New Object()
@@ -607,7 +608,12 @@ Public NotInheritable Class OcrReader
 
             items.Add(New OcrTextRegion With {
                 .Text = text,
-                .Bounds = bounds
+                .Bounds = bounds,
+                .Words = line.Words.Select(Function(word) New OcrTextRegion With {
+                    .Text = word.Text,
+                    .Bounds = Rectangle.FromLTRB(CInt(Math.Floor(word.BoundingRect.X)), CInt(Math.Floor(word.BoundingRect.Y)),
+                        CInt(Math.Ceiling(word.BoundingRect.X + word.BoundingRect.Width)), CInt(Math.Ceiling(word.BoundingRect.Y + word.BoundingRect.Height)))
+                }).ToList()
             })
         Next
 

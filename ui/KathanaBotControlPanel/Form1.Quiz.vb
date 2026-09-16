@@ -426,7 +426,21 @@ Partial Public Class Form1
                         If manual AndAlso String.IsNullOrWhiteSpace(_quizApiKey) Then ConfigureQuizApiKey()
                         If String.IsNullOrWhiteSpace(_quizApiKey) Then
                             lookupStarted = True
-                            Throw New InvalidOperationException("No confident local answer was found and no OpenAI API key is configured for fallback.")
+                            Dim guessPoint As System.Drawing.Point
+                            If ClickQuizButtonFast(hwnd, answersArea, buttons, 0, guessPoint) Then
+                                _quizLastClickedHash = quizIdentity
+                                _quizLastClickedUtc = DateTime.UtcNow
+                                answerClicked = True
+                                _quizLastClickNormalizedX = guessPoint.X / CDbl(Math.Max(1, clientWidth))
+                                _quizLastClickNormalizedY = guessPoint.Y / CDbl(Math.Max(1, clientHeight))
+                                _quizLastClickedButtonNumber = 1
+                                SetQuizStatus($"No confident answer available; guessed answer 1 x10 (50 ms). Total {totalWatch.ElapsedMilliseconds} ms", ThemeWarn)
+                                AppendLog($"Quiz solver: no confident answer available; guessed button 1. Total {totalWatch.ElapsedMilliseconds} ms.")
+                            Else
+                                SetQuizStatus("No confident answer available and the guess click could not be sent.", ThemeWarn)
+                                AppendLog("Quiz solver: no confident answer available and the guess click failed to send.")
+                            End If
+                            Return
                         End If
                         SetQuizStatus("Local index was inconclusive; querying the API and web fallback...", ThemeAccent)
                         lookupStarted = True
@@ -436,8 +450,20 @@ Partial Public Class Form1
                     ShowQuizEvidence(answer)
                     Dim skipReason As String = ""
                     If Not QuizAnswerPolicy.CanClick(answer, buttons.Count, skipReason) Then
-                        SetQuizStatus("Skipped: " & skipReason, ThemeWarn)
-                        AppendLog($"Quiz solver skipped: {answer.QuestionText}; {skipReason} {answer.Evidence}")
+                        Dim guessPoint As System.Drawing.Point
+                        If ClickQuizButtonFast(hwnd, answersArea, buttons, 0, guessPoint) Then
+                            _quizLastClickedHash = quizIdentity
+                            _quizLastClickedUtc = DateTime.UtcNow
+                            answerClicked = True
+                            _quizLastClickNormalizedX = guessPoint.X / CDbl(Math.Max(1, clientWidth))
+                            _quizLastClickNormalizedY = guessPoint.Y / CDbl(Math.Max(1, clientHeight))
+                            _quizLastClickedButtonNumber = 1
+                            SetQuizStatus($"No confident answer ({skipReason}); guessed answer 1 x10 (50 ms). Total {totalWatch.ElapsedMilliseconds} ms", ThemeWarn)
+                            AppendLog($"Quiz solver: {answer.QuestionText}; {skipReason} {answer.Evidence}; guessed button 1. Total {totalWatch.ElapsedMilliseconds} ms.")
+                        Else
+                            SetQuizStatus("Skipped: " & skipReason & " (guess click could not be sent)", ThemeWarn)
+                            AppendLog($"Quiz solver skipped: {answer.QuestionText}; {skipReason} {answer.Evidence}")
+                        End If
                         Return
                     End If
                     Dim targetIndex = answer.ButtonNumber - 1
@@ -517,6 +543,24 @@ Partial Public Class Form1
             clickMs = phaseWatch.ElapsedMilliseconds
             Return clicked
         End Using
+    End Function
+
+    ' Used only when no confident answer exists at all (a guess), so there is nothing to verify
+    ' against - it clicks straight off the buttons already detected earlier this same pass, skipping
+    ' RevalidateAndClickQuizAnswer's live re-capture/re-detection/hash-compare entirely for speed.
+    Private Function ClickQuizButtonFast(hwnd As IntPtr, answersArea As Rectangle, buttons As List(Of Rectangle), index As Integer, ByRef clickedClientPoint As System.Drawing.Point) As Boolean
+        clickedClientPoint = System.Drawing.Point.Empty
+        If index < 0 OrElse index >= buttons.Count Then Return False
+        Dim currentWindow = GetSelectedProcessWindowForEdition(BotEdition.Full)
+        If currentWindow Is Nothing OrElse currentWindow.MainWindowHandle <> hwnd OrElse Not IsUsableQuizWindow(hwnd) Then Return False
+        Dim target = buttons(index)
+        Dim clientPoint As New NativeMethods.POINT With {
+            .X = answersArea.Left + target.Left + target.Width \ 2,
+            .Y = answersArea.Top + target.Top + target.Height \ 2
+        }
+        clickedClientPoint = New System.Drawing.Point(clientPoint.X, clientPoint.Y)
+        If Not NativeMethods.ClientToScreen(hwnd, clientPoint) Then Return False
+        Return PerformQuizClickBurst(hwnd, clientPoint)
     End Function
 
     Private Shared Function PerceptualHashDistance(first As String, second As String) As Integer

@@ -4,6 +4,8 @@ Imports System.Text.RegularExpressions
 ' Local OCR only. Keeping the decision logic separate from input makes payment and blacklist
 ' rules testable without a game window or sending any keys/clicks.
 Friend Class ResuSettings
+    Public Property ShowTradeClickOverlay As Boolean
+    Public Property BlacklistDraft As String = ""
     Public Property SelectKey As String = "TAB"
     Public Property SelectKeyIntervalMs As Integer = 500
     Public Property ResurrectKey As String = ""

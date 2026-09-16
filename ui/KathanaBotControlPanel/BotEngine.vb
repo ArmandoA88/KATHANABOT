@@ -641,6 +641,7 @@ Public Class BotStatus
     Public Property MapCoordinateX As Integer = -1
     Public Property MapCoordinateY As Integer = -1
     Public Property MapCoordinateDebugLog As String = ""
+    Public Property ChatOcrLines As New List(Of ChatOverlayLine)()
     Public Property ChatOcrText As String = ""
     Public Property ChatOcrUpdatedAt As DateTime = DateTime.MinValue
     Public Property MapHeading As String = ""
@@ -1338,6 +1339,7 @@ Public Class BotEngine
     Private ReadOnly _mapCoordinateDebugLines As New Queue(Of String)()
     Private _lastMapCoordinateDebugLog As String = ""
     Private _lastChatOcrAt As DateTime = DateTime.MinValue
+    Private _lastChatOcrLines As New List(Of ChatOverlayLine)()
     Private _lastChatOcrText As String = ""
     Private _lastChatOcrNormalized As String = ""
     Private _lastChatOcrUpdatedAt As DateTime = DateTime.MinValue
@@ -1798,6 +1800,7 @@ Public Class BotEngine
             _mapCoordinateDebugLines.Clear()
             _lastMapCoordinateDebugLog = ""
             _lastChatOcrAt = DateTime.MinValue
+            _lastChatOcrLines = New List(Of ChatOverlayLine)()
             _lastChatOcrText = ""
             _lastChatOcrNormalized = ""
             _lastChatOcrUpdatedAt = DateTime.MinValue
@@ -4984,18 +4987,11 @@ Public Class BotEngine
                     g.DrawImage(crop, New Rectangle(0, 0, enlarged.Width, enlarged.Height), New Rectangle(0, 0, crop.Width, crop.Height), GraphicsUnit.Pixel)
                 End Using
 
-                Dim rawText As String = OcrReader.ReadScreenText(enlarged)
-                Dim normalized As String = NormalizeChatOcrText(rawText)
-                If normalized = "" Then
-                    _lastChatOcrText = ""
-                    _lastChatOcrNormalized = ""
-                    Return
-                End If
-
-                If _lastChatOcrNormalized.Equals(normalized, StringComparison.Ordinal) Then
-                    Return
-                End If
-
+                Dim regions = OcrReader.ReadScreenTextRegions(enlarged)
+                _lastChatOcrLines = ChatOverlayLine.FromOcr(regions, crop, rect, 2)
+                ' Failed recognition must retry even if the image has not changed.
+                If _lastChatOcrLines.Count = 0 Then _lastChatVisualSignature = 0UL
+                Dim normalized = String.Join(Environment.NewLine, _lastChatOcrLines.Select(Function(line) line.SourceText))
                 _lastChatOcrText = normalized
                 _lastChatOcrNormalized = normalized
                 _lastChatOcrUpdatedAt = now
@@ -5004,6 +5000,7 @@ Public Class BotEngine
     End Sub
 
     Private Sub ClearChatTranslationRuntime()
+        _lastChatOcrLines = New List(Of ChatOverlayLine)()
         _lastChatOcrText = ""
         _lastChatOcrNormalized = ""
         _lastChatOcrUpdatedAt = DateTime.MinValue
@@ -5711,17 +5708,7 @@ Public Class BotEngine
             cleanedLines.Add(line)
         Next
 
-        Dim deduped As New List(Of String)()
-        Dim previous As String = ""
-        For Each line As String In cleanedLines
-            If previous.Equals(line, StringComparison.OrdinalIgnoreCase) Then
-                Continue For
-            End If
-            deduped.Add(line)
-            previous = line
-        Next
-
-        Return String.Join(Environment.NewLine, deduped.Take(8))
+        Return String.Join(Environment.NewLine, cleanedLines)
     End Function
 
     Private Sub ScanMapPlayerMarkerIfNeeded(now As DateTime)
@@ -12181,6 +12168,7 @@ Public Class BotEngine
             _status.MapCoordinateX = _lastMapCoordinateX
             _status.MapCoordinateY = _lastMapCoordinateY
             _status.MapCoordinateDebugLog = _lastMapCoordinateDebugLog
+            _status.ChatOcrLines = _lastChatOcrLines.Select(Function(line) line.Copy()).ToList()
             _status.ChatOcrText = _lastChatOcrText
             _status.ChatOcrUpdatedAt = _lastChatOcrUpdatedAt
             _status.MapHeading = If(String.IsNullOrWhiteSpace(_lastNavigationKnownHeading), "", $"{_lastNavigationKnownHeading} (from coordinates)")
@@ -12298,6 +12286,7 @@ Public Class BotEngine
             .MapCoordinateX = src.MapCoordinateX,
             .MapCoordinateY = src.MapCoordinateY,
             .MapCoordinateDebugLog = src.MapCoordinateDebugLog,
+            .ChatOcrLines = src.ChatOcrLines.Select(Function(line) line.Copy()).ToList(),
             .ChatOcrText = src.ChatOcrText,
             .ChatOcrUpdatedAt = src.ChatOcrUpdatedAt,
             .MapHeading = src.MapHeading,

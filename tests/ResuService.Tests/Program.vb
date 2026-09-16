@@ -1,3 +1,4 @@
+Imports System.Windows.Forms
 Imports System.Text.Json
 
 Module Program
@@ -6,6 +7,7 @@ Module Program
 
     <STAThread>
     Sub Main()
+        Test("RESU current UI inputs survive profile snapshot and restore", AddressOf ResuProfileInputs)
         Test("stable target required", AddressOf StableTarget)
         Test("resurrection waits for a chat keyword trigger", AddressOf ResuKeywordTriggerGate)
         Test("keep-standing activity runs only while waiting for a keyword", AddressOf ResuKeywordTriggerTiming)
@@ -63,6 +65,100 @@ Module Program
         Test("chat alarm keywords and toggle survive JSON roundtrip", AddressOf ChatAlarmSettingsPersistence)
         Console.WriteLine($"Passed {_passed} RESU tests.")
     End Sub
+
+    Private Sub ResuProfileInputs()
+        Dim flags = Reflection.BindingFlags.Instance Or Reflection.BindingFlags.NonPublic
+        Dim formType = GetType(Form1)
+        Dim form = Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(formType)
+        Dim controls As New Dictionary(Of String, Control)()
+        For Each field In formType.GetFields(flags).Where(Function(f) f.Name.StartsWith("_resu", StringComparison.Ordinal))
+            Dim control As Control = Nothing
+            If field.FieldType Is GetType(TextBox) Then control = New TextBox()
+            If field.FieldType Is GetType(CheckBox) Then control = New CheckBox()
+            If field.FieldType Is GetType(NumericUpDown) Then control = New NumericUpDown With {.Maximum = 1000000000D, .DecimalPlaces = 1}
+            If field.FieldType Is GetType(ComboBox) Then
+                Dim combo As New ComboBox()
+                combo.Items.AddRange({"TAB", "SPACE", "F4"})
+                control = combo
+            End If
+            If field.FieldType Is GetType(Label) Then control = New Label()
+            If field.FieldType Is GetType(DataGridView) Then
+                Dim grid As New DataGridView()
+                grid.Columns.Add("Username", "Username")
+                grid.Columns.Add("Reason", "Reason")
+                grid.Columns.Add("Added", "Added")
+                control = grid
+            End If
+            If control IsNot Nothing Then
+                field.SetValue(form, control)
+                controls.Add(field.Name, control)
+            End If
+        Next
+        Dim buffEnabled = {New CheckBox(), New CheckBox(), New CheckBox()}
+        Dim buffKeys = {New TextBox(), New TextBox(), New TextBox()}
+        formType.GetField("_resuBuffEnabled", flags).SetValue(form, buffEnabled)
+        formType.GetField("_resuBuffKey", flags).SetValue(form, buffKeys)
+        Dim patterns As New Dictionary(Of String, TextBox)()
+        For Each name In {"Invitation", "Trade window", "Payment received", "Nonpayment", "Trade completed / cancelled"}
+            patterns.Add(name, New TextBox())
+        Next
+        formType.GetField("_resuPatterns", flags).SetValue(form, patterns)
+        Dim apply = formType.GetMethod("ApplyPersistedResuState", flags)
+        Dim snapshot = formType.GetMethod("BuildPersistedResuState", flags)
+        apply.Invoke(form, {Nothing})
+        Dim expected As New Dictionary(Of String, Object)()
+        For Each pair In controls
+            If TypeOf pair.Value Is TextBox AndAlso pair.Key <> "_resuOcr" Then
+                pair.Value.Text = If(pair.Key = "_resuChatAlarmKeywords", "HELP, REVIVE", "CUSTOM")
+                expected(pair.Key) = pair.Value.Text
+            ElseIf TypeOf pair.Value Is CheckBox Then
+                Dim box = DirectCast(pair.Value, CheckBox)
+                box.Checked = Not box.Checked
+                expected(pair.Key) = box.Checked
+            ElseIf TypeOf pair.Value Is NumericUpDown Then
+                Dim box = DirectCast(pair.Value, NumericUpDown)
+                box.Value = If(pair.Key.EndsWith("Ms", StringComparison.Ordinal), 700D, 7D)
+                expected(pair.Key) = box.Value
+            ElseIf TypeOf pair.Value Is ComboBox Then
+                DirectCast(pair.Value, ComboBox).SelectedItem = "F4"
+                expected(pair.Key) = "F4"
+            End If
+        Next
+        For i = 0 To 2
+            buffEnabled(i).Checked = i <> 1
+            buffKeys(i).Text = "F" & (i + 5).ToString()
+        Next
+        For Each pair In patterns
+            pair.Value.Text = "CUSTOM " & pair.Key
+        Next
+        Dim saved = snapshot.Invoke(form, Nothing)
+        Dim json = JsonSerializer.Serialize(saved, saved.GetType())
+        apply.Invoke(form, {Nothing})
+        apply.Invoke(form, {JsonSerializer.Deserialize(json, saved.GetType())})
+        For Each pair In expected
+            Dim control = controls(pair.Key)
+            Dim actual As Object = control.Text
+            If TypeOf control Is CheckBox Then actual = DirectCast(control, CheckBox).Checked
+            If TypeOf control Is NumericUpDown Then actual = DirectCast(control, NumericUpDown).Value
+            If Not Object.Equals(actual, pair.Value) Then Throw New Exception("RESU profile lost UI input: " & pair.Key)
+        Next
+        For i = 0 To 2
+            If buffEnabled(i).Checked <> (i <> 1) OrElse buffKeys(i).Text <> "F" & (i + 5).ToString() Then Throw New Exception("RESU profile lost buff input")
+        Next
+        For Each pair In patterns
+            If pair.Value.Text <> "CUSTOM " & pair.Key Then Throw New Exception("RESU profile lost pattern input")
+        Next
+        For Each control In controls.Values
+            control.Dispose()
+        Next
+        For Each control In buffEnabled
+            control.Dispose()
+        Next
+        For Each control In buffKeys.Concat(patterns.Values)
+            control.Dispose()
+        Next
+    End Sub
+
 
     Private Sub Test(name As String, action As Action)
         action()

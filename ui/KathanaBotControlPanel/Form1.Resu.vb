@@ -3,6 +3,9 @@ Imports System.Text.Json
 Imports DrawingPoint = System.Drawing.Point
 
 Partial Public Class Form1
+    Private _resuApplyingSettings As Boolean
+    Private _resuShowOverlay As CheckBox
+    Private _resuBlacklistDraft As TextBox
     Private _resuTab As TabPage
     Private _resuSettings As New ResuSettings()
     Private _resuService As ResuService
@@ -65,6 +68,7 @@ Partial Public Class Form1
         _resuStart = New Button With {.Text = "Start RESU", .Width = 130, .Height = 34}
         AddHandler _resuStart.Click, AddressOf ToggleResu
         Dim overlay As New CheckBox With {.Text = "Show trade click overlay", .AutoSize = True, .Margin = New Padding(14, 9, 6, 6)}
+        _resuShowOverlay = overlay
         AddHandler overlay.CheckedChanged, Sub() SetResuOverlay(overlay.Checked)
         actions.Controls.AddRange({_resuStart, overlay, New Label With {.Text = "F12 = stop   |   Background game input enabled", .AutoSize = True, .Margin = New Padding(14, 10, 0, 0)}})
         body.Controls.Add(actions)
@@ -173,6 +177,7 @@ Partial Public Class Form1
         body.Controls.Add(New Label With {.Text = "Paste one or several exact character names below. Separate names with a new line, comma, or semicolon. Blacklisted characters are skipped before the resurrection key is sent.", .AutoSize = True, .MaximumSize = New Size(1050, 0), .ForeColor = ThemeTextSecondary, .Margin = New Padding(0, 0, 0, 8)})
         Dim blacklistActions As New FlowLayoutPanel With {.AutoSize = True, .Dock = DockStyle.Top, .WrapContents = True}
         Dim username As New TextBox With {.Width = 390, .Height = 58, .Multiline = True, .ScrollBars = ScrollBars.Vertical, .PlaceholderText = "Character names, one per line"}
+        _resuBlacklistDraft = username
         Dim add As New Button With {.Text = "Add to blacklist", .AutoSize = True, .Height = 34, .Margin = New Padding(8, 4, 0, 0)}
         Dim remove As New Button With {.Text = "Remove selected", .AutoSize = True, .Height = 34, .Margin = New Padding(8, 4, 0, 0)}
         AddHandler add.Click,
@@ -215,6 +220,7 @@ Partial Public Class Form1
         tab.Controls.Add(scroll)
         AddHandler _resuTimer.Tick, Async Sub() Await TickResuAsync()
         ApplyPersistedResuState(Nothing)
+        WireResuPersistence(body)
         Return tab
     End Function
 
@@ -268,8 +274,37 @@ Partial Public Class Form1
         Return box
     End Function
 
+    Private Sub WireResuPersistence(parent As Control)
+        For Each child As Control In parent.Controls
+            If TypeOf child Is NumericUpDown Then
+                AddHandler DirectCast(child, NumericUpDown).ValueChanged, AddressOf ResuInputChanged
+            ElseIf TypeOf child Is TextBox Then
+                If Not DirectCast(child, TextBox).ReadOnly Then AddHandler child.TextChanged, AddressOf ResuInputChanged
+            ElseIf TypeOf child Is CheckBox Then
+                AddHandler DirectCast(child, CheckBox).CheckedChanged, AddressOf ResuInputChanged
+            ElseIf TypeOf child Is ComboBox Then
+                AddHandler DirectCast(child, ComboBox).SelectedIndexChanged, AddressOf ResuInputChanged
+            Else
+                WireResuPersistence(child)
+            End If
+        Next
+    End Sub
+
+    Private Sub ResuInputChanged(sender As Object, e As EventArgs)
+        If _resuApplyingSettings OrElse Not IsHandleCreated OrElse IsDisposed Then Return
+        SavePersistedListState(False)
+    End Sub
+
+    Private Function BuildPersistedResuState() As ResuSettings
+        If _resuKeepStandingIntervalSeconds Is Nothing Then Return _resuSettings
+        ' Snapshot current edits without changing the running service or requiring a valid runnable setup.
+        Return ReadResuOptions()
+    End Function
+
     Private Function ReadResuOptions() As ResuSettings
         Dim settings = JsonSerializer.Deserialize(Of ResuSettings)(JsonSerializer.Serialize(_resuSettings))
+        settings.ShowTradeClickOverlay = _resuShowOverlay.Checked
+        settings.BlacklistDraft = _resuBlacklistDraft.Text
         settings.SelectKey = CStr(_resuSelectKey.SelectedItem)
         settings.SelectKeyIntervalMs = CInt(_resuSelectKeyIntervalMs.Value)
         settings.ResurrectKey = _resuCastKey.Text.Trim().ToUpperInvariant()
@@ -309,8 +344,6 @@ Partial Public Class Form1
     Private Sub SaveResuOptions()
         Try
             Dim settings = ReadResuOptions()
-            ValidateResuKeys(settings)
-            Dim validation As New ResuService(settings)
             _resuSettings = settings
             SavePersistedListState(True)
             SetResuStatus("RESU settings saved.")
@@ -334,6 +367,8 @@ Partial Public Class Form1
     End Sub
 
     Private Sub ApplyPersistedResuState(settings As ResuSettings)
+        _resuApplyingSettings = True
+        Try
         _resuSettings = If(settings, New ResuSettings())
         If String.Equals(_resuSettings.InvitePattern, ResuService.LegacyDefaultInvitePattern, StringComparison.Ordinal) OrElse String.Equals(_resuSettings.InvitePattern, ResuService.PreviousDefaultInvitePattern, StringComparison.Ordinal) Then
             _resuSettings.InvitePattern = ResuService.DefaultInvitePattern
@@ -385,8 +420,13 @@ Partial Public Class Form1
         _resuKeepStandingEnabled.Checked = _resuSettings.KeepStandingEnabled
         _resuKeepStandingKey.SelectedItem = If(_resuKeepStandingKey.Items.Contains(_resuSettings.KeepStandingKey), _resuSettings.KeepStandingKey, "SPACE")
         _resuKeepStandingIntervalSeconds.Value = Math.Clamp(_resuSettings.KeepStandingIntervalSeconds, 1, 3600)
+        _resuBlacklistDraft.Text = If(_resuSettings.BlacklistDraft, "")
+        _resuShowOverlay.Checked = _resuSettings.ShowTradeClickOverlay
         UpdateResuCalibrationLabel()
         RefreshResuBlacklist()
+        Finally
+            _resuApplyingSettings = False
+        End Try
     End Sub
 
     Private Sub UpdateResuCalibrationLabel()

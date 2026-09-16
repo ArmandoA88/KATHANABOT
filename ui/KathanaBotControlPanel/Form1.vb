@@ -1983,6 +1983,8 @@ Partial Public Class Form1
     Private _deathNotificationLatched As Boolean = False
     Private _windowMissingNotificationLatched As Boolean = False
     Private _gameDisconnectedNotificationLatched As Boolean = False
+    Private _lastGameDisconnectedNotificationUtc As DateTime = DateTime.MinValue
+    Private Shared ReadOnly GameDisconnectedReminderInterval As TimeSpan = TimeSpan.FromMinutes(5)
     Private _disconnectRecoveryPending As Boolean = False
     Private _autoRelaunchPending As Boolean = False
     Private _lastAutoRelaunchAttemptUtc As DateTime = DateTime.MinValue
@@ -14459,7 +14461,9 @@ Partial Public Class Form1
                 chatState = "Chat Translation: disabled."
                 lblChatTranslationStatus.ForeColor = Color.DimGray
             ElseIf String.IsNullOrWhiteSpace(status.ChatOcrText) Then
-                chatState = "Chat Translation: waiting for readable chat text in chat_rect."
+                chatState = If(_chatOverlayEntries.Count > 0,
+                    "Chat Translation: keeping the last overlay visible while looking for readable chat text.",
+                    "Chat Translation: waiting for readable chat text in chat_rect.")
                 lblChatTranslationStatus.ForeColor = Color.Khaki
             Else
                 Dim lineCount As Integer = status.ChatOcrText.Split({Environment.NewLine}, StringSplitOptions.RemoveEmptyEntries).Length
@@ -14552,16 +14556,26 @@ Partial Public Class Form1
 
         Dim rawText As String = If(status.ChatOcrText, "").Trim()
         Dim targetLanguage As String = GetSelectedChatTargetLanguageCode()
-        If rawText = "" Then
-            _lastChatOcrText = ""
-            _lastChatTargetLanguage = targetLanguage
-            _chatScreenGeneration += 1
-            _chatOverlayEntries.Clear()
-            RefreshChatTranslationOverlayContent()
-            Return
+        Dim capturedLines = If(status.ChatOcrLines, New List(Of ChatOverlayLine)())
+        If rawText = "" OrElse capturedLines.Count = 0 Then
+            ' An unreadable scan is not proof that chat was cleared. Keep both the last screen
+            ' and its generation so in-flight translations can still finish during OCR gaps.
+            If targetLanguage.Equals(_lastChatTargetLanguage, StringComparison.OrdinalIgnoreCase) OrElse _chatOverlayEntries.Count = 0 Then
+                RefreshChatTranslationOverlayContent()
+                Return
+            End If
+            ' A language change can translate the retained source even before OCR recovers.
+            rawText = _lastChatOcrText
+            capturedLines = _chatOverlayEntries.Select(Function(line) line.Copy()).ToList()
         End If
 
-        If rawText.Equals(_lastChatOcrText, StringComparison.Ordinal) AndAlso targetLanguage.Equals(_lastChatTargetLanguage, StringComparison.OrdinalIgnoreCase) Then
+        If rawText.Equals(_lastChatOcrText, StringComparison.Ordinal) AndAlso targetLanguage.Equals(_lastChatTargetLanguage, StringComparison.OrdinalIgnoreCase) AndAlso capturedLines.Count = _chatOverlayEntries.Count Then
+            ' Identical messages may move when chat scrolls. Update geometry without restarting translation.
+            For i = 0 To capturedLines.Count - 1
+                Dim translated = _chatOverlayEntries(i).TranslatedText
+                _chatOverlayEntries(i) = capturedLines(i).Copy()
+                _chatOverlayEntries(i).TranslatedText = translated
+            Next
             RefreshChatTranslationOverlayContent()
             Return
         End If
@@ -14570,21 +14584,9 @@ Partial Public Class Form1
         _lastChatTargetLanguage = targetLanguage
         _chatScreenGeneration += 1
         Dim generation As Integer = _chatScreenGeneration
-        Dim lines As List(Of String) = ParseChatOcrLines(rawText)
+        Dim nextEntries = PreserveChatTranslations(capturedLines, _chatOverlayEntries)
         _chatOverlayEntries.Clear()
-
-        For Each line As String In lines
-            Dim lineText As String = If(line, "").Trim()
-            If lineText = "" Then
-                Continue For
-            End If
-
-            _chatOverlayEntries.Add(New ChatOverlayLine With {
-                .SourceText = lineText,
-                .TranslatedText = lineText,
-                .CreatedAtUtc = DateTime.UtcNow
-            })
-        Next
+        _chatOverlayEntries.AddRange(nextEntries)
 
         RefreshChatTranslationOverlayContent()
 
@@ -14593,6 +14595,17 @@ Partial Public Class Form1
         Next
     End Sub
 
+    Private Shared Function PreserveChatTranslations(captured As IEnumerable(Of ChatOverlayLine), previous As IEnumerable(Of ChatOverlayLine)) As List(Of ChatOverlayLine)
+        Dim result As New List(Of ChatOverlayLine)()
+        For Each line In captured
+            Dim entry = line.Copy()
+            Dim existing = previous.FirstOrDefault(Function(old) String.Equals(old.SourceText, line.SourceText, StringComparison.Ordinal))
+            If existing IsNot Nothing Then entry.TranslatedText = existing.TranslatedText
+            result.Add(entry)
+        Next
+        Return result
+    End Function
+
     Private Shared Function ParseChatOcrLines(rawText As String) As List(Of String)
         Dim results As New List(Of String)()
         For Each rawLine As String In If(rawText, "").Replace(vbCrLf, vbLf).Replace(vbCr, vbLf).Split({vbLf}, StringSplitOptions.RemoveEmptyEntries)
@@ -14600,7 +14613,7 @@ Partial Public Class Form1
             If cleaned.Length < 2 Then
                 Continue For
             End If
-            results.AddRange(SplitJoinedChatMessages(cleaned))
+            results.Add(cleaned)
         Next
         Return results
     End Function
@@ -14850,7 +14863,7 @@ Partial Public Class Form1
                     BeginInvoke(
                         New Action(
                             Sub()
-                                ApplyTranslatedChatEntry(generation, entryIndex, lineCopy, translated)
+                                ApplyMatchingChatTranslation(targetLanguage, lineCopy, translated)
                             End Sub))
                 Catch ex As Exception
                     If Not IsDisposed Then
@@ -14860,6 +14873,17 @@ Partial Public Class Form1
                     _chatTranslationLock.Release()
                 End Try
             End Function)
+    End Sub
+
+    Private Sub ApplyMatchingChatTranslation(targetLanguage As String, sourceText As String, translatedText As String)
+        If Not String.Equals(targetLanguage, _lastChatTargetLanguage, StringComparison.OrdinalIgnoreCase) Then Return
+        ' A newer OCR snapshot may have scrolled the same message to another row while HTTP
+        ' was in flight. Only update exact source matches in the current language and layout.
+        For i = 0 To _chatOverlayEntries.Count - 1
+            If String.Equals(_chatOverlayEntries(i).SourceText, sourceText, StringComparison.Ordinal) Then
+                ApplyTranslatedChatEntry(_chatScreenGeneration, i, sourceText, translatedText)
+            End If
+        Next
     End Sub
 
     Private Sub ApplyTranslatedChatEntry(generation As Integer, entryIndex As Integer, sourceText As String, translatedText As String)
@@ -14895,13 +14919,7 @@ Partial Public Class Form1
             Return
         End If
 
-        Dim visibleEntries As List(Of ChatOverlayLine) = _chatOverlayEntries.
-            Select(Function(entry) New ChatOverlayLine With {
-                .SourceText = entry.SourceText,
-                .TranslatedText = entry.TranslatedText,
-                .CreatedAtUtc = entry.CreatedAtUtc
-            }).
-            ToList()
+        Dim visibleEntries As List(Of ChatOverlayLine) = _chatOverlayEntries.Select(Function(entry) entry.Copy()).ToList()
 
         _chatTranslationOverlayForm.UpdateContent(visibleEntries, chkChatTranslationOverlay IsNot Nothing AndAlso chkChatTranslationOverlay.Checked)
     End Sub
@@ -15696,19 +15714,34 @@ Partial Public Class Form1
         End If
 
         If status.Running AndAlso status.WindowFound AndAlso status.GameDisconnected Then
-            If Not _gameDisconnectedNotificationLatched Then
+            Dim nowUtc As DateTime = DateTime.UtcNow
+            Dim firstAlert As Boolean = Not _gameDisconnectedNotificationLatched
+            If firstAlert OrElse nowUtc - _lastGameDisconnectedNotificationUtc >= GameDisconnectedReminderInterval Then
                 _gameDisconnectedNotificationLatched = True
-                AppendLog($"Game disconnect detected. Sending alert via {GetNotificationDestinationSummary()}.")
-                BeginDisconnectOkRecovery()
+                ' Reserve this interval before starting the asynchronous send, including failed attempts.
+                _lastGameDisconnectedNotificationUtc = nowUtc
+                If firstAlert Then
+                    AppendLog($"Game disconnect detected. Sending alert via {GetNotificationDestinationSummary()}.")
+                    BeginDisconnectOkRecovery()
+                Else
+                    AppendLog($"Game remains disconnected. Sending five-minute reminder via {GetNotificationDestinationSummary()}.")
+                End If
                 Dim title As String = WithCharacterName("KathanaBot Game Disconnected", status.CharacterName)
+                Dim body As String = If(firstAlert,
+                    "The game reported: connection to server has failed. Please try again.",
+                    "Reminder: the disconnect message is still detected. The game reported: connection to server has failed. Please try again.")
                 Task.Run(
                     Async Function()
-                        Dim sent As Boolean = Await SendPhoneNotificationAsync(title, "The game reported: connection to server has failed. Please try again.", DeathNotificationRetryCount)
-                        If sent Then
-                            AppendLogSafe("Game disconnect alert sent.")
-                        Else
-                            AppendLogSafe("Game disconnect alert failed.")
-                        End If
+                        Try
+                            Dim sent As Boolean = Await SendPhoneNotificationAsync(title, body, DeathNotificationRetryCount)
+                            If sent Then
+                                AppendLogSafe("Game disconnect alert sent.")
+                            Else
+                                AppendLogSafe("Game disconnect alert failed.")
+                            End If
+                        Catch ex As Exception
+                            AppendLogSafe("Game disconnect alert failed: " & ex.Message)
+                        End Try
                     End Function)
             End If
             Return
@@ -15716,7 +15749,8 @@ Partial Public Class Form1
 
         If _gameDisconnectedNotificationLatched AndAlso ((Not status.Running) OrElse (Not status.GameDisconnected)) Then
             _gameDisconnectedNotificationLatched = False
-            AppendLog("Game disconnect alert reset.")
+            _lastGameDisconnectedNotificationUtc = DateTime.MinValue
+            AppendLog("Game disconnect alert reset; five-minute reminders stopped.")
         End If
     End Sub
 
@@ -17843,7 +17877,7 @@ Partial Public Class Form1
                 .UpdateIncludePrereleases = (chkUpdateIncludePrereleases IsNot Nothing AndAlso chkUpdateIncludePrereleases.Checked),
                 .DashboardMode = _dashboardMode.ToString(),
                 .Quiz = BuildPersistedQuizState(),
-                .Resu = _resuSettings,
+                .Resu = BuildPersistedResuState(),
                 .Full = fullState,
                 .Lite = liteState
             }
