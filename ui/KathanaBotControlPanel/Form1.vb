@@ -2328,6 +2328,7 @@ Partial Public Class Form1
         Public Property DashboardMode As String = "Compact"
         Public Property Quiz As PersistedQuizState = New PersistedQuizState()
         Public Property Resu As ResuSettings = New ResuSettings()
+        Public Property Trade As TradeSettings = New TradeSettings()
         Public Property Full As PersistedListState = New PersistedListState()
         Public Property Lite As PersistedLiteState = New PersistedLiteState()
     End Class
@@ -3758,6 +3759,7 @@ Partial Public Class Form1
         ' until the Home-page digit sequence unlocks it for this executable session.
         _quizTab = BuildQuizTab()
         _resuTab = BuildResuTab()
+        _tradeTab = BuildTradeTab()
         _updateTab = BuildUpdateTab()
         _mainTabs.TabPages.Add(_updateTab)
         _mainTabs.FitTabsToHeight()
@@ -4818,6 +4820,7 @@ Partial Public Class Form1
         End If
 
         If tab Is _resuTab Then Return _resuRunning
+        If tab Is _tradeTab Then Return _tradeRunning
 
         If tab Is _dashboardTab Then
             Return GetRunningEdition().HasValue
@@ -5660,6 +5663,10 @@ Partial Public Class Form1
     End Sub
 
     Private Sub LoadProfileByName(profileName As String)
+        If _tradeRunning OrElse _tradeAnalyzing Then
+            MessageBox.Show(Me, "Stop Trade before loading another profile.", "Trade")
+            Return
+        End If
         Dim sourcePath As String = Path.Combine(ProfilesDirectoryPath, profileName & ".json")
         If Not File.Exists(sourcePath) Then
             MessageBox.Show(Me, $"Profile ""{profileName}"" no longer exists on disk.", "Load Profile", MessageBoxButtons.OK, MessageBoxIcon.Warning)
@@ -9330,6 +9337,10 @@ Partial Public Class Form1
     End Function
 
     Private Sub StartEdition(edition As BotEdition, autoStart As Boolean)
+        If _tradeRunning Then
+            AppendLog("Stop Trade before starting a bot edition.")
+            Return
+        End If
         Dim otherEdition As BotEdition = If(edition = BotEdition.Lite, BotEdition.Full, BotEdition.Lite)
         If IsEditionRunning(otherEdition) Then
             StopEdition(otherEdition, False, $"starting {edition.ToString().ToLowerInvariant()}")
@@ -11671,6 +11682,7 @@ Partial Public Class Form1
                 ' ordinary edition/sidebar refresh to remove it again immediately.
                 desired.Add(_quizTab)
                 desired.Add(_resuTab)
+                desired.Add(_tradeTab)
             End If
             desired.Add(_updateTab)
             desired.RemoveAll(Function(page) page Is Nothing)
@@ -17495,6 +17507,7 @@ Partial Public Class Form1
 
             ApplyPersistedQuizState(If(appState IsNot Nothing, appState.Quiz, Nothing))
             ApplyPersistedResuState(If(appState IsNot Nothing, appState.Resu, Nothing))
+            ApplyPersistedTradeState(If(appState IsNot Nothing, appState.Trade, Nothing))
 
             Dim savedToggleX As Integer = If(appState IsNot Nothing, appState.InGameBotToggleX, -1)
             _inGameBotToggleX = If(savedToggleX < 0, -1, savedToggleX)
@@ -17878,6 +17891,7 @@ Partial Public Class Form1
                 .DashboardMode = _dashboardMode.ToString(),
                 .Quiz = BuildPersistedQuizState(),
                 .Resu = BuildPersistedResuState(),
+                .Trade = BuildPersistedTradeState(),
                 .Full = fullState,
                 .Lite = liteState
             }
@@ -20457,6 +20471,12 @@ Partial Public Class Form1
 
     Protected Overrides Sub OnFormClosing(e As FormClosingEventArgs)
         _dashboardEntranceTimer.Stop()
+        _tradeCancellation?.Cancel()
+        _tradeAnalysisCancellation?.Cancel()
+        _tradePriceGeneration += 1
+        _tradePriceTimer?.Stop()
+        _tradeStopTimer.Stop()
+        _tradeStopTimer.Dispose()
         ShutdownQuizSolver()
         ShutdownResu()
         If _updateCancellation IsNot Nothing Then

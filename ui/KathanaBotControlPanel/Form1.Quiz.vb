@@ -247,6 +247,7 @@ Partial Public Class Form1
         _quizUnlocked = True
         ApplyDarkTheme(_quizTab)
         ApplyDarkTheme(_resuTab)
+        ApplyDarkTheme(_tradeTab)
         ' Use the same authoritative tab builder as edition/developer-mode changes. It inserts Quiz
         ' after Diagnostics (when visible) and immediately before Update, and now preserves it on
         ' every later sidebar refresh for the rest of this executable session.
@@ -356,6 +357,7 @@ Partial Public Class Form1
     End Function
 
     Private Async Function RunQuizSolverOnceAsync(manual As Boolean) As Task
+        If _tradeRunning Then Return
         If _quizSolveInProgress Then Return
         If Not manual AndAlso (chkQuizSolverEnabled Is Nothing OrElse Not chkQuizSolverEnabled.Checked) Then Return
         If Not manual AndAlso DateTime.UtcNow < _quizRetryAfterUtc Then

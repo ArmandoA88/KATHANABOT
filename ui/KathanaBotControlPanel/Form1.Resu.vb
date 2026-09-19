@@ -1,4 +1,4 @@
-﻿Imports System.Threading.Tasks
+Imports System.Threading.Tasks
 Imports System.Text.Json
 Imports DrawingPoint = System.Drawing.Point
 
@@ -490,6 +490,10 @@ Partial Public Class Form1
     End Sub
 
     Private Sub ToggleResu(sender As Object, e As EventArgs)
+        If _tradeRunning Then
+            MessageBox.Show(Me, "Stop Trade before starting RESU.", "Trade")
+            Return
+        End If
         If _resuRunning Then
             StopResu("RESU stopped.")
             Return
