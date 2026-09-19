@@ -186,7 +186,7 @@ Partial Public Class Form1
                 Dim names = ResuService.ParseManualCharacterNames(username.Text, invalid)
                 If names.Count = 0 Then
                     Dim detail = If(invalid.Count > 0, " Invalid: " & String.Join(", ", invalid.Take(5)), "")
-                    MessageBox.Show(Me, "Enter at least one valid character name. Names may contain letters, numbers, underscores, or hyphens." & detail, "RESU blacklist")
+                    SilentMessageBox.Show(Me, "Enter at least one valid character name. Names may contain letters, numbers, underscores, or hyphens." & detail, "RESU blacklist")
                     Return
                 End If
                 Dim added As Integer = 0
@@ -199,7 +199,7 @@ Partial Public Class Form1
                 SaveResuBlacklist()
                 username.Clear()
                 SetResuStatus($"Added {added} character name(s) to the blacklist. {names.Count - added} already existed.")
-                If invalid.Count > 0 Then MessageBox.Show(Me, "These entries were not added because their names are invalid: " & String.Join(", ", invalid.Take(10)), "RESU blacklist")
+                If invalid.Count > 0 Then SilentMessageBox.Show(Me, "These entries were not added because their names are invalid: " & String.Join(", ", invalid.Take(10)), "RESU blacklist")
             End Sub
         AddHandler remove.Click,
             Sub()
@@ -348,7 +348,7 @@ Partial Public Class Form1
             SavePersistedListState(True)
             SetResuStatus("RESU settings saved.")
         Catch ex As Exception
-            MessageBox.Show(Me, ex.Message, "RESU settings")
+            SilentMessageBox.Show(Me, ex.Message, "RESU settings")
         End Try
     End Sub
 
@@ -473,7 +473,7 @@ Partial Public Class Form1
             UpdateResuCalibrationLabel()
             SavePersistedListState(True)
         Catch ex As Exception
-            MessageBox.Show(Me, ex.Message, "RESU calibration")
+            SilentMessageBox.Show(Me, ex.Message, "RESU calibration")
         End Try
     End Sub
 
@@ -491,7 +491,7 @@ Partial Public Class Form1
 
     Private Sub ToggleResu(sender As Object, e As EventArgs)
         If _tradeRunning Then
-            MessageBox.Show(Me, "Stop Trade before starting RESU.", "Trade")
+            SilentMessageBox.Show(Me, "Stop Trade before starting RESU.", "Trade")
             Return
         End If
         If _resuRunning Then
@@ -531,7 +531,7 @@ Partial Public Class Form1
             SetResuStatus("RESU started; waiting for a configured chat keyword.")
             AppendLog("RESU started. Any running Full or Lite bot was stopped first. F12 stops RESU; background input is enabled.")
         Catch ex As Exception
-            MessageBox.Show(Me, ex.Message, "RESU")
+            SilentMessageBox.Show(Me, ex.Message, "RESU")
         End Try
     End Sub
 
@@ -886,7 +886,7 @@ Partial Public Class Form1
     Private Async Function TestResuNtfyAsync() As Task
         Dim topic = If(_resuNtfyTopic.Text, "").Trim()
         If topic.Length = 0 Then
-            MessageBox.Show(Me, "Enter a private ntfy topic for RESU first.", "RESU ntfy")
+            SilentMessageBox.Show(Me, "Enter a private ntfy topic for RESU first.", "RESU ntfy")
             Return
         End If
         Dim sent = Await SendPhoneNotificationToTopicAsync("KathanaBot RESU test", "Your separate RESU ntfy channel is working.", topic, forceNtfy:=True)

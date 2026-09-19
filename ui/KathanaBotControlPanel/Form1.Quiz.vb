@@ -273,7 +273,7 @@ Partial Public Class Form1
             Catch ex As Exception
                 _quizApiKey = ""
                 _quizEncryptedApiKey = ""
-                MessageBox.Show(Me, "The API key could not be encrypted: " & ex.Message, "Quiz Solver", MessageBoxButtons.OK, MessageBoxIcon.Error)
+                SilentMessageBox.Show(Me, "The API key could not be encrypted: " & ex.Message, "Quiz Solver", MessageBoxButtons.OK, MessageBoxIcon.Error)
             End Try
         End Using
     End Sub
@@ -281,7 +281,7 @@ Partial Public Class Form1
     Private Sub CalibrateQuizOverlay()
         Dim selected = GetSelectedProcessWindowForEdition(BotEdition.Full)
         If selected Is Nothing OrElse Not IsUsableQuizWindow(selected.MainWindowHandle) Then
-            MessageBox.Show(Me, "Select a running Full game window first.", "Quiz Calibration", MessageBoxButtons.OK, MessageBoxIcon.Information)
+            SilentMessageBox.Show(Me, "Select a running Full game window first.", "Quiz Calibration", MessageBoxButtons.OK, MessageBoxIcon.Information)
             Return
         End If
         Try
@@ -304,7 +304,7 @@ Partial Public Class Form1
             SavePersistedListState(True)
             RefreshQuizPreview()
         Catch ex As Exception
-            MessageBox.Show(Me, "Unable to capture the selected game window: " & ex.Message, "Quiz Calibration", MessageBoxButtons.OK, MessageBoxIcon.Error)
+            SilentMessageBox.Show(Me, "Unable to capture the selected game window: " & ex.Message, "Quiz Calibration", MessageBoxButtons.OK, MessageBoxIcon.Error)
         End Try
     End Sub
 
@@ -340,13 +340,13 @@ Partial Public Class Form1
     Private Function ValidateQuizSetup(showMessages As Boolean) As Boolean
         If _quizReferenceWidth <= 0 OrElse _quizReferenceHeight <= 0 OrElse _quizRegion Is Nothing OrElse _quizAnswersRegion Is Nothing Then
             If showMessages Then
-                MessageBox.Show(Me, "Calibrate the quiz and answer areas before enabling the solver.", "Quiz Solver", MessageBoxButtons.OK, MessageBoxIcon.Information)
+                SilentMessageBox.Show(Me, "Calibrate the quiz and answer areas before enabling the solver.", "Quiz Solver", MessageBoxButtons.OK, MessageBoxIcon.Information)
             End If
             Return False
         End If
         Dim selected = GetSelectedProcessWindowForEdition(BotEdition.Full)
         If selected Is Nothing OrElse Not IsUsableQuizWindow(selected.MainWindowHandle) Then
-            If showMessages Then MessageBox.Show(Me, "Select a running Full game window first.", "Quiz Solver", MessageBoxButtons.OK, MessageBoxIcon.Information)
+            If showMessages Then SilentMessageBox.Show(Me, "Select a running Full game window first.", "Quiz Solver", MessageBoxButtons.OK, MessageBoxIcon.Information)
             Return False
         End If
         Return True
@@ -608,12 +608,12 @@ Partial Public Class Form1
 
     Private Sub RefreshQuizLivePreview(showMessages As Boolean)
         If _quizReferenceWidth <= 0 OrElse _quizReferenceHeight <= 0 OrElse _quizRegion Is Nothing OrElse _quizAnswersRegion Is Nothing Then
-            If showMessages Then MessageBox.Show(Me, "Calibrate the quiz and answer areas first.", "Quiz Preview", MessageBoxButtons.OK, MessageBoxIcon.Information)
+            If showMessages Then SilentMessageBox.Show(Me, "Calibrate the quiz and answer areas first.", "Quiz Preview", MessageBoxButtons.OK, MessageBoxIcon.Information)
             Return
         End If
         Dim selected = GetSelectedProcessWindowForEdition(BotEdition.Full)
         If selected Is Nothing OrElse Not IsUsableQuizWindow(selected.MainWindowHandle) Then
-            If showMessages Then MessageBox.Show(Me, "Select a running Full game window first.", "Quiz Preview", MessageBoxButtons.OK, MessageBoxIcon.Information)
+            If showMessages Then SilentMessageBox.Show(Me, "Select a running Full game window first.", "Quiz Preview", MessageBoxButtons.OK, MessageBoxIcon.Information)
             Return
         End If
         Try

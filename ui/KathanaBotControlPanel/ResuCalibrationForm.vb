@@ -152,7 +152,7 @@ Friend Class ResuCalibrationForm
 
     Private Sub SaveClicked(sender As Object, e As EventArgs)
         If _regions.Any(Function(rect) rect.Width < 15 OrElse rect.Height < 10) OrElse Not _regions(1).Contains(_points(0)) OrElse Not _regions(4).Contains(_points(1)) Then
-            MessageBox.Show(Me, "Set all five detection regions and both click points. Overlay 5 must be inside overlay 2, and overlay 7 must be inside overlay 6.", "RESU calibration")
+            SilentMessageBox.Show(Me, "Set all five detection regions and both click points. Overlay 5 must be inside overlay 2, and overlay 7 must be inside overlay 6.", "RESU calibration")
             Return
         End If
         Settings.ReferenceWidth = _image.Width

@@ -328,7 +328,7 @@ Public Class FullSupportCalibrationForm
     Private Sub NextClicked(sender As Object, e As EventArgs)
         If _stage = 1 Then
             If _partyRect.W < 40 OrElse _partyRect.H < 25 Then
-                MessageBox.Show(Me, "Select the complete party panel before continuing.", "Full Support", MessageBoxButtons.OK, MessageBoxIcon.Information)
+                SilentMessageBox.Show(Me, "Select the complete party panel before continuing.", "Full Support", MessageBoxButtons.OK, MessageBoxIcon.Information)
                 Return
             End If
             ShowStage(2)
@@ -337,7 +337,7 @@ Public Class FullSupportCalibrationForm
 
         CommitMemberEditor()
         If _members.Count = 0 OrElse Not _members.Any(Function(member) member.Enabled) Then
-            MessageBox.Show(Me, "Enable and calibrate at least one party member.", "Full Support", MessageBoxButtons.OK, MessageBoxIcon.Information)
+            SilentMessageBox.Show(Me, "Enable and calibrate at least one party member.", "Full Support", MessageBoxButtons.OK, MessageBoxIcon.Information)
             Return
         End If
         DialogResult = DialogResult.OK

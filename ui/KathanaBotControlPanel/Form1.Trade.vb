@@ -358,7 +358,7 @@ Partial Public Class Form1
         Catch ex As Exception
             If Not IsDisposed Then
                 _tradeStatus.Text = "Trade stopped: " & ex.Message
-                MessageBox.Show(Me, ex.Message, "Trade")
+                SilentMessageBox.Show(Me, ex.Message, "Trade")
             End If
         Finally
             If cancellation IsNot Nothing Then

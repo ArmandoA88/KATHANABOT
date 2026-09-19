@@ -47,7 +47,7 @@ Friend Class QuizApiKeyDialog
         AddHandler okButton.Click,
             Sub()
                 If String.IsNullOrWhiteSpace(_keyBox.Text) Then
-                    MessageBox.Show(Me, "Enter an OpenAI API key.", "Quiz Solver", MessageBoxButtons.OK, MessageBoxIcon.Information)
+                    SilentMessageBox.Show(Me, "Enter an OpenAI API key.", "Quiz Solver", MessageBoxButtons.OK, MessageBoxIcon.Information)
                     DialogResult = DialogResult.None
                 End If
             End Sub
@@ -227,15 +227,15 @@ Friend Class QuizCalibrationForm
 
     Private Sub SaveClicked(sender As Object, e As EventArgs)
         If _quizArea.Width < 20 OrElse _quizArea.Height < 20 Then
-            MessageBox.Show(Me, "Set the full quiz area first.", "Quiz Calibration", MessageBoxButtons.OK, MessageBoxIcon.Information)
+            SilentMessageBox.Show(Me, "Set the full quiz area first.", "Quiz Calibration", MessageBoxButtons.OK, MessageBoxIcon.Information)
             Return
         End If
         If _answersArea.Width < 20 OrElse _answersArea.Height < 15 Then
-            MessageBox.Show(Me, "Set the answer-button area.", "Quiz Calibration", MessageBoxButtons.OK, MessageBoxIcon.Information)
+            SilentMessageBox.Show(Me, "Set the answer-button area.", "Quiz Calibration", MessageBoxButtons.OK, MessageBoxIcon.Information)
             Return
         End If
         If Not _quizArea.Contains(_answersArea) Then
-            MessageBox.Show(Me, "The answer-button area must be completely inside the full quiz area.", "Quiz Calibration", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            SilentMessageBox.Show(Me, "The answer-button area must be completely inside the full quiz area.", "Quiz Calibration", MessageBoxButtons.OK, MessageBoxIcon.Warning)
             Return
         End If
         DialogResult = DialogResult.OK

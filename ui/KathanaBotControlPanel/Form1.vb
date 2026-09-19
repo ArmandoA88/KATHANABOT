@@ -3965,7 +3965,7 @@ Partial Public Class Form1
     End Sub
 
     Private Sub DashboardResetSessionClicked(sender As Object, e As EventArgs)
-        If MessageBox.Show(Me,
+        If SilentMessageBox.Show(Me,
                            "Reset the EXE-session Mobs Killed, Kills/Hour, EXP, Rupiah counters, and Runtime? After OK, the next fresh valid OCR readings become the new fixed baselines and the Runtime tile starts counting from 0. This does not change the game character.",
                            "Reset Session Stats",
                            MessageBoxButtons.OKCancel,
@@ -5652,18 +5652,18 @@ Partial Public Class Form1
             UpdateProfilesButtonAppearance()
             Dim message As String = $"Unable to save profile ""{profileName}"": {ex.Message}"
             AppendLog(message)
-            MessageBox.Show(Me, message, "Save Profile", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            SilentMessageBox.Show(Me, message, "Save Profile", MessageBoxButtons.OK, MessageBoxIcon.Warning)
         End Try
     End Sub
 
     Private Sub LoadProfileByName(profileName As String)
         If _tradeRunning OrElse _tradeAnalyzing Then
-            MessageBox.Show(Me, "Stop Trade before loading another profile.", "Trade")
+            SilentMessageBox.Show(Me, "Stop Trade before loading another profile.", "Trade")
             Return
         End If
         Dim sourcePath As String = Path.Combine(ProfilesDirectoryPath, profileName & ".json")
         If Not File.Exists(sourcePath) Then
-            MessageBox.Show(Me, $"Profile ""{profileName}"" no longer exists on disk.", "Load Profile", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            SilentMessageBox.Show(Me, $"Profile ""{profileName}"" no longer exists on disk.", "Load Profile", MessageBoxButtons.OK, MessageBoxIcon.Warning)
             Return
         End If
 
@@ -5696,12 +5696,12 @@ Partial Public Class Form1
         Catch ex As Exception
             Dim message As String = $"Unable to load profile ""{profileName}"": {ex.Message}"
             AppendLog(message)
-            MessageBox.Show(Me, message, "Load Profile", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            SilentMessageBox.Show(Me, message, "Load Profile", MessageBoxButtons.OK, MessageBoxIcon.Warning)
         End Try
     End Sub
 
     Private Sub DeleteProfileByName(profileName As String)
-        Dim confirm As DialogResult = MessageBox.Show(Me, $"Delete the saved profile ""{profileName}""? This cannot be undone.",
+        Dim confirm As DialogResult = SilentMessageBox.Show(Me, $"Delete the saved profile ""{profileName}""? This cannot be undone.",
             "Delete Profile", MessageBoxButtons.YesNo, MessageBoxIcon.Warning)
         If confirm <> DialogResult.Yes Then
             Return
@@ -5721,7 +5721,7 @@ Partial Public Class Form1
         Catch ex As Exception
             Dim message As String = $"Unable to delete profile ""{profileName}"": {ex.Message}"
             AppendLog(message)
-            MessageBox.Show(Me, message, "Delete Profile", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            SilentMessageBox.Show(Me, message, "Delete Profile", MessageBoxButtons.OK, MessageBoxIcon.Warning)
         End Try
     End Sub
 
@@ -6921,13 +6921,13 @@ Partial Public Class Form1
     Private Sub CalibrateFullSupportClicked(sender As Object, e As EventArgs)
         Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(BotEdition.Full)
         If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then
-            MessageBox.Show(Me, "Select the Kathana game window first.", "Full Support calibration", MessageBoxButtons.OK, MessageBoxIcon.Information)
+            SilentMessageBox.Show(Me, "Select the Kathana game window first.", "Full Support calibration", MessageBoxButtons.OK, MessageBoxIcon.Information)
             Return
         End If
 
         Using frame As Bitmap = BotEngine.CaptureClient(selected.MainWindowHandle)
             If frame Is Nothing Then
-                MessageBox.Show(Me, "The game client could not be captured. Keep the game window available and try again.", "Full Support calibration", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+                SilentMessageBox.Show(Me, "The game client could not be captured. Keep the game window available and try again.", "Full Support calibration", MessageBoxButtons.OK, MessageBoxIcon.Warning)
                 Return
             End If
 
@@ -8326,7 +8326,7 @@ Partial Public Class Form1
             BotEngine.EnsureBuffIconLibraryExists()
             Process.Start(New ProcessStartInfo(BotEngine.BuffIconLibraryRoot) With {.UseShellExecute = True})
         Catch ex As Exception
-            MessageBox.Show(Me, $"Unable to open the Buff Watch icon folder: {ex.Message}", "Buff Watch", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            SilentMessageBox.Show(Me, $"Unable to open the Buff Watch icon folder: {ex.Message}", "Buff Watch", MessageBoxButtons.OK, MessageBoxIcon.Warning)
         End Try
     End Sub
 
@@ -9300,7 +9300,7 @@ Partial Public Class Form1
         Catch ex As Exception
             Dim message As String = $"Settings were saved locally, but profile ""{_activeProfileName}"" could not be updated: {ex.Message}"
             AppendLog(message)
-            MessageBox.Show(Me, message, "Save Settings", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            SilentMessageBox.Show(Me, message, "Save Settings", MessageBoxButtons.OK, MessageBoxIcon.Warning)
         End Try
     End Sub
 
@@ -9549,14 +9549,14 @@ Partial Public Class Form1
         Dim repositoryUrl As String = GetUpdateRepositoryUrl()
         Dim parsed As Uri = Nothing
         If Not Uri.TryCreate(repositoryUrl, UriKind.Absolute, parsed) Then
-            MessageBox.Show(Me, "Enter a valid repository URL first.", "Open Releases", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            SilentMessageBox.Show(Me, "Enter a valid repository URL first.", "Open Releases", MessageBoxButtons.OK, MessageBoxIcon.Warning)
             Return
         End If
 
         Try
             Process.Start(New ProcessStartInfo(repositoryUrl & "/releases") With {.UseShellExecute = True})
         Catch ex As Exception
-            MessageBox.Show(Me, "Unable to open GitHub Releases: " & ex.Message, "Open Releases", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            SilentMessageBox.Show(Me, "Unable to open GitHub Releases: " & ex.Message, "Open Releases", MessageBoxButtons.OK, MessageBoxIcon.Warning)
         End Try
     End Sub
 
@@ -9580,7 +9580,7 @@ Partial Public Class Form1
             SetUpdateStatus(errorMessage, Color.LightCoral)
             SetUpdateTabState(UpdateTabState.Error)
             If showErrors Then
-                MessageBox.Show(Me, errorMessage, "KathanaBot Update", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+                SilentMessageBox.Show(Me, errorMessage, "KathanaBot Update", MessageBoxButtons.OK, MessageBoxIcon.Warning)
             End If
             Return
         End If
@@ -9637,7 +9637,7 @@ Partial Public Class Form1
                 txtUpdateDetails.Text = "GitHub update check failed." & Environment.NewLine & Environment.NewLine & ex.ToString()
             End If
             If showErrors Then
-                MessageBox.Show(Me, "Unable to check for updates: " & ex.Message, "KathanaBot Update", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+                SilentMessageBox.Show(Me, "Unable to check for updates: " & ex.Message, "KathanaBot Update", MessageBoxButtons.OK, MessageBoxIcon.Warning)
             End If
         Finally
             _updateOperationInProgress = False
@@ -9819,7 +9819,7 @@ Partial Public Class Form1
         If runningEdition.HasValue Then
             prompt &= Environment.NewLine & Environment.NewLine & $"The running {runningEdition.Value} bot will be stopped safely before the application restarts."
         End If
-        If MessageBox.Show(Me, prompt, "Update and Restart", MessageBoxButtons.YesNo, MessageBoxIcon.Question) <> DialogResult.Yes Then
+        If SilentMessageBox.Show(Me, prompt, "Update and Restart", MessageBoxButtons.YesNo, MessageBoxIcon.Question) <> DialogResult.Yes Then
             Return
         End If
 
@@ -9850,7 +9850,7 @@ Partial Public Class Form1
             SetUpdateStatus("Update download canceled.", Color.Khaki)
         Catch ex As Exception
             SetUpdateStatus("Update failed: " & ex.Message, Color.LightCoral)
-            MessageBox.Show(Me, "Unable to install the update: " & ex.Message, "KathanaBot Update", MessageBoxButtons.OK, MessageBoxIcon.Error)
+            SilentMessageBox.Show(Me, "Unable to install the update: " & ex.Message, "KathanaBot Update", MessageBoxButtons.OK, MessageBoxIcon.Error)
         Finally
             _updateOperationInProgress = False
             SetUpdateControlsBusy(False)
@@ -10478,7 +10478,7 @@ Partial Public Class Form1
         Catch ex As Exception
             Dim message As String = "Unable to open the session history file: " & ex.Message
             AppendLog(message)
-            MessageBox.Show(Me, message, "Open Session History", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            SilentMessageBox.Show(Me, message, "Open Session History", MessageBoxButtons.OK, MessageBoxIcon.Warning)
         End Try
     End Sub
 
@@ -10490,7 +10490,7 @@ Partial Public Class Form1
         Catch ex As Exception
             Dim message As String = "Unable to open the automatic screenshot folder: " & ex.Message
             AppendLog(message)
-            MessageBox.Show(Me, message, "Open Screenshot Folder", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            SilentMessageBox.Show(Me, message, "Open Screenshot Folder", MessageBoxButtons.OK, MessageBoxIcon.Warning)
         End Try
     End Sub
 

@@ -160,7 +160,7 @@ Friend Class BuffIconSelectorForm
             BotEngine.EnsureBuffIconLibraryExists()
             Process.Start(New ProcessStartInfo(BotEngine.BuffIconLibraryRoot) With {.UseShellExecute = True})
         Catch ex As Exception
-            MessageBox.Show(Me, $"Unable to open the icon folder: {ex.Message}", "Buff Icon Library", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            SilentMessageBox.Show(Me, $"Unable to open the icon folder: {ex.Message}", "Buff Icon Library", MessageBoxButtons.OK, MessageBoxIcon.Warning)
         End Try
     End Sub
 
@@ -435,7 +435,7 @@ Friend Class BuffIconSelectorForm
 
     Private Sub CaptureFromGameClicked(sender As Object, e As EventArgs)
         If _gameHwnd = IntPtr.Zero Then
-            MessageBox.Show(Me, "Select a Full game process window on the main window first.", "Buff Icon Selector", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            SilentMessageBox.Show(Me, "Select a Full game process window on the main window first.", "Buff Icon Selector", MessageBoxButtons.OK, MessageBoxIcon.Warning)
             Return
         End If
 
@@ -498,7 +498,7 @@ Friend Class BuffIconSelectorForm
         Using crop As Bitmap = BotEngine.CaptureClientRegion(_gameHwnd, region)
             lblHint.Text = DefaultHintText
             If crop Is Nothing Then
-                MessageBox.Show(Me, "Unable to capture the icon at that location.", "Buff Icon Selector", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+                SilentMessageBox.Show(Me, "Unable to capture the icon at that location.", "Buff Icon Selector", MessageBoxButtons.OK, MessageBoxIcon.Warning)
                 Return
             End If
 
@@ -599,7 +599,7 @@ Friend Class BuffIconSelectorForm
                     End Using
                 End Using
             Catch ex As Exception
-                MessageBox.Show(Me, $"Unable to import that image: {ex.Message}", "Buff Icon Selector", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+                SilentMessageBox.Show(Me, $"Unable to import that image: {ex.Message}", "Buff Icon Selector", MessageBoxButtons.OK, MessageBoxIcon.Warning)
             End Try
         End Using
     End Sub
