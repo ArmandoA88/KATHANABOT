@@ -1,3 +1,12 @@
+# KathanaBot 1.0.204
+
+## What changed
+
+- Fixed the delayed Windows ding regression introduced by the 1.0.200 colored debug log. Above 160,000 characters, trimming tried to clear a selection in a read-only RichTextBox; the native edit was rejected and retried every five seconds. The onset depended on log volume, not an alarm timer or attack key.
+- Log trimming now permits only the synchronous programmatic deletion, restores read-only mode in a Finally block, preserves category colors, and clears undo history.
+- Trim boundaries now use RichTextBox's normalized LF newlines so retained messages remain complete.
+- Added a regression test that crosses the production threshold repeatedly and checks bounded size, retained colors/messages, read-only restoration, and absence of read-only WM_CLEAR requests.
+
 # KathanaBot 1.0.203
 
 ## What changed

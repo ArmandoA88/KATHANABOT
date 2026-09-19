@@ -18725,14 +18725,22 @@ Partial Public Class Form1
 
         Dim text As String = rtbLog.Text
         Dim keepStart As Integer = Math.Max(0, text.Length - TargetRealtimeLogChars)
-        Dim newlineIndex As Integer = text.IndexOf(Environment.NewLine, keepStart, StringComparison.Ordinal)
-        If newlineIndex >= 0 AndAlso newlineIndex + Environment.NewLine.Length < text.Length Then
-            keepStart = newlineIndex + Environment.NewLine.Length
+        Dim newlineIndex As Integer = text.IndexOf(ChrW(10), keepStart)
+        If newlineIndex >= 0 AndAlso newlineIndex + 1 < text.Length Then
+            keepStart = newlineIndex + 1
         End If
 
-        ' Delete only the old prefix so retained lines keep their category colors.
-        rtbLog.Select(0, keepStart)
-        rtbLog.SelectedText = ""
+        ' Empty SelectedText uses native WM_CLEAR, which rejects read-only controls and dings.
+        ' Temporarily allow this synchronous UI-thread edit; preserve retained category colors.
+        Dim wasReadOnly As Boolean = rtbLog.ReadOnly
+        Try
+            rtbLog.ReadOnly = False
+            rtbLog.Select(0, keepStart)
+            rtbLog.SelectedText = ""
+            rtbLog.ClearUndo()
+        Finally
+            rtbLog.ReadOnly = wasReadOnly
+        End Try
     End Sub
 
     Private Sub ClearRealtimeLog()
