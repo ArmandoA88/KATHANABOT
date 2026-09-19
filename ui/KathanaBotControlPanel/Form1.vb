@@ -1,4 +1,3 @@
-Imports System.Media
 Imports System.Net.Http
 Imports System.Runtime.InteropServices
 Imports System.Text
@@ -1965,7 +1964,6 @@ Partial Public Class Form1
     Private _inGameBotToggleHeight As Integer = 76
     Private _inGameBotToggleEdition As BotEdition = BotEdition.Full
     Private _autoStarted As Boolean = False
-    Private Const AlarmVolumePercent As Integer = 85
     Private _hpZeroAlarmActive As Boolean = False
     Private _lastStatsNotificationUtc As DateTime = DateTime.MinValue
     Private _hpZeroPending As Boolean = False
@@ -2450,14 +2448,6 @@ Partial Public Class Form1
         Public Property CooldownSec As Double = 1.0
         Public Property TriggerPercent As Integer = 40
     End Class
-
-    <DllImport("winmm.dll")>
-    Private Shared Function waveOutGetVolume(hwo As IntPtr, ByRef dwVolume As UInteger) As Integer
-    End Function
-
-    <DllImport("winmm.dll")>
-    Private Shared Function waveOutSetVolume(hwo As IntPtr, dwVolume As UInteger) As Integer
-    End Function
 
     <DllImport("user32.dll")>
     Private Shared Function GetAsyncKeyState(vKey As Integer) As Short
@@ -15724,9 +15714,6 @@ Partial Public Class Form1
                                            $"The game window for the {characterText} is still unresponsive. This alarm repeats every 5 minutes until the game responds again.",
                                            $"The game window for the {characterText} is responding again. Freeze reminders have stopped.")
                                        AppendLog(title & ". " & body)
-                                       If unresponsive Then
-                                           Dim alarmTask As Task = Task.Run(Sub() PlayAlarmPulse(AlarmVolumePercent))
-                                       End If
                                        Try
                                            Dim sent = Await SendPhoneNotificationAsync(title, body, DeathNotificationRetryCount)
                                            AppendLogSafe(If(sent, "Game responsiveness notification sent.", "Game responsiveness notification failed; check notification settings and connection."))
@@ -19547,9 +19534,8 @@ Partial Public Class Form1
 
     Private Sub StartHpZeroAlarm(Optional characterName As String = "")
         _hpZeroAlarmActive = True
-        AppendLog($"HP is zero. Death alert started at volume {AlarmVolumePercent}%.")
+        AppendLog("HP is zero. Death alert started.")
         SendHpZeroPhoneAlert(characterName)
-        Task.Run(Sub() PlayAlarmPulse(AlarmVolumePercent))
         AppendLog("Death confirmed by HP=0 on consecutive frames. Bot will keep running.")
     End Sub
 
@@ -20182,29 +20168,6 @@ Partial Public Class Form1
         End If
         Return sent
     End Function
-
-    Private Sub PlayAlarmPulse(volumePercent As Integer)
-        Dim previous As UInteger = 0UI
-        Try
-            waveOutGetVolume(IntPtr.Zero, previous)
-            Dim level As Integer = Math.Max(0, Math.Min(100, volumePercent))
-            Dim scaled As UInteger = CUInt((65535 * level) \ 100)
-            Dim stereo As UInteger = scaled Or (scaled << 16)
-            waveOutSetVolume(IntPtr.Zero, stereo)
-
-            SystemSounds.Hand.Play()
-            Thread.Sleep(160)
-            SystemSounds.Exclamation.Play()
-            Thread.Sleep(160)
-            SystemSounds.Hand.Play()
-        Catch
-        Finally
-            Try
-                waveOutSetVolume(IntPtr.Zero, previous)
-            Catch
-            End Try
-        End Try
-    End Sub
 
     Private Sub CaptureThemeSnapshot(control As Control)
         If control Is Nothing Then
