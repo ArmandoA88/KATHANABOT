@@ -512,6 +512,7 @@ Partial Public Class Form1
             _resuStatusHistory.Clear()
             _resuStatusTimes.Clear()
             _resuGeneration += 1
+            If Not _workflowModes.Transition(OperatingMode.Resu, "RESU started") Then Throw New InvalidOperationException("Stop the other active workflow first.")
             _resuRunning = True
             PushLiveConfig()
             _resuOptions.Enabled = False
@@ -535,6 +536,7 @@ Partial Public Class Form1
     End Sub
 
     Private Sub StopResu(reason As String)
+        If _workflowModes.Current = OperatingMode.Resu Then _workflowModes.Transition(OperatingMode.Idle, "RESU stopped")
         _resuRunning = False
         _resuGeneration += 1
         _resuTimer.Stop()
@@ -936,6 +938,7 @@ Partial Public Class Form1
     End Sub
 
     Private Sub ShutdownResu()
+        If _workflowModes.Current = OperatingMode.Resu Then _workflowModes.Transition(OperatingMode.Idle, "RESU stopped")
         _resuRunning = False
         _resuGeneration += 1
         _resuTimer.Stop()

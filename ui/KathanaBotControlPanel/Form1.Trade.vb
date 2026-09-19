@@ -325,6 +325,7 @@ Partial Public Class Form1
             SavePersistedListState(True)
             cancellation = New CancellationTokenSource()
             _tradeCancellation = cancellation
+            If Not _workflowModes.Transition(OperatingMode.Trade, "whisper queue started") Then Throw New InvalidOperationException("Another workflow is active.")
             _tradeRunning = True
             _tradeStart.Enabled = False
             _tradeOptions.Enabled = False
@@ -362,6 +363,7 @@ Partial Public Class Form1
         Finally
             If cancellation IsNot Nothing Then
                 completed = completed AndAlso Not cancellation.IsCancellationRequested
+                _workflowModes.Transition(OperatingMode.Idle, If(completed, "all whispers completed", "whispers cancelled or failed"))
                 _tradeRunning = False
                 _tradeCancellation = Nothing
                 cancellation.Dispose()

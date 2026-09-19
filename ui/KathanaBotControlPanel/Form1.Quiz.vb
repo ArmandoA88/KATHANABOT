@@ -365,6 +365,7 @@ Partial Public Class Form1
             Return
         End If
         If Not ValidateQuizSetup(manual) Then Return
+        If Not _workflowModes.Transition(OperatingMode.Quiz, "quiz scan") Then Return
         _quizSolveInProgress = True
         _quizCancellation?.Cancel()
         _quizCancellation?.Dispose()
@@ -506,6 +507,7 @@ Partial Public Class Form1
             SetQuizStatus("Solver error: " & ex.Message, ThemeWarn)
             AppendLog("Quiz solver error: " & ex.Message)
         Finally
+            _workflowModes.Transition(OperatingMode.Idle, "quiz attempt finished")
             _quizSolveInProgress = False
             ' Keep screen refreshes cheap after an unresolved answer, timeout, or API error.
             If lookupStarted AndAlso Not answerClicked Then _quizRetryAfterUtc = DateTime.UtcNow.AddSeconds(15)

@@ -1,7 +1,11 @@
-# KathanaBot 1.0.196
+# KathanaBot 1.0.200
 
 ## What changed
 
+- **Added an "Activity & Setup" tab** with a Timeline (recent actions with HP/MP/target context, skip reasons, and mode changes), an OCR readings view showing reading age and confidence when available, and a Route preview that plots the selected Leveling route with waypoint numbers, direction arrows, and long jumps highlighted in red.
+- **The Diagnostics tab now always shows current status** at the top - what the bot is waiting on or blocked by, plus whether settings are saved/applied, with error details on save or apply failures instead of failing silently.
+- **Log lines are now color-coded by category** (errors, warnings, waiting, success, combat, loot, OCR, navigation) with a legend, and the Combat Full tab's panels are now resizable by dragging their splitters.
+- **HP/MP checks and death recovery now always run before optional scans** (OCR, loot, map, stats) each frame, so a critical health drop is never delayed behind lower-priority work.
 - Internal maintenance and performance improvements.
 
 ## Recent change history - last 5

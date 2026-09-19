@@ -2489,6 +2489,7 @@ Partial Public Class Form1
         LoadPersistedListState()
         ForceLevelingAgentOffForStartup()
         SetupLiveConfigBindings()
+        InitializeRuntimeTools()
         RefreshUpdateInstallMode()
         SetAutoRelaunchClickOverlayVisible(chkAutoRelaunchClickOverlay IsNot Nothing AndAlso chkAutoRelaunchClickOverlay.Checked)
         SetArrowUnbundleOverlayVisible(chkArrowUnbundleOverlay IsNot Nothing AndAlso chkArrowUnbundleOverlay.Checked)
@@ -3645,18 +3646,21 @@ Partial Public Class Form1
         ' and pushing config unconditionally here.
         Try
             _fullEngine.UpdateConfig(BuildFullConfig())
-        Catch
-        End Try
-        Try
             _liteEngine.UpdateConfig(BuildLiteConfig())
-        Catch
+            _applyState = "Applied to engines"
+        Catch ex As Exception
+            _applyState = "Apply failed: " & ex.Message
+            RuntimeJournal.Record("Configuration", _applyState & "; correct the edited field and save again")
         End Try
     End Sub
 
     Private Sub PushLiteLiveConfig()
         Try
             _liteEngine.UpdateConfig(BuildLiteConfig())
-        Catch
+            _applyState = "Applied to Lite"
+        Catch ex As Exception
+            _applyState = "Apply failed: " & ex.Message
+            RuntimeJournal.Record("Configuration", _applyState)
         End Try
     End Sub
 
@@ -5733,10 +5737,10 @@ Partial Public Class Form1
 
     Private Function BuildCombatTab() As TabPage
         Dim tab As New TabPage("Combat Full") With {.BackColor = Color.FromArgb(20, 20, 20)}
-        Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 1, .Padding = New Padding(8)}
-        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50.0F))
-        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 21.0F))
-        root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 29.0F))
+        tab.Padding = New Padding(8)
+        Dim root = CreateResizableColumns(1.0 / 3.0)
+        Dim right = CreateResizableColumns(0.5)
+        root.Panel2.Controls.Add(right)
         tab.Controls.Add(root)
 
         Dim left As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2}
@@ -5745,9 +5749,9 @@ Partial Public Class Form1
         left.Controls.Add(BuildCombatSkillsGroup(), 0, 0)
         left.Controls.Add(BuildFiltersPanel(), 0, 1)
 
-        root.Controls.Add(left, 0, 0)
-        root.Controls.Add(BuildCenterControlPanel(), 1, 0)
-        root.Controls.Add(BuildLogPanel(), 2, 0)
+        root.Panel1.Controls.Add(left)
+        right.Panel1.Controls.Add(BuildCenterControlPanel())
+        right.Panel2.Controls.Add(BuildLogPanel())
         Return tab
     End Function
 
@@ -8927,16 +8931,19 @@ Partial Public Class Form1
         Dim tabs As New TabControl() With {.Dock = DockStyle.Fill, .Font = New Font("Segoe UI", 9.0F, FontStyle.Bold)}
 
         Dim realtimeTab As New TabPage("Real-time")
-        Dim realtimeLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3}
-        realtimeLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 34.0F))
+        Dim realtimeLayout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 4}
+        realtimeLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
+        realtimeLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+        realtimeLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
         realtimeLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         realtimeLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 36.0F))
         realtimeLayout.Controls.Add(BuildLogFilterPanel(), 0, 0)
+        realtimeLayout.Controls.Add(New Label With {.AutoSize = True, .Dock = DockStyle.Fill, .Padding = New Padding(4), .Text = "Red: errors | Orange: warnings | Yellow: waiting | Green: success" & Environment.NewLine & "Cyan: combat | Purple: loot | Blue: OCR | Teal: navigation | White: info"}, 0, 1)
         rtbLog = New RichTextBox() With {.Dock = DockStyle.Fill, .ReadOnly = True, .BackColor = Color.Black, .ForeColor = Color.FromArgb(70, 255, 160), .Font = New Font("Consolas", 9.0F, FontStyle.Regular), .ScrollBars = RichTextBoxScrollBars.Vertical}
-        realtimeLayout.Controls.Add(rtbLog, 0, 1)
+        realtimeLayout.Controls.Add(rtbLog, 0, 2)
         Dim btnClearLog As New Button() With {.Text = "Clear Log", .Dock = DockStyle.Fill, .BackColor = Color.FromArgb(130, 25, 25), .ForeColor = Color.White}
         AddHandler btnClearLog.Click, Sub(_s As Object, _e As EventArgs) ClearRealtimeLog()
-        realtimeLayout.Controls.Add(btnClearLog, 0, 2)
+        realtimeLayout.Controls.Add(btnClearLog, 0, 3)
         realtimeTab.Controls.Add(realtimeLayout)
 
         Dim summaryTab As New TabPage("Key Summary")
@@ -8956,7 +8963,7 @@ Partial Public Class Form1
     End Function
 
     Private Function BuildLogFilterPanel() As Control
-        Dim panel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = False, .AutoScroll = True, .Padding = New Padding(4, 3, 4, 0)}
+        Dim panel As New FlowLayoutPanel() With {.Dock = DockStyle.Fill, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .Padding = New Padding(4, 3, 4, 4)}
         chkLogCombat = CreateLogFilterCheckBox("Combat", Sub(value) _logFilterCombatEnabled = value)
         chkLogLoot = CreateLogFilterCheckBox("Loot", Sub(value) _logFilterLootEnabled = value)
         chkLogOcrVision = CreateLogFilterCheckBox("OCR/Vision", Sub(value) _logFilterOcrVisionEnabled = value)
@@ -9337,6 +9344,10 @@ Partial Public Class Form1
     End Function
 
     Private Sub StartEdition(edition As BotEdition, autoStart As Boolean)
+        If _workflowModes.Current <> OperatingMode.Idle Then
+            RuntimeJournal.Record("Mode blocked", "Stop " & _workflowModes.Current.ToString() & " before starting combat")
+            Return
+        End If
         If _tradeRunning Then
             AppendLog("Stop Trade before starting a bot edition.")
             Return
@@ -9373,7 +9384,14 @@ Partial Public Class Form1
         End If
         CommitPendingGridEdits()
         PushLiveConfig()
-        engine.Start()
+        If Not _fullEngine.IsRunning() AndAlso Not _liteEngine.IsRunning() Then _modes.Transition(OperatingMode.Idle, "engines stopped")
+        If Not _modes.Transition(If(edition = BotEdition.Full, OperatingMode.Full, OperatingMode.Lite), "combat start") Then Return
+        Try
+            engine.Start()
+        Catch
+            _modes.Transition(OperatingMode.Idle, "start failed")
+            Throw
+        End Try
         CheckForUpdatesAfterBotStart(edition)
         UpdateAttackButtonAppearance(False)
         If autoStart Then
@@ -9396,6 +9414,7 @@ Partial Public Class Form1
         End If
 
         engine.Stop()
+        _modes.Transition(OperatingMode.Idle, context)
         If edition = BotEdition.Full Then
             _notificationWarmupUntilUtc = DateTime.MinValue
             ApplyHealthUiTint(100.0, False)
@@ -17915,6 +17934,7 @@ Partial Public Class Form1
             ' The live bot config push (PushLiveConfig/UpdateConfig) already happened separately and
             ' instantly - this is only the disk persistence, so it's safe to debounce and move off the
             ' UI thread: rapid edits coalesce into one background write shortly after things go quiet.
+            _saveState = "Unsaved changes - saving shortly"
             _pendingPersistState = appState
             _persistDebounceTimer.Stop()
             _persistDebounceTimer.Start()
@@ -17934,6 +17954,7 @@ Partial Public Class Form1
 
     Private Sub WritePersistedStateToDisk(appState As PersistedAppState, logFailure As Boolean, revision As Long)
         Try
+            _saveState = "Saving changes..."
             SyncLock _persistFileLock
                 If revision <> Threading.Interlocked.Read(_persistWriteRevision) Then Return
                 If Not Directory.Exists(PersistDirectoryPath) Then
@@ -17957,7 +17978,10 @@ Partial Public Class Form1
                     SaveCurrentSettingsToProfile(appState.ActiveProfileName)
                 End If
             End SyncLock
+            _saveState = "Saved"
         Catch ex As Exception
+            _saveState = "Save failed: " & ex.Message
+            RuntimeJournal.Record("Persistence", _saveState & "; check profile folder access and disk space")
             If logFailure Then
                 AppendLog("Unable to save list state: " & ex.Message)
             End If
@@ -18689,7 +18713,9 @@ Partial Public Class Form1
 
         rtbLog.SuspendLayout()
         Try
-            rtbLog.AppendText(String.Join(Environment.NewLine, batch) & Environment.NewLine)
+            For Each line In batch
+                AppendColoredLog(line)
+            Next
             TrimRealtimeLogIfNeeded(False)
             rtbLog.SelectionStart = rtbLog.TextLength
             rtbLog.ScrollToCaret()
@@ -18726,7 +18752,9 @@ Partial Public Class Form1
             keepStart = newlineIndex + Environment.NewLine.Length
         End If
 
-        rtbLog.Text = text.Substring(keepStart)
+        ' Delete only the old prefix so retained lines keep their category colors.
+        rtbLog.Select(0, keepStart)
+        rtbLog.SelectedText = ""
     End Sub
 
     Private Sub ClearRealtimeLog()

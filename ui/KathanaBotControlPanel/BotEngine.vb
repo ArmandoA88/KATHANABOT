@@ -765,8 +765,12 @@ Friend Module NativeMethods
     Friend Function GetForegroundWindow() As IntPtr
     End Function
 
-    <DllImport("user32.dll", SetLastError:=True)>
+    <DllImport("user32.dll", EntryPoint:="SetForegroundWindow", SetLastError:=True)>
+    Friend Function RawSetForegroundWindow(hWnd As IntPtr) As Boolean
+    End Function
+
     Friend Function SetForegroundWindow(hWnd As IntPtr) As Boolean
+        Return WindowsInput.Current.Activate(hWnd)
     End Function
 
     <DllImport("user32.dll", SetLastError:=True)>
@@ -789,19 +793,31 @@ Friend Module NativeMethods
     Friend Function GetCursorPos(ByRef lpPoint As POINT) As Boolean
     End Function
 
-    <DllImport("user32.dll", SetLastError:=True)>
-    Friend Function SetCursorPos(X As Integer, Y As Integer) As Boolean
+    <DllImport("user32.dll", EntryPoint:="SetCursorPos", SetLastError:=True)>
+    Friend Function RawSetCursorPos(X As Integer, Y As Integer) As Boolean
     End Function
 
-    <DllImport("user32.dll", SetLastError:=True)>
+    Friend Function SetCursorPos(X As Integer, Y As Integer) As Boolean
+        Return WindowsInput.Current.MoveCursor(X, Y)
+    End Function
+
+    <DllImport("user32.dll", EntryPoint:="mouse_event", SetLastError:=True)>
+    Friend Sub Rawmouse_event(dwFlags As UInteger, dx As UInteger, dy As UInteger, dwData As UInteger, dwExtraInfo As UIntPtr)
+    End Sub
+
     Friend Sub mouse_event(dwFlags As UInteger, dx As UInteger, dy As UInteger, dwData As UInteger, dwExtraInfo As UIntPtr)
+        WindowsInput.Current.Mouse(dwFlags, dx, dy, dwData, dwExtraInfo)
     End Sub
 
     Friend Const VK_MENU As Byte = &H12
     Friend Const KEYEVENTF_KEYUP As UInteger = &H2UI
 
-    <DllImport("user32.dll", SetLastError:=True)>
+    <DllImport("user32.dll", EntryPoint:="keybd_event", SetLastError:=True)>
+    Friend Sub Rawkeybd_event(bVk As Byte, bScan As Byte, dwFlags As UInteger, dwExtraInfo As UIntPtr)
+    End Sub
+
     Friend Sub keybd_event(bVk As Byte, bScan As Byte, dwFlags As UInteger, dwExtraInfo As UIntPtr)
+        WindowsInput.Current.Keyboard(bVk, bScan, dwFlags, dwExtraInfo)
     End Sub
 
     ' Raw Win32 clipboard access instead of System.Windows.Forms.Clipboard: the bot's tick loop runs
@@ -917,8 +933,12 @@ Friend Module NativeMethods
 
 
 
-    <DllImport("user32.dll", SetLastError:=True)>
+    <DllImport("user32.dll", EntryPoint:="PostMessage", SetLastError:=True)>
+    Friend Function RawPostMessage(hWnd As IntPtr, msg As UInteger, wParam As IntPtr, lParam As IntPtr) As Boolean
+    End Function
+
     Friend Function PostMessage(hWnd As IntPtr, msg As UInteger, wParam As IntPtr, lParam As IntPtr) As Boolean
+        Return WindowsInput.Current.Post(hWnd, msg, wParam, lParam)
     End Function
 
 
@@ -957,6 +977,8 @@ Friend Module NativeMethods
 End Module
 
 Public Class BotEngine
+    Public Property Clock As IBotClock = New SystemBotClock()
+    Private ReadOnly _keyReadyAt As New Dictionary(Of String, Long)(StringComparer.OrdinalIgnoreCase)
     Public Event StatusUpdated(status As BotStatus)
     Public Event LogLine(line As String)
     Public Event LootAwardDetected(award As LootAwardRead)
@@ -1896,6 +1918,7 @@ Public Class BotEngine
             _sessionKillLastLivingSignalAt = DateTime.MinValue
             _lastFullFrameCaptureAttemptAt = DateTime.MinValue
             _lastActionTick.Clear()
+            _keyReadyAt.Clear()
             _lastStatusRaisedAt = DateTime.MinValue
             _lastStatusRaisedSignature = ""
             _lastStuckLockReleaseLogAt = DateTime.MinValue
@@ -1935,7 +1958,8 @@ Public Class BotEngine
         If localTask IsNot Nothing Then
             Try
                 localTask.Wait(1500)
-            Catch
+            Catch ex As Exception
+                RuntimeJournal.Record("Shutdown", "Loop did not stop cleanly: " & ex.Message)
             End Try
         End If
         SetChatInputPaused(False, IntPtr.Zero)
@@ -2472,8 +2496,10 @@ Public Class BotEngine
             Dim localMobHpRegion As RectRegion = Nothing
 
             If frame IsNot Nothing Then
-                hpPct = ComputeBarPercent(frame, hpRegion, True, cfg)
-                mpPct = ComputeBarPercent(frame, mpRegion, False, cfg)
+                hpPct = ComputeClientBarPercent(hwnd, hpRegion, True, cfg, fullHpScanOk)
+                mpPct = ComputeClientBarPercent(hwnd, mpRegion, False, cfg, fullMpScanOk)
+                If Not fullHpScanOk Then hpPct = ComputeBarPercent(frame, hpRegion, True, cfg)
+                If Not fullMpScanOk Then mpPct = ComputeBarPercent(frame, mpRegion, False, cfg)
                 mobHpPct = ComputeMobHpPercent(frame, mobHpRegion, cfg)
             Else
                 hpPct = ComputeClientBarPercent(hwnd, hpRegion, True, cfg, fullHpScanOk)
@@ -2488,6 +2514,11 @@ Public Class BotEngine
             End If
             hpScanWatch.Stop()
             RecordTiming(_hpMpScanTiming, hpScanWatch.Elapsed.TotalMilliseconds)
+            Dim urgentHealth = ActionPriorityPolicy.UrgentHealth(hpPct, cfg.Actions)
+            If urgentHealth Then
+                deferOptionalWork = True
+                RuntimeJournal.Record("Priority", "HP/death checks take priority; optional OCR deferred this frame")
+            End If
             Dim expPct As Double = GetCachedPranaExpPercent()
             Dim rupiahsTotal As Long = GetCachedRupiahsTotal()
             If frame Is Nothing AndAlso Not (fullHpScanOk OrElse fullMpScanOk OrElse mobHpScanOk) Then
@@ -2549,7 +2580,9 @@ Public Class BotEngine
                 Continue While
             End If
 
-            If Not cfg.ResuHoldPlaceOnlyModeEnabled Then
+            Dim deathPaused As Boolean = TryHandleDeathMessage(cfg, hwnd, frame, now, hpPct)
+            Dim earlySupportSent As Boolean = Not deathPaused AndAlso urgentHealth AndAlso TrySendSupportActions(cfg, hwnd, hpPct, mpPct, hpRegion, mpRegion)
+            If Not cfg.ResuHoldPlaceOnlyModeEnabled AndAlso Not urgentHealth Then
                 Dim lootScanWatch As Stopwatch = Stopwatch.StartNew()
                 TryHandlePendingLootScannerCapture(cfg, hwnd, activeHwnd, frame, lootScanPolygon, now)
                 lootScanWatch.Stop()
@@ -2583,10 +2616,12 @@ Public Class BotEngine
                 targetWindowSignalNoName AndAlso
                 ((now - _lastMobNameRead).TotalMilliseconds >= forcedTargetNameRefreshMs)
             Dim mobName As String
-            If shouldReadMobName Then
+            If shouldReadMobName AndAlso Not urgentHealth Then
                 mobName = If(frame IsNot Nothing,
                              ReadMobNameIfNeeded(frame, mobNameRegion, now, forceMobNameRefresh, targetNameScanIntervalMs),
                              ReadMobNameFromClientRegionIfNeeded(hwnd, mobNameRegion, now, forceMobNameRefresh, targetNameScanIntervalMs))
+            ElseIf urgentHealth Then
+                mobName = _cachedMobName
             Else
                 ' Avoid stale-name attacks after target switches.
                 _cachedMobName = ""
@@ -2601,7 +2636,7 @@ Public Class BotEngine
             Dim rupiahsPerHour As Double = UpdateRupiahsRate(rupiahsTotal, now)
             Dim mapCoordinateFeaturesEnabled As Boolean = cfg.NavigationEnabled OrElse cfg.HoldPlaceEnabled OrElse cfg.RouteRecordingEnabled
             Dim mapCoordinateReadRequired As Boolean = cfg.HoldPlaceEnabled OrElse cfg.RouteRecordingEnabled OrElse (cfg.NavigationEnabled AndAlso cfg.NavigationTravelExecutionEnabled)
-            If mapCoordinateFeaturesEnabled AndAlso Not startupCombatPriorityActive AndAlso (Not deferOptionalWork OrElse mapCoordinateReadRequired) Then
+            If mapCoordinateFeaturesEnabled AndAlso Not startupCombatPriorityActive AndAlso Not urgentHealth AndAlso (Not deferOptionalWork OrElse mapCoordinateReadRequired) Then
                 ReadMapCoordinateIfNeeded(hwnd, frame, mapCoordinateXRegion, mapCoordinateYRegion, cfg, now)
                 ScanMapPlayerMarkerIfNeeded(now)
                 UpdateMapLocalizationConfidence()
@@ -2899,13 +2934,12 @@ Public Class BotEngine
             End If
             TrackSessionKill(targetHasHpSignal, (Not captureGlitch) AndAlso mobHpScanOk, now)
             TrackMobHpMovement(targetValid, mobHpPct, now)
-            TryHandleLootAfterKill(cfg, hwnd, targetHasHpSignal, now)
+            If ActionPriorityPolicy.CanRunOptional(deathPaused, urgentHealth, earlySupportSent) Then TryHandleLootAfterKill(cfg, hwnd, targetHasHpSignal, now)
 
             ' Death/capture uncertainty must be established before evaluating leveling guardrails.
             ' Otherwise a dead character (no target, depleted bars) or one bad frame can promote a
             ' temporary pause into a leveling guardrail. Guardrails now pause input and recover
             ' automatically instead of cancelling the whole engine.
-            Dim deathPaused As Boolean = TryHandleDeathMessage(cfg, hwnd, frame, now, hpPct)
             Dim guardrailTelemetryReliable As Boolean =
                 Not captureGlitch AndAlso
                 fullHpScanOk AndAlso
@@ -2926,16 +2960,16 @@ Public Class BotEngine
             ClearLevelingGuardrailPauseIfRecovered(cfg)
 
             Dim reason As String = If(deathPaused, "Character down: combat skills paused until full life. Auto Resurrect still active.", "")
-            Dim fullSupportActionSent As Boolean = (Not deathPaused) AndAlso TryHandleFullSupportHealing(cfg, hwnd, frame, partyListRegion, hpPct, now)
-            Dim actionSent As Boolean = fullSupportActionSent
+            Dim fullSupportActionSent As Boolean = (Not deathPaused) AndAlso Not earlySupportSent AndAlso TryHandleFullSupportHealing(cfg, hwnd, frame, partyListRegion, hpPct, now)
+            Dim actionSent As Boolean = fullSupportActionSent OrElse earlySupportSent
             If actionSent Then
-                reason = "Full Support action sent."
+                reason = If(earlySupportSent, "Urgent health recovery sent; other actions deferred.", "Full Support action sent.")
             End If
             If Not actionSent Then
                 actionSent = TryHandleAutoAcceptPrompts(cfg, hwnd, frame, now, partyInviteScanRegion)
             End If
             If actionSent Then
-                If Not reason.Equals("Full Support action sent.", StringComparison.Ordinal) Then
+                If Not earlySupportSent AndAlso Not reason.Equals("Full Support action sent.", StringComparison.Ordinal) Then
                     reason = "Auto-accept prompt detected and accepted."
                 End If
             End If
@@ -3039,7 +3073,7 @@ Public Class BotEngine
             ' having already fired, etc.) - the character's survival should never depend on the
             ' currently-selected mob being an allowed attack target.
             Dim actionSentBeforeSupport As Boolean = actionSent
-            Dim supportSent As Boolean = (Not deathPaused) AndAlso (Not fullSupportActionSent) AndAlso TrySendSupportActions(cfg, hwnd, hpPct, mpPct, hpRegion, mpRegion)
+            Dim supportSent As Boolean = earlySupportSent OrElse ((Not deathPaused) AndAlso (Not fullSupportActionSent) AndAlso TrySendSupportActions(cfg, hwnd, hpPct, mpPct, hpRegion, mpRegion))
             If supportSent Then
                 actionSent = True
                 reason = ""
@@ -3084,7 +3118,7 @@ Public Class BotEngine
                     End If
                 End If
 
-                ' Support keys can fire without blocking attack/buff in the same loop.
+                ' Recovery and movement reserve this frame before offensive actions.
                 Dim allowBlindAttack As Boolean = AllowBlindAttackWhenTargetMissing AndAlso (Not monsterFilterActive) AndAlso (Not monsterFilterBlockedTarget) AndAlso (Not avoidHighMaxHpTarget) AndAlso (Not _lastNavigationTravelActive)
                 ' Buffs must never fire on a filter-disallowed target: blocked in blacklist mode,
                 ' not-listed in whitelist mode (previously only blacklist mode suppressed buffs,
@@ -3092,7 +3126,7 @@ Public Class BotEngine
                 Dim suppressOffensiveBuffsForBlacklist As Boolean =
                     monsterFilterActive AndAlso
                     (monsterFilterBlockedTarget OrElse blacklistLockActive OrElse Not nameConfirmedForAttack)
-                Dim attackBurst As List(Of ActionRule) = If(deathPaused OrElse movementActionSent, New List(Of ActionRule)(), ChooseAttackBurstActions(cfg, hpPct, mpPct, effectiveTargetValid, allowBlindAttack, highMaxHpAttackActive, suppressOffensiveBuffsForBlacklist, reason))
+                Dim attackBurst As List(Of ActionRule) = If(Not ActionPriorityPolicy.CanRunOffense(deathPaused, supportSent OrElse fullSupportActionSent, movementActionSent), New List(Of ActionRule)(), ChooseAttackBurstActions(cfg, hpPct, mpPct, effectiveTargetValid, allowBlindAttack, highMaxHpAttackActive, suppressOffensiveBuffsForBlacklist, reason))
                 If attackBurst.Count > 0 Then
                     Dim sentKeys As New List(Of String)()
                     Dim targetSignature As String = If(normMobName <> "", normMobName, If(mobName <> "", mobName, $"{mobHpPct:0.0}"))
@@ -3226,14 +3260,19 @@ Public Class BotEngine
                 End If
             End If
 
-            If Not deathPaused Then TryHandleAutoLootArrowHold(cfg, hwnd, token)
-            TryHandleLootPickup(cfg, hwnd, now, actionSent OrElse _firstHitPending)
-            TryHandleArrowUnbundle(cfg, hwnd, fullClientWidth, fullClientHeight, now, actionSent OrElse _firstHitPending)
-            TryHandleBuffWatch(cfg, hwnd, now)
+            If ActionPriorityPolicy.CanRunOptional(deathPaused, urgentHealth, supportSent OrElse fullSupportActionSent OrElse movementActionSent) Then
+                TryHandleAutoLootArrowHold(cfg, hwnd, token)
+                TryHandleLootPickup(cfg, hwnd, now, actionSent OrElse _firstHitPending)
+                TryHandleArrowUnbundle(cfg, hwnd, fullClientWidth, fullClientHeight, now, actionSent OrElse _firstHitPending)
+                If Not actionSent Then TryHandleBuffWatch(cfg, hwnd, now)
+            Else
+                ReleaseAutoLootArrowKey()
+                RuntimeJournal.Record("Priority", "Loot, movement and buff recasts deferred for death/recovery or an active movement action")
+            End If
             UpdateLevelingAgentRuntimeState(cfg, now, hpPct, mpPct, targetWindowVisible, effectiveTargetValid, actionSent, forcedRetarget OrElse unreachableTriggered, unreachableLockActive, reason)
 
             Dim statsOcrDue As Boolean = IsStatsOcrDue(now)
-            If deferOptionalWork AndAlso Not statsOcrDue Then
+            If urgentHealth OrElse (deferOptionalWork AndAlso Not statsOcrDue) Then
                 MarkOptionalWorkDeferred()
             Else
                 If frame IsNot Nothing Then
@@ -6852,6 +6891,7 @@ Public Class BotEngine
         End If
 
         ReleaseMovementKeys(hwnd)
+        RuntimeJournal.Record("Navigation repath", $"Travel stalled for {(now - _lastNavigationProgressAt).TotalSeconds:0.0}s; localization {_lastMapCoordinateConfidence}%; {_lastNavigationTravelReason}")
         Dim repathReason As String = ""
         If ForceNavigationRepath(cfg, now, repathReason) AndAlso Not String.IsNullOrWhiteSpace(repathReason) Then
             RaiseEvent LogLine(repathReason)
@@ -7622,7 +7662,8 @@ Public Class BotEngine
 
         If _mobNameOcrTask IsNot Nothing AndAlso _mobNameOcrTask.IsCompleted Then
             Dim taskGeneration As Long = _mobNameOcrTaskGeneration
-            Dim isCurrent As Boolean = taskGeneration = _runGeneration
+            Dim isCurrent As Boolean = taskGeneration = _runGeneration AndAlso (now - _mobNameOcrStartedAt).TotalMilliseconds <= MobNameOcrRetentionMs
+            If Not isCurrent Then RuntimeJournal.Record("OCR discarded", "Target name belongs to an old session or expired frame")
             Try
                 Dim candidate As String = NormalizeMobNameDisplay(If(_mobNameOcrTask.Result, "").Trim())
                 If isCurrent Then
@@ -10765,6 +10806,7 @@ Public Class BotEngine
             Next
         Next
 
+        RuntimeJournal.Record("Loot filter", $"{rawObservedText} -> {bestAllowedName}: score {bestScore:P0}, required {threshold:P0}; {If(bestScore >= threshold, "matched", "rejected")}")
         If bestScore >= threshold Then
             matchedAllowedName = bestAllowedName
             Return True
@@ -11423,10 +11465,7 @@ Public Class BotEngine
             Return False
         End If
 
-        Dim ordered = cfg.Actions.
-            Where(Function(a) a.Enabled AndAlso IsSupportRole(a.Role)).
-            OrderBy(Function(a) a.Priority).
-            ToList()
+        Dim ordered = ActionPriorityPolicy.Ordered(cfg.Actions.Where(Function(a) a.Enabled AndAlso IsSupportRole(a.Role)))
         If ordered.Count = 0 Then
             Return False
         End If
@@ -11451,7 +11490,7 @@ Public Class BotEngine
             MarkActionUsed(action)
             RecordLiteAutoPotActionSent(cfg, hwnd, action)
             SetLastAction($"{action.KeyName} ({action.Role})")
-            sentAny = True
+            Return True
         Next
 
         For Each action In ordered
@@ -11459,6 +11498,7 @@ Public Class BotEngine
                 Continue For
             End If
             If Not IsSupportTriggered(action, hpPercent, mpPercent) Then
+                RuntimeJournal.Record("Skill skipped", $"{action.KeyName} ({action.Role}): threshold {action.TriggerPercent}% not reached; HP {hpPercent:0}% MP {mpPercent:0}%")
                 Continue For
             End If
             If Not ConfirmSupportActionStillNeeded(cfg, hwnd, action, hpPercent, mpPercent, hpRegion, mpRegion) Then
@@ -11474,7 +11514,7 @@ Public Class BotEngine
             MarkActionUsed(action)
             RecordLiteAutoPotActionSent(cfg, hwnd, action)
             SetLastAction($"{action.KeyName} ({action.Role})")
-            sentAny = True
+            Return True
         Next
 
         Return sentAny
@@ -11909,7 +11949,7 @@ Public Class BotEngine
     End Function
 
     Private Function ChooseAttackBurstActions(cfg As BotConfig, hpPercent As Double, mpPercent As Double, targetValid As Boolean, allowBlindAttack As Boolean, highMaxHpAttackActive As Boolean, suppressOffensiveBuffs As Boolean, ByRef reason As String) As List(Of ActionRule)
-        Dim ordered = cfg.Actions.Where(Function(a) a.Enabled).OrderBy(Function(a) a.Priority).ToList()
+        Dim ordered = ActionPriorityPolicy.Ordered(cfg.Actions.Where(Function(a) a.Enabled))
         If ordered.Count = 0 Then
             reason = "No enabled keys."
             Return New List(Of ActionRule)()
@@ -11936,11 +11976,13 @@ Public Class BotEngine
             hasAttackKey = True
 
             If suppressOffensiveBuffs AndAlso IsOffensiveBuffRole(role) Then
+                RuntimeJournal.Record("Skill skipped", $"{action.KeyName}: target filter blocks offensive buffs")
                 offensiveBuffBlocked = True
                 Continue For
             End If
 
             If role = "high_max_hp" AndAlso Not highMaxHpAttackActive Then
+                RuntimeJournal.Record("Skill skipped", $"{action.KeyName}: high-Max-HP condition not met or reading unavailable")
                 highMaxHpRoleWaitingForLifeRead = True
                 Continue For
             End If
@@ -11957,6 +11999,7 @@ Public Class BotEngine
             ' waiting on a target that will never arrive.
             If targetValid OrElse allowBlindAttack OrElse cfg.FullSupportModeEnabled Then
                 If Not usedKeys.Add(action.KeyName) Then
+                    RuntimeJournal.Record("Skill skipped", $"{action.KeyName}: duplicate key already selected this burst")
                     Continue For
                 End If
 
@@ -12001,8 +12044,14 @@ Public Class BotEngine
         End If
 
         Dim cooldownId As String = GetActionCooldownId(action)
-        Dim nowTick As Long = Environment.TickCount64
+        Dim nowTick As Long = Clock.Tick
         SyncLock _sync
+            Dim keyReady As Long
+            If _keyReadyAt.TryGetValue(action.KeyName, keyReady) AndAlso nowTick < keyReady Then
+                remainingMs = keyReady - nowTick
+                RuntimeJournal.Record("Skill skipped", $"{action.KeyName} ({action.Role}): shared key reserved for {remainingMs} ms by a previous action")
+                Return False
+            End If
             Dim lastTick As Long = 0
             If Not _lastActionTick.TryGetValue(cooldownId, lastTick) Then
                 Return True
@@ -12022,6 +12071,7 @@ Public Class BotEngine
                 _lastActionTick.Remove(cooldownId)
                 Return True
             End If
+            RuntimeJournal.Record("Skill skipped", $"{action.KeyName} ({action.Role}): cooldown {remainingMs} ms remaining")
             Return False
         End SyncLock
     End Function
@@ -12033,7 +12083,8 @@ Public Class BotEngine
 
         Dim cooldownId As String = GetActionCooldownId(action)
         SyncLock _sync
-            _lastActionTick(cooldownId) = Environment.TickCount64
+            _lastActionTick(cooldownId) = Clock.Tick
+            _keyReadyAt(action.KeyName) = Clock.Tick + Math.Max(50, action.CooldownMs)
         End SyncLock
     End Sub
 
@@ -12049,6 +12100,7 @@ Public Class BotEngine
     End Function
 
     Private Sub SetLastAction(text As String)
+        RuntimeJournal.Record("Action", $"{text}; HP {_status.HpPercent:0}% MP {_status.MpPercent:0}%; target {_status.MobName}; {_status.NotAttackingReason}")
         SetStatus(Sub(s)
                       s.LastAction = text
                   End Sub)
@@ -12160,6 +12212,10 @@ Public Class BotEngine
         Dim shouldRaise As Boolean = False
         SyncLock _sync
             updateAction(_status)
+            If _lastMobNameDetectedAt <> DateTime.MinValue Then ReadingMonitor.Record("Target name", _cachedMobName, capturedAt:=_lastMobNameDetectedAt)
+            If _lastChatOcrUpdatedAt <> DateTime.MinValue Then ReadingMonitor.Record("Chat", _lastChatOcrText, capturedAt:=_lastChatOcrUpdatedAt)
+            If _lastMapCoordinateAcceptedAt <> DateTime.MinValue Then ReadingMonitor.Record("Map coordinates", _lastMapCoordinateText, $"{_lastMapCoordinateConfidence}% detector score", _lastMapCoordinateAcceptedAt)
+            If _status.NotAttackingReason <> "" Then RuntimeJournal.Record("Waiting", _status.NotAttackingReason)
             _status.AgentEnabled = _config IsNot Nothing AndAlso _config.LevelingAgentEnabled
             _status.AgentState = _agentState.ToString()
             _status.AgentReason = _agentReason
@@ -13598,8 +13654,8 @@ Public Class BotEngine
 
 
 
-    <DllImport("user32.dll", SetLastError:=True)>
     Friend Shared Sub keybd_event(bVk As Byte, bScan As Byte, dwFlags As UInteger, dwExtraInfo As UIntPtr)
+        WindowsInput.Current.Keyboard(bVk, bScan, dwFlags, dwExtraInfo)
     End Sub
 
     Public Shared Function IsSupportedKeyName(keyName As String) As Boolean
@@ -13607,6 +13663,12 @@ Public Class BotEngine
     End Function
 
     Public Shared Function SendKey(hwnd As IntPtr, keyName As String, pressMs As Integer, Optional forceBackgroundPost As Boolean = False, Optional forcePhysicalKeyEvent As Boolean = False) As Boolean
+        SyncLock WindowsInput.SequenceLock
+            Return SendKeyCore(hwnd, keyName, pressMs, forceBackgroundPost, forcePhysicalKeyEvent)
+        End SyncLock
+    End Function
+
+    Private Shared Function SendKeyCore(hwnd As IntPtr, keyName As String, pressMs As Integer, forceBackgroundPost As Boolean, forcePhysicalKeyEvent As Boolean) As Boolean
         If hwnd = IntPtr.Zero Then
             Return False
         End If
@@ -13666,10 +13728,9 @@ Public Class BotEngine
         Dim lparamUp As Integer = lparamDown Or (1 << 30) Or (1 << 31)
 
         Try
-            NativeMethods.PostMessage(hwnd, CUInt(&H100), New IntPtr(vk), New IntPtr(lparamDown))
+            If Not NativeMethods.PostMessage(hwnd, CUInt(&H100), New IntPtr(vk), New IntPtr(lparamDown)) Then Return False
             Thread.Sleep(Math.Max(5, pressMs))
-            NativeMethods.PostMessage(hwnd, CUInt(&H101), New IntPtr(vk), New IntPtr(lparamUp))
-            Return True
+            Return NativeMethods.PostMessage(hwnd, CUInt(&H101), New IntPtr(vk), New IntPtr(lparamUp))
         Catch
             Return False
         End Try

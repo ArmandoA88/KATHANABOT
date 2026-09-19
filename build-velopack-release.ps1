@@ -28,6 +28,8 @@ if ($Version -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') {
     throw "Version '$Version' is not a valid release version (example: 1.0.43)."
 }
 
+& (Join-Path $root "run-all-tests.ps1")
+
 New-Item -ItemType Directory -Force -Path $publishDir, $standalonePublishDir, $releaseDir | Out-Null
 
 $resolvedRoot = [System.IO.Path]::GetFullPath($root).TrimEnd('\') + '\'

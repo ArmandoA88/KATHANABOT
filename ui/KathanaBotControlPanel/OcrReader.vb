@@ -35,7 +35,7 @@ Public NotInheritable Class OcrReader
     Private NotInheritable Class OcrStaWorkItem
         Public Property Work As Func(Of Object)
         Public Property Completion As TaskCompletionSource(Of Object)
-        Public Property CreatedAtUtc As DateTime = DateTime.UtcNow
+        Public Property Deadline As FrameDeadline
         Public Property TimeoutMs As Integer = 1000
     End Class
 
@@ -74,6 +74,12 @@ Public NotInheritable Class OcrReader
     End Sub
 
     Public Shared Function ReadName(source As Bitmap) As String
+        Dim result = ReadNameCore(source)
+        ReadingMonitor.Record("ReadName", Convert.ToString(result, Globalization.CultureInfo.InvariantCulture))
+        Return result
+    End Function
+
+    Private Shared Function ReadNameCore(source As Bitmap) As String
         If source Is Nothing Then
             Return ""
         End If
@@ -84,7 +90,8 @@ Public NotInheritable Class OcrReader
             If direct <> "" Then
                 Return direct
             End If
-        Catch
+        Catch ex As Exception
+            RuntimeJournal.Record("OCR fallback", ex.Message & "; retrying on the OCR worker")
         End Try
 
         ' Some WinRT OCR calls can fail on MTA threads. Retry on STA.
@@ -92,6 +99,12 @@ Public NotInheritable Class OcrReader
     End Function
 
     Public Shared Function ReadPercent(source As Bitmap) As Double
+        Dim result = ReadPercentCore(source)
+        ReadingMonitor.Record("ReadPercent", Convert.ToString(result, Globalization.CultureInfo.InvariantCulture))
+        Return result
+    End Function
+
+    Private Shared Function ReadPercentCore(source As Bitmap) As Double
         If source Is Nothing Then
             Return -1
         End If
@@ -102,13 +115,20 @@ Public NotInheritable Class OcrReader
             If direct >= 0 Then
                 Return direct
             End If
-        Catch
+        Catch ex As Exception
+            RuntimeJournal.Record("OCR fallback", ex.Message & "; retrying on the OCR worker")
         End Try
 
         Return ReadPercentStaFallback(source)
     End Function
 
     Public Shared Function ReadHpFraction(source As Bitmap) As String
+        Dim result = ReadHpFractionCore(source)
+        ReadingMonitor.Record("ReadHpFraction", Convert.ToString(result, Globalization.CultureInfo.InvariantCulture))
+        Return result
+    End Function
+
+    Private Shared Function ReadHpFractionCore(source As Bitmap) As String
         If source Is Nothing Then
             Return ""
         End If
@@ -119,13 +139,20 @@ Public NotInheritable Class OcrReader
             If Not String.IsNullOrWhiteSpace(direct) Then
                 Return direct
             End If
-        Catch
+        Catch ex As Exception
+            RuntimeJournal.Record("OCR fallback", ex.Message & "; retrying on the OCR worker")
         End Try
 
         Return ReadHpFractionStaFallback(source)
     End Function
 
     Public Shared Function ReadInteger(source As Bitmap) As Long
+        Dim result = ReadIntegerCore(source)
+        ReadingMonitor.Record("ReadInteger", Convert.ToString(result, Globalization.CultureInfo.InvariantCulture))
+        Return result
+    End Function
+
+    Private Shared Function ReadIntegerCore(source As Bitmap) As Long
         If source Is Nothing Then
             Return -1
         End If
@@ -136,13 +163,20 @@ Public NotInheritable Class OcrReader
             If direct >= 0 Then
                 Return direct
             End If
-        Catch
+        Catch ex As Exception
+            RuntimeJournal.Record("OCR fallback", ex.Message & "; retrying on the OCR worker")
         End Try
 
         Return ReadIntegerStaFallback(source)
     End Function
 
     Public Shared Function ReadScreenText(source As Bitmap) As String
+        Dim result = ReadScreenTextCore(source)
+        ReadingMonitor.Record("ReadScreenText", Convert.ToString(result, Globalization.CultureInfo.InvariantCulture))
+        Return result
+    End Function
+
+    Private Shared Function ReadScreenTextCore(source As Bitmap) As String
         If source Is Nothing Then
             Return ""
         End If
@@ -153,13 +187,20 @@ Public NotInheritable Class OcrReader
             If Not String.IsNullOrWhiteSpace(direct) Then
                 Return direct
             End If
-        Catch
+        Catch ex As Exception
+            RuntimeJournal.Record("OCR fallback", ex.Message & "; retrying on the OCR worker")
         End Try
 
         Return ReadScreenTextStaFallback(source)
     End Function
 
     Public Shared Function ReadScreenTextIsolated(source As Bitmap) As String
+        Dim result = ReadScreenTextIsolatedCore(source)
+        ReadingMonitor.Record("ReadScreenTextIsolated", Convert.ToString(result, Globalization.CultureInfo.InvariantCulture))
+        Return result
+    End Function
+
+    Private Shared Function ReadScreenTextIsolatedCore(source As Bitmap) As String
         If source Is Nothing Then
             Return ""
         End If
@@ -170,13 +211,20 @@ Public NotInheritable Class OcrReader
             If Not String.IsNullOrWhiteSpace(direct) Then
                 Return direct
             End If
-        Catch
+        Catch ex As Exception
+            RuntimeJournal.Record("OCR fallback", ex.Message & "; retrying on the OCR worker")
         End Try
 
         Return ReadScreenTextStaFallback(source, True)
     End Function
 
     Public Shared Function ReadScreenTextRegionsIsolated(source As Bitmap) As List(Of OcrTextRegion)
+        Dim result = ReadScreenTextRegionsIsolatedCore(source)
+        ReadingMonitor.Record("ReadScreenTextRegionsIsolated", String.Join(" | ", result.Select(Function(line) line.Text)))
+        Return result
+    End Function
+
+    Private Shared Function ReadScreenTextRegionsIsolatedCore(source As Bitmap) As List(Of OcrTextRegion)
         If source Is Nothing Then
             Return New List(Of OcrTextRegion)()
         End If
@@ -186,18 +234,26 @@ Public NotInheritable Class OcrReader
             If direct IsNot Nothing AndAlso direct.Count > 0 Then
                 Return direct
             End If
-        Catch
+        Catch ex As Exception
+            RuntimeJournal.Record("OCR fallback", ex.Message & "; retrying on the OCR worker")
         End Try
 
         Return ReadScreenTextRegionsStaFallback(source, True)
     End Function
 
     Public Shared Function ReadScreenTextRegions(source As Bitmap) As List(Of OcrTextRegion)
+        Dim result = ReadScreenTextRegionsCore(source)
+        ReadingMonitor.Record("ReadScreenTextRegions", String.Join(" | ", result.Select(Function(line) line.Text)))
+        Return result
+    End Function
+
+    Private Shared Function ReadScreenTextRegionsCore(source As Bitmap) As List(Of OcrTextRegion)
         If source Is Nothing Then Return New List(Of OcrTextRegion)()
         Try
             Dim direct = ReadScreenTextRegionsInternal(source)
             If direct IsNot Nothing AndAlso direct.Count > 0 Then Return direct
-        Catch
+        Catch ex As Exception
+            RuntimeJournal.Record("OCR fallback", ex.Message & "; retrying on the OCR worker")
         End Try
         Return ReadScreenTextRegionsStaFallback(source)
     End Function
@@ -275,6 +331,7 @@ Public NotInheritable Class OcrReader
         Dim item As New OcrStaWorkItem With {
             .Work = Function() DirectCast(work(), Object),
             .Completion = completion,
+            .Deadline = New FrameDeadline(New SystemBotClock(), timeoutMs),
             .TimeoutMs = Math.Max(1, timeoutMs)
         }
 
@@ -322,13 +379,19 @@ Public NotInheritable Class OcrReader
                 If item Is Nothing OrElse item.Completion Is Nothing OrElse item.Completion.Task.IsCompleted Then
                     Continue For
                 End If
-                If item.CreatedAtUtc <> DateTime.MinValue AndAlso (DateTime.UtcNow - item.CreatedAtUtc).TotalMilliseconds > Math.Max(1, item.TimeoutMs) Then
+                If Not item.Deadline.IsFresh Then
+                    RuntimeJournal.Record("OCR discarded", "Queued frame exceeded its useful deadline before recognition")
                     item.Completion.TrySetCanceled()
                     Continue For
                 End If
 
                 Dim result As Object = If(item.Work Is Nothing, Nothing, item.Work())
-                item.Completion.TrySetResult(result)
+                If Not item.Deadline.IsFresh Then
+                    RuntimeJournal.Record("OCR discarded", "Recognition completed after the frame deadline")
+                    item.Completion.TrySetCanceled()
+                Else
+                    item.Completion.TrySetResult(result)
+                End If
             Catch ex As Exception
                 SetLastError(ex.Message)
                 item.Completion.TrySetException(ex)
@@ -664,6 +727,12 @@ Public NotInheritable Class OcrReader
     ' scores candidates by cleanliness/brevity instead of length, since ScoreText's length bonus would
     ' otherwise let a longer garbage read from one candidate outscore a correct, short "OK" from another.
     Public Shared Function ReadButtonText(source As Bitmap) As String
+        Dim result = ReadButtonTextCore(source)
+        ReadingMonitor.Record("ReadButtonText", Convert.ToString(result, Globalization.CultureInfo.InvariantCulture))
+        Return result
+    End Function
+
+    Private Shared Function ReadButtonTextCore(source As Bitmap) As String
         If source Is Nothing Then
             Return ""
         End If
@@ -674,7 +743,8 @@ Public NotInheritable Class OcrReader
             If direct <> "" Then
                 Return direct
             End If
-        Catch
+        Catch ex As Exception
+            RuntimeJournal.Record("OCR fallback", ex.Message & "; retrying on the OCR worker")
         End Try
 
         Return ReadButtonTextStaFallback(source)
