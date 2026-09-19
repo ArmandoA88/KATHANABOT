@@ -1,4 +1,4 @@
-Imports System.Threading.Tasks
+﻿Imports System.Threading.Tasks
 
 Partial Public Class Form1
     Private _tradePriceGrid As DataGridView
@@ -11,7 +11,7 @@ Partial Public Class Form1
 
     Private Function BuildTradePriceTables() As Control
         _tradeOffers = New List(Of TradePriceOffer)
-        Dim tables As New TableLayoutPanel With {.Dock = DockStyle.Top, .Height = 310, .ColumnCount = 2, .RowCount = 1}
+        Dim tables As New TableLayoutPanel With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1}
         tables.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50))
         tables.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50))
         tables.RowStyles.Add(New RowStyle(SizeType.Percent, 100))

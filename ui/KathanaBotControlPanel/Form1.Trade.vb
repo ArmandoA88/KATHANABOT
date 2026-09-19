@@ -1,4 +1,4 @@
-Imports System.Threading
+﻿Imports System.Threading
 Imports System.Threading.Tasks
 
 Partial Public Class Form1
@@ -24,24 +24,20 @@ Partial Public Class Form1
 
     Private Function BuildTradeTab() As TabPage
         Dim tab As New TabPage("Trade") With {.BackColor = ThemeBg}
-        Dim scroll As New Panel With {.Dock = DockStyle.Fill, .AutoScroll = True, .Padding = New Padding(24)}
-        Dim body As New TableLayoutPanel With {.Dock = DockStyle.Top, .AutoSize = True, .ColumnCount = 1}
+        Dim scroll As New Panel With {.Dock = DockStyle.Fill, .AutoScroll = False, .Padding = New Padding(8)}
+        Dim body As New TableLayoutPanel With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 6}
+        For Each rowSize As Single In {0, 0, 48, 52, 0, 0}
+            body.RowStyles.Add(New RowStyle(If(rowSize = 0, SizeType.AutoSize, SizeType.Percent), rowSize))
+        Next
         body.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
         body.Controls.Add(New Label With {.Text = "TRADE / DISCORD WHISPERS", .AutoSize = True, .Font = New Font("Segoe UI", 17, FontStyle.Bold), .ForeColor = ThemeAccent})
-        body.Controls.Add(New Label With {.Text = "Paste Discord listings and click Analyze posts with AI. The three most common items are selected automatically; review the items and whisper queue. Character names are case-sensitive. Select the Full game window first and leave its chat input closed. Start sends checked rows once, in order; F12 stops. After successful completion, the previous combat mode resumes (Full if none was running).", .AutoSize = True, .MaximumSize = New Size(1050, 0), .Margin = New Padding(0, 10, 0, 14)})
-        Dim options As New TableLayoutPanel With {.Dock = DockStyle.Top, .AutoSize = True, .ColumnCount = 2}
-        options.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 195))
-        options.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
+        body.Controls.Add(New Label With {.Text = "Paste posts > Analyze > review checked whispers > Start. Select the Full game window with chat closed. F12 stops.", .AutoSize = True, .Margin = New Padding(0, 3, 0, 5)})
+        Dim options As New TableLayoutPanel With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 1}
+        options.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 35))
+        options.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 25))
+        options.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 40))
+        options.RowStyles.Add(New RowStyle(SizeType.Percent, 100))
         _tradeOptions = options
-        Dim addRow As Action(Of String, Control) =
-            Sub(label, control)
-                Dim row = options.RowCount
-                options.RowCount += 1
-                options.RowStyles.Add(New RowStyle(SizeType.AutoSize))
-                options.Controls.Add(New Label With {.Text = label, .AutoSize = True, .Margin = New Padding(0, 8, 8, 8)}, 0, row)
-                control.Margin = New Padding(0, 5, 0, 7)
-                options.Controls.Add(control, 1, row)
-            End Sub
         _tradeSource = New TextBox With {.Multiline = True, .ScrollBars = ScrollBars.Vertical, .Dock = DockStyle.Fill, .Height = 180, .MaxLength = 200000, .PlaceholderText = "Paste the Discord posts here, including their authors and item listings."}
         _tradeMode = New ComboBox With {.DropDownStyle = ComboBoxStyle.DropDownList, .Dock = DockStyle.Fill}
         _tradeMode.Items.AddRange({"Buy from sellers", "Sell to buyers"})
@@ -50,28 +46,46 @@ Partial Public Class Form1
         _tradeChosenItems = New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
         _tradeItemSearch = New TextBox With {.Dock = DockStyle.Fill, .PlaceholderText = "Find detected items, e.g. ASBA or ROR (optional)"}
         _tradeDetectedItems = New CheckedListBox With {.Dock = DockStyle.Fill, .IntegralHeight = False, .CheckOnClick = True}
-        Dim sizeItemList As Action = Sub() _tradeDetectedItems.Height = _tradeDetectedItems.ItemHeight * 10 + 8
-        sizeItemList()
-        AddHandler _tradeDetectedItems.FontChanged, Sub() sizeItemList()
-        AddHandler _tradeDetectedItems.DpiChangedAfterParent, Sub() sizeItemList()
         _tradeTemplate = New TextBox With {.Dock = DockStyle.Fill, .Text = TradeService.BuyTemplate, .MaxLength = 220}
         _tradeDelay = New NumericUpDown With {.Minimum = 1, .Maximum = 300, .Value = 5, .Dock = DockStyle.Fill}
-        addRow("Discord posts / names", _tradeSource)
-        addRow("I want to", _tradeMode)
-        addRow("Find detected items", _tradeItemSearch)
-        addRow("Detected items", _tradeDetectedItems)
-        addRow("Search", New Label With {.Text = "Search the AI results by part of an item name. Clear the search to show all items. Checked items stay selected when hidden by search; use the checkboxes to change the whisper queue.", .AutoSize = True, .MaximumSize = New Size(800, 0)})
-        addRow("Automatic selection", New Label With {.Text = "No item names needed. AI identifies exact items; the three most common for your Buy/Sell choice are checked automatically. Counts use distinct characters, not repeated posts. Change the checkboxes to rebuild the queue.", .AutoSize = True, .MaximumSize = New Size(800, 0)})
+        Dim posts As New GroupBox With {.Text = "Discord posts / names", .Dock = DockStyle.Fill, .Padding = New Padding(6)}
+        posts.Controls.Add(_tradeSource)
+        options.Controls.Add(posts, 0, 0)
+        Dim items As New TableLayoutPanel With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3}
+        items.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
+        items.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+        items.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+        items.RowStyles.Add(New RowStyle(SizeType.Percent, 100))
+        items.Controls.Add(New Label With {.Text = "Detected items (top 3 auto-selected)", .AutoSize = True}, 0, 0)
+        items.Controls.Add(_tradeItemSearch, 0, 1)
+        items.Controls.Add(_tradeDetectedItems, 0, 2)
+        options.Controls.Add(items, 1, 0)
+        Dim settings As New TableLayoutPanel With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 5}
+        settings.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 112))
+        settings.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
+        For i As Integer = 0 To 4
+            settings.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+        Next
+        settings.Controls.Add(New Label With {.Text = "I want to", .AutoSize = True}, 0, 0)
+        settings.Controls.Add(_tradeMode, 1, 0)
+        settings.Controls.Add(New Label With {.Text = "Template", .AutoSize = True}, 0, 1)
+        settings.Controls.Add(_tradeTemplate, 1, 1)
+        settings.Controls.Add(New Label With {.Text = "Delay (sec)", .AutoSize = True}, 0, 2)
+        settings.Controls.Add(_tradeDelay, 1, 2)
         Dim aiKey As New Button With {.Text = "Configure AI key", .AutoSize = True}
         AddHandler aiKey.Click, Sub() ConfigureQuizApiKey()
-        addRow("AI access", aiKey)
-        addRow("", New Label With {.Text = "Uses the encrypted OpenAI key and model configured in Quiz. Analyze sends these pasted posts to OpenAI; it never sends whispers. Review the queue, then press Start.", .AutoSize = True, .MaximumSize = New Size(800, 0)})
-        addRow("Message template", _tradeTemplate)
-        addRow("Template placeholder", New Label With {.Text = "{items} becomes the matching items for that character. Only matching SELL posts are used when buying; BUY posts when selling.", .AutoSize = True, .MaximumSize = New Size(800, 0)})
-        addRow("Delay between sends (sec)", _tradeDelay)
-        Dim parse As New Button With {.Text = "Analyze posts with AI", .AutoSize = True, .Height = 32}
+        Dim parse As New Button With {.Text = "Analyze posts with AI", .AutoSize = True}
         AddHandler parse.Click, AddressOf ParseTradeQueue
-        addRow("", parse)
+        Dim help As New Button With {.Text = "Help", .AutoSize = True}
+        AddHandler help.Click, Sub() SilentMessageBox.Show(Me, "Analyze sends pasted posts to OpenAI using the encrypted key/model configured in Quiz. It does not send whispers. AI selects the three most common items for Buy/Sell, counting distinct characters. Search filters the detected list; checked hidden items stay selected. Change checkboxes to rebuild the queue." & vbCrLf & vbCrLf & "{items} inserts matching items per character. Buying matches SELL posts; selling matches BUY posts. Character names are case-sensitive. Edit the queue, then Start sends checked rows once in order. Stop / F12 cancels. After successful completion the previous combat mode resumes (Full if none was running)." & vbCrLf & vbCrLf & "Chat price scanning uses Regions > chat_rect every 3 seconds. Offers are cheapest first; review OCR quotes. Clear offers removes collected prices.", "Trade Help")
+        Dim setupActions As New FlowLayoutPanel With {.Dock = DockStyle.Fill, .AutoSize = True}
+        setupActions.Controls.AddRange({aiKey, parse, help})
+        settings.Controls.Add(setupActions, 0, 3)
+        settings.SetColumnSpan(setupActions, 2)
+        Dim privacy As New Label With {.Text = "Analyze sends pasted posts to OpenAI. Review the queue before Start. {items} inserts matching items.", .AutoSize = True, .Dock = DockStyle.Fill}
+        settings.Controls.Add(privacy, 0, 4)
+        settings.SetColumnSpan(privacy, 2)
+        options.Controls.Add(settings, 2, 0)
         _tradeGrid = New DataGridView With {.Dock = DockStyle.Top, .Height = 270, .AllowUserToAddRows = True, .AllowUserToDeleteRows = True, .RowHeadersVisible = True, .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill}
         _tradeGrid.Columns.Add(New DataGridViewCheckBoxColumn With {.Name = "Send", .HeaderText = "Send", .FillWeight = 35})
         _tradeGrid.Columns.Add("Character", "Character (exact case)")

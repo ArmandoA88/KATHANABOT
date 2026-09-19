@@ -1,4 +1,4 @@
-Imports System.Net.Http
+﻿Imports System.Net.Http
 Imports System.Net
 Imports System.Text
 Imports System.Threading
@@ -226,10 +226,9 @@ Module Program
                 formType.GetMethod("ApplyPersistedTradeState", flags).Invoke(form, {saved})
                 search.Clear()
                 Check(items.CheckedItems.Count = 2, "Clearing a restored search lost selected items")
-                Check(items.Height >= items.ItemHeight * 10 + 4, "Detected item list cannot show ten rows")
                 formType.GetMethod("ApplyPersistedTradeState", flags).Invoke(form, {settings})
                 formType.GetMethod("ApplyDarkTheme", flags).Invoke(form, {page})
-                Using host As New Form With {.ClientSize = New Drawing.Size(1180, 1050), .ShowInTaskbar = False, .StartPosition = FormStartPosition.Manual, .Location = New Drawing.Point(-30000, -30000)}, tabs As New TabControl With {.Dock = DockStyle.Fill}
+                Using host As New Form With {.ClientSize = New Drawing.Size(1360, 760), .ShowInTaskbar = False, .StartPosition = FormStartPosition.Manual, .Location = New Drawing.Point(-30000, -30000)}, tabs As New TabControl With {.Dock = DockStyle.Fill}
                     host.Controls.Add(tabs)
                     tabs.TabPages.Add(page)
                     host.Show()
@@ -240,6 +239,14 @@ Module Program
                     host.PerformLayout()
                     tabs.PerformLayout()
                     page.PerformLayout()
+                    Dim startButton = DirectCast(formType.GetField("_tradeStart", flags).GetValue(form), Button)
+                    Dim priceGrid = DirectCast(formType.GetField("_tradePriceGrid", flags).GetValue(form), DataGridView)
+                    For Each control As Control In New Control() {items, startButton, priceGrid}
+                        Dim bounds = host.RectangleToClient(control.RectangleToScreen(control.ClientRectangle))
+                        Check(host.ClientRectangle.Contains(bounds), "Trade control outside the single-view layout: " & control.GetType().Name)
+                    Next
+                    Check(items.Height >= items.ItemHeight * 10 + 4, "Detected item list cannot show ten rows")
+                    Check(Not DirectCast(page.Controls(0), Panel).VerticalScroll.Visible, "Trade page requires vertical scrolling")
                     Using bitmap As New Drawing.Bitmap(host.ClientSize.Width, host.ClientSize.Height)
                         host.DrawToBitmap(bitmap, host.ClientRectangle)
                         bitmap.Save(IO.Path.Combine(AppContext.BaseDirectory, "trade-tab.png"))

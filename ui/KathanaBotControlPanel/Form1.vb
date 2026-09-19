@@ -1,4 +1,4 @@
-Imports System.Net.Http
+﻿Imports System.Net.Http
 Imports System.Runtime.InteropServices
 Imports System.Text
 Imports System.Text.RegularExpressions
@@ -2509,21 +2509,6 @@ Partial Public Class Form1
         AddHandler _enterToggleTimer.Tick, AddressOf EnterToggleTimerTick
         _enterToggleTimer.Start()
 
-        ' Runs on one dedicated, persistent background thread - not a thread-pool timer and not the
-        ' WinForms message-loop timer above. Two things this avoids: (1) WM_TIMER-based timers get
-        ' coalesced/throttled by Windows once the app is in the background, which made key-release
-        ' detection lag whenever KathanaBot itself wasn't focused; (2) the AttachThreadInput trick used
-        ' to force the game foreground is tied to a specific OS thread ID - a thread-pool timer can (and
-        ' does) run its callback on a different pool thread each tick, so the thread that attaches on
-        ' key-down often isn't the same one detaching/restoring focus on key-up, which left the restore
-        ' call failing silently and the game window stuck in front. A single long-lived thread guarantees
-        ' the same OS thread handles both halves of every hold.
-        _holdToShowGameWindowThread = New System.Threading.Thread(AddressOf HoldToShowGameWindowThreadLoop) With {
-            .IsBackground = True,
-            .Name = "HoldToShowGameWindow"
-        }
-        _holdToShowGameWindowThread.Start()
-
         _logFlushTimer.Interval = LogFlushIntervalMs
         AddHandler _logFlushTimer.Tick, AddressOf LogFlushTimerTick
         _logFlushTimer.Start()
@@ -3487,7 +3472,7 @@ Partial Public Class Form1
     Private Sub HoldPlaceUseCurrentClicked(_sender As Object, _e As EventArgs)
         Dim status As BotStatus = _fullStatus
         If status Is Nothing OrElse status.MapCoordinateX < 0 OrElse status.MapCoordinateY < 0 Then
-            AppendLog("Hold on place anchor not set: current map coordinates are not available yet.")
+            AppendLog("Max Range anchor not set: current map coordinates are not available yet.")
             Return
         End If
 
@@ -3497,7 +3482,7 @@ Partial Public Class Form1
         If chkHoldPlaceEnabled IsNot Nothing Then
             chkHoldPlaceEnabled.Checked = True
         End If
-        AppendLog($"Hold on place anchor set to {status.MapCoordinateX:000}/{status.MapCoordinateY:000}.")
+        AppendLog($"Max Range anchor set to {status.MapCoordinateX:000}/{status.MapCoordinateY:000}.")
         PushLiveConfig()
         SavePersistedListState(False)
         UpdateMainTabIndicators()
@@ -8092,15 +8077,31 @@ Partial Public Class Form1
         Return tab
     End Function
 
+    Private Sub ShowMaxRangeHelp(sender As Object, e As EventArgs)
+        Dim help As String = String.Join(Environment.NewLine & Environment.NewLine, New String() {
+            "Max Range keeps your character near an anchor while the Full bot runs. Enable it after setting the anchor and configuring map-coordinate OCR in Vision.",
+            "Units: all distances use the game's map X/Y coordinate system. The scale differs from AH AutoHunt: do not copy AH range numbers or assume a fixed conversion. This is a movement correction feature, not a strict attack or target-selection radius.",
+            "Anchor X / Y: the map position to return to. Use Current copies the latest available map coordinates; verify them before enabling.",
+            "Tolerance: allowed offset on EACH axis around the anchor (a square). For anchor 100/100 and tolerance 4, positions 096-104 on both axes are within tolerance.",
+            "Restrictiveness: Low allows looser movement; Medium is recommended; High and Extra High use tighter/faster corrections. Editing individual values selects Custom.",
+            "Move Burst (ms): how long a correction movement lasts. Correction (ms): minimum interval between corrections. Reduce burst length if you overshoot.",
+            "Return before retargeting after fight: outside tolerance, return toward the anchor before selecting another target.",
+            "During combat: emergency leash only: delay normal correction while fighting. Emergency Leash uses straight-line map-coordinate distance and can trigger a return during combat. Its effective minimum is tolerance + 1. Movement and OCR delays mean this is not a hard boundary.",
+            "Learn direction after corrections: use observed coordinate changes to improve movement direction choices.",
+            "Show Overlay: display the coordinate overlay. Open OCR Crops: inspect captured OCR images for troubleshooting. Runtime shows current coordinates, anchor and correction status; unreadable coordinates prevent correction."
+        })
+        SilentMessageBox.Show(Me, help, "Max Range Help", MessageBoxButtons.OK, MessageBoxIcon.Information)
+    End Sub
+
     Private Function BuildHoldPlaceTab() As TabPage
-        Dim tab As New TabPage("Hold on place") With {.BackColor = Color.FromArgb(20, 20, 20)}
+        Dim tab As New TabPage("Max Range") With {.BackColor = Color.FromArgb(20, 20, 20)}
         Dim root As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 1, .Padding = New Padding(8)}
         root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 40.0F))
         root.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 60.0F))
         root.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         tab.Controls.Add(root)
 
-        Dim settingsGroup As New GroupBox() With {.Text = "Hold on place", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
+        Dim settingsGroup As New GroupBox() With {.Text = "Max Range", .Dock = DockStyle.Fill, .Padding = New Padding(10)}
         Dim settingsLayout As New TableLayoutPanel() With {.Dock = DockStyle.Top, .AutoSize = True, .AutoSizeMode = AutoSizeMode.GrowAndShrink, .ColumnCount = 2, .RowCount = 13}
         settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 210.0F))
         settingsLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
@@ -8109,7 +8110,7 @@ Partial Public Class Form1
         Next
         settingsGroup.Controls.Add(settingsLayout)
 
-        chkHoldPlaceEnabled = New CheckBox() With {.Text = "Enable Hold on place", .Dock = DockStyle.Fill, .Margin = New Padding(2)}
+        chkHoldPlaceEnabled = New CheckBox() With {.Text = "Enable Max Range", .Dock = DockStyle.Fill, .Margin = New Padding(2)}
         settingsLayout.Controls.Add(chkHoldPlaceEnabled, 0, 0)
         settingsLayout.SetColumnSpan(chkHoldPlaceEnabled, 2)
 
@@ -8162,10 +8163,13 @@ Partial Public Class Form1
         buttonPanel.Controls.Add(btnHoldPlaceUseCurrent)
         buttonPanel.Controls.Add(btnHoldPlaceOverlay)
         buttonPanel.Controls.Add(btnHoldPlaceOpenOcrCrops)
+        Dim btnMaxRangeHelp As New Button() With {.Text = "Help", .AutoSize = True, .BackColor = Color.FromArgb(55, 95, 145), .ForeColor = Color.White, .FlatStyle = FlatStyle.Flat}
+        AddHandler btnMaxRangeHelp.Click, AddressOf ShowMaxRangeHelp
+        buttonPanel.Controls.Add(btnMaxRangeHelp)
         settingsLayout.Controls.Add(buttonPanel, 1, 11)
 
         Dim note As New Label() With {
-            .Text = "Presets: Low = loose, Medium = recommended, High/Extra High = tighter leash and faster return. Editing values switches to Custom.",
+            .Text = "Distances use map X/Y coordinates, not AH AutoHunt range units; the scales differ. Click Help for setup and controls. Presets: Low = loose, Medium = recommended, High/Extra High = tighter leash and faster return. Editing values switches to Custom.",
             .Dock = DockStyle.Fill,
             .ForeColor = Color.LightSteelBlue,
             .AutoSize = True,
@@ -8769,25 +8773,6 @@ Partial Public Class Form1
         hpMpLayout.Controls.Add(lblHp, 0, 0)
         hpMpLayout.Controls.Add(lblMp, 1, 0)
 
-        btnHoldToShowGameWindow = New Button() With {
-            .Text = "Hold to Show Game Window: OFF",
-            .Dock = DockStyle.Fill,
-            .MinimumSize = New Size(0, 38),
-            .Margin = New Padding(3, 3, 3, 3),
-            .BackColor = Color.FromArgb(110, 45, 45),
-            .ForeColor = Color.White
-        }
-        cboHoldToShowGameWindowKey = New ComboBox() With {.Dock = DockStyle.Fill, .DropDownStyle = ComboBoxStyle.DropDownList, .MinimumSize = New Size(0, 28), .Margin = New Padding(3, 3, 3, 3)}
-        cboHoldToShowGameWindowKey.Items.AddRange(HoldToShowGameWindowKeyOptions())
-        cboHoldToShowGameWindowKey.SelectedItem = _holdToShowGameWindowKey.ToString()
-        AddHandler btnHoldToShowGameWindow.Click, AddressOf ToggleHoldToShowGameWindowClicked
-        AddHandler cboHoldToShowGameWindowKey.SelectedIndexChanged, AddressOf HoldToShowGameWindowKeyChanged
-        Dim holdToShowGameWindowRow As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .AutoSize = True, .ColumnCount = 2, .RowCount = 1, .Margin = New Padding(0)}
-        holdToShowGameWindowRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 62.0F))
-        holdToShowGameWindowRow.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 38.0F))
-        holdToShowGameWindowRow.Controls.Add(btnHoldToShowGameWindow, 0, 0)
-        holdToShowGameWindowRow.Controls.Add(cboHoldToShowGameWindowKey, 1, 0)
-
         chkDeveloperMode = New CheckBox() With {
             .Text = "Developer Mode: OFF",
             .Appearance = Appearance.Button,
@@ -8843,7 +8828,7 @@ Partial Public Class Form1
             lblMobName, lblExpRate, lblRupiahsRate, runRow, btnSaveSettings, btnStopBot,
             btnFullSupport, btnBypassStuck, btnLootAfterKill, btnPartyInviteAutoAccept, btnRessAutoAccept,
             lblPartyAskEvery, nudPartyAskSeconds, lblPartyAskText, txtPartyAskText, partyAskRow, btnProfiles, btnHelp,
-            holdToShowGameWindowRow, chkDeveloperMode
+            chkDeveloperMode
         }
         For rowIndex As Integer = 0 To controls.Length - 1
             content.Controls.Add(controls(rowIndex), 0, rowIndex)
@@ -14420,7 +14405,10 @@ Partial Public Class Form1
             lblHoldPlaceStatus.ForeColor = If(status.HoldPlaceActive, Color.LightSteelBlue, If(status.HoldPlaceEnabled, Color.Khaki, Color.DimGray))
         End If
         If lblHoldPlaceCurrent IsNot Nothing Then
-            If status.MapCoordinateX >= 0 AndAlso status.MapCoordinateY >= 0 Then
+            If Not status.HoldPlaceEnabled Then
+                lblHoldPlaceCurrent.Text = "Current: disabled"
+                lblHoldPlaceCurrent.ForeColor = Color.DimGray
+            ElseIf status.MapCoordinateX >= 0 AndAlso status.MapCoordinateY >= 0 Then
                 lblHoldPlaceCurrent.Text = $"Current: {status.MapCoordinateX:000}/{status.MapCoordinateY:000} (confidence {status.MapCoordinateConfidence}%)"
                 lblHoldPlaceCurrent.ForeColor = If(status.MapCoordinateConfidence >= 70, Color.LightGreen, Color.Khaki)
             Else
@@ -14430,7 +14418,7 @@ Partial Public Class Form1
             End If
         End If
         If txtHoldPlaceCoordinateLog IsNot Nothing Then
-            Dim coordinateLog As String = If(String.IsNullOrWhiteSpace(status.MapCoordinateDebugLog), "Coordinate log: no coordinate checks reported yet.", status.MapCoordinateDebugLog)
+            Dim coordinateLog As String = If(Not status.HoldPlaceEnabled, "Max Range is disabled.", If(String.IsNullOrWhiteSpace(status.MapCoordinateDebugLog), "Coordinate log: no coordinate checks reported yet.", status.MapCoordinateDebugLog))
             If Not String.Equals(txtHoldPlaceCoordinateLog.Text, coordinateLog, StringComparison.Ordinal) Then
                 txtHoldPlaceCoordinateLog.Text = coordinateLog
                 txtHoldPlaceCoordinateLog.SelectionStart = txtHoldPlaceCoordinateLog.TextLength
@@ -14438,7 +14426,10 @@ Partial Public Class Form1
             End If
         End If
         If lblHoldPlaceTarget IsNot Nothing Then
-            If status.HoldPlaceTargetX >= 0 AndAlso status.HoldPlaceTargetY >= 0 Then
+            If Not status.HoldPlaceEnabled Then
+                lblHoldPlaceTarget.Text = "Anchor: inactive"
+                lblHoldPlaceTarget.ForeColor = Color.DimGray
+            ElseIf status.HoldPlaceTargetX >= 0 AndAlso status.HoldPlaceTargetY >= 0 Then
                 Dim holdDistance As String = If(status.HoldPlaceDistance < 0, "n/a", status.HoldPlaceDistance.ToString("0.0"))
                 lblHoldPlaceTarget.Text = $"Anchor: {status.HoldPlaceTargetX:000}/{status.HoldPlaceTargetY:000} | Distance: {holdDistance}"
                 lblHoldPlaceTarget.ForeColor = If(status.HoldPlaceEnabled, Color.LightSteelBlue, Color.DimGray)
@@ -17643,7 +17634,7 @@ Partial Public Class Form1
                 chkBuffWatchSelfClickEnabled.Checked = _buffWatchSelfClickEnabled
             End If
             ApplyBuffWatchSlotsToGrid(state.BuffWatchSlots)
-            _holdToShowGameWindowEnabled = state.HoldToShowGameWindowEnabled
+            _holdToShowGameWindowEnabled = False
             Dim parsedHoldToShowKey As Keys
             _holdToShowGameWindowKey = If([Enum].TryParse(Of Keys)(state.HoldToShowGameWindowKey, parsedHoldToShowKey), parsedHoldToShowKey, Keys.F10)
             UpdateHoldToShowGameWindowUi()

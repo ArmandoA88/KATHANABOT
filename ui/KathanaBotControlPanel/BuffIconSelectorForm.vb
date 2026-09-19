@@ -1,4 +1,4 @@
-Imports System.ComponentModel
+﻿Imports System.ComponentModel
 Imports System.Diagnostics
 Imports System.IO
 Imports System.Runtime.InteropServices
@@ -27,7 +27,7 @@ Friend Class BuffIconSelectorForm
     End Property
 
     Private ReadOnly _gameHwnd As IntPtr
-    Private ReadOnly _defaultCategories As String() = {"Library", "General", "Naga - Kimnara", "Ashura - Rakshasa", "Yaksa - Gandharva", "Deva - Garuda", "Other"}
+    Private ReadOnly _defaultCategories As String() = {"Library", "Naga - Kimnara", "Ashura - Rakshasa", "Yaksa - Gandharva", "Deva - Garuda", "Other"}
     Private _entries As New List(Of BuffIconLibraryEntry)()
     Private _selectedCategory As String = "library"
     Private ReadOnly _selectedEntries As New List(Of BuffIconLibraryEntry)()
@@ -166,7 +166,7 @@ Friend Class BuffIconSelectorForm
 
     Private Sub ReloadLibrary()
         BotEngine.EnsureBuffIconLibraryExists()
-        _entries = BotEngine.ScanBuffIconLibrary()
+        _entries = BotEngine.ScanBuffIconLibrary().Where(Function(entry) Not String.Equals(entry.Category, "general", StringComparison.OrdinalIgnoreCase)).ToList()
         ReconcileSelectedEntries()
 
         Dim orderedKeys As New List(Of String)()
@@ -205,7 +205,7 @@ Friend Class BuffIconSelectorForm
 
     Private Sub CategorySelectedChanged(sender As Object, e As EventArgs)
         Dim item As CategoryItem = TryCast(lstCategories.SelectedItem, CategoryItem)
-        _selectedCategory = If(item IsNot Nothing, item.Key, BotEngine.SanitizeBuffIconIdentifier("General"))
+        _selectedCategory = If(item IsNot Nothing, item.Key, BotEngine.SanitizeBuffIconIdentifier("Library"))
         RefreshIconGrid()
     End Sub
 

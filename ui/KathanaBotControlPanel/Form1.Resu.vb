@@ -1,4 +1,4 @@
-Imports System.Threading.Tasks
+﻿Imports System.Threading.Tasks
 Imports System.Text.Json
 Imports DrawingPoint = System.Drawing.Point
 
@@ -639,7 +639,7 @@ Partial Public Class Form1
         Dim generation = _resuGeneration
         Dim hwnd = _resuWindow
         If ResuSelectedWindow() <> hwnd OrElse Not IsResuCompatibleBotState(hwnd) Then
-            StopResu("RESU stopped: the selected window changed, Lite started, or Full is running without Hold on Place.")
+            StopResu("RESU stopped: the selected window changed, Lite started, or Full is running without Max Range.")
             Return
         End If
         If Not CanResuAct(generation, hwnd) Then

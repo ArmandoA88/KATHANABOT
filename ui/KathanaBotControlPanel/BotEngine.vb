@@ -1,4 +1,4 @@
-Imports System.Collections.Generic
+﻿Imports System.Collections.Generic
 Imports System.Diagnostics
 Imports System.Drawing
 Imports System.Drawing.Drawing2D
@@ -1074,7 +1074,7 @@ Public Class BotEngine
     Private Const AttackBurstKeysPerLoop As Integer = 3
     Private Const AttackBurstGapMs As Integer = 4
     ' Most action-combat MMOs cancel an attack/skill animation if a movement key is pressed
-    ' during it. Hold on Place / Navigation Travel corrections must not fire this soon after an
+    ' during it. Max Range / Navigation Travel corrections must not fire this soon after an
     ' attack, or the correction step keeps interrupting combat instead of just repositioning
     ' between fights.
     Private Const PostAttackMovementGraceMs As Integer = 600
@@ -2657,7 +2657,7 @@ Public Class BotEngine
                 If mapCoordinateFeaturesEnabled AndAlso startupCombatPriorityActive Then
                     AppendMapCoordinateDebug(now, "not checking: startup combat-priority window is active.")
                 ElseIf Not mapCoordinateFeaturesEnabled Then
-                    AppendMapCoordinateDebug(now, "not checking: navigation and Hold on place are disabled.")
+                    ' No repeated coordinate diagnostics while both features are disabled.
                 End If
                 ClearMapLocalizationRuntime()
                 ClearNavigationPreviewRuntime()
@@ -2914,7 +2914,7 @@ Public Class BotEngine
                 Dim holdReason As String = ""
                 Dim holdBlocksRetarget As Boolean = False
                 Dim holdMoved As Boolean = TryHandleHoldPlace(cfg, hwnd, now, False, holdReason, holdBlocksRetarget)
-                Dim coexistenceStatus As String = If(String.IsNullOrWhiteSpace(holdReason), "RESU active; Hold on Place is monitoring the anchor.", "RESU + Hold on Place: " & holdReason)
+                Dim coexistenceStatus As String = If(String.IsNullOrWhiteSpace(holdReason), "RESU active; Max Range is monitoring the anchor.", "RESU + Max Range: " & holdReason)
                 SetStatus(Sub(s)
                               s.WindowFound = True
                               s.HpPercent = Math.Round(hpPct, 1)
@@ -3079,7 +3079,7 @@ Public Class BotEngine
                 reason = ""
             End If
 
-            ' Tracks whether Hold on Place / Navigation Travel actually sent a movement key (W/A/S/D)
+            ' Tracks whether Max Range / Navigation Travel actually sent a movement key (W/A/S/D)
             ' this tick, as opposed to just a status flag like holdBlocksRetarget or the travel mob
             ' scan's E press. Most action-combat MMOs cancel an attack/skill if movement fires in the
             ' same moment, so the attack burst below must never run in the same tick as a movement
@@ -7073,19 +7073,19 @@ Public Class BotEngine
         Dim targetX As Integer = cfg.HoldPlaceTargetX
         Dim targetY As Integer = cfg.HoldPlaceTargetY
         If Not cfg.HoldPlaceAnchorSet Then
-            reason = "Hold on place: set an anchor X/Y coordinate."
+            reason = "Max Range: set an anchor X/Y coordinate."
             SetHoldPlaceRuntime(False, -1, -1, -1, reason)
             Return False
         End If
 
         If targetX < 0 OrElse targetY < 0 OrElse targetX > 999 OrElse targetY > 999 Then
-            reason = "Hold on place: set an anchor X/Y coordinate."
+            reason = "Max Range: set an anchor X/Y coordinate."
             SetHoldPlaceRuntime(False, targetX, targetY, -1, reason)
             Return False
         End If
 
         If _lastMapCoordinateX < 0 OrElse _lastMapCoordinateY < 0 OrElse _lastMapLocalizationConfidence < 30 Then
-            reason = $"Hold on place: waiting for map coordinates near anchor {targetX:000}/{targetY:000}."
+            reason = $"Max Range: waiting for map coordinates near anchor {targetX:000}/{targetY:000}."
             SetHoldPlaceRuntime(False, targetX, targetY, -1, reason)
             Return False
         End If
@@ -7095,7 +7095,7 @@ Public Class BotEngine
         Dim distance As Double = CalculateDistance(_lastMapCoordinateX, _lastMapCoordinateY, targetX, targetY)
         Dim radius As Integer = Math.Max(0, cfg.HoldPlaceRadius)
         If Math.Abs(dx) <= radius AndAlso Math.Abs(dy) <= radius Then
-            reason = $"Hold on place: anchored at {targetX:000}/{targetY:000}; current {_lastMapCoordinateX:000}/{_lastMapCoordinateY:000}."
+            reason = $"Max Range: anchored at {targetX:000}/{targetY:000}; current {_lastMapCoordinateX:000}/{_lastMapCoordinateY:000}."
             SetHoldPlaceRuntime(False, targetX, targetY, distance, reason)
             Return False
         End If
@@ -7107,13 +7107,13 @@ Public Class BotEngine
         blocksRetarget = postFightReturn
 
         If combatActive AndAlso cfg.HoldPlaceCombatSafeEnabled AndAlso Not emergencyCorrection Then
-            reason = $"Hold on place: combat active; normal correction waits until target clears or distance reaches leash {emergencyLeash}."
+            reason = $"Max Range: combat active; normal correction waits until target clears or distance reaches leash {emergencyLeash}."
             SetHoldPlaceRuntime(False, targetX, targetY, distance, reason)
             Return False
         End If
 
         If Not emergencyCorrection AndAlso _lastAttackAction <> DateTime.MinValue AndAlso (now - _lastAttackAction).TotalMilliseconds < PostAttackMovementGraceMs Then
-            reason = $"Hold on place: waiting {PostAttackMovementGraceMs}ms after the last attack before moving, so correction doesn't cancel it."
+            reason = $"Max Range: waiting {PostAttackMovementGraceMs}ms after the last attack before moving, so correction doesn't cancel it."
             SetHoldPlaceRuntime(False, targetX, targetY, distance, reason)
             Return False
         End If
@@ -7121,7 +7121,7 @@ Public Class BotEngine
         Dim correctionIntervalMs As Integer = Math.Max(150, cfg.HoldPlaceCorrectionIntervalMs)
         If _lastHoldPlaceMoveAt <> DateTime.MinValue AndAlso (now - _lastHoldPlaceMoveAt).TotalMilliseconds < correctionIntervalMs Then
             Dim correctionMode As String = If(emergencyCorrection, "emergency leash", If(postFightReturn, "post-fight return", "correction"))
-            reason = $"Hold on place: {correctionMode} waiting for correction interval; current {_lastMapCoordinateX:000}/{_lastMapCoordinateY:000}, distance {distance:0.0}."
+            reason = $"Max Range: {correctionMode} waiting for correction interval; current {_lastMapCoordinateX:000}/{_lastMapCoordinateY:000}, distance {distance:0.0}."
             SetHoldPlaceRuntime(True, targetX, targetY, distance, reason)
             Return False
         End If
@@ -7159,12 +7159,12 @@ Public Class BotEngine
             Else
                 ClearPendingNavigationTravelInput()
             End If
-            reason = $"Hold on place: {correctionMode} to {targetX:000}/{targetY:000}; current {_lastMapCoordinateX:000}/{_lastMapCoordinateY:000}, distance {distance:0.0}, using {primaryKey}."
+            reason = $"Max Range: {correctionMode} to {targetX:000}/{targetY:000}; current {_lastMapCoordinateX:000}/{_lastMapCoordinateY:000}, distance {distance:0.0}, using {primaryKey}."
             SetHoldPlaceRuntime(True, targetX, targetY, distance, reason)
             Return True
         End If
 
-        reason = $"Hold on place: failed to send movement toward {targetX:000}/{targetY:000}."
+        reason = $"Max Range: failed to send movement toward {targetX:000}/{targetY:000}."
         SetHoldPlaceRuntime(False, targetX, targetY, distance, reason)
         Return False
     End Function
@@ -13700,6 +13700,12 @@ Public Class BotEngine
             If foregroundHwnd <> hwnd Then
                 NativeMethods.SetForegroundWindow(hwnd)
                 Thread.Sleep(ForegroundInputSettleMs)
+            End If
+
+            ' Activation can be denied by Windows. Never inject into the bot UI or another app.
+            If NativeMethods.GetForegroundWindow() <> hwnd Then
+                RuntimeJournal.Record("Input skipped", $"Key {keyName}: game window {hwnd} did not gain focus.")
+                Return False
             End If
 
             Dim scan As Byte = CByte(NativeMethods.MapVirtualKey(CUInt(vk), 0UI))
