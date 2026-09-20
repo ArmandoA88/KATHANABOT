@@ -276,6 +276,8 @@ Public Class BotConfig
     Public Property LoopMs As Integer = 80
     <System.Text.Json.Serialization.JsonIgnore>
     Public Property DirectKpEnabled As Boolean = False
+    <System.Text.Json.Serialization.JsonIgnore>
+    Public Property AutoAssistOnlyEnabled As Boolean = False
     Public Property DirectKpIntervalMs As Integer = 1000
 
     Public Property NormalRetargetEnabled As Boolean = True
@@ -1237,6 +1239,7 @@ Partial Public Class BotEngine
     Private _lastLootPickup As DateTime = DateTime.MinValue
     Private _pendingLootPickupVerifyAt As DateTime = DateTime.MinValue
     Private _lootAfterKillArmed As Boolean = False
+    Private _lootAfterKillLastLivingAt As DateTime = DateTime.MinValue
     Private _autoLootArrowSchedule As New AutoLootArrowHoldSchedule()
     Private _autoLootArrowTask As Task
     Private _lastAutoLootForegroundAttempt As DateTime = DateTime.MinValue
@@ -1522,6 +1525,7 @@ Partial Public Class BotEngine
         SyncLock _sync
             _config = cfg
         End SyncLock
+        UpdateAutoAssistOutput(If(cfg IsNot Nothing AndAlso cfg.SelectedWindowHandle <> IntPtr.Zero, cfg.SelectedWindowHandle, _autoAssistWindow), cfg)
         SetCaptureBackendPreference(If(cfg?.CaptureBackendPreference, "auto"))
         _windowResponsivenessMonitor.UpdateTarget(cfg)
     End Sub
@@ -1968,6 +1972,7 @@ Partial Public Class BotEngine
             End Try
         End If
         SetChatInputPaused(False, IntPtr.Zero)
+        UpdateAutoAssistOutput(IntPtr.Zero, Nothing)
 
         Dim sessionStartedAtUtc As DateTime
         Dim sessionExpPercent As Double
@@ -2171,6 +2176,7 @@ Partial Public Class BotEngine
                 Dim noTargetStableMs As Integer = retargetDelayMs
 
                 Dim hwnd As IntPtr = ResolveGameWindow(cfg)
+                UpdateAutoAssistOutput(hwnd, cfg)
                 If hwnd = IntPtr.Zero Then
                     ClearLatestLoopFrame()
                     ReleaseLootScannerAltKey()
@@ -2947,7 +2953,7 @@ Partial Public Class BotEngine
             End If
             TrackSessionKill(targetHasHpSignal, (Not captureGlitch) AndAlso mobHpScanOk, now)
             TrackMobHpMovement(targetValid, mobHpPct, now)
-            If ActionPriorityPolicy.CanRunOptional(deathPaused, urgentHealth, earlySupportSent) Then TryHandleLootAfterKill(cfg, hwnd, targetHasHpSignal, now)
+            If ActionPriorityPolicy.CanRunOptional(deathPaused, urgentHealth, earlySupportSent) Then TryHandleLootAfterKill(cfg, hwnd, targetHasHpSignal AndAlso mobHpPct > 0, now, (Not captureGlitch) AndAlso mobHpScanOk)
 
             ' Death/capture uncertainty must be established before evaluating leveling guardrails.
             ' Otherwise a dead character (no target, depleted bars) or one bad frame can promote a
@@ -8151,36 +8157,34 @@ Partial Public Class BotEngine
             (now - _sessionKillLastLivingSignalAt).TotalMilliseconds <= recentLivingSignalWindowMs
     End Function
 
-    ' Loot After Kill also requires a fresh centered loot detection so it cannot stop an approach.
-    '
-    ' This used to wait for the target's HP reading to hit (or come near) 0 before treating a vanish
-    ' as a kill, but HasTargetWindowSignal (what targetHasHpSignal is built from) requires either a
-    ' non-trivial amount of the HP bar's own color still on screen, or mobHpPct > 0.0 outright - so
-    ' the instant a mob's bar actually empties, the rest of the targeting logic already stops
-    ' reporting a target at all, and no HP-based threshold on the way down ever reliably matched what
-    ' was on screen right before the vanish. A recent target disappearance arms a pickup attempt,
-    ' but the center check below must confirm that an allowed item is within reach.
-    Private Sub TryHandleLootAfterKill(cfg As BotConfig, hwnd As IntPtr, targetHasHpSignal As Boolean, now As DateTime)
+    ' Direct post-kill pickup is independent of scanner/centered-item requirements.
+    Private Sub TryHandleLootAfterKill(cfg As BotConfig, hwnd As IntPtr, targetHasHpSignal As Boolean, now As DateTime, Optional telemetryReliable As Boolean = True)
         If cfg Is Nothing OrElse Not cfg.LootAfterKillEnabled OrElse hwnd = IntPtr.Zero Then
+            _lootAfterKillArmed = False
+            _lootAfterKillLastLivingAt = DateTime.MinValue
+            Return
+        End If
+        If Not telemetryReliable Then Return
+
+        If targetHasHpSignal Then
+            ' A recent attack establishes ownership; continued living observations keep long
+            ' auto-attack fights armed even when no new skill key is needed for several seconds.
+            If _lastAttackAction <> DateTime.MinValue AndAlso (now - _lastAttackAction).TotalMilliseconds <= 3000 Then
+                _lootAfterKillArmed = True
+            End If
+            If _lootAfterKillArmed Then _lootAfterKillLastLivingAt = now
+            Return
+        End If
+        If Not _lootAfterKillArmed Then Return
+        If _lootAfterKillLastLivingAt = DateTime.MinValue OrElse (now - _lootAfterKillLastLivingAt).TotalMilliseconds > 3000 Then
             _lootAfterKillArmed = False
             Return
         End If
-
-        If targetHasHpSignal Then
-            _lootAfterKillArmed = True
-            Return
-        End If
-
-        Const recentAttackWindowMs As Double = 3000.0
-        If _lootAfterKillArmed AndAlso _lastAttackAction <> DateTime.MinValue AndAlso (now - _lastAttackAction).TotalMilliseconds <= recentAttackWindowMs Then
-            If TryConsumeCenteredLoot(cfg, hwnd, now) AndAlso SendKey(hwnd, "F", FastKeyPressMs) Then
-                _lastLootPickup = now
-                SetLastAction("F (Loot After Kill)")
-                RaiseEvent LogLine("Loot After Kill: target gone and allowed loot confirmed at screen center, pressed F.")
-            End If
-        End If
-
+        If Not SendKey(hwnd, "F", FastKeyPressMs) Then Return
         _lootAfterKillArmed = False
+        _lastLootPickup = now
+        SetLastAction("F (Loot After Kill)")
+        RaiseEvent LogLine("Loot After Kill: mob HP reached zero or target disappeared after combat; pressed F.")
     End Sub
 
     Public Shared Function ShouldForceAutoLootForeground(cfg As BotConfig) As Boolean
@@ -11264,6 +11268,7 @@ Partial Public Class BotEngine
             _lastNormalRetarget = now
         End If
         If SendKey(hwnd, "E", FastKeyPressMs) Then
+            _lootAfterKillArmed = False
             DisarmSessionKillTracking()
             ClearCombatLock()
             ClearMobMaxHpTracking()
@@ -11286,6 +11291,7 @@ Partial Public Class BotEngine
         If Not SendKey(hwnd, action.KeyName, FastKeyPressMs) Then Return False
 
         MarkActionUsed(action)
+        _lootAfterKillArmed = False
         DisarmSessionKillTracking()
         ClearCombatLock()
         ClearMobMaxHpTracking()
@@ -11962,6 +11968,7 @@ Partial Public Class BotEngine
         End If
 
         If SendKey(hwnd, "E", FastKeyPressMs) Then
+            _lootAfterKillArmed = False
             _lastNormalRetarget = DateTime.UtcNow
             SetLastAction("E (manual retarget)")
             Return True
@@ -13699,6 +13706,7 @@ Partial Public Class BotEngine
         End If
 
         SyncLock _keyOutputPauseSync
+            If _autoAssistWindows.Contains(hwnd) AndAlso String.Equals(If(keyName, "").Trim(), "E", StringComparison.OrdinalIgnoreCase) Then Return False
             If _keyOutputPausedWindows.Contains(hwnd) Then
                 Return False
             End If

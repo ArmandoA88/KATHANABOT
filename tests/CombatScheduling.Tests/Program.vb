@@ -1,4 +1,4 @@
-Imports System.Reflection
+﻿Imports System.Reflection
 
 Module Program
     Private ReadOnly Flags As BindingFlags = BindingFlags.Instance Or BindingFlags.NonPublic
@@ -58,7 +58,76 @@ Module Program
         chosen = DirectCast(GetType(BotEngine).GetMethod("ChooseAttackBurstActions", Flags).Invoke(engine, args), List(Of ActionRule))
         Check(chosen.Count = 0 AndAlso CStr(args(7)).Contains("No target"), "missing target blocks attack with a reason")
         Check(RuntimeJournal.Snapshot().Any(Function(item) item.Kind = "Skill skipped"), "skip reason reaches timeline")
+        TestAutoAssistOnly()
+        TestLootAfterKill()
         Console.WriteLine($"PASS: {passed} combat scheduling, timing, mode and injected-input assertions.")
+    End Sub
+    Private Sub TestAutoAssistOnly()
+        Dim engine As New BotEngine
+        Dim input As New FakeInput
+        Dim cfg As New BotConfig With {.AutoAssistOnlyEnabled = True}
+        Dim update = GetType(BotEngine).GetMethod("UpdateAutoAssistOutput", Flags)
+        WindowsInput.Current = input
+        Try
+            update.Invoke(engine, {New IntPtr(321), cfg})
+            Check(Not BotEngine.SendKey(New IntPtr(321), "E", 5), "assist-only blocks retarget E")
+            Check(Not BotEngine.SendKey(New IntPtr(321), " e ", 5, forcePhysicalKeyEvent:=True), "assist-only blocks physical E and alternate casing")
+            Check(input.Messages.Count = 0, "blocked E never reaches Windows")
+            For Each key In {"R", "F", "1", "F1"}
+                Check(BotEngine.SendKey(New IntPtr(321), key, 5), "assist-only preserves " & key)
+            Next
+            Check(BotEngine.SendKey(New IntPtr(999), "E", 5), "assist-only is scoped to selected game")
+            cfg.AutoAssistOnlyEnabled = False
+            update.Invoke(engine, {New IntPtr(321), cfg})
+            Check(BotEngine.SendKey(New IntPtr(321), "E", 5), "toggle off restores E")
+            cfg.AutoAssistOnlyEnabled = True
+            update.Invoke(engine, {New IntPtr(321), cfg})
+            update.Invoke(engine, {New IntPtr(654), cfg})
+            Check(BotEngine.SendKey(New IntPtr(321), "E", 5) AndAlso Not BotEngine.SendKey(New IntPtr(654), "E", 5), "window switch moves E block")
+        Finally
+            update.Invoke(engine, {IntPtr.Zero, Nothing})
+            WindowsInput.Current = Nothing
+        End Try
+    End Sub
+    Private Sub TestLootAfterKill()
+        Dim engine As New BotEngine
+        Dim input As New FakeInput
+        Dim cfg As New BotConfig With {.LootAfterKillEnabled = True, .LootScannerEnabled = False, .LootPickupEnabled = False}
+        Dim method = GetType(BotEngine).GetMethod("TryHandleLootAfterKill", Flags)
+        Dim now = DateTime.UtcNow
+        Dim tick As Action(Of Boolean, Integer, Boolean) = Sub(alive, ms, reliable) method.Invoke(engine, {cfg, New IntPtr(123), alive, now.AddMilliseconds(ms), reliable})
+        WindowsInput.Current = input
+        Try
+            tick(False, 0, True)
+            Check(input.Messages.Count = 0, "no post-kill pickup without an attacked living mob")
+            GetType(BotEngine).GetField("_lastAttackAction", Flags).SetValue(engine, now)
+            tick(True, 0, True)
+            tick(True, 10000, True)
+            tick(False, 10100, False)
+            Check(input.Messages.Count = 0, "unreliable HP does not trigger pickup")
+            tick(False, 10200, True)
+            Check(input.Keys.SequenceEqual({70, 70}), "zero/absent HP sends F without scanner after a long fight")
+            tick(False, 10300, True)
+            Check(input.Messages.Count = 2, "one F per death transition")
+            GetType(BotEngine).GetField("_lastAttackAction", Flags).SetValue(engine, now.AddMilliseconds(11000))
+            tick(True, 11000, True)
+            input.Accept = False
+            tick(False, 11100, True)
+            input.Accept = True
+            tick(False, 11200, True)
+            Check(input.Messages.Count = 5, "failed F is retried rather than dropping the pickup")
+            tick(True, 12000, True)
+            cfg.LootAfterKillEnabled = False
+            tick(False, 12100, True)
+            cfg.LootAfterKillEnabled = True
+            tick(False, 12200, True)
+            Check(input.Messages.Count = 5, "disabled pickup clears pending death")
+            tick(True, 13000, True)
+            tick(False, 17000, True)
+            Check(input.Messages.Count = 5, "stale target disappearance does not loot")
+        Finally
+            WindowsInput.Current = Nothing
+        End Try
     End Sub
     Private Function Ready(engine As BotEngine, action As ActionRule) As Boolean
         Return CBool(GetType(BotEngine).GetMethod("IsReady", Flags, Nothing, {GetType(ActionRule)}, Nothing).Invoke(engine, {action}))
@@ -89,10 +158,12 @@ Module Program
     End Class
     Private Class FakeInput
         Implements IWindowsInput
+        Public Keys As New List(Of Integer)
         Public Messages As New List(Of UInteger)
         Public Accept As Boolean = True
         Public Function Post(hwnd As IntPtr, message As UInteger, w As IntPtr, l As IntPtr) As Boolean Implements IWindowsInput.Post
             Messages.Add(message)
+            Keys.Add(w.ToInt32())
             Return Accept
         End Function
         Public Function Activate(hwnd As IntPtr) As Boolean Implements IWindowsInput.Activate

@@ -89,9 +89,40 @@ Module Program
             timer.Start()
             Check(notice.ShowDialog() = DialogResult.Cancel, "Warning cannot be cancelled")
         End Using
+        TestSidebarStartupLayout()
         TestSkillCards()
         RenderControls()
         Console.WriteLine("PASS: E/R timing/order, repeated cycles, stop between keys, input failure, pause, targeting bypass, interval persistence and Direct KP layout.")
+    End Sub
+    Private Sub TestSidebarStartupLayout()
+        Dim tabType = GetType(Form1).GetNestedType("SidebarTabControl", BindingFlags.NonPublic)
+        Using host As New Form With {.ClientSize = New Size(1450, 900), .ShowInTaskbar = False, .StartPosition = FormStartPosition.Manual, .Location = New Point(-30000, -30000)}, tabs = DirectCast(Activator.CreateInstance(tabType, True), TabControl)
+            tabs.Dock = DockStyle.Fill
+            tabs.Alignment = TabAlignment.Left
+            tabs.SizeMode = TabSizeMode.Fixed
+            tabs.ItemSize = New Size(70, 122)
+            For index = 0 To 11
+                tabs.TabPages.Add(New TabPage(If(index = 0, "Home", "Page " & index)))
+            Next
+            Dim home = tabs.TabPages(0)
+            Dim content As New Panel With {.Dock = DockStyle.Fill, .BackColor = Color.Navy}
+            Dim status As New Label With {.Text = "Ready", .Dock = DockStyle.Fill}
+            content.Controls.Add(status)
+            home.Controls.Add(content)
+            host.Controls.Add(tabs)
+            host.Show()
+            For Each size In {New Size(1450, 900), New Size(1900, 970), New Size(1200, 750)}
+                host.ClientSize = size
+                Application.DoEvents()
+                tabType.GetMethod("FitTabsToHeight").Invoke(tabs, Nothing)
+                Application.DoEvents()
+                status.Text = "FULL RUNNING"
+                tabs.Refresh()
+                Check(tabs.SelectedTab Is home, "Layout changed selected tab")
+                Check(home.Bounds = tabs.DisplayRectangle, "Home retained stale native page bounds")
+                Check(content.Bounds = home.ClientRectangle AndAlso status.Text = "FULL RUNNING", "Home children did not fill the page/update after startup layout")
+            Next
+        End Using
     End Sub
     Private Sub TestSkillCards()
         Using grid As New DataGridView With {.AllowUserToAddRows = False}

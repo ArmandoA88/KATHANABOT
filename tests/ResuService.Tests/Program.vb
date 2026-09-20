@@ -1,4 +1,4 @@
-Imports System.Windows.Forms
+﻿Imports System.Windows.Forms
 Imports System.Text.Json
 
 Module Program
@@ -198,6 +198,20 @@ Module Program
             liteState.Running = False
             refresh.Invoke(form, New Object() {Nothing, BotEdition.Lite})
             Check(Not CBool(playing.GetValue(button)), "Missing telemetry must still synchronize the button")
+            Dim liveRefresh = formType.GetMethod("RefreshDashboardFromEngine", flags)
+            formType.GetField("_fullStatus", flags).SetValue(form, New BotStatus With {.Running = False, .HpPercent = 0})
+            fullState.Running = True
+            fullState.HpPercent = 84
+            fullState.SessionKilledMobs = 7
+            liveRefresh.Invoke(form, Nothing)
+            Dim displayed = DirectCast(formType.GetField("_fullStatus", flags).GetValue(form), BotStatus)
+            Check(displayed.Running AndAlso displayed.HpPercent = 84 AndAlso displayed.SessionKilledMobs = 7, "Home must fetch live telemetry without a tab change or status event")
+            Check(CBool(playing.GetValue(button)), "Home start state must refresh immediately")
+            fullState.Running = False
+            fullState.HpPercent = 92
+            liveRefresh.Invoke(form, Nothing)
+            displayed = DirectCast(formType.GetField("_fullStatus", flags).GetValue(form), BotStatus)
+            Check(Not displayed.Running AndAlso displayed.HpPercent = 92 AndAlso Not CBool(playing.GetValue(button)), "Home must refresh stop and new readings without a tab change")
         End Using
     End Sub
 

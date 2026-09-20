@@ -31,7 +31,7 @@ Partial Public Class BotEngine
             Async Function()
                 Try
                     Await DirectKpSequence.RunAsync(
-                        Function(key) SendKey(hwnd, key, 5, forceBackgroundPost:=True),
+                        Function(key) If(key = "E" AndAlso Volatile.Read(_config).AutoAssistOnlyEnabled, True, SendKey(hwnd, key, 5, forceBackgroundPost:=True)),
                         allowed, Function() Volatile.Read(_config).DirectKpIntervalMs, runToken)
                 Catch ex As OperationCanceledException
                     ' Stop/toggle-off cancels the pending R as well as future cycles.

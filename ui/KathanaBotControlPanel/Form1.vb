@@ -317,12 +317,23 @@ Partial Public Class Form1
             End If
         End Sub
 
+        Private _fitQueued As Boolean
         Protected Overrides Sub OnResize(e As EventArgs)
-            ' Resized before calling base so the Resize event (raised from within MyBase.OnResize,
-            ' which Form1 also listens to in order to keep the sliding indicator's height/position in
-            ' sync) always sees the freshly-recomputed ItemSize, never the stale pre-resize one.
-            FitTabsToHeight()
             MyBase.OnResize(e)
+            ' Never resize the native tab control recursively inside its parent's layout pass.
+            If Not IsHandleCreated OrElse _fitQueued OrElse _isFittingTabsToHeight Then Return
+            _fitQueued = True
+            BeginInvoke(New Action(Sub()
+                                       _fitQueued = False
+                                       If IsDisposed Then Return
+                                       FitTabsToHeight()
+                                       PerformLayout()
+                                       If SelectedTab IsNot Nothing Then
+                                           SelectedTab.Bounds = DisplayRectangle
+                                           SelectedTab.PerformLayout()
+                                       End If
+                                       Refresh()
+                                   End Sub))
         End Sub
 
         Protected Overrides Sub WndProc(ByRef m As Message)
@@ -3933,6 +3944,21 @@ Partial Public Class Form1
         Return tab
     End Function
 
+    Private Sub RefreshDashboardFromEngine()
+        ' Home must not depend on queued StatusUpdated callbacks or a tab-selection event.
+        Dim edition As BotEdition = GetRunningEdition().GetValueOrDefault(BotEdition.Full)
+        Dim status As BotStatus = GetEngineForEdition(edition).GetStatus()
+        If edition = BotEdition.Full Then
+            _fullStatus = status
+        Else
+            _liteStatus = status
+        End If
+        UpdateDashboardUi(status, edition)
+        If _dashboardTab IsNot Nothing AndAlso _dashboardTab.Visible Then
+            _dashboardTab.Invalidate(True)
+        End If
+    End Sub
+
     Private Sub UpdateDashboardRunButton()
         If btnDashPlayPause Is Nothing OrElse btnDashPlayPause.IsDisposed Then Return
         ' Use the same live state as the click action. Queued telemetry and the selected tab
@@ -4645,7 +4671,7 @@ Partial Public Class Form1
             _inGameBotToggleEdition = _edition
         End If
 
-        If WindowState = FormWindowState.Normal Then
+        If previousEdition <> _edition AndAlso WindowState = FormWindowState.Normal Then
             Size = If(_edition = BotEdition.Lite, LiteWindowSize, FullWindowSize)
         End If
 
@@ -8635,7 +8661,7 @@ Partial Public Class Form1
             .AutoSize = True,
             .AutoSizeMode = AutoSizeMode.GrowAndShrink,
             .ColumnCount = 1,
-            .RowCount = 27,
+            .RowCount = 28,
             .GrowStyle = TableLayoutPanelGrowStyle.FixedSize,
             .Margin = New Padding(0),
             .Padding = New Padding(4)
@@ -8827,7 +8853,7 @@ Partial Public Class Form1
 
         Dim controls As Control() = {
             lblFullEdition, lblRunState, lblShortcutHint, lblState, lblSystem, hpMpLayout,
-            lblMobName, lblExpRate, lblRupiahsRate, runRow, BuildDirectKpControls(), btnSaveSettings, btnStopBot,
+            lblMobName, lblExpRate, lblRupiahsRate, runRow, BuildDirectKpControls(), BuildAutoAssistButton(), btnSaveSettings, btnStopBot,
             btnFullSupport, btnBypassStuck, btnLootAfterKill, btnPartyInviteAutoAccept, btnRessAutoAccept,
             lblPartyAskEvery, nudPartyAskSeconds, lblPartyAskText, txtPartyAskText, partyAskRow, btnProfiles, btnHelp,
             chkDeveloperMode
@@ -9370,8 +9396,10 @@ Partial Public Class Form1
             _modes.Transition(OperatingMode.Idle, "start failed")
             Throw
         End Try
-        CheckForUpdatesAfterBotStart(edition)
+        RefreshDashboardFromEngine()
         UpdateAttackButtonAppearance(False)
+        QueueMainSurfaceRefresh()
+        CheckForUpdatesAfterBotStart(edition)
         If autoStart Then
             AppendLog($"Auto-start on launch enabled for {edition}.")
         End If
@@ -9393,6 +9421,7 @@ Partial Public Class Form1
         End If
 
         engine.Stop()
+        RefreshDashboardFromEngine()
         _modes.Transition(OperatingMode.Idle, context)
         If edition = BotEdition.Full Then
             _notificationWarmupUntilUtc = DateTime.MinValue
@@ -10010,6 +10039,7 @@ Partial Public Class Form1
         UpdateTabIndicatorTarget()
         StartDashboardEntranceTransition()
         AutoStartOnLaunch()
+        QueueMainSurfaceRefresh()
         RefreshProcessWindowList(False, IntPtr.Zero)
         BeginInvoke(New Action(AddressOf ShowStartupNoticeAndCheckUpdates))
     End Sub
@@ -11695,6 +11725,7 @@ Partial Public Class Form1
             _mainTabs.FitTabsToHeight()
 
             _mainTabs.SelectedTab = If(previouslySelected IsNot Nothing AndAlso desired.Contains(previouslySelected), previouslySelected, _dashboardTab)
+            QueueMainSurfaceRefresh()
         Finally
             _isRefreshingMainTabsVisibility = False
         End Try
@@ -13019,7 +13050,7 @@ Partial Public Class Form1
             "- Stop Bot: sends hard stop macro then stops engine.",
             "- FS (Full Support): a support-only role that never presses E - normal retargeting, forced retargeting, manual Retarget Now, and Dadati evade are all disabled, so the character never selects or changes a target.",
             "- Auto Retarget If Stuck: allows stuck-target bypass logic. Disabled while FS is on.",
-            "- Loot After Kill: attempts F after combat only when a fresh allowed item is detected near screen center.",
+            "- Loot After Kill: presses F when an attacked mob reaches zero HP or disappears. Works without the loot scanner; picks up nearby items without its item filter.",
             "- Retarget Now (E): manual retarget key.",
             "- Auto Accept Party/Ress: toggle OCR prompt auto accept.",
             "- Ask Party Every (sec) + Auto Ask Party Text + Auto Ask Party: periodic custom command.",
@@ -13989,12 +14020,11 @@ Partial Public Class Form1
     End Sub
 
     Private Sub UiTimerTick(sender As Object, e As EventArgs)
-        UpdateDashboardRunButton()
+        RefreshDashboardFromEngine()
         Dim uiWatch As Stopwatch = Stopwatch.StartNew()
         MonitorEngineWorkers()
         PushLiveConfig()
         Dim st As BotStatus = GetStatusForEdition(_edition)
-        UpdateDashboardUi(st, _edition)
         HandlePendingLitePointCapture()
         HandlePendingArrowUnbundlePointCapture()
         HandlePendingArrowBundleIconCapture()
@@ -14332,7 +14362,7 @@ Partial Public Class Form1
         If edition = BotEdition.Lite Then
             _liteStatus = status
             UpdateLiteStatus(statusText, status)
-            UpdateDashboardUi(status, BotEdition.Lite)
+            RefreshDashboardFromEngine()
             UpdateAttackButtonAppearance(False)
             HandleGameDisconnectedAlert(status)
             UpdateTaskbarStatusIndicator()
@@ -14340,7 +14370,7 @@ Partial Public Class Form1
         End If
 
         _fullStatus = status
-        UpdateDashboardUi(status, BotEdition.Full)
+        RefreshDashboardFromEngine()
 
         lblState.Text = statusText
         lblSystem.Text = $"System Active: {status.Running}"
@@ -16341,6 +16371,7 @@ Partial Public Class Form1
 
     Private Function BuildFullConfig() As BotConfig
         Dim cfg = BuildConfig()
+        cfg.AutoAssistOnlyEnabled = _autoAssistOnlyEnabled
         cfg.DirectKpEnabled = _directKpEnabled
         cfg.DirectKpIntervalMs = CInt(If(_directKpInterval Is Nothing, 1000D, _directKpInterval.Value))
         Return cfg

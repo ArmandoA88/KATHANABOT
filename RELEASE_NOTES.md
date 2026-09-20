@@ -1,3 +1,12 @@
+# KathanaBot 1.0.210
+
+## What changed
+
+- **Restored direct F pickup for Loot After Kill** when an attacked mob reaches zero HP or disappears - it no longer requires the loot scanner or a centered item detection. Long fights stay armed using the latest living-mob observation instead of expiring 3 seconds after the last attack key, failed sends retry briefly, and a successful pickup is never repeated for the same death. Centered Loot Pickup and timed-arrow behavior are unchanged.
+- **Fixed Home not refreshing reliably.** It now reads a live engine snapshot immediately on Start/Stop and on every UI tick instead of relying on cached status callbacks or a tab switch, keeping the play/pause icon, status, and session readings in sync.
+- **Fixed stale/duplicated Home panels and layout gaps after startup or Start**, and switching tabs no longer resets your window size.
+- **Added AUTO-ASSIST ONLY next to LITE Direct KP**: blocks every bot-generated E key press (configured E rows and normal/manual/forced retargeting) while leaving all other keys - including Direct KP's own R - working normally. Enabling it requires a warning plus a separate "Are you sure?" confirmation; canceling either leaves it off, and the setting always resets when the app closes.
+
 # KathanaBot 1.0.207
 
 ## What changed

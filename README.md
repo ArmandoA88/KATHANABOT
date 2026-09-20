@@ -184,7 +184,7 @@ While either Full or Lite bot is running, an independent background timer checks
 
 Loot Scanner keeps its configured scan interval during adaptive performance mode, including when Hold on Place keeps coordinate OCR active. A pending capture or OCR scan finishes before another starts, so slow loops cannot disable scanning or stack overlapping scans.
 
-Enable Loot Scanner (Alt) and Centered Loot Pickup (F). The scanner clicks distant allowed loot to approach it. F is permitted only when a fresh OCR label is inside the central 10% of the game client, using the actual label position even with a coarse grid or an offset scan area. Cooldown (sec) is a minimum delay, not a repeating F timer. Each detection permits one pickup; stale detections expire after 1.5 seconds. Loot After Kill uses the same center check. Scanner frequency still controls how often arrival is checked. Auto-loot settings continue to save automatically to the active profile.
+Enable Loot Scanner (Alt) and Centered Loot Pickup (F). The scanner clicks distant allowed loot to approach it. F is permitted only when a fresh OCR label is inside the central 10% of the game client, using the actual label position even with a coarse grid or an offset scan area. Cooldown (sec) is a minimum delay, not a repeating F timer. Each detection permits one pickup; stale detections expire after 1.5 seconds. Loot After Kill is separate: it presses F once when an attacked mob reaches zero HP or disappears, without requiring scanner detection or the centered-item filter. Scanner frequency still controls how often arrival is checked. Auto-loot settings continue to save automatically to the active profile.
 
 ## Faster leveling and easier setup
 
