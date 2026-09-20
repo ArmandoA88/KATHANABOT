@@ -274,6 +274,10 @@ Public Class BotConfig
     Public Property LiteMpCheckColorEnabled As Boolean = False
     Public Property LiteMpCheckColorArgb As Integer = 0
     Public Property LoopMs As Integer = 80
+    <System.Text.Json.Serialization.JsonIgnore>
+    Public Property DirectKpEnabled As Boolean = False
+    Public Property DirectKpIntervalMs As Integer = 1000
+
     Public Property NormalRetargetEnabled As Boolean = True
     Public Property RetargetMs As Integer = 300
     Public Property ForcedRetargetEnabled As Boolean = True
@@ -976,7 +980,7 @@ Friend Module NativeMethods
     End Function
 End Module
 
-Public Class BotEngine
+Partial Public Class BotEngine
     Public Property Clock As IBotClock = New SystemBotClock()
     Private ReadOnly _keyReadyAt As New Dictionary(Of String, Long)(StringComparer.OrdinalIgnoreCase)
     Public Event StatusUpdated(status As BotStatus)
@@ -1954,6 +1958,7 @@ Public Class BotEngine
             ReleaseAutoLootArrowKey()
             localTask = _task
         End SyncLock
+        StopDirectKpWorker()
 
         If localTask IsNot Nothing Then
             Try
@@ -2191,6 +2196,7 @@ Public Class BotEngine
                                   s.GameDisconnected = False
                               End Sub)
                     RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
+                    Threading.Interlocked.Exchange(_directKpAllowedUntil, 0)
                     Await Task.Delay(loopDelayMs, token)
                     Continue While
                 End If
@@ -2216,6 +2222,7 @@ Public Class BotEngine
                                   s.GameDisconnected = False
                               End Sub)
                     RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
+                    Threading.Interlocked.Exchange(_directKpAllowedUntil, 0)
                     Await Task.Delay(loopDelayMs, token)
                     Continue While
                 End If
@@ -2379,6 +2386,7 @@ Public Class BotEngine
                     liteFrame.Dispose()
                 End If
                 RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
+                Threading.Interlocked.Exchange(_directKpAllowedUntil, 0)
                 Await Task.Delay(loopDelayMs, token)
                 Continue While
             End If
@@ -2394,6 +2402,7 @@ Public Class BotEngine
                               s.GameDisconnected = False
                           End Sub)
                 RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
+                Threading.Interlocked.Exchange(_directKpAllowedUntil, 0)
                 Await Task.Delay(loopDelayMs, token)
                 Continue While
             End If
@@ -2430,6 +2439,7 @@ Public Class BotEngine
                               s.GameDisconnected = False
                           End Sub)
                 RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
+                Threading.Interlocked.Exchange(_directKpAllowedUntil, 0)
                 Await Task.Delay(loopDelayMs, token)
                 Continue While
             End If
@@ -2542,6 +2552,7 @@ Public Class BotEngine
                               s.GameDisconnected = False
                           End Sub)
                 RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
+                Threading.Interlocked.Exchange(_directKpAllowedUntil, 0)
                 Await Task.Delay(loopDelayMs, token)
                 Continue While
             End If
@@ -2576,6 +2587,7 @@ Public Class BotEngine
                     mobHpRegionFrame.Dispose()
                 End If
                 RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
+                Threading.Interlocked.Exchange(_directKpAllowedUntil, 0)
                 Await Task.Delay(loopDelayMs, token)
                 Continue While
             End If
@@ -2909,7 +2921,7 @@ Public Class BotEngine
             If nameOnlyNonMobTarget Then
                 targetSignalHoldActive = False
             End If
-            Dim effectiveTargetValid As Boolean = targetValid OrElse targetSignalHoldActive OrElse ((Not nameOnlyNonMobTarget) AndAlso combatLockActive AndAlso Not targetActionBlocked)
+            Dim effectiveTargetValid As Boolean = cfg.DirectKpEnabled OrElse targetValid OrElse targetSignalHoldActive OrElse ((Not nameOnlyNonMobTarget) AndAlso combatLockActive AndAlso Not targetActionBlocked)
             If cfg.ResuHoldPlaceOnlyModeEnabled Then
                 Dim holdReason As String = ""
                 Dim holdBlocksRetarget As Boolean = False
@@ -2929,6 +2941,7 @@ Public Class BotEngine
                 If frame IsNot Nothing Then frame.Dispose()
                 If mobHpRegionFrame IsNot Nothing Then mobHpRegionFrame.Dispose()
                 RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
+                Threading.Interlocked.Exchange(_directKpAllowedUntil, 0)
                 Await Task.Delay(loopDelayMs, token)
                 Continue While
             End If
@@ -2954,6 +2967,7 @@ Public Class BotEngine
                 End If
                 TriggerLevelingGuardrailPause(cfg, guardrailReason)
                 RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
+                Threading.Interlocked.Exchange(_directKpAllowedUntil, 0)
                 Await Task.Delay(loopDelayMs, token)
                 Continue While
             End If
@@ -3003,7 +3017,7 @@ Public Class BotEngine
                     reason = "Auto Party message sent."
                 End If
             End If
-            If unreachableTriggered AndAlso Not actionSent Then
+            If Not cfg.DirectKpEnabled AndAlso unreachableTriggered AndAlso Not actionSent Then
                 actionSent = True
                 reason = "Unable to reach target detected. Forced retarget."
             End If
@@ -3015,7 +3029,7 @@ Public Class BotEngine
             End If
             Dim forcedRetarget As Boolean = False
 
-            If evadeDadatiTarget AndAlso Not actionSent Then
+            If Not cfg.DirectKpEnabled AndAlso evadeDadatiTarget AndAlso Not actionSent Then
                 If TryEvadeDadatiTarget(hwnd, cfg, now) Then
                     _noDamageTargetSignature = ""
                     _noDamageAttackCount = 0
@@ -3031,7 +3045,7 @@ Public Class BotEngine
                 actionSent = True
             End If
 
-            If nameOnlyNonMobTarget AndAlso Not actionSent Then
+            If Not cfg.DirectKpEnabled AndAlso nameOnlyNonMobTarget AndAlso Not actionSent Then
                 If TrySendRetargetKey(hwnd, cfg, now, "E (non-mob target without HP bar)", forced:=True) Then
                     reason = $"Selected target '{mobName}' has no mob HP bar/life numbers. Retarget key sent."
                     forcedRetarget = True
@@ -3041,7 +3055,7 @@ Public Class BotEngine
                 End If
             End If
 
-            If Not forcedRetarget AndAlso ShouldBypassStuckTarget(cfg, targetWindowVisible, targetValid, now) Then
+            If Not cfg.DirectKpEnabled AndAlso Not forcedRetarget AndAlso ShouldBypassStuckTarget(cfg, targetWindowVisible, targetValid, now) Then
                 If TrySendRetargetKey(hwnd, cfg, now, "E (stuck target bypass)", forced:=True) Then
                     _noDamageTargetSignature = ""
                     _noDamageAttackCount = 0
@@ -3053,7 +3067,7 @@ Public Class BotEngine
                 End If
             End If
 
-            If Not forcedRetarget AndAlso Not actionSent AndAlso avoidHighMaxHpTarget Then
+            If Not cfg.DirectKpEnabled AndAlso Not forcedRetarget AndAlso Not actionSent AndAlso avoidHighMaxHpTarget Then
                 If TrySendRetargetKey(hwnd, cfg, now, "E (avoid high max HP target)", forced:=True) Then
                     _noDamageTargetSignature = ""
                     _noDamageAttackCount = 0
@@ -3085,6 +3099,13 @@ Public Class BotEngine
             ' same moment, so the attack burst below must never run in the same tick as a movement
             ' key - otherwise Hold Place/Navigation corrections keep interrupting active combat.
             Dim movementActionSent As Boolean = False
+            If cfg.DirectKpEnabled AndAlso Not deathPaused AndAlso Not captureGlitch AndAlso
+               Not actionSent AndAlso Not urgentHealth AndAlso Not cfg.ResuHoldPlaceOnlyModeEnabled Then
+                PermitDirectKp(hwnd, cfg, token)
+            Else
+                Threading.Interlocked.Exchange(_directKpAllowedUntil, 0)
+            End If
+
 
             If Not forcedRetarget AndAlso Not actionSentBeforeSupport Then
                 If Not actionSent Then
@@ -3119,12 +3140,12 @@ Public Class BotEngine
                 End If
 
                 ' Recovery and movement reserve this frame before offensive actions.
-                Dim allowBlindAttack As Boolean = AllowBlindAttackWhenTargetMissing AndAlso (Not monsterFilterActive) AndAlso (Not monsterFilterBlockedTarget) AndAlso (Not avoidHighMaxHpTarget) AndAlso (Not _lastNavigationTravelActive)
+                Dim allowBlindAttack As Boolean = cfg.DirectKpEnabled OrElse AllowBlindAttackWhenTargetMissing AndAlso (Not monsterFilterActive) AndAlso (Not monsterFilterBlockedTarget) AndAlso (Not avoidHighMaxHpTarget) AndAlso (Not _lastNavigationTravelActive)
                 ' Buffs must never fire on a filter-disallowed target: blocked in blacklist mode,
                 ' not-listed in whitelist mode (previously only blacklist mode suppressed buffs,
                 ' letting them slip through against a non-whitelisted mob), or not yet OCR-confirmed.
                 Dim suppressOffensiveBuffsForBlacklist As Boolean =
-                    monsterFilterActive AndAlso
+                    Not cfg.DirectKpEnabled AndAlso monsterFilterActive AndAlso
                     (monsterFilterBlockedTarget OrElse blacklistLockActive OrElse Not nameConfirmedForAttack)
                 Dim attackBurst As List(Of ActionRule) = If(Not ActionPriorityPolicy.CanRunOffense(deathPaused, supportSent OrElse fullSupportActionSent, movementActionSent), New List(Of ActionRule)(), ChooseAttackBurstActions(cfg, hpPct, mpPct, effectiveTargetValid, allowBlindAttack, highMaxHpAttackActive, suppressOffensiveBuffsForBlacklist, reason))
                 If attackBurst.Count > 0 Then
@@ -3166,7 +3187,7 @@ Public Class BotEngine
                 End If
             End If
 
-            If Not effectiveTargetValid AndAlso Not actionSent AndAlso Not _lastNavigationTravelActive Then
+            If Not cfg.DirectKpEnabled AndAlso Not effectiveTargetValid AndAlso Not actionSent AndAlso Not _lastNavigationTravelActive Then
                 Dim filterBlockedRetarget As Boolean = targetActionBlocked
                 If _firstHitPending Then
                     If String.IsNullOrWhiteSpace(reason) Then
@@ -11222,7 +11243,7 @@ Public Class BotEngine
     End Function
 
     Private Function TrySendRetargetKey(hwnd As IntPtr, cfg As BotConfig, now As DateTime, actionText As String, Optional forced As Boolean = False) As Boolean
-        If hwnd = IntPtr.Zero OrElse (cfg IsNot Nothing AndAlso cfg.FullSupportModeEnabled) Then
+        If hwnd = IntPtr.Zero OrElse (cfg IsNot Nothing AndAlso (cfg.FullSupportModeEnabled OrElse cfg.DirectKpEnabled)) Then
             Return False
         End If
 
@@ -11255,7 +11276,7 @@ Public Class BotEngine
     End Function
 
     Private Function TrySendConfiguredRetargetAction(hwnd As IntPtr, cfg As BotConfig, context As String) As Boolean
-        If cfg Is Nothing OrElse cfg.Actions Is Nothing Then Return False
+        If cfg Is Nothing OrElse cfg.DirectKpEnabled OrElse cfg.Actions Is Nothing Then Return False
 
         Dim action As ActionRule = cfg.Actions.
             Where(Function(item) item IsNot Nothing AndAlso item.Enabled AndAlso String.Equals(item.Role, "retarget", StringComparison.OrdinalIgnoreCase)).
@@ -11294,7 +11315,7 @@ Public Class BotEngine
     End Sub
 
     Private Function TryEvadeDadatiTarget(hwnd As IntPtr, cfg As BotConfig, now As DateTime) As Boolean
-        If hwnd = IntPtr.Zero OrElse (cfg IsNot Nothing AndAlso cfg.FullSupportModeEnabled) Then
+        If hwnd = IntPtr.Zero OrElse (cfg IsNot Nothing AndAlso (cfg.FullSupportModeEnabled OrElse cfg.DirectKpEnabled)) Then
             Return False
         End If
 
@@ -11923,7 +11944,7 @@ Public Class BotEngine
             cfg = _config
         End SyncLock
 
-        If cfg IsNot Nothing AndAlso cfg.FullSupportModeEnabled Then
+        If cfg IsNot Nothing AndAlso (cfg.FullSupportModeEnabled OrElse cfg.DirectKpEnabled) Then
             Return False
         End If
 
@@ -11949,6 +11970,10 @@ Public Class BotEngine
     End Function
 
     Private Function ChooseAttackBurstActions(cfg As BotConfig, hpPercent As Double, mpPercent As Double, targetValid As Boolean, allowBlindAttack As Boolean, highMaxHpAttackActive As Boolean, suppressOffensiveBuffs As Boolean, ByRef reason As String) As List(Of ActionRule)
+        If cfg.DirectKpEnabled Then
+            allowBlindAttack = True
+            suppressOffensiveBuffs = False
+        End If
         Dim ordered = ActionPriorityPolicy.Ordered(cfg.Actions.Where(Function(a) a.Enabled))
         If ordered.Count = 0 Then
             reason = "No enabled keys."

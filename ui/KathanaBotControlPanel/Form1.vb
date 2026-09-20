@@ -3717,7 +3717,6 @@ Partial Public Class Form1
         _combatTab = BuildCombatTab()
         _visionTab = BuildVisionTab()
         _autoPotTab = BuildAutoPotTab()
-        _mainTabs.TabPages.Add(_liteTab)
         _mainTabs.TabPages.Add(_combatTab)
         _mainTabs.TabPages.Add(_visionTab)
         _mainTabs.TabPages.Add(_autoPotTab)
@@ -4639,7 +4638,7 @@ Partial Public Class Form1
         If _edition = BotEdition.Lite Then
             Text = "KATHANA GAMEBOT - LITE ACTIVE"
         Else
-            Text = "KATHANA GAMEBOT - FULL ACTIVE"
+            Text = If(_directKpEnabled, "KATHANA GAMEBOT - LITE Direct KP", "KATHANA GAMEBOT - FULL ACTIVE")
         End If
 
         If Not GetRunningEdition().HasValue Then
@@ -8468,7 +8467,10 @@ Partial Public Class Form1
         dgvCombat.Columns.Add(roleColumn)
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Priority", .FillWeight = 75.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "TriggerPercent", .HeaderText = "Trigger%", .FillWeight = 62.0F})
-        layout.Controls.Add(dgvCombat, 0, 0)
+        _combatSkillsGroup = group
+        _combatSkillHost = New Panel With {.Dock = DockStyle.Fill}
+        _combatSkillHost.Controls.Add(dgvCombat)
+        layout.Controls.Add(_combatSkillHost, 0, 0)
         layout.Controls.Add(New Label() With {
             .Text = "repair role: watches unreachable_text_rect for about-to-break, broken-soon, needs-repair, or low/critical-durability warnings (with OCR tolerance). After 5 OCR reads inside a 10-minute rolling window it sends the key once, then waits for the warning to clear. TriggerPercent is ignored.",
             .Dock = DockStyle.Fill,
@@ -8633,7 +8635,7 @@ Partial Public Class Form1
             .AutoSize = True,
             .AutoSizeMode = AutoSizeMode.GrowAndShrink,
             .ColumnCount = 1,
-            .RowCount = 26,
+            .RowCount = 27,
             .GrowStyle = TableLayoutPanelGrowStyle.FixedSize,
             .Margin = New Padding(0),
             .Padding = New Padding(4)
@@ -8825,7 +8827,7 @@ Partial Public Class Form1
 
         Dim controls As Control() = {
             lblFullEdition, lblRunState, lblShortcutHint, lblState, lblSystem, hpMpLayout,
-            lblMobName, lblExpRate, lblRupiahsRate, runRow, btnSaveSettings, btnStopBot,
+            lblMobName, lblExpRate, lblRupiahsRate, runRow, BuildDirectKpControls(), btnSaveSettings, btnStopBot,
             btnFullSupport, btnBypassStuck, btnLootAfterKill, btnPartyInviteAutoAccept, btnRessAutoAccept,
             lblPartyAskEvery, nudPartyAskSeconds, lblPartyAskText, txtPartyAskText, partyAskRow, btnProfiles, btnHelp,
             chkDeveloperMode
@@ -9319,6 +9321,7 @@ Partial Public Class Form1
     End Function
 
     Private Sub StartEdition(edition As BotEdition, autoStart As Boolean)
+        If edition = BotEdition.Lite Then Return ' The separate Lite engine has been retired.
         If _workflowModes.Current <> OperatingMode.Idle Then
             RuntimeJournal.Record("Mode blocked", "Stop " & _workflowModes.Current.ToString() & " before starting combat")
             Return
@@ -9378,6 +9381,7 @@ Partial Public Class Form1
     End Sub
 
     Private Sub StopEdition(edition As BotEdition, triggeredByButton As Boolean, context As String)
+        If edition = BotEdition.Full Then DisableDirectKp()
         Dim engine As BotEngine = GetEngineForEdition(edition)
         Dim hardStopSent As Boolean = engine.HardStopMovement(GetSelectedWindowTitleForFallback(edition), context)
         If triggeredByButton Then
@@ -9415,7 +9419,8 @@ Partial Public Class Form1
             _inGameBotToggleX,
             _inGameBotToggleY,
             _inGameBotToggleWidth,
-            _inGameBotToggleHeight)
+            _inGameBotToggleHeight,
+            Function() _directKpEnabled)
         AddHandler _inGameBotToggleForm.ToggleRequested, AddressOf InGameBotToggleRequested
         AddHandler _inGameBotToggleForm.OverlayLayoutChanged, AddressOf InGameBotToggleLayoutChanged
     End Sub
@@ -11654,9 +11659,6 @@ Partial Public Class Form1
 
             Dim desired As New List(Of TabPage)()
             desired.Add(_dashboardTab)
-            If Not runningEdition.HasValue OrElse runningEdition.Value = BotEdition.Lite Then
-                desired.Add(_liteTab)
-            End If
             If Not runningEdition.HasValue OrElse runningEdition.Value = BotEdition.Full Then
                 desired.Add(_combatTab)
                 desired.Add(_visionTab)
@@ -16338,7 +16340,10 @@ Partial Public Class Form1
     End Function
 
     Private Function BuildFullConfig() As BotConfig
-        Return BuildConfig()
+        Dim cfg = BuildConfig()
+        cfg.DirectKpEnabled = _directKpEnabled
+        cfg.DirectKpIntervalMs = CInt(If(_directKpInterval Is Nothing, 1000D, _directKpInterval.Value))
+        Return cfg
     End Function
 
     Private Function BuildLiteConfig() As BotConfig
@@ -18021,6 +18026,7 @@ Partial Public Class Form1
     End Sub
 
     Private Sub ApplySavedConfigToUi(cfg As BotConfig)
+        If cfg IsNot Nothing AndAlso _directKpInterval IsNot Nothing Then _directKpInterval.Value = Math.Clamp(cfg.DirectKpIntervalMs, 200, 60000)
         If cfg Is Nothing Then
             Return
         End If
@@ -19234,7 +19240,7 @@ Partial Public Class Form1
 
         If btnAttack IsNot Nothing Then
             If fullRunning Then
-                btnAttack.Text = "RUNNING"
+                btnAttack.Text = If(_directKpEnabled, "LITE RUNNING", "FULL RUNNING")
                 btnAttack.BackColor = BotRunningColor
                 btnAttack.ForeColor = Color.White
             Else
@@ -19250,6 +19256,7 @@ Partial Public Class Form1
             btnLiteAttack.ForeColor = Color.White
         End If
 
+        UpdateDirectKpButton()
         If btnStopBot IsNot Nothing Then
             btnStopBot.Enabled = fullRunning
         End If
@@ -19260,12 +19267,12 @@ Partial Public Class Form1
         End If
 
         If lblRunState IsNot Nothing Then
-            lblRunState.Text = If(fullRunning, "FULL BOT RUNNING", "FULL BOT STOPPED")
+            lblRunState.Text = If(_directKpEnabled, "LITE Direct KP", "FULL BOT") & If(fullRunning, " RUNNING", " STOPPED")
             lblRunState.BackColor = If(fullRunning, BotRunningColor, StatusStoppedOrDeadColor)
             lblRunState.ForeColor = Color.White
         End If
         If lblFullEdition IsNot Nothing Then
-            lblFullEdition.Text = If(liteRunning, "FULL VERSION - LITE BOT RUNNING", "FULL VERSION - for more powerful computers")
+            lblFullEdition.Text = If(_directKpEnabled, "LITE Direct KP - direct targeting / skill cards", "FULL VERSION - for more powerful computers")
         End If
 
         If lblLiteRunState IsNot Nothing Then
@@ -20324,6 +20331,7 @@ Partial Public Class Form1
     End Sub
 
     Private Sub ApplyTintRecursive(control As Control, tint As Color, blendAmount As Double)
+        If control IsNot Nothing AndAlso Equals(control.Tag, "direct-kp-scope") Then Return
         If control Is Nothing Then
             Return
         End If
@@ -20406,7 +20414,8 @@ Partial Public Class Form1
     Private Sub ApplyDarkTheme(control As Control)
         Dim themeScope As String = If(control.Tag, "").ToString()
         If String.Equals(themeScope, "lite-scope", StringComparison.OrdinalIgnoreCase) OrElse
-           String.Equals(themeScope, "dashboard-scope", StringComparison.OrdinalIgnoreCase) Then
+           String.Equals(themeScope, "dashboard-scope", StringComparison.OrdinalIgnoreCase) OrElse
+           String.Equals(themeScope, "direct-kp-scope", StringComparison.OrdinalIgnoreCase) Then
             Return
         End If
         ' Dashboard cards/play-pause button pick their own colors deliberately (rounded-card fill,

@@ -1,4 +1,4 @@
-Imports System.Drawing.Drawing2D
+﻿Imports System.Drawing.Drawing2D
 
 Friend Class InGameBotToggleForm
     Inherits Form
@@ -84,6 +84,7 @@ Friend Class InGameBotToggleForm
 
     Private ReadOnly _windowProvider As Func(Of IntPtr)
     Private ReadOnly _editionProvider As Func(Of BotEdition)
+    Private ReadOnly _liteModeProvider As Func(Of Boolean)
     Private ReadOnly _runningProvider As Func(Of BotEdition, Boolean)
     Private ReadOnly _statusProvider As Func(Of BotEdition, BotStatus)
     Private ReadOnly _timer As New Timer()
@@ -119,8 +120,10 @@ Friend Class InGameBotToggleForm
         clientX As Integer,
         clientY As Integer,
         overlayWidth As Integer,
-        overlayHeight As Integer)
+        overlayHeight As Integer,
+        Optional liteModeProvider As Func(Of Boolean) = Nothing)
 
+        _liteModeProvider = liteModeProvider
         _windowProvider = windowProvider
         _editionProvider = editionProvider
         _runningProvider = runningProvider
@@ -383,8 +386,9 @@ Friend Class InGameBotToggleForm
         Dim powerSize As Integer = Math.Min(27, Math.Max(22, bounds.Height - 40))
         Dim powerRect As New Rectangle(bounds.Right - powerSize - 10, 8, powerSize, powerSize)
         Dim headingWidth As Integer = Math.Max(30, powerRect.Left - contentLeft - 5)
-        Dim editionText As String = If(_lastEdition.GetValueOrDefault(BotEdition.Full) = BotEdition.Lite, "LITE BOT", "FULL BOT")
-        Dim stateText As String = If(running, "ACTIVE", "STOPPED")
+        Dim liteDisplay As Boolean = If(_liteModeProvider IsNot Nothing, _liteModeProvider.Invoke(), _lastEdition.GetValueOrDefault(BotEdition.Full) = BotEdition.Lite)
+        Dim editionText As String = If(liteDisplay, "LITE", "FULL")
+        Dim stateText As String = If(running, "RUNNING", "STOPPED")
 
         Using headingFont As New Font("Segoe UI Semibold", 8.4F, FontStyle.Bold),
               stateFont As New Font("Segoe UI", 7.4F, FontStyle.Bold),
@@ -437,7 +441,8 @@ Friend Class InGameBotToggleForm
         Dim mobHp As Double = If(status Is Nothing, -1, ClampPercent(status.MobHpPercent))
         Dim mobName As String = If(status Is Nothing, "", If(status.MobName, "").Trim())
         Dim targetValid As Boolean = status IsNot Nothing AndAlso status.TargetValid AndAlso mobName <> ""
-        Dim signature As String = $"{edition}|{running}|{hp:0.0}|{mp:0.0}|{expRate:0.00}|{mobHp:0.0}|{targetValid}|{mobName}"
+        Dim liteDisplay As Boolean = If(_liteModeProvider IsNot Nothing, _liteModeProvider.Invoke(), edition = BotEdition.Lite)
+        Dim signature As String = $"{edition}|{liteDisplay}|{running}|{hp:0.0}|{mp:0.0}|{expRate:0.00}|{mobHp:0.0}|{targetValid}|{mobName}"
         If _lastStatusSignature.Equals(signature, StringComparison.Ordinal) Then
             Return
         End If
@@ -451,7 +456,7 @@ Friend Class InGameBotToggleForm
         _displayMobHp = mobHp
         _displayTarget = mobName
         _displayTargetValid = targetValid
-        _toggleButton.AccessibleDescription = If(running, $"Active. HP {hp:0} percent, MP {mp:0} percent, target {If(targetValid, mobName, "searching")}. Click to stop.", "Stopped. Click to start.")
+        _toggleButton.AccessibleDescription = If(running, $"{If(liteDisplay, "LITE RUNNING", "FULL RUNNING")}. HP {hp:0} percent, MP {mp:0} percent, target {If(targetValid, mobName, "searching")}. Click to stop.", "Stopped. Click to start.")
         _toggleButton.Invalidate()
     End Sub
 
