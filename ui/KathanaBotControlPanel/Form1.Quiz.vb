@@ -245,6 +245,12 @@ Partial Public Class Form1
     Private Sub UnlockQuizTab()
         If _quizUnlocked OrElse _quizTab Is Nothing OrElse _mainTabs Is Nothing Then Return
         _quizUnlocked = True
+        Try
+            System.IO.Directory.CreateDirectory(PersistDirectoryPath)
+            System.IO.File.WriteAllText(System.IO.Path.Combine(PersistDirectoryPath, "hidden-tabs-version.txt"), GetType(Form1).Assembly.GetName().Version.ToString())
+        Catch ex As Exception
+            AppendLog("Could not remember hidden-tab unlock: " & ex.Message)
+        End Try
         ApplyDarkTheme(_quizTab)
         ApplyDarkTheme(_resuTab)
         ApplyDarkTheme(_tradeTab)
@@ -260,6 +266,18 @@ Partial Public Class Form1
         UpdateTabIndicatorTarget()
         ' The sequence also reveals RESU, which uses local OCR and needs no API key.
         ' Quiz already exposes its own Configure API Key button.
+    End Sub
+
+    Private Sub RestoreHiddenTabUnlock()
+        Try
+            Dim path = System.IO.Path.Combine(PersistDirectoryPath, "hidden-tabs-version.txt")
+            If System.IO.File.Exists(path) AndAlso System.IO.File.ReadAllText(path).Trim() = GetType(Form1).Assembly.GetName().Version.ToString() Then
+                UnlockQuizTab()
+                _mainTabs.SelectedTab = _dashboardTab
+            End If
+        Catch ex As Exception
+            AppendLog("Could not restore hidden-tab unlock: " & ex.Message)
+        End Try
     End Sub
 
     Private Sub ConfigureQuizApiKey()

@@ -1,3 +1,21 @@
+﻿## 1.0.213
+- Reset All Settings disables features and overlays, clears calibration and lists, and resets cooldowns to supported minimums while preserving saved character profiles.
+- Home pulses red at zero character HP; stopped bots have a red surface tint.
+- Hidden tabs remain unlocked across restarts of the same app version and require the password again after an update.
+- Daily rupiah projection now uses wallet-sized gray text.
+- Added a switch for the in-game bot overlay so Reset All Settings can turn it off too.
+
+## 1.0.212
+- Fixed Trade selections clearing the whisper queue when a custom message omitted {items}. Plain messages now work unchanged; optional item substitution and exact-case recipient names are preserved.
+
+## 1.0.211
+- Added Reset All Settings beside Profiles, with explicit confirmation; resets current settings and keeps saved character profiles.
+- Suppressed persistence and live config pushes during profile application; committed overlay drags save immediately.
+- Preserved saved calibration coordinates, including older factory coordinates, instead of migrating them on reload.
+- Remembered Full/LITE Direct KP selection across bot stop/start and in saved profiles.
+- Clarified target calibration labels: Mob HP - Red Bar and Mob HP - Numbers (OCR).
+- Added a colorful monitor icon to Remote Desktop Mosaic.
+
 # KathanaBot 1.0.210
 
 ## What changed

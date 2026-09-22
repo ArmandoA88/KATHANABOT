@@ -157,6 +157,7 @@ Partial Public Class Form1
     Private btnRestoreCalibrationRegions As Button
     Private chkChatTranslationEnabled As CheckBox
     Private chkChatTranslationOverlay As CheckBox
+    Private chkInGameBotOverlay As CheckBox
     Private cboChatTargetLanguage As ComboBox
     Private nudChatScanMs As NumericUpDown
     Private nudChatMaxLines As NumericUpDown
@@ -820,6 +821,9 @@ Partial Public Class Form1
         Private ReadOnly _lblCaption As New Label()
         Private ReadOnly _lblValue As New Label()
         Private ReadOnly _lblSecondary As New Label()
+        Private ReadOnly _lblDaily As New Label()
+        Private _requestedGraphHeight As Integer = 64
+        Private _hasDailyProjection As Boolean
         Private ReadOnly _lblBadge As New Label()
         Private ReadOnly _progressMeter As New DashboardProgressMeter()
         Private ReadOnly _sparkline As New DashboardSparkline()
@@ -864,6 +868,15 @@ Partial Public Class Form1
             _lblBadge.ForeColor = ThemeGood
 
             Controls.Add(_lblValue)
+            _lblDaily.Dock = DockStyle.Bottom
+            _lblDaily.Height = 30
+            _lblDaily.Font = New Font("Segoe UI Semibold", 18.0F, FontStyle.Bold)
+            _lblDaily.Height = Math.Max(34, _lblDaily.Font.Height + 2)
+            _lblDaily.ForeColor = ThemeTextSecondary
+            _lblDaily.BackColor = Color.Transparent
+            _lblDaily.AutoEllipsis = True
+            _lblDaily.Visible = False
+            Controls.Add(_lblDaily)
             Controls.Add(_lblSecondary)
             Controls.Add(_sparkline)
             Controls.Add(_progressMeter)
@@ -918,6 +931,13 @@ Partial Public Class Form1
             End If
         End Sub
 
+        Public Sub SetDailyProjection(text As String)
+            _lblDaily.Text = text
+            _hasDailyProjection = text <> ""
+            _lblDaily.Visible = _hasDailyProjection
+            _sparkline.SetGraphHeight(_requestedGraphHeight - If(_hasDailyProjection, _lblDaily.Height, 0))
+        End Sub
+
         Public Sub SetProgress(percent As Double, color As Color, Optional showMeter As Boolean = True)
             _progressMeter.SetProgress(percent, color, showMeter)
         End Sub
@@ -930,7 +950,8 @@ Partial Public Class Form1
         End Sub
 
         Public Sub SetGraphHeight(value As Integer)
-            _sparkline.SetGraphHeight(value)
+            _requestedGraphHeight = value
+            _sparkline.SetGraphHeight(value - If(_hasDailyProjection, _lblDaily.Height, 0))
         End Sub
 
         Public Sub SetValueFont(size As Single, Optional style As FontStyle = FontStyle.Bold)
@@ -999,7 +1020,7 @@ Partial Public Class Form1
             End Using
 
             Dim cardRect As New Rectangle(1, 1, Width - 3, Height - 6)
-            Dim fillColor As Color = BlendColors(ThemeCard, _accentColor, 0.035 + (_hoverAmount * 0.055))
+            Dim fillColor As Color = BlendColors(BackColor, _accentColor, 0.035 + (_hoverAmount * 0.055))
             Dim borderColor As Color = BlendColors(ThemeCardBorder, _accentColor, 0.2 + (_hoverAmount * 0.65))
             Using path As Drawing2D.GraphicsPath = RoundedRectPath(cardRect, 22)
                 Using fillBrush As New SolidBrush(fillColor)
@@ -1318,7 +1339,7 @@ Partial Public Class Form1
             End Using
             Dim rect As New Rectangle(1, 1, Width - 3, Height - 6)
             Using path As Drawing2D.GraphicsPath = RoundedRectPath(rect, 22)
-                Using fillBrush As New SolidBrush(BlendColors(ThemeCard, ThemeAccent, 0.035))
+                Using fillBrush As New SolidBrush(BlendColors(BackColor, ThemeAccent, 0.035))
                     e.Graphics.FillPath(fillBrush, path)
                 End Using
                 Using borderPen As New Pen(BlendColors(ThemeCardBorder, ThemeAccent, 0.25), 1.2F)
@@ -2323,11 +2344,13 @@ Partial Public Class Form1
 
     Private Class PersistedAppState
         Public Property ActiveProfileName As String = ""
+        Public Property LiteDirectKpSelected As Boolean = False
         Public Property WindowTitle As String = DefaultGameWindowTitle
         Public Property PeriodicScreenshotsEnabled As Boolean = False
         Public Property PeriodicScreenshotIntervalMinutes As Decimal = 15D
         Public Property PeriodicScreenshotDirectory As String = ""
         Public Property InGameBotToggleX As Integer = -1
+        Public Property InGameBotOverlayEnabled As Boolean = True
         Public Property InGameBotToggleY As Integer = 10
         Public Property InGameBotToggleWidth As Integer = 220
         Public Property InGameBotToggleHeight As Integer = 76
@@ -2501,6 +2524,8 @@ Partial Public Class Form1
         End If
         CaptureThemeSnapshot(Me)
         _themeSnapshotCaptured = True
+        RestoreHiddenTabUnlock()
+        InitializeSurfaceAlerts()
 
         AddHandler _fullEngine.StatusUpdated, Sub(status As BotStatus) OnEngineStatusUpdated(BotEdition.Full, status)
         AddHandler _liteEngine.StatusUpdated, Sub(status As BotStatus) OnEngineStatusUpdated(BotEdition.Lite, status)
@@ -3622,6 +3647,7 @@ Partial Public Class Form1
     End Sub
 
     Private Sub PushLiveConfig()
+        If _applyingSettings Then Return
         ' NOTE: this used to bail out entirely whenever dgvCombat/dgvRegions reported
         ' IsCurrentCellInEditMode. Checkbox/combo columns commit their edit (CommitEdit) without
         ' immediately ending it, so that flag can still read True for a moment right as the
@@ -3915,6 +3941,7 @@ Partial Public Class Form1
         cardDashSession.SetCaption("$  RUPIAH")
         cardDashSession.SetValue("Waiting for reading", ThemeTextSecondary)
         cardDashSession.SetSecondary("Wallet, session earnings, and hourly rate appear here.")
+        cardDashSession.SetSecondaryHeight(32)
         cardDashSession.SetGraphHeight(64)
         _dashboardCardHost.Controls.Add(cardDashSession, 4, 1)
         _dashboardCardHost.SetColumnSpan(cardDashSession, 2)
@@ -4208,10 +4235,11 @@ Partial Public Class Form1
         End If
 
         Dim rupiahAccent As Color = Color.FromArgb(245, 195, 85)
+        cardDashSession.SetDailyProjection(If(edition = BotEdition.Full AndAlso status.RupiahsPerHour >= 0, $"{(status.RupiahsPerHour * 24.0):N0}/day", ""))
         cardDashSession.AccentColor = rupiahAccent
         If edition = BotEdition.Full AndAlso status.RupiahsTotal >= 0 Then
             cardDashSession.SetValue($"{status.RupiahsTotal:N0} wallet", rupiahAccent)
-            Dim projectionText As String = If(status.RupiahsPerHour < 0, "projection calculating", $"Projected {status.RupiahsPerHour:N0}/hr  ·  {(status.RupiahsPerHour * 24.0):N0}/day")
+            Dim projectionText As String = If(status.RupiahsPerHour < 0, "projection calculating", $"Projected {status.RupiahsPerHour:N0}/hr")
             Dim baselineText As String = If(_dashboardRunBaseRupiahs < 0, "waiting", _dashboardRunBaseRupiahs.ToString("N0"))
             cardDashSession.SetSecondary($"{_dashboardSessionRupiahsEarned.ToString("+#,##0;-#,##0;0")} from fixed baseline {baselineText}{Environment.NewLine}{projectionText}  ·  confirmed OCR only")
             cardDashSession.SetRateHistory(_dashboardRupiahRateHistory, rupiahAccent, _dashboardRupiahRateHistory.Count > 0, "N0", " Rupiah/hr", DashboardRateHistoryIntervalSeconds)
@@ -5678,29 +5706,18 @@ Partial Public Class Form1
         End If
 
         Try
-            ' Flush edits to the outgoing profile before replacing the live settings.
+            Dim incomingJson As String = File.ReadAllText(sourcePath)
+            Dim incoming = JsonSerializer.Deserialize(Of PersistedAppState)(incomingJson)
+            If incoming Is Nothing Then Throw New InvalidDataException("Profile is empty.")
             SavePersistedListState(True, True)
-            ' Same atomic temp-file-then-replace approach as SavePersistedListState, so a failed
-            ' load can never leave the live settings file half-written.
             _persistDebounceTimer.Stop()
             _pendingPersistState = Nothing
-            SyncLock _persistFileLock
-                Dim tempFilePath As String = PersistFilePath & ".tmp"
-                Dim backupFilePath As String = PersistFilePath & ".bak"
-                File.Copy(sourcePath, tempFilePath, overwrite:=True)
-                If File.Exists(PersistFilePath) Then
-                    File.Replace(tempFilePath, PersistFilePath, backupFilePath, ignoreMetadataErrors:=True)
-                Else
-                    File.Move(tempFilePath, PersistFilePath)
-                End If
-            End SyncLock
-
-            LoadPersistedListState()
-            PushLiveConfig()
+            Threading.Interlocked.Increment(_persistWriteRevision)
+            CloseCalibrationEditors()
+            LoadPersistedListState(incomingJson)
             _activeProfileName = profileName
             UpdateProfilesButtonAppearance()
-            ' Persist the selected profile marker in the live settings file. Older profile files
-            ' did not contain this field, so the selection would otherwise disappear on restart.
+            PushLiveConfig()
             SavePersistedListState(True, True)
             AppendLog($"Profile ""{profileName}"" loaded.")
         Catch ex As Exception
@@ -5949,6 +5966,10 @@ Partial Public Class Form1
         generalLayout.Controls.Add(New Label() With {.Text = "Overlay Lines", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft}, 0, 10)
         nudChatMaxLines = New NumericUpDown() With {.Dock = DockStyle.Fill, .Minimum = 1, .Maximum = 12, .Value = 6}
         generalLayout.Controls.Add(nudChatMaxLines, 1, 10)
+        chkInGameBotOverlay = New CheckBox With {.Text = "Show in-game bot overlay", .Dock = DockStyle.Fill, .Checked = True}
+        AddHandler chkInGameBotOverlay.CheckedChanged, Sub() SavePersistedListState(False)
+        generalLayout.Controls.Add(chkInGameBotOverlay, 2, 10)
+        generalLayout.SetColumnSpan(chkInGameBotOverlay, 2)
 
         lblChatTranslationStatus = New Label() With {
             .Text = "Chat Translation: idle. Calibrate chat_rect in Regions, then keep the chat window visible.",
@@ -5984,6 +6005,7 @@ Partial Public Class Form1
         dgvRegions.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Y"})
         dgvRegions.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "W"})
         dgvRegions.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "H"})
+        AddHandler dgvRegions.CellFormatting, AddressOf FormatCalibrationRegionName
         regionLayout.Controls.Add(dgvRegions, 0, 1)
 
         Dim lootAreaPanel As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 4, .RowCount = 1, .Margin = New Padding(0, 6, 0, 0)}
@@ -8855,7 +8877,7 @@ Partial Public Class Form1
             lblFullEdition, lblRunState, lblShortcutHint, lblState, lblSystem, hpMpLayout,
             lblMobName, lblExpRate, lblRupiahsRate, runRow, BuildDirectKpControls(), BuildAutoAssistButton(), btnSaveSettings, btnStopBot,
             btnFullSupport, btnBypassStuck, btnLootAfterKill, btnPartyInviteAutoAccept, btnRessAutoAccept,
-            lblPartyAskEvery, nudPartyAskSeconds, lblPartyAskText, txtPartyAskText, partyAskRow, btnProfiles, btnHelp,
+            lblPartyAskEvery, nudPartyAskSeconds, lblPartyAskText, txtPartyAskText, partyAskRow, BuildProfileSettingsButtons(), btnHelp,
             chkDeveloperMode
         }
         For rowIndex As Integer = 0 To controls.Length - 1
@@ -9409,7 +9431,7 @@ Partial Public Class Form1
     End Sub
 
     Private Sub StopEdition(edition As BotEdition, triggeredByButton As Boolean, context As String)
-        If edition = BotEdition.Full Then DisableDirectKp()
+        If edition = BotEdition.Full Then _fullEngine.StopDirectKpWorker()
         Dim engine As BotEngine = GetEngineForEdition(edition)
         Dim hardStopSent As Boolean = engine.HardStopMovement(GetSelectedWindowTitleForFallback(edition), context)
         If triggeredByButton Then
@@ -9463,6 +9485,7 @@ Partial Public Class Form1
     End Function
 
     Private Function GetInGameBotToggleWindowHandle() As IntPtr
+        If chkInGameBotOverlay IsNot Nothing AndAlso Not chkInGameBotOverlay.Checked Then Return IntPtr.Zero
         Dim targetEdition As BotEdition = ResolveInGameBotToggleEdition()
         Dim selected As ProcessWindowEntry = GetSelectedProcessWindowForEdition(targetEdition)
         If selected Is Nothing OrElse Not IsPreferredKathanaWindow(selected) Then
@@ -13853,6 +13876,7 @@ Partial Public Class Form1
 
         UpdateRegionGridRow(regionName, region)
         PushLiveConfig()
+        SavePersistedListState(True, True)
         AppendLog($"Overlay updated {regionName}: x={region.X}, y={region.Y}, w={region.W}, h={region.H}")
     End Sub
 
@@ -13874,6 +13898,7 @@ Partial Public Class Form1
 
         UpdateLootScanAreaText(points)
         PushLiveConfig()
+        SavePersistedListState(True, True)
         AppendLog("Overlay updated loot_scan_area: " & FormatLootScanPoints(points))
     End Sub
 
@@ -17454,9 +17479,10 @@ Partial Public Class Form1
         End Try
     End Function
 
-    Private Sub LoadPersistedListState()
+    Private Sub LoadPersistedListState(Optional suppliedJson As String = Nothing)
+        _applyingSettings = True
         Try
-            Dim raw As String = ReadPersistedStateRawWithFallback()
+            Dim raw As String = If(suppliedJson, ReadPersistedStateRawWithFallback())
             If String.IsNullOrWhiteSpace(raw) Then
                 Return
             End If
@@ -17488,6 +17514,8 @@ Partial Public Class Form1
                 Return
             End If
 
+            _directKpEnabled = appState IsNot Nothing AndAlso appState.LiteDirectKpSelected
+            UpdateDirectKpButton()
             _dashboardModeLoading = True
             Try
                 Dim savedDashboardMode As String = If(appState IsNot Nothing, appState.DashboardMode, "Compact")
@@ -17543,6 +17571,7 @@ Partial Public Class Form1
             ApplyPersistedTradeState(If(appState IsNot Nothing, appState.Trade, Nothing))
 
             Dim savedToggleX As Integer = If(appState IsNot Nothing, appState.InGameBotToggleX, -1)
+            If chkInGameBotOverlay IsNot Nothing Then chkInGameBotOverlay.Checked = appState Is Nothing OrElse appState.InGameBotOverlayEnabled
             _inGameBotToggleX = If(savedToggleX < 0, -1, savedToggleX)
             _inGameBotToggleY = Math.Max(0, If(appState IsNot Nothing, appState.InGameBotToggleY, 10))
             _inGameBotToggleWidth = Math.Max(188, Math.Min(360, If(appState IsNot Nothing, appState.InGameBotToggleWidth, 220)))
@@ -17604,7 +17633,7 @@ Partial Public Class Form1
             End If
             _autoPartyMessageEnabled = state.AutoPartyMessageEnabled
             If txtAutoPartyMessageText IsNot Nothing Then
-                txtAutoPartyMessageText.Text = If(String.IsNullOrWhiteSpace(state.AutoPartyMessageText), DefaultAutoPartyMessageText, state.AutoPartyMessageText.Trim())
+                txtAutoPartyMessageText.Text = If(state.AutoPartyMessageText, DefaultAutoPartyMessageText).Trim()
             End If
             If txtItemAwardSkipTerms IsNot Nothing Then
                 txtItemAwardSkipTerms.Text = If(state.LootAwardSkipTerms, DefaultLootAwardSkipTermsText)
@@ -17687,7 +17716,7 @@ Partial Public Class Form1
                 nudPartyAskSeconds.Value = boundedAskSeconds
             End If
             If txtPartyAskText IsNot Nothing Then
-                txtPartyAskText.Text = If(String.IsNullOrWhiteSpace(state.AskForPartyText), DefaultPartyAskCommand, state.AskForPartyText.Trim())
+                txtPartyAskText.Text = If(state.AskForPartyText, DefaultPartyAskCommand).Trim()
             End If
             UpdatePartyAskButton()
             UpdateChatMessageInputModeButton()
@@ -17698,7 +17727,7 @@ Partial Public Class Form1
                 nudAskForResurrectSeconds.Value = boundedResuAskSeconds
             End If
             If txtAskForResurrectText IsNot Nothing Then
-                txtAskForResurrectText.Text = If(String.IsNullOrWhiteSpace(state.AskForResurrectText), DefaultResurrectAskCommand, state.AskForResurrectText.Trim())
+                txtAskForResurrectText.Text = If(state.AskForResurrectText, DefaultResurrectAskCommand).Trim()
             End If
             If chkAskForResurrectMapCoords IsNot Nothing Then
                 chkAskForResurrectMapCoords.Checked = state.AskForResurrectMapCoordsEnabled
@@ -17800,10 +17829,13 @@ Partial Public Class Form1
             ApplyPersistedLiteState(liteState)
         Catch ex As Exception
             AppendLog("Unable to load saved lists: " & ex.Message)
+        Finally
+            _applyingSettings = False
         End Try
     End Sub
 
     Private Sub SavePersistedListState(Optional logFailure As Boolean = False, Optional includeFullConfig As Boolean = True)
+        If _applyingSettings Then Return
         Dim appState As PersistedAppState = Nothing
         Try
             CommitPendingGridEdits()
@@ -17910,11 +17942,13 @@ Partial Public Class Form1
 
             appState = New PersistedAppState With {
                 .ActiveProfileName = _activeProfileName,
+                .LiteDirectKpSelected = _directKpEnabled,
                 .WindowTitle = GetSelectedWindowTitleForFallback(If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full)),
                 .PeriodicScreenshotsEnabled = (chkPeriodicScreenshots IsNot Nothing AndAlso chkPeriodicScreenshots.Checked),
                 .PeriodicScreenshotIntervalMinutes = If(nudPeriodicScreenshotMinutes IsNot Nothing, nudPeriodicScreenshotMinutes.Value, 15D),
                 .PeriodicScreenshotDirectory = GetPeriodicScreenshotDirectory(),
                 .InGameBotToggleX = _inGameBotToggleX,
+                .InGameBotOverlayEnabled = chkInGameBotOverlay IsNot Nothing AndAlso chkInGameBotOverlay.Checked,
                 .InGameBotToggleY = _inGameBotToggleY,
                 .InGameBotToggleWidth = _inGameBotToggleWidth,
                 .InGameBotToggleHeight = _inGameBotToggleHeight,
@@ -20362,7 +20396,6 @@ Partial Public Class Form1
     End Sub
 
     Private Sub ApplyTintRecursive(control As Control, tint As Color, blendAmount As Double)
-        If control IsNot Nothing AndAlso Equals(control.Tag, "direct-kp-scope") Then Return
         If control Is Nothing Then
             Return
         End If

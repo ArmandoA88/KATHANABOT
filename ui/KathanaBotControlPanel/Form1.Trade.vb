@@ -82,7 +82,7 @@ Partial Public Class Form1
         setupActions.Controls.AddRange({aiKey, parse, help})
         settings.Controls.Add(setupActions, 0, 3)
         settings.SetColumnSpan(setupActions, 2)
-        Dim privacy As New Label With {.Text = "Analyze sends pasted posts to OpenAI. Review the queue before Start. {items} inserts matching items.", .AutoSize = True, .Dock = DockStyle.Fill}
+        Dim privacy As New Label With {.Text = "Analyze sends pasted posts to OpenAI. Review the queue before Start. Optional: {items} inserts matching items; plain messages are sent as written.", .AutoSize = True, .Dock = DockStyle.Fill}
         settings.Controls.Add(privacy, 0, 4)
         settings.SetColumnSpan(privacy, 2)
         options.Controls.Add(settings, 2, 0)

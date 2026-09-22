@@ -577,36 +577,9 @@ Public Class BotConfig
             cfg.WindowTitle = "Kathana - The Reign of Shadow"
         End If
 
-        Dim legacyHp As New RectRegion(11, 25, 151, 11)
-        Dim legacyMp As New RectRegion(3, 40, 161, 11)
-        Dim legacyMobName As New RectRegion(860, 711, 162, 23)
-        Dim legacyMobHp As New RectRegion(859, 737, 165, 11)
-        Dim usesLegacyHud As Boolean =
-            SameRect(cfg.HpBar, legacyHp) AndAlso
-            SameRect(cfg.MpBar, legacyMp) AndAlso
-            SameRect(cfg.MobNameRect, legacyMobName) AndAlso
-            SameRect(cfg.MobHpRect, legacyMobHp)
+        ' Saved coordinates are authoritative, including values matching older defaults.
+        If cfg.MobLifeRect Is Nothing Then cfg.MobLifeRect = DefaultMobLifeRect()
 
-        If usesLegacyHud Then
-            cfg.HpBar = DefaultHpBarRect()
-            cfg.MpBar = DefaultMpBarRect()
-            cfg.MobNameRect = DefaultMobNameRect()
-            cfg.MobHpRect = DefaultMobHpRect()
-        End If
-
-        ' The original warning crop was too narrow for equipment names followed by
-        ' "is about to break", so longer item names could hide the repair keywords.
-        ' Only migrate the exact old default; preserve every custom calibration.
-        If SameRect(cfg.UnreachableTextRect, New RectRegion(15, 582, 128, 22)) Then
-            cfg.UnreachableTextRect = New RectRegion(15, 582, 430, 22)
-        End If
-
-        ' mob_life_rect was added after mob_hp_rect. Older saved configs can retain the
-        ' obsolete bottom-right rectangle even after the other target regions were moved.
-        If cfg.MobLifeRect Is Nothing OrElse
-           (SameRect(cfg.MobLifeRect, legacyMobHp) AndAlso Not SameRect(cfg.MobHpRect, legacyMobHp)) Then
-            cfg.MobLifeRect = DefaultMobLifeRect()
-        End If
     End Sub
 
     Private Shared Function SameRect(a As RectRegion, b As RectRegion) As Boolean

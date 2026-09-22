@@ -12,6 +12,16 @@ Module Program
         TestAiExtraction().GetAwaiter().GetResult()
         TestTradePrices()
         Dim example = "PulgaAPP9/14/2026 10:24 PM" & vbLf & "**SELL ROR YASKA-- SELL LIFE KAKANA 5M --S= VOUCHER 1.7KK- S=ASBA RING 2.5"
+        Dim customMessage = "Hi! I would like to buy yy3. how much?"
+        Dim customListings As New List(Of TradeListing) From {
+            New TradeListing With {.CharacterName = "IIAKISHAII", .Intent = "sell", .ItemKey = "YY3", .ItemText = "YY3"},
+            New TradeListing With {.CharacterName = "Ambo", .Intent = "sell", .ItemKey = "YY3", .ItemText = "YY3"},
+            New TradeListing With {.CharacterName = "Buyer", .Intent = "buy", .ItemKey = "YY3", .ItemText = "YY3"}}
+        Dim customQueue = TradeAiService.BuildQueue(customListings, True, {"YY3"}, customMessage)
+        Check(customQueue.Select(Function(row) row.CharacterName).SequenceEqual({"IIAKISHAII", "Ambo"}), "Custom message lost exact-case sellers")
+        Check(customQueue.All(Function(row) row.Message = customMessage), "Literal custom message was changed")
+        Check(TradeAiService.BuildQueue(customListings, True, {"YY3"}, "Buy {items}").All(Function(row) row.Message = "Buy YY3"), "Optional item substitution broke")
+        Check(TradeService.ParsePosts("Ambo", "YY3", True, customMessage).Single().Message = customMessage, "Manual-name parser rejects literal message")
         Dim parsed = TradeService.ParsePosts(example, "ROR YAKSA|ROR YASKA, VOUCHER", True, TradeService.BuyTemplate)
         Check(parsed.Count = 1 AndAlso parsed(0).CharacterName = "Pulga", "APP/date header or original capitalization failed")
         Check(parsed(0).Items = "ROR YAKSA, VOUCHER", "Multiple clauses or alias matching failed")

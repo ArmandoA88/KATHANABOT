@@ -51,6 +51,7 @@
         _directKpEnabled = True
         UpdateDirectKpButton()
         PushLiveConfig()
+        SavePersistedListState(False)
         AppendLog("LITE Direct KP enabled: E/R replaces target selection. Monster filters and target-based features may not work correctly.")
     End Sub
 
@@ -62,6 +63,7 @@
         _directKpEnabled = False
         UpdateDirectKpButton()
         PushLiveConfig()
+        SavePersistedListState(False)
         _fullEngine.StopDirectKpWorker()
     End Sub
 

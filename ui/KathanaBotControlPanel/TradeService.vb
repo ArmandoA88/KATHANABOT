@@ -1,4 +1,4 @@
-Imports System.Text.RegularExpressions
+﻿Imports System.Text.RegularExpressions
 Imports System.Threading
 
 Public Class TradeRecipient
@@ -47,7 +47,7 @@ Public NotInheritable Class TradeService
             Select(Function(item) item.Split("|"c).Select(Function(aliasText) aliasText.Trim()).Where(Function(aliasText) aliasText.Length > 0).ToArray()).
             Where(Function(aliases) aliases.Length > 0).ToList()
         If items.Count = 0 Then Throw New ArgumentException("Enter at least one item to buy or sell.")
-        If String.IsNullOrWhiteSpace(template) OrElse Not template.Contains("{items}") Then Throw New ArgumentException("The message template must contain {items}.")
+        If String.IsNullOrWhiteSpace(template) Then Throw New ArgumentException("Enter a whisper message. Use {items} optionally to insert matching items.")
         Dim lines = If(raw, "").Replace(vbCr, "").Split(vbLf).Select(Function(line) line.Trim().Trim("*"c, "`"c)).Where(Function(line) line.Length > 0).ToList()
         Dim results As New List(Of TradeRecipient)()
         Dim byName As New Dictionary(Of String, List(Of String))(StringComparer.Ordinal)

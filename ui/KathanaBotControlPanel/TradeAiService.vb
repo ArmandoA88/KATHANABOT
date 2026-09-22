@@ -1,4 +1,4 @@
-Imports System.Net.Http
+﻿Imports System.Net.Http
 Imports System.Net.Http.Headers
 Imports System.Text
 Imports System.Text.Json
@@ -129,7 +129,7 @@ Public NotInheritable Class TradeAiService
     End Function
 
     Public Shared Function BuildQueue(listings As IEnumerable(Of TradeListing), buying As Boolean, selectedItems As IEnumerable(Of String), template As String) As List(Of TradeRecipient)
-        If String.IsNullOrWhiteSpace(template) OrElse Not template.Contains("{items}") Then Throw New ArgumentException("The message template must contain {items}.")
+        If String.IsNullOrWhiteSpace(template) Then Throw New ArgumentException("Enter a whisper message. Use {items} optionally to insert matching items.")
         Dim selected As New HashSet(Of String)(selectedItems, StringComparer.OrdinalIgnoreCase)
         Dim rows As New List(Of TradeRecipient)()
         For Each group In listings.Where(Function(entry) entry.Intent = If(buying, "sell", "buy") AndAlso selected.Contains(entry.ItemKey)).GroupBy(Function(entry) entry.CharacterName, StringComparer.Ordinal)

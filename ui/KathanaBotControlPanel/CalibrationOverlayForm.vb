@@ -1,4 +1,4 @@
-Imports System.Drawing.Drawing2D
+﻿Imports System.Drawing.Drawing2D
 Imports System.Linq
 Imports DrawingPoint = System.Drawing.Point
 
@@ -104,8 +104,8 @@ Public Class CalibrationOverlayForm
         DrawRegion(e.Graphics, "hp_bar", _currentConfig.HpBar, Color.FromArgb(170, 220, 70, 70), "HP")
         DrawRegion(e.Graphics, "mp_bar", _currentConfig.MpBar, Color.FromArgb(170, 70, 130, 240), "MP")
         DrawRegion(e.Graphics, "mob_name_rect", _currentConfig.MobNameRect, Color.FromArgb(170, 250, 230, 80), "Mob Name")
-        DrawRegion(e.Graphics, "mob_hp_rect", _currentConfig.MobHpRect, Color.FromArgb(170, 255, 140, 60), "Mob HP")
-        DrawRegion(e.Graphics, "mob_life_rect", _currentConfig.MobLifeRect, Color.FromArgb(170, 255, 255, 255), "Mob Life")
+        DrawRegion(e.Graphics, "mob_hp_rect", _currentConfig.MobHpRect, Color.FromArgb(170, 255, 140, 60), "Mob HP - Red Bar")
+        DrawRegion(e.Graphics, "mob_life_rect", _currentConfig.MobLifeRect, Color.FromArgb(170, 255, 255, 255), "Mob HP - Numbers")
         DrawRegion(e.Graphics, "unreachable_text_rect", _currentConfig.UnreachableTextRect, Color.FromArgb(170, 255, 90, 190), "Unreachable Text")
         DrawRegion(e.Graphics, "prana_exp_rect", _currentConfig.PranaExpRect, Color.FromArgb(170, 160, 220, 90), "Prana/EXP")
         DrawRegion(e.Graphics, "rupiahs_rect", _currentConfig.RupiahsRect, Color.FromArgb(170, 255, 215, 90), "Rupiahs")

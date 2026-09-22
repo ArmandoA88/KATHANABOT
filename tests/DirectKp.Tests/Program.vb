@@ -89,11 +89,76 @@ Module Program
             timer.Start()
             Check(notice.ShowDialog() = DialogResult.Cancel, "Warning cannot be cancelled")
         End Using
+        TestSettingsSafety()
         TestSidebarStartupLayout()
         TestSkillCards()
         RenderControls()
         Console.WriteLine("PASS: E/R timing/order, repeated cycles, stop between keys, input failure, pause, targeting bypass, interval persistence and Direct KP layout.")
     End Sub
+    Private Sub TestSettingsSafety()
+        Dim form = Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(GetType(Form1))
+        GetType(Form1).GetField("_applyingSettings", Flags).SetValue(form, True)
+        ' No controls, timers or engines: partial-load handlers must return without touching them.
+        GetType(Form1).GetMethod("PushLiveConfig", Flags).Invoke(form, Nothing)
+        GetType(Form1).GetMethod("SavePersistedListState", Flags).Invoke(form, {True, True})
+        Dim stateType = GetType(Form1).GetNestedType("PersistedAppState", BindingFlags.NonPublic)
+        Dim emptyJson = CStr(GetType(Form1).GetMethod("BuildEmptySettingsJson", BindingFlags.Static Or BindingFlags.NonPublic).Invoke(Nothing, Nothing))
+        Check(JsonSerializer.Deserialize(emptyJson, stateType) IsNot Nothing, "Empty settings cannot reload")
+        Using empty = JsonDocument.Parse(emptyJson)
+            Dim full = empty.RootElement.GetProperty("Full")
+            Check(Not full.GetProperty("ArrowUnbundleEnabled").GetBoolean(), "Reset enables unbundling")
+            Check(Not full.GetProperty("PartyInviteAutoAcceptEnabled").GetBoolean(), "Reset enables party acceptance")
+            Check(full.GetProperty("BuffWatchSlots").GetArrayLength() = 0, "Reset retains buff slots")
+            Check(full.GetProperty("LootNames").GetArrayLength() = 0, "Reset retains loot names")
+            Dim blankConfig = JsonSerializer.Deserialize(Of BotConfig)(full.GetProperty("SavedConfig").GetRawText())
+            Check(blankConfig.HpBar.X = 0 AndAlso blankConfig.HpBar.W = 1, "Reset retains calibration")
+        End Using
+        Dim state = Activator.CreateInstance(stateType, True)
+        stateType.GetProperty("LiteDirectKpSelected").SetValue(state, True)
+        Dim json = JsonSerializer.Serialize(state, stateType)
+        Dim restored = JsonSerializer.Deserialize(json, stateType)
+        Check(CBool(stateType.GetProperty("LiteDirectKpSelected").GetValue(restored)), "Saved Lite mode lost")
+        Using panel As New Panel(), toggle As New CheckBox With {.Checked = True}, number As New NumericUpDown With {.Minimum = 20, .Value = 80}, text As New TextBox With {.Text = "old setup"}
+            panel.Controls.AddRange({toggle, number, text})
+            GetType(Form1).GetMethod("ClearSetupControls", Flags).Invoke(form, {panel})
+            Check(Not toggle.Checked AndAlso number.Value = 20 AndAlso text.Text = "", "Reset failed to clear setup controls")
+            Check(number.Text <> "", "Reset cleared the numeric editor's internal text")
+        End Using
+        Dim alert = GetType(Form1).GetMethod("GetSurfaceAlertState", BindingFlags.Static Or BindingFlags.NonPublic)
+        Dim dead As New BotStatus With {.WindowFound = True, .HpPercent = 0}
+        Check(CInt(alert.Invoke(Nothing, {dead, True, True, True})) = 2, "Zero HP did not flash red")
+        Check(CInt(alert.Invoke(Nothing, {dead, True, True, False})) = 3, "Zero HP did not alternate flash")
+        dead.HpPercent = 100
+        Check(CInt(alert.Invoke(Nothing, {dead, True, True, True})) = 0, "Recovered HP did not clear alert")
+        Check(CInt(alert.Invoke(Nothing, {dead, False, True, True})) = 1, "Stopped bot is not red")
+        dead.HpPercent = 0
+        dead.ErrorMessage = "capture failed"
+        Check(CInt(alert.Invoke(Nothing, {dead, True, True, True})) = 0, "Invalid capture triggered death alert")
+        Dim cardType = GetType(Form1).GetNestedType("DashboardCard", BindingFlags.NonPublic)
+        Using card = DirectCast(Activator.CreateInstance(cardType, True), Panel)
+            card.Size = New Size(360, 200)
+            cardType.GetMethod("SetSecondaryHeight").Invoke(card, {32})
+            cardType.GetMethod("SetDailyProjection").Invoke(card, {"1,234,567/day"})
+            cardType.GetMethod("SetGraphHeight").Invoke(card, {64})
+            DirectCast(cardType.GetField("_sparkline", Flags).GetValue(card), Control).Visible = True
+            card.PerformLayout()
+            Dim daily = DirectCast(cardType.GetField("_lblDaily", Flags).GetValue(card), Label)
+            Dim wallet = DirectCast(cardType.GetField("_lblValue", Flags).GetValue(card), Label)
+            Check(daily.Font.Size = wallet.Font.Size, "Daily projection does not match wallet size")
+            Check(wallet.Height >= wallet.Font.Height, "Daily projection crowds wallet text")
+            Check(daily.Height >= daily.Font.Height, "Daily projection text clips vertically")
+        End Using
+        Dim cfg As New BotConfig With {.HpBar = New RectRegion(11, 25, 151, 11), .MpBar = New RectRegion(3, 40, 161, 11),
+            .MobNameRect = New RectRegion(860, 711, 162, 23), .MobHpRect = New RectRegion(859, 737, 165, 11),
+            .UnreachableTextRect = New RectRegion(15, 582, 128, 22)}
+        Dim expected = JsonSerializer.Serialize(cfg.HpBar) & JsonSerializer.Serialize(cfg.MobHpRect) & JsonSerializer.Serialize(cfg.UnreachableTextRect)
+        For index = 1 To 20
+            cfg = JsonSerializer.Deserialize(Of BotConfig)(JsonSerializer.Serialize(cfg))
+            BotConfig.MigrateLegacyVisionLayout(cfg)
+            Check(expected = JsonSerializer.Serialize(cfg.HpBar) & JsonSerializer.Serialize(cfg.MobHpRect) & JsonSerializer.Serialize(cfg.UnreachableTextRect), "Saved calibration changed on reload")
+        Next
+    End Sub
+
     Private Sub TestSidebarStartupLayout()
         Dim tabType = GetType(Form1).GetNestedType("SidebarTabControl", BindingFlags.NonPublic)
         Using host As New Form With {.ClientSize = New Size(1450, 900), .ShowInTaskbar = False, .StartPosition = FormStartPosition.Manual, .Location = New Point(-30000, -30000)}, tabs = DirectCast(Activator.CreateInstance(tabType, True), TabControl)
