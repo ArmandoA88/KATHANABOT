@@ -60,7 +60,106 @@ Module Program
         Check(RuntimeJournal.Snapshot().Any(Function(item) item.Kind = "Skill skipped"), "skip reason reaches timeline")
         TestAutoAssistOnly()
         TestLootAfterKill()
+        TestStuckTargetRecovery()
+        TestDisappearedTargetRecovery()
         Console.WriteLine($"PASS: {passed} combat scheduling, timing, mode and injected-input assertions.")
+    End Sub
+    Private Sub TestStuckTargetRecovery()
+        Dim now = New DateTime(2026, 9, 22, 18, 0, 0, DateTimeKind.Utc)
+        For Each lootEnabled In {False, True}
+            Dim engine As New BotEngine
+            Dim cfg As New BotConfig With {.BypassStuckTarget = True, .StuckTargetMs = 1500, .StuckTargetNoProgressRetargetMs = 4000,
+                .RetargetMs = 500, .ForcedRetargetMs = 1100, .LootAfterKillEnabled = lootEnabled}
+            Dim track = GetType(BotEngine).GetMethod("TrackMobHpMovement", Flags)
+            Dim beginLock = GetType(BotEngine).GetMethod("BeginCombatLock", Flags)
+            Dim bypass = GetType(BotEngine).GetMethod("ShouldBypassStuckTarget", Flags)
+            ' Ten minutes of combat precede a mob disappearing. A stale red-bar signal keeps
+            ' targetValid true and each attempted attack renews the combat lock, as in the log.
+            For ms = 0 To 600000 Step 500
+                Dim tick = now.AddMilliseconds(ms)
+                If ms Mod 50000 = 0 Then GetType(BotEngine).GetMethod("ResetMobNameTrackingAfterRetarget", Flags).Invoke(engine, Nothing)
+                track.Invoke(engine, {True, 100.0R - (ms Mod 50000) / 500.0R, tick})
+                beginLock.Invoke(engine, {"", tick})
+                GetType(BotEngine).GetField("_lastAttackAction", Flags).SetValue(engine, tick)
+                Check(Not CBool(bypass.Invoke(engine, {cfg, True, True, tick})), "ongoing fights with real damage do not trigger recovery")
+            Next
+            Dim vanishedAt = now.AddMinutes(10)
+            track.Invoke(engine, {True, 1.0R, vanishedAt})
+            For ms = 500 To 3500 Step 500
+                Dim tick = vanishedAt.AddMilliseconds(ms)
+                track.Invoke(engine, {True, 1.0R, tick})
+                beginLock.Invoke(engine, {"", tick})
+                GetType(BotEngine).GetField("_lastAttackAction", Flags).SetValue(engine, tick)
+                Check(Not CBool(bypass.Invoke(engine, {cfg, True, True, tick})), "stuck recovery respects configured no-progress delay")
+            Next
+            Check(CBool(bypass.Invoke(engine, {cfg, True, True, vanishedAt.AddMilliseconds(4000)})),
+                "combat lock must not suppress stuck recovery after ten minutes; Loot After Kill=" & lootEnabled)
+            cfg.BypassStuckTarget = False
+            Check(Not CBool(bypass.Invoke(engine, {cfg, True, True, vanishedAt.AddMilliseconds(4000)})), "stuck recovery respects OFF")
+            cfg.BypassStuckTarget = True
+            Dim input As New FakeInput
+            WindowsInput.Current = input
+            Try
+                Dim send = GetType(BotEngine).GetMethod("TrySendRetargetKey", Flags)
+                Dim recoveredAt = vanishedAt.AddMilliseconds(4000)
+                Check(CBool(send.Invoke(engine, {New IntPtr(123), cfg, recoveredAt, "test stuck recovery", True})), "stuck recovery sends retarget")
+                Check(input.Keys.SequenceEqual({69, 69}), "stuck recovery sends E down/up")
+                Check(Not CBool(GetType(BotEngine).GetField("_combatLockActive", Flags).GetValue(engine)), "retarget clears combat lock")
+                Check(Not CBool(GetType(BotEngine).GetMethod("IsRecentTargetSignalHoldActive", Flags).Invoke(engine, {recoveredAt, cfg})), "old sightings cannot authorize attacks after retarget")
+                Check(Not CBool(send.Invoke(engine, {New IntPtr(123), cfg, recoveredAt.AddMilliseconds(100), "test cooldown", True})), "forced retarget respects cooldown")
+                track.Invoke(engine, {True, 80.0R, recoveredAt.AddMilliseconds(500)})
+                Check(Not CBool(bypass.Invoke(engine, {cfg, True, True, recoveredAt.AddMilliseconds(500)})), "new target receives its own progress window")
+                track.Invoke(engine, {True, 75.0R, recoveredAt.AddMilliseconds(4000)})
+                Check(Not CBool(bypass.Invoke(engine, {cfg, True, True, recoveredAt.AddMilliseconds(4500)})), "real HP damage prevents retarget")
+                ' Alternating background colors must not renew the damage timestamp forever.
+                track.Invoke(engine, {True, 80.0R, recoveredAt.AddMilliseconds(5000)})
+                track.Invoke(engine, {True, 75.0R, recoveredAt.AddMilliseconds(6000)})
+                Check(CBool(bypass.Invoke(engine, {cfg, True, True, recoveredAt.AddMilliseconds(8000)})), "oscillating stale HP is not damage progress")
+                Check(CBool(bypass.Invoke(engine, {cfg, True, True, recoveredAt.AddMinutes(1)})), "long skill cooldown does not disable stuck recovery")
+                For Each mode In {"FullSupportModeEnabled", "DirectKpEnabled", "ResuHoldPlaceOnlyModeEnabled"}
+                    GetType(BotConfig).GetProperty(mode).SetValue(cfg, True)
+                    Check(Not CBool(bypass.Invoke(engine, {cfg, True, True, recoveredAt.AddMinutes(1)})), mode & " excludes normal stuck recovery")
+                    GetType(BotConfig).GetProperty(mode).SetValue(cfg, False)
+                Next
+            Finally
+                WindowsInput.Current = Nothing
+            End Try
+        Next
+    End Sub
+    Private Sub TestDisappearedTargetRecovery()
+        For Each lootEnabled In {False, True}
+            Dim engine As New BotEngine
+            Dim cfg As New BotConfig With {.LootAfterKillEnabled = lootEnabled, .RetargetMs = 500}
+            Dim now = DateTime.UtcNow
+            Dim input As New FakeInput
+            WindowsInput.Current = input
+            Try
+                GetType(BotEngine).GetField("_lastAttackAction", Flags).SetValue(engine, now)
+                GetType(BotEngine).GetField("_lastLivingTargetSignalAt", Flags).SetValue(engine, now)
+                GetType(BotEngine).GetField("_lastTargetWindowSeen", Flags).SetValue(engine, now)
+                GetType(BotEngine).GetField("_lastTargetValidAt", Flags).SetValue(engine, now)
+                GetType(BotEngine).GetField("_sessionKillTrackingArmed", Flags).SetValue(engine, True)
+                GetType(BotEngine).GetMethod("BeginCombatLock", Flags).Invoke(engine, {"mob", now})
+                Dim kill = GetType(BotEngine).GetMethod("TrackSessionKill", Flags)
+                Dim loot = GetType(BotEngine).GetMethod("TryHandleLootAfterKill", Flags)
+                kill.Invoke(engine, {True, True, now})
+                loot.Invoke(engine, {cfg, New IntPtr(123), True, now, True})
+                For ms = 100 To 200 Step 100
+                    Dim tick = now.AddMilliseconds(ms)
+                    GetType(BotEngine).GetMethod("UpdateCombatLockState", Flags).Invoke(engine, {tick, cfg, False, ""})
+                    kill.Invoke(engine, {False, True, tick})
+                    loot.Invoke(engine, {cfg, New IntPtr(123), False, tick, True})
+                Next
+                Check(Not CBool(GetType(BotEngine).GetField("_combatLockActive", Flags).GetValue(engine)), "external kill releases combat lock after reliable missing frames")
+                Check(Not CBool(GetType(BotEngine).GetMethod("IsSessionKillConfirmationPending", Flags).Invoke(engine, {now.AddMilliseconds(200)})), "kill confirmation cannot block search indefinitely")
+                Dim searchAt = now.AddMilliseconds(1600)
+                Check(Not CBool(GetType(BotEngine).GetMethod("IsRecentTargetSignalHoldActive", Flags).Invoke(engine, {searchAt, cfg})), "missing target grace expires")
+                Check(CBool(GetType(BotEngine).GetMethod("TrySendRetargetKey", Flags).Invoke(engine, {New IntPtr(123), cfg, searchAt, "test external kill", False})), "normal search retarget resumes after external kill")
+                Check(input.Keys.SequenceEqual(If(lootEnabled, New Integer() {70, 70, 69, 69}, New Integer() {69, 69})), "pickup remains optional and cannot prevent next E")
+            Finally
+                WindowsInput.Current = Nothing
+            End Try
+        Next
     End Sub
     Private Sub TestAutoAssistOnly()
         Dim engine As New BotEngine

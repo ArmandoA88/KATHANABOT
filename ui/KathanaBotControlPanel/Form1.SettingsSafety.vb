@@ -52,6 +52,7 @@
             Threading.Interlocked.Increment(_persistWriteRevision)
             _autoAssistOnlyEnabled = False
             _directKpEnabled = False
+            WindowsInput.BackgroundOnly = False
             LoadPersistedListState(defaults)
             _applyingSettings = True
             Try

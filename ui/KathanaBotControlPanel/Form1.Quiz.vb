@@ -328,6 +328,11 @@ Partial Public Class Form1
 
     Private Async Sub QuizSolverEnabledChanged(sender As Object, e As EventArgs)
         If _quizSettingsLoading Then Return
+        If WindowsInput.BackgroundOnly AndAlso chkQuizSolverEnabled.Checked Then
+            chkQuizSolverEnabled.Checked = False
+            RejectForegroundWorkflow("Quiz solver")
+            Return
+        End If
         If chkQuizSolverEnabled.Checked Then
             If Not ValidateQuizSetup(True) Then
                 _quizSettingsLoading = True
@@ -375,6 +380,10 @@ Partial Public Class Form1
     End Function
 
     Private Async Function RunQuizSolverOnceAsync(manual As Boolean) As Task
+        If WindowsInput.BackgroundOnly Then
+            If manual Then RejectForegroundWorkflow("Quiz solver")
+            Return
+        End If
         If _tradeRunning Then Return
         If _quizSolveInProgress Then Return
         If Not manual AndAlso (chkQuizSolverEnabled Is Nothing OrElse Not chkQuizSolverEnabled.Checked) Then Return
@@ -600,6 +609,7 @@ Partial Public Class Form1
     End Function
 
     Private Shared Function PerformQuizClickBurst(hwnd As IntPtr, screenPoint As NativeMethods.POINT) As Boolean
+        If WindowsInput.BackgroundOnly Then Return False
         Dim previous As New NativeMethods.POINT()
         Dim hadCursor = NativeMethods.GetCursorPos(previous)
         Try

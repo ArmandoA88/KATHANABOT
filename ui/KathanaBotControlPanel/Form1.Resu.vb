@@ -490,6 +490,7 @@ Partial Public Class Form1
     End Sub
 
     Private Sub ToggleResu(sender As Object, e As EventArgs)
+        If RejectForegroundWorkflow("RESU") Then Return
         If _tradeRunning Then
             SilentMessageBox.Show(Me, "Stop Trade before starting RESU.", "Trade")
             Return

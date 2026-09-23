@@ -368,6 +368,7 @@ Public Class BotConfig
     ' Loot After Kill: watches the current target's HP reading and presses F the instant it drops
     ' to 0, instead of waiting on LootPickupIntervalMs's timer - a separate, immediate trigger.
     Public Property LootAfterKillEnabled As Boolean = False
+    Public Property LootAfterKillHoldMs As Integer = 1000
     ' Auto Party: presses a user-picked hotkey then clicks a fixed calibrated screen point on one
     ' loop timer (the invite macro), and separately types a user-edited chat message on its own
     ' loop timer - two independent loops sharing nothing but the Auto-Loot tab UI.
@@ -760,12 +761,18 @@ Friend Module NativeMethods
     Friend Function GetCurrentThreadId() As UInteger
     End Function
 
-    <DllImport("user32.dll", SetLastError:=True)>
+    <DllImport("user32.dll", EntryPoint:="ShowWindow", SetLastError:=True)>
+    Private Function RawShowWindow(hWnd As IntPtr, nCmdShow As Integer) As Boolean
+    End Function
     Friend Function ShowWindow(hWnd As IntPtr, nCmdShow As Integer) As Boolean
+        Return Not WindowsInput.BackgroundOnly AndAlso RawShowWindow(hWnd, nCmdShow)
     End Function
 
-    <DllImport("user32.dll", SetLastError:=True)>
+    <DllImport("user32.dll", EntryPoint:="BringWindowToTop", SetLastError:=True)>
+    Private Function RawBringWindowToTop(hWnd As IntPtr) As Boolean
+    End Function
     Friend Function BringWindowToTop(hWnd As IntPtr) As Boolean
+        Return Not WindowsInput.BackgroundOnly AndAlso RawBringWindowToTop(hWnd)
     End Function
 
     <DllImport("user32.dll", SetLastError:=True)>
@@ -3034,7 +3041,10 @@ Partial Public Class BotEngine
                 End If
             End If
 
-            If Not cfg.DirectKpEnabled AndAlso Not forcedRetarget AndAlso ShouldBypassStuckTarget(cfg, targetWindowVisible, targetValid, now) Then
+            If Not cfg.DirectKpEnabled AndAlso Not forcedRetarget AndAlso Not actionSent AndAlso
+               Not deathPaused AndAlso Not urgentHealth AndAlso Not captureGlitch AndAlso mobHpScanOk AndAlso
+               ShouldBypassStuckTarget(cfg, targetWindowVisible, targetValid, now) Then
+                Dim noProgressMs = (now - _lastMobHpMovement).TotalMilliseconds
                 If TrySendRetargetKey(hwnd, cfg, now, "E (stuck target bypass)", forced:=True) Then
                     _noDamageTargetSignature = ""
                     _noDamageAttackCount = 0
@@ -3043,6 +3053,7 @@ Partial Public Class BotEngine
                     _firstHitWindowUntil = DateTime.MinValue
                     reason = "Stuck target bypass sent retarget."
                     forcedRetarget = True
+                    RaiseEvent LogLine($"Stuck target recovery: no HP progress for {noProgressMs:0}ms; retargeted and cleared the previous combat lock.")
                 End If
             End If
 
@@ -8153,11 +8164,11 @@ Partial Public Class BotEngine
             _lootAfterKillArmed = False
             Return
         End If
-        If Not SendKey(hwnd, "F", FastKeyPressMs) Then Return
+        If Not SendKey(hwnd, "F", Math.Clamp(cfg.LootAfterKillHoldMs, 50, 5000), cancellationToken:=If(_cts Is Nothing, CancellationToken.None, _cts.Token)) Then Return
         _lootAfterKillArmed = False
         _lastLootPickup = now
         SetLastAction("F (Loot After Kill)")
-        RaiseEvent LogLine("Loot After Kill: mob HP reached zero or target disappeared after combat; pressed F.")
+        RaiseEvent LogLine($"Loot After Kill: held F for {Math.Clamp(cfg.LootAfterKillHoldMs, 50, 5000)}ms after target disappeared.")
     End Sub
 
     Public Shared Function ShouldForceAutoLootForeground(cfg As BotConfig) As Boolean
@@ -9672,6 +9683,7 @@ Partial Public Class BotEngine
     ' System.Windows.Forms.Clipboard, which needs an STA thread this engine loop doesn't run on).
     ' On success, the OS owns hGlobal from SetClipboardData onward - it must not be freed here.
     Private Shared Function SetClipboardText(text As String) As Boolean
+        If WindowsInput.BackgroundOnly Then Return False
         Dim bytes As Byte() = Encoding.Unicode.GetBytes(If(text, "") & ChrW(0))
 
         Dim hGlobal As IntPtr = NativeMethods.GlobalAlloc(NativeMethods.GMEM_MOVEABLE, New UIntPtr(CUInt(bytes.Length)))
@@ -11281,6 +11293,15 @@ Partial Public Class BotEngine
     ' here forces the fresh "retarget -> scan OCR -> decide" sequence on every retarget, normal or
     ' forced (stuck bypass, avoid-high-max-hp, Dadati evade, etc. all funnel through this function).
     Private Sub ResetMobNameTrackingAfterRetarget()
+        ' Sightings and damage progress belong to the old target. Keeping these after E can
+        ' authorize attacks before a fresh scan or immediately mark the next mob as stuck.
+        _lastTargetWindowSeen = DateTime.MinValue
+        _lastTargetValidAt = DateTime.MinValue
+        _lastLivingTargetSignalAt = DateTime.MinValue
+        _lastMobHpSample = -1
+        _lastMobHpMovement = DateTime.MinValue
+        _noDamageTargetSignature = ""
+        _noDamageAttackCount = 0
         _cachedMobName = ""
         _lastMobNameRead = DateTime.MinValue
         _lastMobNameDetectedAt = DateTime.MinValue
@@ -11364,29 +11385,21 @@ Partial Public Class BotEngine
             Return
         End If
 
-        ' Ignore small OCR jitter, but re-baseline large upward jumps.
-        If mobHpPct >= (_lastMobHpSample + 1.8) Then
-            _lastMobHpSample = mobHpPct
-        End If
+        ' Only a new low is progress. Re-baselining upward made an oscillating stale bar
+        ' look like repeated damage forever. A successful retarget resets this baseline.
     End Sub
 
     Private Function ShouldBypassStuckTarget(cfg As BotConfig, targetWindowVisible As Boolean, targetValid As Boolean, now As DateTime) As Boolean
-        If Not cfg.BypassStuckTarget Then
+        If cfg Is Nothing OrElse Not cfg.BypassStuckTarget OrElse cfg.FullSupportModeEnabled OrElse
+           cfg.DirectKpEnabled OrElse cfg.ResuHoldPlaceOnlyModeEnabled Then
             Return False
         End If
         If _lastAttackAction = DateTime.MinValue Then
             Return False
         End If
-        If _combatLockActive Then
-            Return False
-        End If
-
         Dim stuckMs As Integer = Math.Max(1, cfg.StuckTargetMs)
-        Dim sinceAttackMs As Double = (now - _lastAttackAction).TotalMilliseconds
-        Dim staleAttackWindowMs As Integer = Math.Max(stuckMs * 5, Math.Max(1, cfg.ForcedRetargetMs) * 6)
-        If sinceAttackMs > staleAttackWindowMs Then
-            Return False
-        End If
+        ' The lock protects live fights from ordinary search retargets, but cannot veto
+        ' this watchdog: every attack renews it, including attacks at a stale target.
 
         Dim retargetCooldownMs As Integer = GetRetargetCooldownMs(cfg, 1, forced:=True)
         If Not targetValid Then
@@ -11399,7 +11412,7 @@ Partial Public Class BotEngine
 
         Dim sinceHpMoveMs As Double = (now - _lastMobHpMovement).TotalMilliseconds
         Dim configuredNoProgressMs As Integer = Math.Max(1000, If(cfg?.StuckTargetNoProgressRetargetMs, 6000))
-        Dim requiredNoProgressMs As Integer = configuredNoProgressMs
+        Dim requiredNoProgressMs As Integer = Math.Max(stuckMs, configuredNoProgressMs)
         If sinceHpMoveMs < requiredNoProgressMs Then
             Return False
         End If
@@ -13664,16 +13677,19 @@ Partial Public Class BotEngine
     End Sub
 
     Public Shared Function IsSupportedKeyName(keyName As String) As Boolean
-        Return Not String.IsNullOrWhiteSpace(keyName) AndAlso KeyMap.ContainsKey(keyName.Trim())
+        Dim modifier As Integer, digit As Integer
+        Return Not String.IsNullOrWhiteSpace(keyName) AndAlso (KeyMap.ContainsKey(keyName.Trim()) OrElse TryParseSkillShortcut(keyName, modifier, digit))
     End Function
 
-    Public Shared Function SendKey(hwnd As IntPtr, keyName As String, pressMs As Integer, Optional forceBackgroundPost As Boolean = False, Optional forcePhysicalKeyEvent As Boolean = False) As Boolean
+    Public Shared Function SendKey(hwnd As IntPtr, keyName As String, pressMs As Integer, Optional forceBackgroundPost As Boolean = False, Optional forcePhysicalKeyEvent As Boolean = False, Optional cancellationToken As CancellationToken = Nothing) As Boolean
         SyncLock WindowsInput.SequenceLock
-            Return SendKeyCore(hwnd, keyName, pressMs, forceBackgroundPost, forcePhysicalKeyEvent)
+            Dim modifier As Integer, digit As Integer
+            If TryParseSkillShortcut(keyName, modifier, digit) Then Return SendSkillShortcut(hwnd, modifier, digit, pressMs, cancellationToken)
+            Return SendKeyCore(hwnd, keyName, pressMs, forceBackgroundPost, forcePhysicalKeyEvent, cancellationToken)
         End SyncLock
     End Function
 
-    Private Shared Function SendKeyCore(hwnd As IntPtr, keyName As String, pressMs As Integer, forceBackgroundPost As Boolean, forcePhysicalKeyEvent As Boolean) As Boolean
+    Private Shared Function SendKeyCore(hwnd As IntPtr, keyName As String, pressMs As Integer, forceBackgroundPost As Boolean, forcePhysicalKeyEvent As Boolean, cancellationToken As CancellationToken) As Boolean
         If hwnd = IntPtr.Zero Then
             Return False
         End If
@@ -13689,6 +13705,8 @@ Partial Public Class BotEngine
         If Not KeyMap.TryGetValue(If(keyName, "").Trim(), vk) Then
             Return False
         End If
+        If WindowsInput.BackgroundOnly AndAlso (forcePhysicalKeyEvent OrElse BackgroundModePolicy.RequiresForeground(keyName) OrElse vk = &HA4 OrElse vk = &HA5 OrElse vk = &H12) Then Return False
+        If cancellationToken.IsCancellationRequested Then Return False
 
         Dim usePhysicalKeyEvent As Boolean =
             forcePhysicalKeyEvent OrElse
@@ -13741,8 +13759,17 @@ Partial Public Class BotEngine
 
         Try
             If Not NativeMethods.PostMessage(hwnd, CUInt(&H100), New IntPtr(vk), New IntPtr(lparamDown)) Then Return False
-            Thread.Sleep(Math.Max(5, pressMs))
-            Return NativeMethods.PostMessage(hwnd, CUInt(&H101), New IntPtr(vk), New IntPtr(lparamUp))
+            Dim released As Boolean
+            Try
+                If cancellationToken.CanBeCanceled Then
+                    cancellationToken.WaitHandle.WaitOne(Math.Max(5, pressMs))
+                Else
+                    Thread.Sleep(Math.Max(5, pressMs))
+                End If
+            Finally
+                released = NativeMethods.PostMessage(hwnd, CUInt(&H101), New IntPtr(vk), New IntPtr(lparamUp))
+            End Try
+            Return released AndAlso Not cancellationToken.IsCancellationRequested
         Catch
             Return False
         End Try
@@ -13837,6 +13864,10 @@ Partial Public Class BotEngine
     ''' </summary>
     Private Shared Function TryBeginVerifiedClick(hwnd As IntPtr, x As Integer, y As Integer, state As VerifiedClickState, ByRef diagnostic As String) As Boolean
         diagnostic = ""
+        If WindowsInput.BackgroundOnly Then
+            diagnostic = "Background-only mode blocks foreground clicks."
+            Return False
+        End If
         If hwnd = IntPtr.Zero Then
             diagnostic = "invalid window handle"
             Return False

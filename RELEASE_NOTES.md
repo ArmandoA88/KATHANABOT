@@ -1,4 +1,16 @@
-﻿## 1.0.213
+﻿## 1.0.215
+- Enabled skill rows are green; editable key cells are purple. Add skill creates additional saved Ctrl+number or Alt+number rows.
+- Added a persistent Background Only button that disables foreground-dependent features, reports the changes, and blocks focus, mouse, and physical key presses while enabled.
+- Loot After Kill now holds F for one second by default, with a configurable 0.05-5 second duration beside its toggle. Stopping releases the held key promptly.
+- Added regression coverage for background input protection, shortcut key order, cancellable loot holds, and saved custom skill rows.
+
+## 1.0.214
+- Fixed Full mode continuing to attack a stale target indefinitely: Auto Retarget If Stuck now overrides the combat lock after the configured no-progress delay, with Loot After Kill either on or off.
+- Successful retargets clear old target sightings and damage history so the next mob gets a fresh recovery window. Oscillating stale HP readings no longer count as repeated damage.
+- Stuck recovery respects capture validity, death/recovery priority, mode exclusions, and retarget cooldowns; added a recovery log with the elapsed no-progress time.
+- Added regressions for ten minutes of combat followed by a stale target, external kills, continued real damage, stale HP jitter, and optional post-kill pickup.
+
+## 1.0.213
 - Reset All Settings disables features and overlays, clears calibration and lists, and resets cooldowns to supported minimums while preserving saved character profiles.
 - Home pulses red at zero character HP; stopped bots have a red surface tint.
 - Hidden tabs remain unlocked across restarts of the same app version and require the password again after an update.

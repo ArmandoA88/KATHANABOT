@@ -106,6 +106,8 @@ Public NotInheritable Class CombatSkillCards
             Try
                 _enabled.Text = "Slot " & Convert.ToString(_row.Cells("Key").Value)
                 _enabled.Checked = _row.Cells("Enabled").Value IsNot Nothing AndAlso Convert.ToBoolean(_row.Cells("Enabled").Value)
+                BackColor = If(_enabled.Checked, Color.FromArgb(202, 238, 214), Color.White)
+                _enabled.BackColor = If(Not _row.Cells("Key").ReadOnly, Color.FromArgb(87, 57, 125), If(_enabled.Checked, Color.FromArgb(25, 96, 55), Color.FromArgb(90, 90, 90)))
                 _role.SelectedItem = _row.Cells("Role").Value
                 For Each pair In _editors
                     Dim text = Convert.ToString(_row.Cells(pair.Key).Value)

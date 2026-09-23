@@ -2345,6 +2345,7 @@ Partial Public Class Form1
     Private Class PersistedAppState
         Public Property ActiveProfileName As String = ""
         Public Property LiteDirectKpSelected As Boolean = False
+        Public Property BackgroundOnlyEnabled As Boolean = False
         Public Property WindowTitle As String = DefaultGameWindowTitle
         Public Property PeriodicScreenshotsEnabled As Boolean = False
         Public Property PeriodicScreenshotIntervalMinutes As Decimal = 15D
@@ -2407,6 +2408,7 @@ Partial Public Class Form1
         Public Property HoldToShowGameWindowEnabled As Boolean = False
         Public Property HoldToShowGameWindowKey As String = "F10"
         Public Property LootAfterKillEnabled As Boolean = False
+        Public Property LootAfterKillHoldMs As Integer = 1000
         Public Property PartyInviteAutoAcceptEnabled As Boolean = True
         Public Property PartyRessAutoAcceptEnabled As Boolean = True
         Public Property AskForPartyEnabled As Boolean = False
@@ -2511,6 +2513,7 @@ Partial Public Class Form1
         SeedDefaults()
         SeedFirstRunSettingsFileIfMissing()
         LoadPersistedListState()
+        EnforceBackgroundOnly(False)
         ForceLevelingAgentOffForStartup()
         SetupLiveConfigBindings()
         InitializeRuntimeTools()
@@ -3648,6 +3651,7 @@ Partial Public Class Form1
 
     Private Sub PushLiveConfig()
         If _applyingSettings Then Return
+        EnforceBackgroundOnly(False)
         ' NOTE: this used to bail out entirely whenever dgvCombat/dgvRegions reported
         ' IsCurrentCellInEditMode. Checkbox/combo columns commit their edit (CommitEdit) without
         ' immediately ending it, so that flag can still read True for a moment right as the
@@ -8495,7 +8499,7 @@ Partial Public Class Form1
 
     Private Function BuildCombatSkillsGroup() As GroupBox
         Dim group As New GroupBox() With {.Text = "Combat Skills", .Dock = DockStyle.Fill}
-        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3}
+        Dim layout As New TableLayoutPanel() With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 4}
         layout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42.0F))
         layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 38.0F))
@@ -8508,13 +8512,23 @@ Partial Public Class Form1
             .EditMode = DataGridViewEditMode.EditOnEnter
         }
         dgvCombat.Columns.Add(New DataGridViewCheckBoxColumn() With {.Name = "Enabled"})
-        dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Key", .ReadOnly = True, .FillWeight = 60.0F})
+        dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Key", .ReadOnly = False, .FillWeight = 60.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "CooldownSec", .FillWeight = 90.0F})
         Dim roleColumn As New DataGridViewComboBoxColumn() With {.Name = "Role", .FillWeight = 80.0F}
         roleColumn.Items.AddRange(New Object() {"attack", "retarget/assist", "heal", "max_health", "mana", "buff", "high_max_hp", "repair", "stop"})
         dgvCombat.Columns.Add(roleColumn)
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "Priority", .FillWeight = 75.0F})
         dgvCombat.Columns.Add(New DataGridViewTextBoxColumn() With {.Name = "TriggerPercent", .HeaderText = "Trigger%", .FillWeight = 62.0F})
+        AddHandler dgvCombat.CellFormatting, AddressOf FormatCombatSkill
+        AddHandler dgvCombat.CellValueChanged, Sub() dgvCombat.Invalidate()
+        AddHandler dgvCombat.CellValidating, Sub(sender, args)
+                                                If dgvCombat.Columns(args.ColumnIndex).Name = "Key" AndAlso Not BotEngine.IsSupportedKeyName(Convert.ToString(args.FormattedValue)) Then
+                                                    args.Cancel = True
+                                                    dgvCombat.Rows(args.RowIndex).ErrorText = "Use a supported key, CTRL+0–9, or ALT+0–9."
+                                                Else
+                                                    dgvCombat.Rows(args.RowIndex).ErrorText = ""
+                                                End If
+                                            End Sub
         _combatSkillsGroup = group
         _combatSkillHost = New Panel With {.Dock = DockStyle.Fill}
         _combatSkillHost.Controls.Add(dgvCombat)
@@ -8548,6 +8562,8 @@ Partial Public Class Form1
         chatPauseRow.Controls.Add(chkPauseCombatKeysWhileChatting)
         chatPauseRow.Controls.Add(lblChatKeyPauseStatus)
         layout.Controls.Add(chatPauseRow, 0, 2)
+        layout.RowStyles.Add(New RowStyle(SizeType.Absolute, 42))
+        layout.Controls.Add(BuildSkillAddControls(), 0, 3)
         group.Controls.Add(layout)
         Return group
     End Function
@@ -8875,8 +8891,8 @@ Partial Public Class Form1
 
         Dim controls As Control() = {
             lblFullEdition, lblRunState, lblShortcutHint, lblState, lblSystem, hpMpLayout,
-            lblMobName, lblExpRate, lblRupiahsRate, runRow, BuildDirectKpControls(), BuildAutoAssistButton(), btnSaveSettings, btnStopBot,
-            btnFullSupport, btnBypassStuck, btnLootAfterKill, btnPartyInviteAutoAccept, btnRessAutoAccept,
+            lblMobName, lblExpRate, lblRupiahsRate, runRow, BuildDirectKpControls(), BuildAutoAssistButton(), BuildBackgroundOnlyButton(), btnSaveSettings, btnStopBot,
+            btnFullSupport, btnBypassStuck, BuildLootAfterKillControls(), btnPartyInviteAutoAccept, btnRessAutoAccept,
             lblPartyAskEvery, nudPartyAskSeconds, lblPartyAskText, txtPartyAskText, partyAskRow, BuildProfileSettingsButtons(), btnHelp,
             chkDeveloperMode
         }
@@ -9211,10 +9227,12 @@ Partial Public Class Form1
         UpdateLootScannerButtons()
         For Each key In PrimaryKeys
             dgvCombat.Rows.Add(False, key, "1", "attack", keyIndex * 10, 1, 1, 1)
+            dgvCombat.Rows(dgvCombat.Rows.Count - 1).Cells("Key").ReadOnly = True
             keyIndex += 1
         Next
         For Each key In FunctionKeys
             dgvCombat.Rows.Add(False, key, "1", "buff", keyIndex * 10, 1, 1, 1)
+            dgvCombat.Rows(dgvCombat.Rows.Count - 1).Cells("Key").ReadOnly = True
             keyIndex += 1
         Next
         For i As Integer = 0 To CustomCombatDefaultKeys.Length - 1
@@ -15572,6 +15590,7 @@ Partial Public Class Form1
     End Function
 
     Private Sub ScheduleGameRelaunch(trigger As String, Optional stopRunningBots As Boolean = True, Optional force As Boolean = False)
+        If WindowsInput.BackgroundOnly Then Return
         If (Not force) AndAlso Not IsAutoRelaunchGameEnabled() Then
             Return
         End If
@@ -15639,6 +15658,7 @@ Partial Public Class Form1
                         End If
                     End If
 
+                    If WindowsInput.BackgroundOnly Then Return
                     Dim launchedProcess As Process = Process.Start(psi)
                     AppendLogSafe($"Auto relaunch started game ({trigger}).")
                     If launchedProcess IsNot Nothing Then
@@ -16399,6 +16419,7 @@ Partial Public Class Form1
         cfg.AutoAssistOnlyEnabled = _autoAssistOnlyEnabled
         cfg.DirectKpEnabled = _directKpEnabled
         cfg.DirectKpIntervalMs = CInt(If(_directKpInterval Is Nothing, 1000D, _directKpInterval.Value))
+        If WindowsInput.BackgroundOnly Then BackgroundModePolicy.Apply(cfg)
         Return cfg
     End Function
 
@@ -16477,6 +16498,7 @@ Partial Public Class Form1
             End If
         End If
 
+        If WindowsInput.BackgroundOnly Then BackgroundModePolicy.Apply(cfg)
         Return cfg
     End Function
 
@@ -16535,6 +16557,7 @@ Partial Public Class Form1
         cfg.FullSupportPartyResurrectBackoffMs = CInt(If(nudFullSupportPartyResurrectBackoff IsNot Nothing, nudFullSupportPartyResurrectBackoff.Value, 30000D))
         cfg.BypassStuckTarget = _bypassStuckTarget
         cfg.LootAfterKillEnabled = _lootAfterKillEnabled
+        cfg.LootAfterKillHoldMs = CInt(If(nudLootAfterKillHold Is Nothing, 1D, nudLootAfterKillHold.Value) * 1000D)
         cfg.PartyInviteAutoAcceptEnabled = _partyInviteAutoAccept
         cfg.PartyRessAutoAcceptEnabled = _ressAutoAccept
         cfg.PartyAskEnabled = _partyAskEnabled
@@ -17515,6 +17538,9 @@ Partial Public Class Form1
             End If
 
             _directKpEnabled = appState IsNot Nothing AndAlso appState.LiteDirectKpSelected
+            ' A profile cannot silently turn off the user's background-only protection.
+            If suppliedJson Is Nothing Then WindowsInput.BackgroundOnly = appState IsNot Nothing AndAlso appState.BackgroundOnlyEnabled
+            UpdateBackgroundOnlyButton()
             UpdateDirectKpButton()
             _dashboardModeLoading = True
             Try
@@ -17704,6 +17730,7 @@ Partial Public Class Form1
             _holdToShowGameWindowKey = If([Enum].TryParse(Of Keys)(state.HoldToShowGameWindowKey, parsedHoldToShowKey), parsedHoldToShowKey, Keys.F10)
             UpdateHoldToShowGameWindowUi()
             _lootAfterKillEnabled = state.LootAfterKillEnabled
+            SetNumericControlValue(nudLootAfterKillHold, state.LootAfterKillHoldMs / 1000D)
             UpdateLootAfterKillButton()
             _partyInviteAutoAccept = state.PartyInviteAutoAcceptEnabled
             _ressAutoAccept = state.PartyRessAutoAcceptEnabled
@@ -17880,6 +17907,7 @@ Partial Public Class Form1
                 .HoldToShowGameWindowEnabled = _holdToShowGameWindowEnabled,
                 .HoldToShowGameWindowKey = _holdToShowGameWindowKey.ToString(),
                 .LootAfterKillEnabled = _lootAfterKillEnabled,
+                .LootAfterKillHoldMs = CInt(If(nudLootAfterKillHold Is Nothing, 1D, nudLootAfterKillHold.Value) * 1000D),
                 .PartyInviteAutoAcceptEnabled = _partyInviteAutoAccept,
                 .PartyRessAutoAcceptEnabled = _ressAutoAccept,
                 .AskForPartyEnabled = _partyAskEnabled,
@@ -17943,6 +17971,7 @@ Partial Public Class Form1
             appState = New PersistedAppState With {
                 .ActiveProfileName = _activeProfileName,
                 .LiteDirectKpSelected = _directKpEnabled,
+                .BackgroundOnlyEnabled = WindowsInput.BackgroundOnly,
                 .WindowTitle = GetSelectedWindowTitleForFallback(If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full)),
                 .PeriodicScreenshotsEnabled = (chkPeriodicScreenshots IsNot Nothing AndAlso chkPeriodicScreenshots.Checked),
                 .PeriodicScreenshotIntervalMinutes = If(nudPeriodicScreenshotMinutes IsNot Nothing, nudPeriodicScreenshotMinutes.Value, 15D),
@@ -18183,6 +18212,7 @@ Partial Public Class Form1
         End If
 
         _lootAfterKillEnabled = cfg.LootAfterKillEnabled
+        SetNumericControlValue(nudLootAfterKillHold, cfg.LootAfterKillHoldMs / 1000D)
         UpdateLootAfterKillButton()
 
         _partyInviteAutoAccept = cfg.PartyInviteAutoAcceptEnabled
@@ -18632,6 +18662,14 @@ Partial Public Class Form1
         If dgvCombat Is Nothing OrElse actions Is Nothing OrElse actions.Count = 0 Then
             Return
         End If
+        Dim defaultCount = PrimaryKeys.Length + FunctionKeys.Length + CustomCombatDefaultKeys.Length
+        Dim requiredCount = Math.Max(defaultCount, actions.Max(Function(item) If(item Is Nothing, -1, item.RowIndex)) + 1)
+        While dgvCombat.Rows.Count > requiredCount
+            dgvCombat.Rows.RemoveAt(dgvCombat.Rows.Count - 1)
+        End While
+        While dgvCombat.Rows.Count < requiredCount
+            AddEditableSkillRow("CTRL+1")
+        End While
 
         Dim keyed As New Dictionary(Of String, PersistedCombatAction)(StringComparer.OrdinalIgnoreCase)
         Dim indexed As New Dictionary(Of Integer, PersistedCombatAction)()

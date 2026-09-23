@@ -307,6 +307,7 @@ Partial Public Class Form1
     End Sub
 
     Private Async Sub StartTradeQueue(sender As Object, e As EventArgs)
+        If RejectForegroundWorkflow("Trade") Then Return
         If _tradeRunning OrElse _tradeAnalyzing OrElse Not _quizUnlocked Then Return
         Dim cancellation As CancellationTokenSource = Nothing
         Dim completed As Boolean = False
