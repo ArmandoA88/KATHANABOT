@@ -11914,16 +11914,8 @@ Partial Public Class Form1
                 Catch
                 End Try
 
-                NativeMethods.keybd_event(NativeMethods.VK_MENU, 0, 0, UIntPtr.Zero)
-                Try
-                    NativeMethods.BringWindowToTop(target)
-                    NativeMethods.SetForegroundWindow(target)
-                Finally
-                    Try
-                        NativeMethods.keybd_event(NativeMethods.VK_MENU, 0, NativeMethods.KEYEVENTF_KEYUP, UIntPtr.Zero)
-                    Catch
-                    End Try
-                End Try
+                NativeMethods.BringWindowToTop(target)
+                NativeMethods.SetForegroundWindow(target)
             Finally
                 If lockTimeoutChanged Then
                     Try
@@ -15468,31 +15460,38 @@ Partial Public Class Form1
             Dim clickHwnd As IntPtr = ResolveAutoRelaunchClickWindow(preferredHwnd, preferredTitle)
             Dim mappedToClient As Boolean = TryMapAutoRelaunchClientPointToScreen(clickHwnd, stepInfo.X, stepInfo.Y, clickPoint)
             If Not mappedToClient Then
-                clickPoint = New NativeMethods.POINT With {.X = stepInfo.X, .Y = stepInfo.Y}
-            Else
-                EnsureAutoRelaunchClickWindowForeground(clickHwnd, i + 1)
+                AppendLogSafe($"Auto relaunch click {i + 1} skipped: no verified game window/client point.")
+                Continue For
+            End If
+            SyncLock WindowsInput.SequenceLock
+            WindowsInput.BindTarget(clickHwnd)
+            EnsureAutoRelaunchClickWindowForeground(clickHwnd, i + 1)
+            If Not WindowsInput.TargetIsForeground(clickHwnd) Then
+                AppendLogSafe($"Auto relaunch click {i + 1} skipped: game is not foreground.")
+                Continue For
             End If
 
-            If NativeMethods.SetCursorPos(clickPoint.X, clickPoint.Y) Then
+            If NativeMethods.MoveCursorInput(clickPoint.X, clickPoint.Y) Then
                 Thread.Sleep(80)
                 ' dx/dy are 0 (not the click coordinates) because MOUSEEVENTF_ABSOLUTE isn't set, so
                 ' Windows ignores them here anyway - the cursor was already positioned via SetCursorPos
                 ' just above. Passing the coordinates through CUInt() used to throw an OverflowException
                 ' the moment either was negative, which happens whenever the game window sits on a
                 ' monitor positioned left of/above the primary monitor (negative absolute desktop coords).
-                NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTDOWN, 0UI, 0UI, 0UI, UIntPtr.Zero)
+                NativeMethods.SendMouseInput(NativeMethods.MOUSEEVENTF_LEFTDOWN, 0UI, 0UI, 0UI, UIntPtr.Zero)
                 Thread.Sleep(70)
-                NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTUP, 0UI, 0UI, 0UI, UIntPtr.Zero)
+                NativeMethods.SendMouseInput(NativeMethods.MOUSEEVENTF_LEFTUP, 0UI, 0UI, 0UI, UIntPtr.Zero)
                 Dim description As String = If(String.IsNullOrWhiteSpace(stepInfo.Description), "", $" [{stepInfo.Description.Trim()}]")
                 Dim coordinateNote As String = If(mappedToClient, $"game {stepInfo.X},{stepInfo.Y} -> screen {clickPoint.X},{clickPoint.Y}", $"screen {clickPoint.X},{clickPoint.Y}")
                 AppendLogSafe($"Auto relaunch post-launch click {i + 1}{description} sent at {coordinateNote} ({trigger}).")
             Else
                 AppendLogSafe($"Auto relaunch post-launch click {i + 1} skipped: SetCursorPos failed.")
             End If
+            End SyncLock
         Next
 
         If hadCursor Then
-            NativeMethods.SetCursorPos(previousCursor.X, previousCursor.Y)
+            NativeMethods.MoveCursorInput(previousCursor.X, previousCursor.Y)
         End If
     End Sub
 
@@ -15981,6 +15980,8 @@ Partial Public Class Form1
     End Function
 
     Private Shared Function TryLeftClickDisconnectOk(hwnd As IntPtr, okRegion As RectRegion) As Boolean
+        SyncLock WindowsInput.SequenceLock
+        WindowsInput.BindTarget(hwnd)
         If hwnd = IntPtr.Zero OrElse okRegion Is Nothing Then
             Return False
         End If
@@ -15997,7 +15998,7 @@ Partial Public Class Form1
         Try
             NativeMethods.SetForegroundWindow(hwnd)
             Thread.Sleep(180)
-            If Not NativeMethods.SetCursorPos(screenPoint.X, screenPoint.Y) Then
+            If Not NativeMethods.MoveCursorInput(screenPoint.X, screenPoint.Y) Then
                 Return False
             End If
 
@@ -16005,17 +16006,18 @@ Partial Public Class Form1
             ' dx/dy are 0 (not the click coordinates) - see the comment on the matching auto-relaunch
             ' click code for why CUInt() on the actual coordinates was a crash risk on multi-monitor
             ' setups where the game window can have negative absolute screen coordinates.
-            NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTDOWN, 0UI, 0UI, 0UI, UIntPtr.Zero)
+            NativeMethods.SendMouseInput(NativeMethods.MOUSEEVENTF_LEFTDOWN, 0UI, 0UI, 0UI, UIntPtr.Zero)
             Thread.Sleep(90)
-            NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTUP, 0UI, 0UI, 0UI, UIntPtr.Zero)
+            NativeMethods.SendMouseInput(NativeMethods.MOUSEEVENTF_LEFTUP, 0UI, 0UI, 0UI, UIntPtr.Zero)
             Return True
         Catch
             Return False
         Finally
             If hadCursor Then
-                NativeMethods.SetCursorPos(previousCursor.X, previousCursor.Y)
+                NativeMethods.MoveCursorInput(previousCursor.X, previousCursor.Y)
             End If
         End Try
+        End SyncLock
     End Function
 
     Private Shared Function IsProcessStillRunning(processId As Integer) As Boolean
@@ -17538,7 +17540,7 @@ Partial Public Class Form1
             End If
 
             _directKpEnabled = appState IsNot Nothing AndAlso appState.LiteDirectKpSelected
-            ' A profile cannot silently turn off the user's background-only protection.
+            ' Legacy background settings are ignored by the foreground-only input layer.
             If suppliedJson Is Nothing Then WindowsInput.BackgroundOnly = appState IsNot Nothing AndAlso appState.BackgroundOnlyEnabled
             UpdateBackgroundOnlyButton()
             UpdateDirectKpButton()

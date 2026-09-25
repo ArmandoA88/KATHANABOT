@@ -2,28 +2,15 @@ Partial Public Class Form1
     Private _backgroundOnlyButton As Button
 
     Private Function BuildBackgroundOnlyButton() As Control
-        _backgroundOnlyButton = CreateResponsiveCenterButton("Background Only: OFF", Color.FromArgb(110, 45, 45))
-        AddHandler _backgroundOnlyButton.Click, Sub()
-                                                  Dim running = GetRunningEdition()
-                                                  If running.HasValue Then StopEdition(running.Value, False, "changing background mode")
-                                                  WindowsInput.BackgroundOnly = Not WindowsInput.BackgroundOnly
-                                                  UpdateBackgroundOnlyButton()
-                                                  If WindowsInput.BackgroundOnly Then
-                                                      EnforceBackgroundOnly(True)
-                                                  Else
-                                                      SilentMessageBox.Show(Me, "Background-only mode is off. Disabled features stay off until you enable them again.", "Background Only")
-                                                  End If
-                                                  PushLiveConfig()
-                                                  SavePersistedListState(True, True)
-                                                  If running.HasValue Then StartEdition(running.Value, False)
-                                              End Sub
+        _backgroundOnlyButton = CreateResponsiveCenterButton("Foreground SendInput only", Color.FromArgb(35, 100, 145))
+        _backgroundOnlyButton.Enabled = False
         Return _backgroundOnlyButton
     End Function
 
     Private Sub UpdateBackgroundOnlyButton()
         If _backgroundOnlyButton Is Nothing Then Return
-        _backgroundOnlyButton.Text = "Background Only: " & If(WindowsInput.BackgroundOnly, "ON", "OFF")
-        _backgroundOnlyButton.BackColor = If(WindowsInput.BackgroundOnly, Color.FromArgb(35, 130, 80), Color.FromArgb(110, 45, 45))
+        _backgroundOnlyButton.Text = "Foreground SendInput only"
+        _backgroundOnlyButton.BackColor = Color.FromArgb(35, 100, 145)
     End Sub
 
     Private Sub EnforceBackgroundOnly(showReport As Boolean)

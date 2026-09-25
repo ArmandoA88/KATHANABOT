@@ -35,7 +35,11 @@ Friend Module Program
             Application.EnableVisualStyles()
             Application.SetCompatibleTextRenderingDefault(False)
             OcrReader.PrewarmAsync()
-            Application.Run(New Form1())
+            Try
+                Application.Run(New Form1())
+            Finally
+                WindowsInput.ReleaseAll()
+            End Try
         Catch ex As Exception
             LogStartupCrash(ex)
             Throw

@@ -118,9 +118,10 @@ Public NotInheritable Class TradeService
         Return results
     End Function
 
-    ' This path posts exact Unicode characters: the older key-name sender uppercases every letter.
+    ' This path sends exact Unicode characters through foreground SendInput: the older key-name sender uppercases every letter.
     Public Shared Function SendWhisper(hwnd As IntPtr, expectedPid As UInteger, name As String, message As String, cancellation As CancellationToken,
                                       Optional foregroundWindow As Func(Of IntPtr) = Nothing) As Boolean
+        SyncLock WindowsInput.SequenceLock
         ' Injectable foreground lookup lets the message-sequence test run on a noninteractive desktop.
         If foregroundWindow Is Nothing Then foregroundWindow = AddressOf NativeMethods.GetForegroundWindow
         Dim command = BuildWhisper(name, message)
@@ -159,7 +160,7 @@ Public NotInheritable Class TradeService
             If cancellation.WaitHandle.WaitOne(600) Then cancellation.ThrowIfCancellationRequested()
             For Each ch In command
                 check()
-                If Not NativeMethods.PostMessage(hwnd, &H102UI, New IntPtr(AscW(ch) And &HFFFF), New IntPtr(1)) Then Return False
+                If Not NativeMethods.SendForegroundInputRequest(hwnd, &H102UI, New IntPtr(AscW(ch) And &HFFFF), New IntPtr(1)) Then Return False
                 If cancellation.WaitHandle.WaitOne(25) Then cancellation.ThrowIfCancellationRequested()
             Next
             If cancellation.WaitHandle.WaitOne(200) Then cancellation.ThrowIfCancellationRequested()
@@ -171,7 +172,8 @@ Public NotInheritable Class TradeService
             Return True
         Finally
             ' Never submit a partially typed whisper after Stop/F12 or a failed send.
-            If chatOpen AndAlso sameWindow() Then BotEngine.SendKey(hwnd, "ESC", 30, forceBackgroundPost:=True)
+            If chatOpen AndAlso sameWindow() AndAlso foregroundWindow() = hwnd Then BotEngine.SendKey(hwnd, "ESC", 30, forceBackgroundPost:=True)
         End Try
+        End SyncLock
     End Function
 End Class

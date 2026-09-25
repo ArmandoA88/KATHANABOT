@@ -11,7 +11,7 @@ Module Program
         TestBackground()
         TestKeysAndHold()
         TestSkillUi()
-        Console.WriteLine("PASS: background input isolation, disabled-feature policy, shortcut sequences, cancellable loot hold, editable skill colors and profile roundtrip.")
+        Console.WriteLine("PASS: foreground-only migration, compatibility policy, shortcut sequences, cancellable loot hold, editable skill colors and profile roundtrip.")
     End Sub
     Private Sub Check(value As Boolean, message As String)
         If Not value Then Throw New Exception(message)
@@ -27,14 +27,12 @@ Module Program
         WindowsInput.Current = fake
         WindowsInput.BackgroundOnly = True
         Try
-            Check(Not WindowsInput.Current.Activate(New IntPtr(123)), "background activated a window")
-            Check(Not WindowsInput.Current.MoveCursor(1, 2), "background moved cursor")
-            WindowsInput.Current.Keyboard(65, 0, 0, UIntPtr.Zero)
-            WindowsInput.Current.Mouse(2, 0, 0, 0, UIntPtr.Zero)
-            Check(Not BotEngine.SendKey(New IntPtr(123), "W", 5), "background sent movement")
-            Check(Not BotEngine.SendKey(New IntPtr(123), "CTRL+1", 5), "background sent physical chord")
-            Check(BotEngine.SendKey(New IntPtr(123), "8", 5), "background ordinary skill failed")
-            Check(fake.GlobalCalls = 0 AndAlso fake.Messages.SequenceEqual({&H100UI, &H101UI}), "background input escaped message-only channel")
+            Check(Not WindowsInput.BackgroundOnly, "legacy profiles must not re-enable background injection")
+            Check(WindowsInput.Current.Activate(New IntPtr(123)), "injected foreground activation failed")
+            Check(BotEngine.SendKey(New IntPtr(123), "W", 5), "movement did not use common input path")
+            fake.Messages.Clear()
+            Check(BotEngine.SendKey(New IntPtr(123), "8", 5, forceBackgroundPost:=True), "legacy callers did not use common input path")
+            Check(fake.Messages.SequenceEqual({&H100UI, &H101UI}), "common key request sequence changed")
         Finally
             WindowsInput.BackgroundOnly = False
             WindowsInput.Current = Nothing

@@ -609,6 +609,8 @@ Partial Public Class Form1
     End Function
 
     Private Shared Function PerformQuizClickBurst(hwnd As IntPtr, screenPoint As NativeMethods.POINT) As Boolean
+        SyncLock WindowsInput.SequenceLock
+        WindowsInput.BindTarget(hwnd)
         If WindowsInput.BackgroundOnly Then Return False
         Dim previous As New NativeMethods.POINT()
         Dim hadCursor = NativeMethods.GetCursorPos(previous)
@@ -618,16 +620,17 @@ Partial Public Class Form1
             End If
             ForceSetForegroundWindow(hwnd)
             NativeMethods.BringWindowToTop(hwnd)
-            If Not NativeMethods.SetCursorPos(screenPoint.X, screenPoint.Y) Then Return False
+            If Not NativeMethods.MoveCursorInput(screenPoint.X, screenPoint.Y) Then Return False
             For clickIndex = 1 To 10
-                NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTDOWN, 0UI, 0UI, 0UI, UIntPtr.Zero)
-                NativeMethods.mouse_event(NativeMethods.MOUSEEVENTF_LEFTUP, 0UI, 0UI, 0UI, UIntPtr.Zero)
+                NativeMethods.SendMouseInput(NativeMethods.MOUSEEVENTF_LEFTDOWN, 0UI, 0UI, 0UI, UIntPtr.Zero)
+                NativeMethods.SendMouseInput(NativeMethods.MOUSEEVENTF_LEFTUP, 0UI, 0UI, 0UI, UIntPtr.Zero)
                 If clickIndex < 10 Then Thread.Sleep(50)
             Next
             Return True
         Finally
-            If hadCursor Then NativeMethods.SetCursorPos(previous.X, previous.Y)
+            If hadCursor Then NativeMethods.MoveCursorInput(previous.X, previous.Y)
         End Try
+        End SyncLock
     End Function
 
     Private Sub RefreshQuizPreview()

@@ -57,12 +57,13 @@ Module Program
             window.Location = New System.Drawing.Point(-30000, -30000)
             window.Show()
             Application.DoEvents()
+            WindowsInput.Current = New ProbeInput(window)
             Dim hwnd = window.Handle
             Dim pid = CUInt(Environment.ProcessId)
             Dim command = TradeService.BuildWhisper("PuLgA", "Hi! ROR YAKSA? Good price, please.")
             Dim sending = Task.Run(Function() TradeService.SendWhisper(hwnd, pid, "PuLgA", "Hi! ROR YAKSA? Good price, please.", cancellation.Token, Function() hwnd))
             Pump(sending)
-            Check(sending.Result AndAlso window.Messages.SequenceEqual({command}), "Posted whisper lost case, punctuation, or Enter sequencing")
+            Check(sending.Result AndAlso window.Messages.SequenceEqual({command}), "Foreground whisper request lost case, punctuation, or Enter sequencing")
             Dim second = Task.Run(Function() TradeService.SendWhisper(hwnd, pid, "Second", "Hi", cancellation.Token, Function() hwnd))
             Pump(second)
             Check(second.Result AndAlso window.Messages.Count = 2 AndAlso window.Messages(1) = "/whisper Second Hi", "Sequential recipient delivery failed")
@@ -82,7 +83,8 @@ Module Program
                 Pump(stopped)
                 Check(stopped.IsCanceled AndAlso window.Messages.Count = 2 AndAlso Not window.ChatOpen, "Cancellation submitted partial text or left chat open")
             End Using
-            Console.WriteLine("PASS: mock-window whispers preserve exact case/punctuation, Enter/text/Enter order, sequential recipients and cancellation without partial submission.")
+            WindowsInput.Current = Nothing
+            Console.WriteLine("PASS: injected-input whispers preserve exact case/punctuation, Enter/text/Enter order, sequential recipients and cancellation without partial submission.")
         End Using
         Console.WriteLine("PASS: Discord APP/BOT and split headers, item aliases, buy/sell filtering, exact-case deduplication, validation and profile/UI roundtrips.")
     End Sub
@@ -282,6 +284,29 @@ Module Program
         If Not condition Then Throw New Exception(message)
     End Sub
 
+    Private Class ProbeInput
+        Implements IWindowsInput
+        Private ReadOnly probe As ChatProbe
+        Public Sub New(value As ChatProbe)
+            probe = value
+        End Sub
+        Public Function Post(hwnd As IntPtr, message As UInteger, w As IntPtr, l As IntPtr) As Boolean Implements IWindowsInput.Post
+            probe.CaptureRequest(message, w, l)
+            Return True
+        End Function
+        Public Function Activate(hwnd As IntPtr) As Boolean Implements IWindowsInput.Activate
+            Return True
+        End Function
+        Public Function MoveCursor(x As Integer, y As Integer) As Boolean Implements IWindowsInput.MoveCursor
+            Return True
+        End Function
+        Public Sub Keyboard(key As Byte, scan As Byte, flags As UInteger, extra As UIntPtr) Implements IWindowsInput.Keyboard
+            Throw New Exception("Unexpected physical call at Trade request seam")
+        End Sub
+        Public Sub Mouse(flags As UInteger, x As UInteger, y As UInteger, data As UInteger, extra As UIntPtr) Implements IWindowsInput.Mouse
+            Throw New Exception("Unexpected mouse call at Trade request seam")
+        End Sub
+    End Class
     Private Class ChatProbe
         Inherits Form
         Public ReadOnly Messages As New List(Of String)()
@@ -289,6 +314,10 @@ Module Program
         Private buffer As String = ""
         Private enterDownAt As Long
         Private readyAt As Long
+        Public Sub CaptureRequest(message As UInteger, w As IntPtr, l As IntPtr)
+            Dim packet = System.Windows.Forms.Message.Create(IntPtr.Zero, CInt(message), w, l)
+            WndProc(packet)
+        End Sub
         Protected Overrides Sub WndProc(ByRef m As Message)
             If m.Msg = &H100 Then
                 If m.WParam.ToInt32() = CInt(Keys.Enter) Then

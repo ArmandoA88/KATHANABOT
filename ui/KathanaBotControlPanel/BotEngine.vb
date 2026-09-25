@@ -779,30 +779,18 @@ Friend Module NativeMethods
     Friend Function GetCursorPos(ByRef lpPoint As POINT) As Boolean
     End Function
 
-    <DllImport("user32.dll", EntryPoint:="SetCursorPos", SetLastError:=True)>
-    Friend Function RawSetCursorPos(X As Integer, Y As Integer) As Boolean
-    End Function
-
-    Friend Function SetCursorPos(X As Integer, Y As Integer) As Boolean
+    Friend Function MoveCursorInput(X As Integer, Y As Integer) As Boolean
         Return WindowsInput.Current.MoveCursor(X, Y)
     End Function
 
-    <DllImport("user32.dll", EntryPoint:="mouse_event", SetLastError:=True)>
-    Friend Sub Rawmouse_event(dwFlags As UInteger, dx As UInteger, dy As UInteger, dwData As UInteger, dwExtraInfo As UIntPtr)
-    End Sub
-
-    Friend Sub mouse_event(dwFlags As UInteger, dx As UInteger, dy As UInteger, dwData As UInteger, dwExtraInfo As UIntPtr)
+    Friend Sub SendMouseInput(dwFlags As UInteger, dx As UInteger, dy As UInteger, dwData As UInteger, dwExtraInfo As UIntPtr)
         WindowsInput.Current.Mouse(dwFlags, dx, dy, dwData, dwExtraInfo)
     End Sub
 
     Friend Const VK_MENU As Byte = &H12
     Friend Const KEYEVENTF_KEYUP As UInteger = &H2UI
 
-    <DllImport("user32.dll", EntryPoint:="keybd_event", SetLastError:=True)>
-    Friend Sub Rawkeybd_event(bVk As Byte, bScan As Byte, dwFlags As UInteger, dwExtraInfo As UIntPtr)
-    End Sub
-
-    Friend Sub keybd_event(bVk As Byte, bScan As Byte, dwFlags As UInteger, dwExtraInfo As UIntPtr)
+    Friend Sub SendKeyboardInput(bVk As Byte, bScan As Byte, dwFlags As UInteger, dwExtraInfo As UIntPtr)
         WindowsInput.Current.Keyboard(bVk, bScan, dwFlags, dwExtraInfo)
     End Sub
 
@@ -919,11 +907,7 @@ Friend Module NativeMethods
 
 
 
-    <DllImport("user32.dll", EntryPoint:="PostMessage", SetLastError:=True)>
-    Friend Function RawPostMessage(hWnd As IntPtr, msg As UInteger, wParam As IntPtr, lParam As IntPtr) As Boolean
-    End Function
-
-    Friend Function PostMessage(hWnd As IntPtr, msg As UInteger, wParam As IntPtr, lParam As IntPtr) As Boolean
+    Friend Function SendForegroundInputRequest(hWnd As IntPtr, msg As UInteger, wParam As IntPtr, lParam As IntPtr) As Boolean
         Return WindowsInput.Current.Post(hWnd, msg, wParam, lParam)
     End Function
 
@@ -2587,7 +2571,7 @@ Partial Public Class BotEngine
                 RecordTiming(_lootScanTiming, lootScanWatch.Elapsed.TotalMilliseconds)
                 TryHandlePendingLootPickupVerification(cfg, hwnd, frame, now, mobNameRegion)
                 If IsLootScannerCaptureDue(cfg, hwnd, activeHwnd, now) Then
-                    BeginLootScannerCapture(now)
+                    BeginLootScannerCapture(hwnd, now)
                 End If
             End If
             Dim mobOcrWatch As Stopwatch = Stopwatch.StartNew()
@@ -3353,12 +3337,13 @@ Partial Public Class BotEngine
             (now - _lastRightAltAt).TotalMilliseconds >= Math.Max(100, Math.Min(20000, cfg.LootScannerIntervalMs))
     End Function
 
-    Private Sub BeginLootScannerCapture(now As DateTime)
+    Private Sub BeginLootScannerCapture(hwnd As IntPtr, now As DateTime)
+        WindowsInput.BindTarget(hwnd)
         Dim scan As Byte = CByte(NativeMethods.MapVirtualKey(CUInt(&HA5), 0UI))
         Dim KEYEVENTF_EXTENDEDKEY As UInteger = &H1
 
         Try
-            keybd_event(&HA5, scan, KEYEVENTF_EXTENDEDKEY, UIntPtr.Zero)
+            SendKeyboardInput(&HA5, scan, KEYEVENTF_EXTENDEDKEY, UIntPtr.Zero)
             _lootScannerCapturePending = True
             _lootScannerCaptureRequestedAt = now
             _lootScannerAltHeld = True
@@ -3597,8 +3582,8 @@ Partial Public Class BotEngine
         Dim KEYEVENTF_KEYUP As UInteger = &H2
 
         Try
-            keybd_event(&HA5, rightAltScan, KEYEVENTF_EXTENDEDKEY Or KEYEVENTF_KEYUP, UIntPtr.Zero)
-            keybd_event(&H12, genericAltScan, KEYEVENTF_KEYUP, UIntPtr.Zero)
+            SendKeyboardInput(&HA5, rightAltScan, KEYEVENTF_EXTENDEDKEY Or KEYEVENTF_KEYUP, UIntPtr.Zero)
+            SendKeyboardInput(&H12, genericAltScan, KEYEVENTF_KEYUP, UIntPtr.Zero)
         Catch
         Finally
             _lootScannerAltHeld = False
@@ -8204,11 +8189,12 @@ Partial Public Class BotEngine
             Dim key = _heldAutoLootArrow
             _heldAutoLootArrow = 0
             _lastAutoLootArrowMotionAt = DateTime.UtcNow
-            keybd_event(CByte(key), CByte(NativeMethods.MapVirtualKey(CUInt(key), 0UI)), &H1UI Or &H2UI, UIntPtr.Zero)
+            SendKeyboardInput(CByte(key), CByte(NativeMethods.MapVirtualKey(CUInt(key), 0UI)), &H1UI Or &H2UI, UIntPtr.Zero)
         End SyncLock
     End Sub
 
     Private Sub TryHandleAutoLootArrowHold(cfg As BotConfig, hwnd As IntPtr, token As CancellationToken)
+        WindowsInput.BindTarget(hwnd)
         If hwnd = IntPtr.Zero OrElse NativeMethods.GetForegroundWindow() <> hwnd OrElse cfg.ResuHoldPlaceOnlyModeEnabled Then Return
         SyncLock _sync
             If token.IsCancellationRequested OrElse _chatInputPaused OrElse Not _status.Running Then Return
@@ -8225,7 +8211,7 @@ Partial Public Class BotEngine
                             NativeMethods.GetForegroundWindow() <> hwnd Then Return
                         _heldAutoLootArrow = key
                         _lastAutoLootArrowMotionAt = DateTime.UtcNow
-                        keybd_event(CByte(key), CByte(NativeMethods.MapVirtualKey(CUInt(key), 0UI)), &H1UI, UIntPtr.Zero)
+                        SendKeyboardInput(CByte(key), CByte(NativeMethods.MapVirtualKey(CUInt(key), 0UI)), &H1UI, UIntPtr.Zero)
                         holdWatch.Restart()
                     End SyncLock
                     RaiseEvent LogLine($"Auto-loot: holding {If(key = &H25, "Left", "Right")} arrow.")
@@ -9590,6 +9576,10 @@ Partial Public Class BotEngine
         Dim typedOk As Boolean = SendPartyAskCommand(hwnd, commandText, cfg.ChatMessageUseCtrlV)
         Thread.Sleep(55)
 
+        If Not typedOk OrElse Not WindowsInput.TargetIsForeground(hwnd) Then
+            If WindowsInput.TargetIsForeground(hwnd) Then SendKey(hwnd, "ESC", FastKeyPressMs)
+            Return False
+        End If
         Dim sentFinalEnter As Boolean = SendKey(hwnd, "ENTER", FastKeyPressMs)
         If sentFinalEnter Then
             _lastPartyAskAt = now
@@ -9654,6 +9644,10 @@ Partial Public Class BotEngine
         Dim typedOk As Boolean = SendPartyAskCommand(hwnd, commandText, cfg.ChatMessageUseCtrlV)
         Thread.Sleep(55)
 
+        If Not typedOk OrElse Not WindowsInput.TargetIsForeground(hwnd) Then
+            If WindowsInput.TargetIsForeground(hwnd) Then SendKey(hwnd, "ESC", FastKeyPressMs)
+            Return False
+        End If
         Dim sentFinalEnter As Boolean = SendKey(hwnd, "ENTER", FastKeyPressMs)
         If sentFinalEnter Then
             _lastResurrectAskAt = now
@@ -9764,43 +9758,28 @@ Partial Public Class BotEngine
         End Try
     End Function
 
-    ' Posts a Ctrl+V key combo directly to hwnd the same way SendKey posts single keys (no real
-    ' hardware event, no foreground requirement) - consistent with how this window already accepts
-    ' posted per-character keystrokes for chat, so the game's own paste handling should see it the
-    ' same way it already sees typed characters.
+    ' Foreground SendInput Ctrl+V with unconditional modifier cleanup.
     Private Shared Function SendCtrlVPaste(hwnd As IntPtr) As Boolean
-        If hwnd = IntPtr.Zero Then
-            Return False
-        End If
-
-        Const VK_CONTROL As Integer = &H11
-        Const VK_V As Integer = &H56
-        Dim scanCtrl As UInteger = NativeMethods.MapVirtualKey(CUInt(VK_CONTROL), 0UI)
-        Dim scanV As UInteger = NativeMethods.MapVirtualKey(CUInt(VK_V), 0UI)
-        Dim lparamCtrlDown As Integer = 1 Or (CInt(scanCtrl) << 16)
-        Dim lparamCtrlUp As Integer = lparamCtrlDown Or (1 << 30) Or (1 << 31)
-        Dim lparamVDown As Integer = 1 Or (CInt(scanV) << 16)
-        Dim lparamVUp As Integer = lparamVDown Or (1 << 30) Or (1 << 31)
-
-        Try
-            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_KEYDOWN), New IntPtr(VK_CONTROL), New IntPtr(lparamCtrlDown))
-            Thread.Sleep(15)
-            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_KEYDOWN), New IntPtr(VK_V), New IntPtr(lparamVDown))
-            Thread.Sleep(20)
-            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_KEYUP), New IntPtr(VK_V), New IntPtr(lparamVUp))
-            Thread.Sleep(15)
-            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_KEYUP), New IntPtr(VK_CONTROL), New IntPtr(lparamCtrlUp))
-            Return True
-        Catch
-            Return False
-        End Try
+        SyncLock WindowsInput.SequenceLock
+            WindowsInput.BindTarget(hwnd)
+            If Not WindowsInput.Current.Activate(hwnd) Then Return False
+            Dim success As Boolean = False
+            Dim releasedV As Boolean, releasedCtrl As Boolean
+            Try
+                If Not NativeMethods.SendForegroundInputRequest(hwnd, &H100UI, New IntPtr(&H11), IntPtr.Zero) Then Return False
+                Thread.Sleep(15)
+                If Not NativeMethods.SendForegroundInputRequest(hwnd, &H100UI, New IntPtr(&H56), IntPtr.Zero) Then Return False
+                Thread.Sleep(20)
+                success = True
+            Finally
+                releasedV = NativeMethods.SendForegroundInputRequest(hwnd, &H101UI, New IntPtr(&H56), IntPtr.Zero)
+                releasedCtrl = NativeMethods.SendForegroundInputRequest(hwnd, &H101UI, New IntPtr(&H11), IntPtr.Zero)
+            End Try
+            Return success AndAlso releasedV AndAlso releasedCtrl
+        End SyncLock
     End Function
 
-    ' Pasting is one clipboard write + one Ctrl+V instead of a posted keystroke (with a settle
-    ' delay) per character, and it carries any character through untouched instead of silently
-    ' dropping whatever PartyAskCharToKeyName doesn't map (e.g. "!", "?", accented letters). Falls
-    ' back to the old per-character typing if the clipboard couldn't be claimed (e.g. another app
-    ' holding it right at that moment), so this can never regress to typing nothing at all.
+    ' Paste and UTF-16 typing both use foreground SendInput. Clipboard access is not input injection.
     Private Shared Function SendPartyAskCommand(hwnd As IntPtr, rawText As String, useCtrlV As Boolean) As Boolean
         Dim commandText As String = NormalizePartyAskCommand(rawText)
 
@@ -9808,8 +9787,8 @@ Partial Public Class BotEngine
             Dim previousClipboardText As String = GetClipboardText()
             If SetClipboardText(commandText) Then
                 Dim pasted As Boolean = SendCtrlVPaste(hwnd)
-                ' Give the game a moment to actually process the posted Ctrl+V and read the clipboard
-                ' before putting the user's own content back - PostMessage only queues the keystrokes,
+                ' Give the game a moment to actually process Ctrl+V and read the clipboard
+                ' before putting the user's own content back - the game consumes input asynchronously,
                 ' it doesn't wait for the target window to have handled them yet.
                 Thread.Sleep(150)
                 If previousClipboardText IsNot Nothing Then
@@ -9822,14 +9801,9 @@ Partial Public Class BotEngine
         End If
 
         Dim typedAny As Boolean = False
+        WindowsInput.BindTarget(hwnd)
         For Each ch As Char In commandText
-            Dim keyName As String = PartyAskCharToKeyName(ch)
-            If keyName = "" Then
-                Continue For
-            End If
-            If Not SendKey(hwnd, keyName, 20, True) Then
-                Return typedAny
-            End If
+            If Not NativeMethods.SendForegroundInputRequest(hwnd, &H102UI, New IntPtr(AscW(ch) And &HFFFF), New IntPtr(1)) Then Return False
             typedAny = True
             Thread.Sleep(20)
         Next
@@ -9837,14 +9811,20 @@ Partial Public Class BotEngine
     End Function
 
     Public Shared Function SendChatMessageSequence(hwnd As IntPtr, rawText As String) As Boolean
+        SyncLock WindowsInput.SequenceLock
         Dim messageText = If(rawText, "").Replace(vbCr, " ").Replace(vbLf, " ").Trim()
         If hwnd = IntPtr.Zero OrElse messageText.Length = 0 Then Return False
         If Not SendKey(hwnd, "ENTER", 30, forceBackgroundPost:=True) Then Return False
         Thread.Sleep(60)
         Dim entered = SendPartyAskCommand(hwnd, messageText, False)
         Thread.Sleep(55)
+        If Not entered OrElse Not WindowsInput.TargetIsForeground(hwnd) Then
+            If WindowsInput.TargetIsForeground(hwnd) Then SendKey(hwnd, "ESC", 30)
+            Return False
+        End If
         Dim submitted = SendKey(hwnd, "ENTER", 30, forceBackgroundPost:=True)
         Return entered AndAlso submitted
+        End SyncLock
     End Function
 
     Private Sub PruneRepairMatchTimes(now As DateTime)
@@ -13672,7 +13652,7 @@ Partial Public Class BotEngine
 
 
 
-    Friend Shared Sub keybd_event(bVk As Byte, bScan As Byte, dwFlags As UInteger, dwExtraInfo As UIntPtr)
+    Friend Shared Sub SendKeyboardInput(bVk As Byte, bScan As Byte, dwFlags As UInteger, dwExtraInfo As UIntPtr)
         WindowsInput.Current.Keyboard(bVk, bScan, dwFlags, dwExtraInfo)
     End Sub
 
@@ -13683,6 +13663,9 @@ Partial Public Class BotEngine
 
     Public Shared Function SendKey(hwnd As IntPtr, keyName As String, pressMs As Integer, Optional forceBackgroundPost As Boolean = False, Optional forcePhysicalKeyEvent As Boolean = False, Optional cancellationToken As CancellationToken = Nothing) As Boolean
         SyncLock WindowsInput.SequenceLock
+            If cancellationToken.IsCancellationRequested Then Return False
+            WindowsInput.BindTarget(hwnd)
+            If Not WindowsInput.Current.Activate(hwnd) Then Return False
             Dim modifier As Integer, digit As Integer
             If TryParseSkillShortcut(keyName, modifier, digit) Then Return SendSkillShortcut(hwnd, modifier, digit, pressMs, cancellationToken)
             Return SendKeyCore(hwnd, keyName, pressMs, forceBackgroundPost, forcePhysicalKeyEvent, cancellationToken)
@@ -13708,57 +13691,15 @@ Partial Public Class BotEngine
         If WindowsInput.BackgroundOnly AndAlso (forcePhysicalKeyEvent OrElse BackgroundModePolicy.RequiresForeground(keyName) OrElse vk = &HA4 OrElse vk = &HA5 OrElse vk = &H12) Then Return False
         If cancellationToken.IsCancellationRequested Then Return False
 
-        Dim usePhysicalKeyEvent As Boolean =
-            forcePhysicalKeyEvent OrElse
-            vk = &HA4 OrElse
-            vk = &HA5 OrElse
-            vk = &H12 OrElse
-            vk = &H57 OrElse
-            vk = &H41 OrElse
-            vk = &H53 OrElse
-            vk = &H44
-
-        ' Use keybd_event for ALT and movement keys because many games ignore PostMessage for them.
-        If usePhysicalKeyEvent AndAlso Not forceBackgroundPost Then
-            Dim foregroundHwnd As IntPtr = NativeMethods.GetForegroundWindow()
-            If foregroundHwnd <> hwnd Then
-                NativeMethods.SetForegroundWindow(hwnd)
-                Thread.Sleep(ForegroundInputSettleMs)
-            End If
-
-            ' Activation can be denied by Windows. Never inject into the bot UI or another app.
-            If NativeMethods.GetForegroundWindow() <> hwnd Then
-                RuntimeJournal.Record("Input skipped", $"Key {keyName}: game window {hwnd} did not gain focus.")
-                Return False
-            End If
-
-            Dim scan As Byte = CByte(NativeMethods.MapVirtualKey(CUInt(vk), 0UI))
-            Dim KEYEVENTF_EXTENDEDKEY As UInteger = &H1
-            Dim KEYEVENTF_KEYUP As UInteger = &H2
-            
-            Dim flagsDown As UInteger = 0
-            Dim flagsUp As UInteger = KEYEVENTF_KEYUP
-            If vk = &HA5 Then ' RMENU
-                flagsDown = flagsDown Or KEYEVENTF_EXTENDEDKEY
-                flagsUp = flagsUp Or KEYEVENTF_EXTENDEDKEY
-            End If
-
-            Try
-                keybd_event(CByte(vk), scan, flagsDown, UIntPtr.Zero)
-                Thread.Sleep(Math.Max(5, pressMs))
-                keybd_event(CByte(vk), scan, flagsUp, UIntPtr.Zero)
-                Return True
-            Catch
-                Return False
-            End Try
-        End If
-
+        ' All key requests, including legacy forceBackgroundPost calls, use the same
+        ' foreground-only SendInput backend. The old flags remain source-compatible.
         Dim scanPost As UInteger = NativeMethods.MapVirtualKey(CUInt(vk), 0UI)
         Dim lparamDown As Integer = 1 Or (CInt(scanPost) << 16)
+        If {&HA5, &H25, &H26, &H27, &H28, &H21, &H22, &H23, &H24, &H2D, &H2E}.Contains(vk) Then lparamDown = lparamDown Or &H1000000
         Dim lparamUp As Integer = lparamDown Or (1 << 30) Or (1 << 31)
 
         Try
-            If Not NativeMethods.PostMessage(hwnd, CUInt(&H100), New IntPtr(vk), New IntPtr(lparamDown)) Then Return False
+            If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(&H100), New IntPtr(vk), New IntPtr(lparamDown)) Then Return False
             Dim released As Boolean
             Try
                 If cancellationToken.CanBeCanceled Then
@@ -13767,7 +13708,7 @@ Partial Public Class BotEngine
                     Thread.Sleep(Math.Max(5, pressMs))
                 End If
             Finally
-                released = NativeMethods.PostMessage(hwnd, CUInt(&H101), New IntPtr(vk), New IntPtr(lparamUp))
+                released = NativeMethods.SendForegroundInputRequest(hwnd, CUInt(&H101), New IntPtr(vk), New IntPtr(lparamUp))
             End Try
             Return released AndAlso Not cancellationToken.IsCancellationRequested
         Catch
@@ -13797,7 +13738,7 @@ Partial Public Class BotEngine
         Dim scan As UInteger = NativeMethods.MapVirtualKey(CUInt(vk), 0UI)
         Dim lparamUp As Integer = 1 Or (CInt(scan) << 16) Or (1 << 30) Or (1 << 31)
         Try
-            Return NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_KEYUP), New IntPtr(vk), New IntPtr(lparamUp))
+            Return NativeMethods.SendForegroundInputRequest(hwnd, CUInt(NativeMethods.WM_KEYUP), New IntPtr(vk), New IntPtr(lparamUp))
         Catch
             Return False
         End Try
@@ -13819,25 +13760,29 @@ Partial Public Class BotEngine
     End Function
 
     Public Shared Function ClickClientPoint(hwnd As IntPtr, x As Integer, y As Integer, Optional moveDelayMs As Integer = 10, Optional downUpDelayMs As Integer = 25) As Boolean
+        SyncLock WindowsInput.SequenceLock
+        WindowsInput.BindTarget(hwnd)
+        If Not WindowsInput.Current.Activate(hwnd) Then Return False
         If hwnd = IntPtr.Zero Then
             Return False
         End If
 
         Dim lParam As Integer = (x And &HFFFF) Or ((y And &HFFFF) << 16)
         Try
-            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_MOUSEMOVE), IntPtr.Zero, New IntPtr(lParam))
+            If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(NativeMethods.WM_MOUSEMOVE), IntPtr.Zero, New IntPtr(lParam)) Then Return False
             If moveDelayMs > 0 Then
                 Thread.Sleep(moveDelayMs)
             End If
-            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_LBUTTONDOWN), New IntPtr(NativeMethods.MK_LBUTTON), New IntPtr(lParam))
+            If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(NativeMethods.WM_LBUTTONDOWN), New IntPtr(NativeMethods.MK_LBUTTON), New IntPtr(lParam)) Then Return False
             If downUpDelayMs > 0 Then
                 Thread.Sleep(downUpDelayMs)
             End If
-            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_LBUTTONUP), IntPtr.Zero, New IntPtr(lParam))
+            If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(NativeMethods.WM_LBUTTONUP), IntPtr.Zero, New IntPtr(lParam)) Then Return False
             Return True
         Catch
             Return False
         End Try
+        End SyncLock
     End Function
 
     Private Class VerifiedClickState
@@ -13863,6 +13808,7 @@ Partial Public Class BotEngine
     ''' block regardless of the return value so the cursor and foreground window get restored.
     ''' </summary>
     Private Shared Function TryBeginVerifiedClick(hwnd As IntPtr, x As Integer, y As Integer, state As VerifiedClickState, ByRef diagnostic As String) As Boolean
+        WindowsInput.BindTarget(hwnd)
         diagnostic = ""
         If WindowsInput.BackgroundOnly Then
             diagnostic = "Background-only mode blocks foreground clicks."
@@ -13911,12 +13857,16 @@ Partial Public Class BotEngine
         ' recovers from a single-tick jitter read without materially widening any interference window,
         ' while a tight tolerance means a persistent few-pixel drift now correctly fails closed instead
         ' of silently clicking wherever the cursor actually landed.
+        If Not WindowsInput.Current.Activate(hwnd) OrElse Not WindowsInput.TargetIsForeground(hwnd) Then
+            diagnostic = "Selected game could not gain foreground focus"
+            Return False
+        End If
         Const cursorPositionTolerancePixels As Integer = 2
         Const maxSetCursorAttempts As Integer = 5
         Dim confirmedPos As NativeMethods.POINT = Nothing
         Dim positionConfirmed As Boolean = False
         For attempt As Integer = 1 To maxSetCursorAttempts
-            If Not NativeMethods.SetCursorPos(state.ScreenPoint.X, state.ScreenPoint.Y) Then
+            If Not NativeMethods.MoveCursorInput(state.ScreenPoint.X, state.ScreenPoint.Y) Then
                 diagnostic = $"SetCursorPos failed (target screen {state.ScreenPoint.X},{state.ScreenPoint.Y})"
                 Return False
             End If
@@ -13944,7 +13894,7 @@ Partial Public Class BotEngine
     Private Shared Sub EndVerifiedClick(hwnd As IntPtr, state As VerifiedClickState, restoreCursor As Boolean)
         If restoreCursor AndAlso state.HadCursor Then
             Try
-                NativeMethods.SetCursorPos(state.PreviousCursor.X, state.PreviousCursor.Y)
+                NativeMethods.MoveCursorInput(state.PreviousCursor.X, state.PreviousCursor.Y)
             Catch
             End Try
         End If
@@ -13965,11 +13915,11 @@ Partial Public Class BotEngine
 
     ''' <summary>
     ''' Double right-clicks a client-space point using the shared verified-click setup (real cursor
-    ''' move + confirm, brief foreground if needed). The click itself is still posted directly to this
-    ''' window's handle rather than sent as a real system-wide click, so it can't land on or steal
-    ''' focus from some other window that happens to be on top of the game at that screen point.
+    ''' move + confirm, foreground verification). The shared backend sends mouse input only
+    ''' while the game is foreground and the cursor is over that window.
     ''' </summary>
     Public Shared Function DoubleRightClickVerifiedAtClientPoint(hwnd As IntPtr, x As Integer, y As Integer, ByRef diagnostic As String, Optional restoreCursor As Boolean = True, Optional pressHoldMs As Integer = 15, Optional clickGapMs As Integer = 60) As Boolean
+        SyncLock WindowsInput.SequenceLock
         Dim state As New VerifiedClickState()
         diagnostic = ""
         If Not TryBeginVerifiedClick(hwnd, x, y, state, diagnostic) Then
@@ -13982,9 +13932,9 @@ Partial Public Class BotEngine
             ' it reads GetCursorPos rather than trusting the message's own coordinates.
             Dim lParam As Integer = (x And &HFFFF) Or ((y And &HFFFF) << 16)
             For clickIndex As Integer = 0 To 1
-                NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_RBUTTONDOWN), New IntPtr(NativeMethods.MK_RBUTTON), New IntPtr(lParam))
+                If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(NativeMethods.WM_RBUTTONDOWN), New IntPtr(NativeMethods.MK_RBUTTON), New IntPtr(lParam)) Then Return False
                 Thread.Sleep(Math.Max(1, pressHoldMs))
-                NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_RBUTTONUP), IntPtr.Zero, New IntPtr(lParam))
+                If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(NativeMethods.WM_RBUTTONUP), IntPtr.Zero, New IntPtr(lParam)) Then Return False
                 If clickIndex = 0 AndAlso clickGapMs > 0 Then
                     Thread.Sleep(clickGapMs)
                 End If
@@ -13997,6 +13947,7 @@ Partial Public Class BotEngine
         Finally
             EndVerifiedClick(hwnd, state, restoreCursor)
         End Try
+        End SyncLock
     End Function
 
     ''' <summary>
@@ -14007,6 +13958,7 @@ Partial Public Class BotEngine
     ''' foreground window.
     ''' </summary>
     Public Shared Function LeftClickVerifiedAtClientPoint(hwnd As IntPtr, x As Integer, y As Integer, ByRef diagnostic As String, Optional restoreCursor As Boolean = True, Optional pressHoldMs As Integer = 25) As Boolean
+        SyncLock WindowsInput.SequenceLock
         Dim state As New VerifiedClickState()
         diagnostic = ""
         If Not TryBeginVerifiedClick(hwnd, x, y, state, diagnostic) Then
@@ -14016,9 +13968,9 @@ Partial Public Class BotEngine
 
         Try
             Dim lParam As Integer = (x And &HFFFF) Or ((y And &HFFFF) << 16)
-            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_LBUTTONDOWN), New IntPtr(NativeMethods.MK_LBUTTON), New IntPtr(lParam))
+            If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(NativeMethods.WM_LBUTTONDOWN), New IntPtr(NativeMethods.MK_LBUTTON), New IntPtr(lParam)) Then Return False
             Thread.Sleep(Math.Max(1, pressHoldMs))
-            NativeMethods.PostMessage(hwnd, CUInt(NativeMethods.WM_LBUTTONUP), IntPtr.Zero, New IntPtr(lParam))
+            If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(NativeMethods.WM_LBUTTONUP), IntPtr.Zero, New IntPtr(lParam)) Then Return False
             Return True
         Catch ex As Exception
             diagnostic = $"exception ({ex.GetType().Name}): {ex.Message}"
@@ -14026,6 +13978,7 @@ Partial Public Class BotEngine
         Finally
             EndVerifiedClick(hwnd, state, restoreCursor)
         End Try
+        End SyncLock
     End Function
 
     ' Auto Party Invite: on its own loop timer, presses the user-picked hotkey (e.g. an in-game
@@ -14055,7 +14008,7 @@ Partial Public Class BotEngine
         ' forcePhysicalKeyEvent: a plain PostMessage keypress never touches window focus, so if the
         ' game wasn't already foreground the very next LeftClickVerifiedAtClientPoint call would have
         ' to foreground it itself, right after this process just posted a message to it in the
-        ' background - flaky in practice. Sending a real keybd_event here foregrounds the game first
+        ' background. The common SendInput path verifies foreground focus first
         ' (same as movement/ALT keys already do), so the click 80ms later lands against a window
         ' that's actually active instead of racing a second, independent foreground switch.
         If Not SendKey(hwnd, keyName, FastKeyPressMs, forcePhysicalKeyEvent:=True) Then
@@ -14110,6 +14063,10 @@ Partial Public Class BotEngine
         Dim typedOk As Boolean = SendPartyAskCommand(hwnd, commandText, cfg.ChatMessageUseCtrlV)
         Thread.Sleep(55)
 
+        If Not typedOk OrElse Not WindowsInput.TargetIsForeground(hwnd) Then
+            If WindowsInput.TargetIsForeground(hwnd) Then SendKey(hwnd, "ESC", FastKeyPressMs)
+            Return False
+        End If
         Dim sentFinalEnter As Boolean = SendKey(hwnd, "ENTER", FastKeyPressMs)
         If sentFinalEnter Then
             _lastAutoPartyMessageAt = now

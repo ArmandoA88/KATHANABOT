@@ -1,4 +1,4 @@
-Imports System.Threading
+﻿Imports System.Threading
 
 Partial Public Class BotEngine
     Private Shared Function TryParseSkillShortcut(value As String, ByRef modifier As Integer, ByRef digit As Integer) As Boolean
@@ -18,11 +18,8 @@ Partial Public Class BotEngine
         SyncLock _keyOutputPauseSync
             If _keyOutputPausedWindows.Contains(hwnd) Then Return False
         End SyncLock
-        If NativeMethods.GetForegroundWindow() <> hwnd Then
-            NativeMethods.SetForegroundWindow(hwnd)
-            Thread.Sleep(ForegroundInputSettleMs)
-        End If
-        If NativeMethods.GetForegroundWindow() <> hwnd Then Return False
+        WindowsInput.BindTarget(hwnd)
+        If Not WindowsInput.Current.Activate(hwnd) OrElse Not WindowsInput.TargetIsForeground(hwnd) Then Return False
         Return SendPhysicalSkillShortcut(modifier, digit, holdMs, token)
     End Function
 
@@ -31,8 +28,8 @@ Partial Public Class BotEngine
         Dim modifierScan = CByte(NativeMethods.MapVirtualKey(CUInt(modifier), 0))
         Dim digitScan = CByte(NativeMethods.MapVirtualKey(CUInt(digit), 0))
         Try
-            keybd_event(CByte(modifier), modifierScan, 0, UIntPtr.Zero)
-            keybd_event(CByte(digit), digitScan, 0, UIntPtr.Zero)
+            SendKeyboardInput(CByte(modifier), modifierScan, 0, UIntPtr.Zero)
+            SendKeyboardInput(CByte(digit), digitScan, 0, UIntPtr.Zero)
             If token.CanBeCanceled Then
                 token.WaitHandle.WaitOne(Math.Clamp(holdMs, 5, 5000))
             Else
@@ -40,8 +37,11 @@ Partial Public Class BotEngine
             End If
             Return Not token.IsCancellationRequested
         Finally
-            keybd_event(CByte(digit), digitScan, 2, UIntPtr.Zero)
-            keybd_event(CByte(modifier), modifierScan, 2, UIntPtr.Zero)
+            Try
+                SendKeyboardInput(CByte(digit), digitScan, 2, UIntPtr.Zero)
+            Finally
+                SendKeyboardInput(CByte(modifier), modifierScan, 2, UIntPtr.Zero)
+            End Try
         End Try
     End Function
 End Class

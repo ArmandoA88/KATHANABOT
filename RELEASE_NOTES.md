@@ -1,4 +1,17 @@
-﻿## 1.0.215
+﻿## 1.0.217
+- Added a fresh 5-15 ms delay before each generated key-down (including Unicode text and modifier presses) and mouse-button-down, across all features using the foreground input backend.
+- Skill cooldowns remain unchanged. Key/button releases and cursor moves have no added delay; focus and click coverage are checked again after the wait.
+- Timing variation is not a guarantee against server disconnections or automation detection.
+
+## 1.0.216
+- All generated game keyboard, mouse, cursor and Unicode text input now goes through a shared foreground-only SendInput backend; no PostMessage, keybd_event, mouse_event or SetCursorPos input fallbacks remain.
+- Background Only is removed as an operating mode. Old profile flags are ignored; the UI reports Foreground SendInput only.
+- Every new input checks the target window/process and foreground state. Clicks also reject covered cursor positions. A watchdog releases bot-owned keys/buttons on focus loss and retries failed releases.
+- Combat/Lite/Direct KP, navigation, loot, buffs, party/support, Trade, Quiz, RESU, disconnect and relaunch paths use the shared input boundary. Relaunch no longer clicks unverified desktop coordinates.
+- Chat preserves Unicode case/punctuation and does not submit partial text after input failure or focus loss. Modifier cleanup is unconditional.
+- Added input-backend and native-import regression checks. No claim is made that foreground input is undetectable.
+
+## 1.0.215
 - Enabled skill rows are green; editable key cells are purple. Add skill creates additional saved Ctrl+number or Alt+number rows.
 - Added a persistent Background Only button that disables foreground-dependent features, reports the changes, and blocks focus, mouse, and physical key presses while enabled.
 - Loot After Kill now holds F for one second by default, with a configurable 0.05-5 second duration beside its toggle. Stopping releases the held key promptly.
