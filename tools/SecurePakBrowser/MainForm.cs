@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.RegularExpressions;
 
 namespace KathanaSecurePakBrowser;
@@ -41,6 +41,7 @@ internal sealed class MainForm : Form
     private readonly ToolStripButton editTccButton = new("Edit TCC map...") { Enabled = false };
     private readonly ToolStripButton editTextButton = new("Edit text...") { Enabled = false };
     private readonly ToolStripButton revertButton = new("Revert selected") { Enabled = false };
+    private readonly ToolStripButton packFolderButton = new("Pack folder to PAK...") { Enabled = false, Overflow = ToolStripItemOverflow.Never };
     private readonly ToolStripButton saveAsButton = new("Save modified PAK...") { Enabled = false };
     private readonly Dictionary<int, byte[]> replacements = new();
     private SecurePakArchive? archive;
@@ -84,6 +85,7 @@ internal sealed class MainForm : Form
         ToolStripButton openButton = new("Open data.pak");
         openButton.Click += async (_, _) => await ChooseArchiveAsync();
         extractSelectedButton.Click += async (_, _) => await ExtractSelectedAsync();
+        packFolderButton.Click += async (_, _) => await PackFolderAsync();
         extractAllButton.Click += async (_, _) => await ExtractAllAsync();
         replaceSelectedButton.Click += async (_, _) => await ReplaceSelectedAsync();
         editTccButton.Click += async (_, _) => await EditSelectedTccAsync();
@@ -94,6 +96,7 @@ internal sealed class MainForm : Form
         ToolStripControlHost searchHost = new(searchBox) { Margin = new Padding(12, 0, 4, 0) };
         toolbar.Items.AddRange([
             openButton,
+            packFolderButton,
             new ToolStripSeparator(),
             extractSelectedButton,
             extractAllButton,
@@ -378,6 +381,7 @@ internal sealed class MainForm : Form
         editTextButton.Enabled = !busy && hasSingleSelection && !selectedIsTcc;
         revertButton.Enabled = !busy && fileList.SelectedItems.Cast<ListViewItem>()
             .Any(item => item.Tag is SecurePakEntry selected && replacements.ContainsKey(selected.Index));
+        packFolderButton.Enabled = !busy && archive is not null;
         saveAsButton.Enabled = !busy && archive is not null && replacements.Count > 0;
         if (fileList.SelectedItems.Count != 1 || fileList.SelectedItems[0].Tag is not SecurePakEntry entry)
         {
@@ -666,6 +670,65 @@ internal sealed class MainForm : Form
         statusLabel.Text = $"Reverted {reverted:N0} modification(s). {replacements.Count:N0} remain.";
     }
 
+    private async Task PackFolderAsync()
+    {
+        if (archive is null || busy) return;
+        if (replacements.Count != 0)
+        {
+            MessageBox.Show(this, "Save or revert pending editor changes before packing a folder.",
+                "Unsaved modifications", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        using FolderBrowserDialog folder = new()
+        {
+            Description = "Select the extraction root. Matching files replace original entries; missing files stay unchanged.",
+            UseDescriptionForTitle = true
+        };
+        if (folder.ShowDialog(this) != DialogResult.OK) return;
+        using SaveFileDialog save = new()
+        {
+            Title = "Pack extracted files with the original SecurePak encryption",
+            Filter = "SecurePak archives (*.pak)|*.pak",
+            FileName = Path.GetFileNameWithoutExtension(archive.FilePath) + ".repacked.pak",
+            InitialDirectory = Path.GetDirectoryName(archive.FilePath),
+            DefaultExt = "pak", AddExtension = true, OverwritePrompt = true
+        };
+        if (save.ShowDialog(this) != DialogResult.OK) return;
+        SetBusy(true, "Scanning extracted files...");
+        progressBar.Visible = true;
+        progressBar.Minimum = 0;
+        progressBar.Maximum = archive.Entries.Count;
+        progressBar.Value = 0;
+        try
+        {
+            SecurePakArchive source = archive;
+            IProgress<int> progress = new Progress<int>(value =>
+            {
+                progressBar.Value = Math.Min(value, progressBar.Maximum);
+                statusLabel.Text = value == source.Entries.Count
+                    ? "Verifying encryption, decompression and checksums..."
+                    : $"Packing {value:N0} / {source.Entries.Count:N0} files...";
+            });
+            SecurePakSaveResult result = await Task.Run(() => source.PackFolder(folder.SelectedPath, save.FileName, progress));
+            SecurePakArchive reopened = await Task.Run(() => SecurePakArchive.Open(result.FilePath));
+            archive = reopened;
+            source.Dispose();
+            BuildFolderTree();
+            UpdateArchiveCaption();
+            statusLabel.Text = $"Packed and verified {result.ModifiedEntries:N0} archive entries from the folder into {Path.GetFileName(result.FilePath)}. Other entries preserved.";
+        }
+        catch (Exception exception)
+        {
+            statusLabel.Text = "Packing failed. The source archive remains unchanged.";
+            MessageBox.Show(this, exception.Message, "Could not pack folder", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            progressBar.Visible = false;
+            SetBusy(false);
+        }
+    }
+
     private async Task SaveArchiveAsAsync()
     {
         if (archive is null || busy || replacements.Count == 0) return;
@@ -761,6 +824,7 @@ internal sealed class MainForm : Form
 
     private void OnFormClosing(object? sender, FormClosingEventArgs e)
     {
+        if (busy) { e.Cancel = true; return; }
         if (replacements.Count == 0) return;
         if (MessageBox.Show(this,
                 $"Discard {replacements.Count:N0} unsaved modification(s) and close?",
@@ -786,6 +850,7 @@ internal sealed class MainForm : Form
         editTextButton.Enabled = !value && GetSelectedEntry() is not null && !selectedIsTcc;
         revertButton.Enabled = !value && fileList.SelectedItems.Cast<ListViewItem>()
             .Any(item => item.Tag is SecurePakEntry selected && replacements.ContainsKey(selected.Index));
+        packFolderButton.Enabled = !value && archive is not null;
         saveAsButton.Enabled = !value && archive is not null && replacements.Count > 0;
         if (message is not null) statusLabel.Text = message;
     }

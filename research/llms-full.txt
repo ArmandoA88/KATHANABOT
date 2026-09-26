@@ -1,0 +1,2013 @@
+﻿# Welcome to Kathana Wiki
+
+Kathana Wiki helps guide new adventurer in mastering the game by learning the basics and its core mechanics!\
+\
+While this Wiki is a work in progress, this will be updated constantly.
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FmQgYQerPXSjMGmKjEapv%2F1080p_KathanaWallpaper.png?alt=media&amp;token=637323cf-1596-48ad-a68f-15130f5979be" alt=""><figcaption></figcaption></figure>
+
+
+# Quickstart
+
+A step forward to play the classic adventure of Kathana!\
+Here you will find the guides from installing the game up to mastering the basics.
+
+If you have technical difficulties and other concerns, for quick support please contact GameOlic Staff at our discord server.
+
+{% embed url="<https://discord.com/servers/kathana-1363839027114934315>" %}
+
+
+# Installing the game
+
+Kathana is available on Steam,  if you already have a steam account, you can download and install the game through this link:
+
+{% embed url="<https://store.steampowered.com/app/2081880/Kathana/>" %}
+
+
+# Game Settings
+
+There are 2 types of settings that the game uses.
+
+First is from the KathanaLauncher.exe (The Launcher) and the second is in game.
+
+### Launcher Settings
+
+First, we will setup the game resolution.\
+Open the launcher (KathanaLauncher.exe) via steam and click on "Settings".\
+In the settings you will see the following:\
+![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2F9dgN5Pu5x4o3bdfbiGiU%2F%7B2452B2CF-F98D-4C44-A135-9CDF25DBB922%7D.png?alt=media\&token=cc552eb7-333a-434a-a78e-9bec29af293d)
+
+Resolution is the setting for the game's window size\
+Quality is the setting for the graphics quality\
+Sound is the setting to set it as stereo or 5.1 & more\
+Shadows can be set as realtime as well\
+Window mode when checked runs the game in window mode, unchecking it will make the game run in full screen mode\
+HD Texture is experimental and unstable but its a nice touch if you have high-end graphics card
+
+### Game Settings
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FVXp9KvhoGTsyMWjvRO2j%2F%7BA67AC8CA-C198-4C5A-B46A-0572F7ADFD32%7D.png?alt=media&amp;token=2ecc30af-d77e-48a9-b00a-e18291a382dd" alt=""><figcaption></figcaption></figure>
+
+UI Gamma sets the transparency of all game widgets (game windows)\
+Show name hides the player's name\
+Effects shows or hides game effects\
+Simplify vend turns the "Player vendors" into a chest, good for optimisation\
+Sound Effects sets the volume of the environmental sfx as well as the skills and other ambient sounds\
+Music sets the volume for the game's background music
+
+
+# Game Interface
+
+### Game interface
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FbNdMrphN2HtFqi5fuUq4%2F%7BDB6F0606-F075-4B1D-92DC-807A35B7EF67%7D.png?alt=media&amp;token=630e4132-c7cf-4b9d-a854-6f24650f0f67" alt=""><figcaption></figcaption></figure>
+
+### Chat Interface
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FW4tOSZJtyg8I2dR7ZKX4%2F%7B5CBD7040-2616-491B-A96D-40D44CF94DB1%7D.png?alt=media&amp;token=89e4d189-4f3b-49f4-ac26-f3e99c054022" alt=""><figcaption></figcaption></figure>
+
+
+# Game Hotkeys
+
+Click to enlarge!\ <img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FzbCwWgbb35uwCkEsGTvp%2F%7BDBC3623B-CA03-4100-B179-2E13F57FDABB%7D.png?alt=media&amp;token=149ea569-6320-4e22-90c9-d0c1fd1a067d" alt="" data-size="original">
+
+| Hotkeys                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| <p><kbd>L</kbd>  - Opens Character Information<br><kbd>I</kbd>  - Opens Inventory<br><kbd>U</kbd>  - Opens Quest Window<br><kbd>K</kbd>  - Opens Skill Window<br><kbd>O</kbd> / <kbd>ESC</kbd> - Opens in-game options<br><kbd>C</kbd>  - Opens in-game commands<br><kbd>J</kbd>  - Opens Friend list (Address Book)<br><kbd>H</kbd>  - Opens Basic game help<br><kbd>B</kbd>  - Show/Hide Chat bubble<br><kbd>N</kbd>  - Show/Hide player names<br><kbd>TAB</kbd>  - Screenshot Mode (hides widgets)</p><p><kbd>Y</kbd> - Toggles Auto Hunting<br></p> | <p><kbd>M</kbd>  - Opens Map (press M again to view full map)<br><kbd>F9</kbd>  - Steam Screenshot<br><kbd>PrntScr</kbd>  - Screenshot<br><kbd>X</kbd>  - Sit / Stand (toggle)<br><kbd>Z</kbd>  - Walk / Run (toggle)<br><kbd>G</kbd>  - Opens Ashram Window<br><kbd>\~</kbd>  - Target Self (quick target self)<br><kbd>E</kbd>  - Select Target (Monster)<br><kbd>R</kbd>  - Normal Attack (Target Monster)<br><kbd>F</kbd>  - Pick-up Loots<br><kbd>L</kbd>  - Opens Character Information</p> |
+
+{% content-ref url="/pages/06yVmN4k4VzgWHvkCtTi" %}
+[Movement & Camera](/wiki/beginner-guide/movement-and-camera)
+{% endcontent-ref %}
+
+
+# Automated Events
+
+Kathana supports automated events in game that is triggered by schedule.
+
+{% hint style="info" %}
+Schedule below is -3 UTC Server Time.
+{% endhint %}
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FvnNC3i2GdDcTSyRGXiVW%2Fimage.png?alt=media&amp;token=39c16f37-c33d-4396-b200-7d92ce1252f6" alt=""><figcaption><p>A portal to Kalia Dungeon has opened</p></figcaption></figure>
+
+### Event Schedules
+
+{% hint style="success" %}
+We have 2 new Automated events for Anaka Kruma & High Kruma!
+{% endhint %}
+
+| Time  | Monday            | Tuesday           | Wednesday        | Thursday          | Friday            | Saturday          | Sunday            |
+| ----- | ----------------- | ----------------- | ---------------- | ----------------- | ----------------- | ----------------- | ----------------- |
+| 05:00 | Kalia Dungeon     | Ananga Invasion   | Kalia Dungeon    | Ananga Invasion   | Kalia Dungeon     | Ananga Invasion   | Ananga Invasion   |
+| 07:00 | High Kruma Event  | —                 | High Kruma Event | —                 | High Kruma Event  | —                 | —                 |
+| 11:00 | Ananga Invasion   | Kalia Dungeon     | Ananga Invasion  | Kalia Dungeon     | Ananga Invasion   | Kalia Dungeon     | Kalia Dungeon     |
+| 13:00 | —                 | High Kruma Event  | —                | High Kruma Event  | —                 | High Kruma Event  | High Kruma Event  |
+| 16:00 | Kalia Dungeon     | Ananga Invasion   | Kalia Dungeon    | Ananga Invasion   | Kalia Dungeon     | Ananga Invasion   | Ananga Invasion   |
+| 18:00 | Anaka Kruma Event | —                 | Anaka Kruma      | —                 | Anaka Kruma Event | —                 | —                 |
+| 22:00 | Ananga Invasion   | Kalia Dungeon     | Ananga Invasion  | Kalia Dungeon     | Ananga Invasion   | Kalia Dungeon     | Kalia Dungeon     |
+| 23:59 | —                 | Anaka Kruma Event | —                | Anaka Kruma Event | —                 | Anaka Kruma Event | Anaka Kruma Event |
+
+### Discord Bot Notification
+
+{% embed url="<https://discord.com/channels/1363839027114934315/1377583724019056671>" fullWidth="false" %}
+Direct Link to our Discord Automated Event Channel
+{% endembed %}
+
+### Joining the Events
+
+| Kalia Dungeon Portal                                                                                                                                                                                                                                                                                                                                                                          | Ananga Invasion Location                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| <div><figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FDBl6OQhvc12uLo57rSZR%2F%7B8EC65692-0D98-4257-B65E-389977AA9FC7%7D.png?alt=media&amp;token=040aeacb-4c9e-409e-a090-030cef909392" alt=""><figcaption><p>Outside of Mandara, a portal will appear in this obelisk</p></figcaption></figure></div> | <div><figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2Fu4TJxIxqeSlq41dQxJCL%2F%7B53EC5C80-761F-48D7-8247-3C578CDBC359%7D.png?alt=media&amp;token=9480d089-965f-48a4-ab7c-76d8135d41f8" alt="Click to enlarge"><figcaption><p>Highlighted in Yellow is where Ananga will spawn, check the map on the right side for detailed location</p></figcaption></figure></div> |
+
+
+# Beginner's Guide
+
+Here you will learn where to level / grind at your current character level.\
+This guide will be in basic format and leaves room for you to explore in game!
+
+{% tabs %}
+{% tab title="General Leveling Guide" %}
+
+| Player Level | Grind Spots                                                           | Tips                                                                                                                |
+| ------------ | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| 1 \~ 10      | Mandara, Vasabhum Caura                                               | Also do the basic quests for additional Prana                                                                       |
+| 11-15        | Mandara, Vasabhum Kulapra, Mlecchas Caura                             |                                                                                                                     |
+| 16-20        | Mandara, Aprah Varaha Raja -> Mara Land                               |                                                                                                                     |
+| 21-30        | Shambala, Ulkamulka, Ulkamulka Caura & Ulkamulka Satvan               | Stay here as long as you want while waiting for Ananga Invasion Event                                               |
+| 31-45        | Ananga, Ananga Dvanta, Kaulitara, Tarantula                           | Shambala, You have options here, either go Ananga until 40 then proceed to Kaulitara or just stay in Ananga Dvantas |
+| 46-50        | <p>Shambala Dungeon or Jina<br>Zarku, Zarku Gosu, Zaku, Zaku Gosu</p> | This spots are good for melees                                                                                      |
+| {% endtab %} |                                                                       |                                                                                                                     |
+
+{% tab title="Range / Mage Guide" %}
+
+| Player Level  | Grind Spots                                             | Tips                                                                                                                                          |
+| ------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 \~ 10       | Mandara, Vasabhum Caura                                 | Also do the basic quests for additional Prana                                                                                                 |
+| 11-15         | Mandara, Mlecchas Caura or Varahas                      |                                                                                                                                               |
+| 16-20         | Mandara, Aprah Varaha Raja                              |                                                                                                                                               |
+| 21-30         | Shambala, Ulkamulka, Ulkamulka Caura & Ulkamulka Satvan | Stay here as long as you want while waiting for Ananga Invasion Event                                                                         |
+| 31-45         | Shambala, Pizac, Pizac Aggana, Ananga, Ananga Dvanta    | You have options here, either go Ananga until 40 then proceed to Pizac or just stay in Pizac and skip Ananga                                  |
+| 46-50         | <p>Shambala, Jina<br>Ghorayogi, Byokbo</p>              | If you proceed to Shambala Dungeon, Ghorayogi is your best bet for range class or mage. If you go Jina, the Tigers there is your best option. |
+| {% endtab %}  |                                                         |                                                                                                                                               |
+| {% endtabs %} |                                                         |                                                                                                                                               |
+
+
+# Movement & Camera
+
+The game uses click-to-move with combination of WASD as a support.
+
+Players can use both movement according to their liking.
+
+Using WASD gives more freedom of character movement as it allows you to strafe.
+
+### Movement Controls
+
+* <kbd>W</kbd>  - move forward
+* <kbd>S</kbd> - move backward
+* <kbd>A</kbd> / <kbd>D</kbd> - move side ways
+* <kbd>A</kbd>+<kbd>W</kbd> / <kbd>D</kbd>+<kbd>W</kbd>- move diagonally forward
+* <kbd>A</kbd>+<kbd>S</kbd> / <kbd>D</kbd>+<kbd>S</kbd> - move diagonally backward
+
+### Camera Controls
+
+* <kbd>⬅️</kbd> - rotate camera to the left
+* <kbd>➡️</kbd> - rotate camera to the right
+* <kbd>F11</kbd> - follow skill projectiles
+* <kbd>F12</kbd>  - Free Cam Mode / Static Camera Mode
+* Right Mouse Button + Drag - rotates camera omnidirectional
+
+
+# Tribes & Jobs
+
+In Kathana there are 8 Tribes and 8 Jobs.
+
+* Naga & Kimnara
+  * These two are the off tanks and main tanks of the game.
+  * Can switch job to Banar (off tank, berserker) or Satya (The full tank)
+  * Uses variety of weapons but spears are recommended
+  * <mark style="color:red;">Chakra Recommendation: Heart + Muscle or All-Heart for Full Tank</mark>
+* Asura & Rakshasa
+  * The assassins in game, fast & agile
+  * Can wield bows, daggers & swords
+  * Specializes in fast and stealth kills
+  * Jobs: Druka (dual wielder) or Karya (Archer)
+  * <mark style="color:red;">Chakra Recommendation: Heart + Muscle (Melee) or Heart + Nerve (Bow)</mark>
+* Deva & Garuda
+  * These are the main mage archetypes, they can cast fire spells, ice spells and lightning spells
+  * Slow but pack a punch!
+  * Master of AOE (area of effect) skills
+  * Jobs: Abikara (Elementalist) or Samabat (Summoner)
+  * <mark style="color:red;">Chakra Recommendation: Heart + Mental or All-Mental build</mark>
+* Yaksa & Gandharva
+  * These are the support tribes, they excel in giving buffs or de-buffs to friends & foes alike
+  * Able to use ressurection skills
+  * Has a lot of buff skills
+  * Jobs: Nakayuda (Off-tank support) or Vidya (Priest, full support)
+  * <mark style="color:red;">Chakra Recommendation: Muscle+ Heart + Nerve / Muscle + Heart or All-Heart build for support</mark>
+
+
+# Basic Skill Build
+
+{% tabs %}
+{% tab title="Druka" %}
+
+### Druka Lv 68 Basic Skill Build
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FhKFVzjcQ7WgYv1saDjgx%2F%7B7001B709-0C5E-4B69-847C-991BCD7F5C84%7D.png?alt=media&amp;token=d64b12c7-3966-4923-9661-37c91d028346" alt=""><figcaption></figcaption></figure>
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2F4YZClYXmtqkSpIxIBLmL%2F%7B0AB49B0E-B233-42D2-979C-1F13D38FFCF7%7D.png?alt=media&amp;token=9af1b588-6008-404e-96ee-84b7d35a8174" alt=""><figcaption></figcaption></figure>
+{% endtab %}
+
+{% tab title="Karya" %}
+Karya Level 68 Basic Skill Build
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2Fj8PD1xS3UaRLogtJqJ9H%2F%7B5C360A58-7E54-4C8D-A703-883D7163922E%7D.png?alt=media&amp;token=72cb087d-808a-4193-9820-ac742bf03853" alt=""><figcaption></figcaption></figure>
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FFf4a95AYhfv0OfM4QrY0%2F%7BB831C6AD-91A8-41E3-BA4C-438FE9BBCA1C%7D.png?alt=media&amp;token=f0c762c1-60c8-4dfc-ba0f-c8bf3a7002f3" alt=""><figcaption></figcaption></figure>
+{% endtab %}
+
+{% tab title="Abikara" %}
+
+{% endtab %}
+
+{% tab title="Samabat" %}
+
+{% endtab %}
+{% endtabs %}
+
+{% tabs %}
+{% tab title="Nakayuda" %}
+Nakayuda Level 74 Basic Skill Build
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FYb0zJp8My3KzE302IrMa%2F%7B66243637-B41C-4B7D-B9C7-3F68A2FC2727%7D.png?alt=media&amp;token=bf1f310d-67f6-468f-8884-73af68391483" alt=""><figcaption></figcaption></figure>
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FvEWYcxFh8xquz1fc1qsQ%2F%7BA49F5EEA-2D01-4932-AD26-D85508F8E019%7D.png?alt=media&amp;token=b8668060-72eb-4132-8843-ac875d4c213e" alt=""><figcaption></figcaption></figure>
+{% endtab %}
+
+{% tab title="Vidya" %}
+
+{% endtab %}
+
+{% tab title="Banar" %}
+
+### Banar Lv 74 Basic Skill Build
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2F45Pm5VUe1r0ZW0QCQ1Gh%2F%7B7C85C4B3-69A3-4759-B3B8-B328E59B4633%7D.png?alt=media&amp;token=be491432-18fd-42d7-b619-d73e699d864f" alt=""><figcaption></figcaption></figure>
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FHZ8v929AN88WEWwJBHnO%2F%7B778D942E-1A46-4BB2-8878-734FDCD17A42%7D.png?alt=media&amp;token=8f180537-c00f-474e-8c65-39c7a1cdcbdb" alt=""><figcaption></figcaption></figure>
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FBg6MVtxHFp2WpTy7A4l9%2F%7B7510862F-F527-4716-931B-03AD4F85E97D%7D.png?alt=media&amp;token=40622381-6cdf-4b1d-a2c4-ecd8c4bdcd26" alt=""><figcaption></figcaption></figure>
+{% endtab %}
+
+{% tab title="Satya" %}
+
+{% endtab %}
+{% endtabs %}
+
+
+# Basic Skill Combo
+
+{% tabs %}
+{% tab title="Druka" %}
+
+### Vega + Dibanda
+
+{% embed url="<https://youtu.be/RKcGpmJ-zO0>" %}
+
+### Yankana + Dibanda
+
+{% embed url="<https://youtu.be/WCJFHR50Hp4>" %}
+
+### Ambaka Bijati + Agupta
+
+{% embed url="<https://youtu.be/jlvN0JfsDic>" %}
+{% endtab %}
+
+{% tab title="Karya" %}
+
+### Sakata Rada + Samayoga
+
+{% embed url="<https://youtu.be/MxLCPkW4_30>" %}
+
+### Irin Tirika + Samayoga
+
+{% embed url="<https://www.youtube.com/watch?v=Ri7WYQr4Myg>" %}
+{% endtab %}
+
+{% tab title="Abikara" %}
+N/A
+{% endtab %}
+
+{% tab title="Samabat" %}
+N/A
+{% endtab %}
+{% endtabs %}
+
+{% tabs %}
+{% tab title="Nakayuda" %}
+
+### Visa Crow + Prapad
+
+{% embed url="<https://youtu.be/WuKjeZPDGqY>" %}
+
+### Spura Asara + Prapad
+
+{% embed url="<https://youtu.be/zIRlNHkLwzM>" %}
+
+### Tapas Asara + Prapad (needs Dull weapon)
+
+{% embed url="<https://youtu.be/hwsi3Efwb0M>" %}
+{% endtab %}
+
+{% tab title="Vidya" %}
+Same as Nakayuda if you opt-in to be a Battle Vidya
+{% endtab %}
+
+{% tab title="Banar" %}
+
+### Amada Cass + Bizsai
+
+{% embed url="<https://youtu.be/tsmnqfKwpbQ>" %}
+{% endtab %}
+
+{% tab title="Satya" %}
+N/A
+{% endtab %}
+{% endtabs %}
+
+
+# Kathana Maps
+
+All playable maps in Kathana, open the interactive map links!
+
+<a href="https://dbuena.github.io/Kathana/map/mandara/" class="button primary">Mandara Interactive map</a>\ <a href="https://dbuena.github.io/Kathana/map/md1/" class="button primary">Mandara Dungeon 1 interactive map</a>\ <a href="https://dbuena.github.io/Kathana/map/md2/" class="button primary">Mandara Dungeon 2 Interactive map</a>\ <a href="https://dbuena.github.io/Kathana/map/shambala/" class="button primary">Shambala Interactive map</a>\ <a href="https://dbuena.github.io/Kathana/map/jina/" class="button primary">Jina Interactive map</a>\ <a href="https://dbuena.github.io/Kathana/map/pamir/" class="button primary">Pamir Interactive map</a>\ <a href="https://dbuena.github.io/Kathana/map/exile/" class="button primary">Exile Interactive map</a>\ <a href="https://dbuena.github.io/Kathana/map/emperorstomb" class="button primary">Emperor's Tomb interactive map</a>\ <a href="https://dbuena.github.io/Kathana/map/biryu" class="button primary">Biryu Interactive map</a>
+
+
+# Status Effects & Chakra
+
+In Kathana, the character's growth depends on how the player distributes its Chakra.<br>
+
+### Chakras
+
+* Muscle - Gives physical damage and slight increase to Defense
+* Nerve - Gives accuracy, critical hit rate, evasion and increase damages to Bows
+* Mental - Gives magical resistances and increases Tapas points & damage to staff or canes
+* Heart - Gives your character hit points (hp)
+
+#### Limitations:
+
+As of August 8, 2025 Update Deva & Garuda can maximize their Nerve Chakra from 350 to 600. While all Classes can maximize their Heart Chakra from 400 to 800.
+
+### Status ailments
+
+* Stun - your character enters a stun state, unable to move
+* Sleep - your character are forced into sleep state, can disrupted when hit by any form of attacks
+* Slow - reduces your movement speed for a duration
+* Bleed - DoT (Damage over time) that reduces your Hit points per seconds
+* Poisoned - DoT (Damage over time) reduces your Hit points over time but can be cured
+* Burning - DoT (Damage over time) reduces your Hit points over time when hit by flame spells
+* Electrocuted - DoT (Damage over time) reduces your Hit points over time when hit by Lightning type spells
+* Frost Bite - DoT (Damage over time) reduces your Hit points over time when hit by Ice type spells
+
+
+# What is Taney?
+
+Taney is the secondary premium currency that is used solely to purchase items from the premium shop.
+
+{% content-ref url="/pages/9S8eEES6ZUZibxCQLdbN" %}
+[How to buy Taney?](/wiki/what-is-taney/how-to-buy-taney)
+{% endcontent-ref %}
+
+Taney is Kathana's premium currency that opens doors to:
+
+* **Powerful consumables** to aid you in challenging quests,
+* **Premium services** for advanced gameplay features,
+* **Character appearance changes** to customize your divine avatar,
+* **Exclusive items** and conveniences to enhance your adventure,
+
+*Your Taney purchases directly support Kathana's continued development during Early Access, helping us craft an even more immersive mythological experience!* **Purchasing Taney Through Steam** With Kathana's Early Access launch on Steam, all Taney purchases are seamlessly integrated through Steam's secure marketplace. This ensures safe, reliable transactions while supporting our ongoing development efforts. We recommend enabling Steam Overlay for the smoothest experience. The entire process is designed to get you back into the action as quickly as possible!&#x20;
+
+**Understanding Our Pricing** we’re committed to keeping the game’s economy fair and enjoyable for all players. Due to Steam’s 30% transaction fee, we’ve carefully adjusted Taney packs amounts and pricing to preserve fair value and keep Kathana’s in-game economy healthy, ensuring balance without impacting your overall gameplay experience.
+
+### Premium Shop
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2F1AXZbpTKWoGh2fjWmfuN%2F%7B89C7125A-AEA0-463C-9BF9-E87043EA759E%7D.png?alt=media&amp;token=e140c83d-0112-447f-a97c-73d523dd0122" alt=""><figcaption></figcaption></figure>
+
+
+# How to buy Taney?
+
+Purchasing Taney is only available on Kathana's Steam page
+
+As you embark on your mythological journey through our Hindu-inspired MMORPG, Taney serves as your gateway to enhanced experiences, powerful consumables, premium services, and stunning character transformations.
+
+This comprehensive guide will walk you through everything you need to know about purchasing Taney safely and efficiently. We'll also cover what to do if your Taney doesn't appear immediately in your account, ensuring you can resolve any issues quickly and get back to your adventure.
+
+{% stepper %}
+{% step %}
+Open the **Premium Services Window**
+
+By clicking the Premium Item button located in the bottom right of the game
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2Flm980iPFK4L7fhfzYwUt%2F%7B7EF76F47-A0C6-43E1-B5E8-2FC412C959C1%7D.png?alt=media&amp;token=6d6dcf34-0eca-4dbd-844d-45c3615b8243" alt=""><figcaption><p>Premium item button </p></figcaption></figure>
+{% endstep %}
+
+{% step %}
+**Select: Recharge Taney** from the menu
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FwdoePcLnBSOPcdqGjBX5%2F%7B49F06588-9916-470F-AEFD-E409CAD11E51%7D.png?alt=media&amp;token=4a23f9b2-8b01-4f06-884d-6048d51a9697" alt=""><figcaption><p>This opens the steam overlay browser</p></figcaption></figure>
+
+{% hint style="warning" %}
+If the steam overlay does not open, please run your Steam with Administrative privileges.
+{% endhint %}
+
+{% hint style="warning" %} <mark style="color:purple;">If you wish not to use Steam Overlay, you can also do this via Kathana's Steam page.</mark>
+
+<https://store.steampowered.com/app/2081880/Kathana/>
+{% endhint %}
+{% endstep %}
+
+{% step %}
+
+### Choose your preferred Taney Pack
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FxazkvO1JBDXzwvHZVX5F%2F%7B53713CA2-49D6-4D79-B145-646378C9440C%7D.png?alt=media&amp;token=d549d8a7-a940-4830-bd91-c98af6cf8d41" alt=""><figcaption><p>Select which Taney Pack you need</p></figcaption></figure>
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2F6ZeyFYvGPEkeR0Ww5vD4%2F%7BD545EBEA-8915-4513-8CCC-D05D844F6495%7D.png?alt=media&amp;token=a8c9fc74-e5eb-4bf5-a5ed-f090b283ca01" alt=""><figcaption><p>Add it to Cart</p></figcaption></figure>
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FcgASPGDsIJ6M8n9TTWfS%2F%7BFD724055-D354-4C81-84C1-FE3CFBAB4648%7D.png?alt=media&amp;token=5fb1918f-2cea-49ab-af0d-aa4292316e07" alt=""><figcaption><p>Check out your shopping cart</p></figcaption></figure>
+{% endstep %}
+
+{% step %}
+
+### Complete your payment through Steam
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FZ7U6tenrw99953ls66qn%2F%7BDDC5FF67-9C6C-4610-AF82-3FED975ABD33%7D.png?alt=media&amp;token=faa71047-b5f7-440d-ab25-110ce8feb9ac" alt=""><figcaption></figcaption></figure>
+
+{% hint style="warning" %}
+You may need to add Funds if your Steam account lacks the fund to purchase.
+{% endhint %}
+{% endstep %}
+
+{% step %}
+
+### Receive automatic confirmation as Steam notifies our servers instantly
+
+After purchasing the Taney Pack, it will then be sent to your Account automatically.
+
+{% hint style="warning" %}
+There are instances that there might be some delay. Wait at least 10 minutes to 30 minutes. After which if the Taney Pack still was not reflected into your account, please open a ticket.
+{% endhint %}
+{% endstep %}
+{% endstepper %}
+
+{% content-ref url="/pages/WNp1MQ3Gl3JijC2CH6pC" %}
+[Taney Delivery Expectations](/wiki/what-is-taney/taney-delivery-expectations)
+{% endcontent-ref %}
+
+
+# Taney Delivery Expectations
+
+### **Instant Delivery (Most Common)**&#x20;
+
+In the vast majority of cases, your Taney will appear in your account immediately after purchase completion. No waiting, no delays—just instant access to enhance your divine journey!&#x20;
+
+**Occasional Processing Time**&#x20;
+
+Sometimes Steam needs a moment to process transactions, especially for:
+
+* First-time purchases on your account,
+* New payment methods,
+* Routine security verifications,
+
+This is completely normal and shows Steam's commitment to secure transactions.
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FdfuSr8fKhooBlz0kbKuX%2Fimage.png?alt=media&amp;token=7347c6e0-02a6-4088-9812-c4804bebc446" alt=""><figcaption></figcaption></figure>
+
+## Didn’t Get Your Taney? Here’s What to Do,
+
+Don't worry! Here's your action plan:&#x20;
+
+**First Response (30-Minute Rule)**
+
+* **Wait 30 minutes** and check your Taney balance again,
+* Steam's verification process occasionally needs this time buffer,
+
+#### **If Issues Persist - Gather Your Evidence:**
+
+1. Open Steam (application or web browser),
+2. Click the dropdown arrow next to your username (top-right corner),
+3. Select **Account Details**,
+4. Navigate to **View Purchase History**,
+5. Find your Taney purchase and click for details,
+6. Copy the **Transaction ID** - this is your ticket to resolution!
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FNXyeN3s9ZfpYDWdp18pe%2Fimage.png?alt=media&amp;token=c3eebc52-c291-4d12-a8c3-fa4625344c98" alt=""><figcaption></figcaption></figure>
+
+#### **Contact Our Support Team**&#x20;
+
+Head to our [official Discord support channel](https://discord.com/channels/1363839027114934315/1363859739431276655) and create a support ticket including:
+
+* Your copied **Transaction ID**,
+* **Any character name** from your Kathana account,
+
+Our dedicated support team will resolve your issue quickly and get you back to your mythological adventures!
+
+## Important Reminders,
+
+**Steam Security First**
+
+* Steam handles all payment processing and confirmation.,
+* We never have access to your billing information. Steam keeps your information secure.,
+* "Pending" or "Under Review" transactions are Steam's way of ensuring secure purchases.,
+
+**Automatic Integration**&#x20;
+
+Once Steam gives the green light on your transaction, our servers automatically credit your Taney—no manual intervention needed!&#x20;
+
+**Dedicated Support** If you've followed all troubleshooting steps and still need assistance, our support team is standing by to ensure you get exactly what you purchased, when you need it.&#x20;
+
+{% hint style="warning" %}
+*Ready to enhance your divine adventure? Your Taney purchase not only enriches your gameplay but helps us continue developing the rich, mythological world of Kathana. Thank you for supporting our Early Access journey!*&#x20;
+{% endhint %}
+
+***Happy Gaming, Pathfinders!***
+
+
+# Refining System
+
+Refining is the process of upgrading your equipments with better stats. You can also augment it with add-on stones to further increase the stat of your equipment.
+
+### Refining Stones
+
+| Item Name                                                                                                                                                                                                                                                | Description                                                    |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FbHRy6K0623HMARG0F1WN%2FUI_ASSISTMAT-LOWSTRENGTHREFINE01.bmp?alt=media\&token=d315124e-e3a6-4475-97d7-cb22a94dd933) Dipa Illa | Upgrade materials from level 1-3 only                          |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FFVnXU6vFwtkfpDJY4Vmo%2FUI_ASSISTMAT-TOTALDAMAGE.bmp?alt=media\&token=d4ba22b5-a689-47f9-85d0-cccf49de3b55) Illa              | Upgrade materials from level 1-5 only                          |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FYkthQ91pgxyROr4fRkKE%2FUI_ASSISTMAT-UPGRADEJEWEL01.bmp?alt=media\&token=8e50bd08-8094-46f5-8e39-ab99f75050a3) Asiz           | Upgrade materials from level 1-8 only                          |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FiV5id0ybxVsKhXC7qRqC%2FUI_ASSISTMAT-UPGRADEJEWEL02.bmp?alt=media\&token=ab977a41-0dd1-4258-aeba-f19438496509) Surapa         | Upgrade materials from level 1-10 only                         |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FTMcmBZ6oAI5LIhMwdcee%2FUI_ASSISTMAT-UPGRADEJEWEL03.bmp?alt=media\&token=a073cd9e-68dc-44c6-8cd5-454f69957dd1) Prajati        | Upgrade materials from level 1-12                              |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FGRrPZTxJWz5UiEN9HKhH%2FUI_CHARGED_GEM_SAMPAD01.bmp?alt=media\&token=31569af4-a633-409d-a9d0-796cd7e27e95) Sambadu            | Upgrade materials from Level 1-9 only                          |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2Fed7rxC3ojQrByjFgeK5d%2FUI_CHARGED_GEMS_gAv.bmp?alt=media\&token=6535a6bb-575d-4203-b3c9-a7c8fc6f27c5) Gavi                   | Top-tier Grade Enhancement Material – Used for Stages 13 to 15 |
+
+### Booster Stones
+
+| Item Name                                                                                                                                                                                                                                        | Description                  | Can only be use on:                                   |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------- | ----------------------------------------------------- |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FCLJc8Y0ufcWk4rPQgLAH%2FUI_ASSISTMAT-FIRE.bmp?alt=media\&token=a887dab5-e2b0-48e0-b9a0-edd1ceccecd7) Raga Mani        | Stone with flame aura        | 1 h & 2h weapons, Armor, Gloves, Shield               |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FSvAjZr7AYx1kiReQMZm0%2FUI_ASSISTMAT-COLD.bmp?alt=media\&token=fd792927-a55e-4d8b-963c-d485d663cdb3) Nila Mani        | Stone with frost aura        | 1 h & 2h weapons, Armor, Gloves, Shield               |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FxGF3CGbYrAu668gWTnhB%2FUI_ASSISTMAT-POISON.bmp?alt=media\&token=17f13293-64a3-4f66-abf5-6749a9c92178) Visazan        | Stone with poison aura       | 1 h & 2h weapons, Armor, Gloves, Shield               |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FliROdZxxvUxEwQUHTQ9E%2FUI_ASSISTMAT-THUNDER.bmp?alt=media\&token=7e089f74-62fb-48a5-91be-c88cda55b90b) Luvati        | Stone with thunder aura      | 1 h & 2h weapons, Armor, Gloves, Shield               |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FEDlyoJt4Je7VdJrvO5bk%2FUI_ASSISTMAT-ACCURATE.bmp?alt=media\&token=91055472-9dc1-4570-a913-27617f53284c) Om Yantra    | Stone with attack/avoid aura | 1 h & 2h weapons, Armor, Gloves, Shield, Belt & Helms |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2Fsr4EZ6clr6p4vdA4an4r%2FUI_ASSISTMAT-MUSCLECHAKRA.bmp?alt=media\&token=9d5969cd-a26c-45dc-89a6-6cc6392f5878) Manipura | Yellow Gem with muscle aura  | Pants, Belt, Shoes & Helms                            |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FPRyqkJvAWf5w2EwH9HpX%2FUI_ASSISTMAT-NERVECHAKRA.bmp?alt=media\&token=86753b3c-c7a3-41e0-931e-9d767ce43567) Vishuda   | Blue Gem with nerve aura     | Pants, Belt, Shoes & Helms                            |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FZUaqVFnMP60bHSlBMxkC%2FUI_ASSISTMAT-HEARTCHAKRA.bmp?alt=media\&token=ccb13c70-1b33-4fae-af9a-de7fae9d4528) Anahata   | Red Gem with heart aura      | Pants, Belt, Shoes & Helms                            |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FQyTtFH8bOtmGcCzgO0oF%2FUI_ASSISTMAT-SPIRITCHAKRA.bmp?alt=media\&token=da7bc3a2-ab28-421f-a9cb-8cea493792aa) Azna     | Green Gem with mental aura   | Pants, Belt, Shoes & Helms                            |
+
+### Helper Stones
+
+| Item Name                                                                                                                                                                                                                                    | Description                                       |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FQyNhNw3ONJufcd5qB6on%2FUI_CHARGED_GEM_nAyati02.bmp?alt=media\&token=67f5beb2-9c14-41aa-a11c-6910bcb41229) Nayate | Lower the cost of item refinement                 |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2Fovhz2AUHuQrhD6opdVb9%2FUI_CHARGED_GEM_lamAte02.bmp?alt=media\&token=c49553cf-7003-4e0e-9fb4-063118575973) Ramate | Increases the success rate of item refinement     |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2F1kBHfDpjctHr2OD0tadI%2FUI_CHARGED_GEM_ZAD01.bmp?alt=media\&token=1e686369-03fa-4556-9a04-7810b5cf63b2) Chattou   | If upgrade +8 or higher fails, item returns to +6 |
+
+### Addons
+
+| Item Name                                                                                                                                                                                                                                        | Description                                 |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2Ftv4PemTdSw9BnR1ddDlb%2FUI_CHARGED_ELEMENT_DEGRADE02.bmp?alt=media\&token=02f3bcfb-8206-4789-9188-042f61c67cfc) Amala | Removes refinement upgrades on the necklace |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FVW7yfyKL9SiQXJTjc7g8%2FUI_CHARGED_mAla_32.bmp?alt=media\&token=5041ddc1-6603-42fa-86ea-ead808806dc7) Mala            | Energy material                             |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2F7PQcbsK2puSswoAFk1Sp%2FUI_CHARGED_lalita_32.bmp?alt=media\&token=a7d75290-ef43-40eb-8106-bef295dc9d2c) Rarita        | Absorption material                         |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FV0yWyhb9RB25ycJ1pSEu%2FUI_CHARGED_sAikha_32.bmp?alt=media\&token=98eb19df-dabe-4077-a06c-677f198d82fc) Saika         | Healing material                            |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FbPSWgyr8IDF0SlWwbyyx%2FUI_CHARGED_kaNTha_32.bmp?alt=media\&token=f7ab9ab0-df62-406e-93cf-16a349806d00) Kanda         | Regeneration material                       |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FZscQeXqesNH8xLWJP146%2FUI_CHARGED_khazIla.bmp?alt=media\&token=45df94b4-8c9d-4bb8-8df4-3a7cf2de40d9) Kazirra         | Control Gem                                 |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FqulkJ55y52K0KNKS5l0q%2FUI_CHARGED_PrakRti.bmp?alt=media\&token=942689c3-c8ad-4c0c-b871-c01efafe73c4) Prakti          | Healing Gem                                 |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FBcjViC6Lh2bIBnyzbtma%2FUI_CHARGED_Manyu.bmp?alt=media\&token=b9bb4198-98ea-4de8-b30d-bc4e83d64fed) Manya             | Regeneration Gem                            |
+| ![](https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FfNEIN4Ttd3tpXR7Bq7Xe%2FUI_CHARGED_Bhava.bmp?alt=media\&token=9d614271-655e-4e21-b608-6e4f089a31b7) Vapahaba          | Tenacity Gem                                |
+
+
+# PvP System
+
+Kathana as variety of PvP System ranging from 1v1 duel to group pvp in specialized maps.
+
+### Player Kill
+
+Players can engage in PK (player kill) when reaching level 30. You can toggle the PK switch to ON or OFF from the shortcut menu.
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FbfrdbEucitYmWmEpM6Eo%2F%7B2830E8B1-C11B-49CE-9920-1AD034B193E6%7D.png?alt=media&amp;token=d2032c9e-622e-40a2-b6cc-31a569af47b3" alt=""><figcaption></figcaption></figure>
+
+### Duels
+
+Duel is another form of single combat against another player with their consent.\
+You simply invite him to duel and wait for the response.\
+To initiate a duel, simply right click on the duel icon from the command window (C) or drag the duel icon into your skill hot bars then target it to your desired opponent.
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FQe89e8vbfdryquWIJeNT%2F%7B5C891DE7-7203-43CF-A8A9-EB034F2748BE%7D.png?alt=media&amp;token=da9a4e4b-9efc-4ffc-bc01-3e4678e01ed3" alt=""><figcaption></figcaption></figure>
+
+### Anaka Kruma
+
+Anaka Kruma is the first map for level 20 to level 59 to engage in a group pvp. There is no objective in this map, its just kill or be killed!\
+Also this map has high drop rate of Rupiah and your rupiah can also be dropped when you get killed by opposing force.
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2F9S6EZAL4qVD0VXAiHwFg%2FAnaka.png?alt=media&amp;token=bd52a553-b297-4eb5-b437-d35437fc4203" alt=""><figcaption></figcaption></figure>
+
+### Kruma
+
+An all out war map between 3 factions!\
+The objective is to collect Kala Cores from your enemy's base and bring it to your base (sort of like Capture the Flag).\
+The first faction to collect 5 Kala Cores will be able to open the gates to Chaturanga!
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FxMrkdZ7gcX3CZjJyOXID%2FHigh_Kruma.png?alt=media&amp;token=31daa95d-51ca-4bf0-9ba5-641e77b5c619" alt=""><figcaption></figcaption></figure>
+
+### Chaturanga
+
+This map has very high Rupiah drop rate and each room will have mini-bosses.\
+Each mini-bosses drops "chess pieces" that will turn into "key" to open the final boss room.\
+The final boss "Raphu" will drop Crystal in which will be used as a catalyst to make your Crystal Weapons!
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FEDpXheIUdnOPTLglFcWY%2FChaturanga.png?alt=media&amp;token=146431a8-bbbe-4cac-85ad-0e0d15bec20b" alt=""><figcaption></figcaption></figure>
+
+### Fortress Arena
+
+This is the place where you battle with another guild!\
+The first to conquer a fortress will have to defend the fort within the allocated time!\
+Guilds who owns a fort after the Event will be granted a Rupiah reward and as well as an exclusive Dungeon for their guild members only!
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2FAeK8w442r7v9asyuzQe6%2FFortressWar.png?alt=media&amp;token=0f7a45df-1224-438d-96cf-2af7cec9a236" alt=""><figcaption></figcaption></figure>
+
+### Biryu Castle Siege
+
+This is one of the major pvp event in Kathana where a guild can control the taxes for the vendors!
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2F7kXmW3kmyFZqoWcss5fd%2FBiryu.png?alt=media&amp;token=3d02694e-4a49-4301-8123-514ff5734084" alt=""><figcaption></figcaption></figure>
+
+
+# Kruma Mechanics
+
+Kruma is just like a Capture the Flag game mode
+
+{% stepper %}
+{% step %}
+
+### Select the god you will follow
+
+In order to enter Kruma (or Anaka Kruma) you need to have a "God" followed. There are 3 Gods, Shiva (blue), Brahma (yellow) & Vishnu (red).\
+These gods are the 3 main factions of Kathana.\
+\
+You can select a god when you reach level  20 and visiting Priest Vananta in Mandara.
+{% endstep %}
+
+{% step %}
+
+### Ways to enter Kruma
+
+There are 3 ways to enter Kruma
+
+* By using Ziva Pustika (or Quality Ziva Pustika)
+* By using the portal near Horseman Rahul in Mandara
+  {% endstep %}
+
+{% step %}
+
+### What to do when in Kruma?
+
+As said earlier, Kruma works like Capture the flag game mode, every "god" has "3" Kala Cores.\
+First to collect 5 Kala Cores for their faction will open the gate to Chaturanga
+
+Slaying players in Kruma will also give you Master Points.\
+Master Points are ranked globally (entire server) and highest rank gets special skills called "God Skills".
+{% endstep %}
+
+{% step %}
+
+### Collecting Kala Cores
+
+We mentioned that each faction has 3 Kala Cores, and first to collect 5 will open the gate to Chaturanga.\
+To get these Kala Cores, you must invade the opposing faction's base and obtain the Kala Core then bring it back to your Base.\
+Placing the Enemy Kala Core in your base counts as a score and a system notice will be shown in the system chat.
+
+The system chat will show the current score between the 3 factions.
+
+{% hint style="info" %}
+You cannot use teleport items such as pustika while you are carrying the Kala Core.
+
+<mark style="color:orange;">**Kala Core drops when you die.**</mark>
+{% endhint %}
+{% endstep %}
+{% endstepper %}
+
+
+# Caste System
+
+Welcome to the competitive world of caste rankings! Whether you're a newcomer or a veteran looking to understand the new system, this guide will walk you through everything you need to know about climbing the ranks and earning those coveted God Skill Points. Before the October 15 update, ranking up was a leisurely journey. You could take your time gathering Master Points (MP) at your own pace, eventually reaching the highest ranks with a maximum of 7 God Skill Points. While relaxed, this system had some drawbacks:
+
+* No competitive edge or sense of urgency,
+* Progress tied to other players' activity,
+* Everyone could reach the same peak, reducing that special feeling of achievement,
+* Limited God Skill Points,
+* Missing ranks and competitive tiers,
+* Inactive players could camp at the top indefinitely,
+
+The new competitive system changes all that! Now, active participation in PvP activities is essential for strengthening your character. This system rewards your participation and helps you stand out not only in Faction PvP Zones but also in Player Killing areas, Castle Sieges, Fortress Durga, and Guild Wars.
+
+### How the Competitive System Works,
+
+The new ranking system rewards dedication and consistent PvP engagement. Once you reach higher ranks, you'll need to actively participate in PvP zones to maintain your position and prevent rank decay. It's all about staying active and competitive!
+
+#### The Caste Ranks (From Lowest to Highest),
+
+* **Sudra** 3 → 2 → 1,
+* **Vaishya** 3 → 2 → 1,
+* **Ksatriya** 3 → 2 → 1,
+* **Braman** 3 → 2 → 1,
+* **Avatara** 3 → 2 → 1,
+* **Mijung** 3 → 2 → 1,
+
+Starting at **Ksatriya 3**, you'll earn your first God Skill Point! From there, each rank you climb grants you an additional point, up to a maximum of **12 God Skill Points**. These points unlock passive God Skills that you can activate in your skill window (press K) to customize your character's abilities.
+
+### Understanding Your Rank,
+
+Your caste rank depends on two important factors:
+
+1. Your accumulated Master Points (MP),
+2. Your position in the overall rankings,
+
+#### Master Points: Your Path to Power,
+
+From **Sudra 3** through **Ksatriya 1**, ranking up is straightforward. Just accumulate the required Master Points. There's no competition yet, so you can focus on gathering MP at your own pace. However, once you hit **Braman 3**, you'll enter the **Top 100 players** bracket, where your rank is determined by both your Master Points AND your position relative to other top players.
+
+#### The Top 100 Competition,
+
+To break into the Top 100, you need at least **60,001 Master Points** to reach Braman 3. But here's the catch: only **25 players** can hold the Braman 3 rank at any given time across all three factions. Here's how it works: Let's say you've just hit 60,001 MP. If all 25 Braman 3 spots are filled by players with higher MP totals than yours, you'll stay at Ksatriya 1 until you can overtake the lowest-ranked Braman 3 player. Once your MP exceeds theirs, you'll swap positions—you'll rise to Braman 3, and they'll drop back to Ksatriya 1. **Key points to remember:**
+
+* Hitting the minimum MP requirement doesn't guarantee an automatic promotion,
+* You must compete for limited spots in each rank,
+* You'll only rank up when your points exceed the lowest player in the rank above you,
+
+This competitive structure applies to all ranks from **Braman 3** up to **Mijung 1**, with the ultimate Mijung 1 rank limited to just **one player across all God factions!**
+
+### Rank Requirements and Rewards,
+
+Here's the complete breakdown of Master Points needed, available spots, and God Skill Points for each rank:
+
+> **Tip:** You can type `$caste` to summon this table anytime, anywhere in our Discord server!
+
+{% content-ref url="/pages/MuKNzyNbShoS574856CJ" %}
+[Caste Ranking](/wiki/pvp-system/caste-system/caste-ranking)
+{% endcontent-ref %}
+
+Altogether, these spots make up a total of 100 top-ranked players! **Example Scenario** Imagine you're currently Avatara 1 and approaching the minimum MP requirement for Mijung 3 (260,001 MP). However, both Mijung 3 spots are already occupied by players with 270,000 MP and 290,000 MP respectively. Simply reaching 260,001 MP won't be enough to rank up. You'll need to surpass the lowest Mijung 3 player's total, in this case, 270,000 MP. Once you hit **270,001 MP**, you'll claim that player's spot and ascend to Mijung 3, while they'll drop down to Avatara 1.
+
+### Tips for Success,
+
+The Competitive Ranking System rewards dedication, strategy, and consistent PvP participation. Here's what you need to know: **For Early Ranks (Sudra → Ksatriya):**
+
+* Focus on accumulating Master Points at your own pace,
+* No competition yet. Just gather the required MP to advance,
+* Start earning God Skill Points from Ksatriya 3 onward,
+
+**For High Ranks (Braman → Mijung):**
+
+* Limited spots mean fierce competition—be ready to fight for your place,
+* Your ranking position matters just as much as your total MP,
+* Surpassing other top players is essential for advancement,
+* Stay active to maintain your rank and prevent decay,
+
+**General Strategy:**
+
+* Participate regularly in all PvP activities to earn Master Points,
+* Once the leaderboards are released, keep an eye on them to track your competition,
+* Each rank from Ksatriya 3 onward grants powerful God Skill Points,
+* Customize your character with passive God Skills to gain an edge in battle
+
+
+# Caste Ranking
+
+Caste System is how you are ranked in Kruma using your Master points.
+
+<table><thead><tr><th>Rank</th><th width="188">Master Points Required</th><th>Available Spots</th><th>God Skill Points </th></tr></thead><tbody><tr><td>Sudra 3</td><td>0 – 1,000</td><td>Unlimited</td><td>0</td></tr><tr><td>Sudra 2</td><td>1,001 – 2,000</td><td>Unlimited</td><td>0</td></tr><tr><td>Sudra 1</td><td>2,001 – 4,000</td><td>Unlimited</td><td>0</td></tr><tr><td>Vaishya 3</td><td>4,001 – 6,000</td><td>Unlimited</td><td>0</td></tr><tr><td>Vaishya 2</td><td>6,001 – 8,000</td><td>Unlimited</td><td>0</td></tr><tr><td>Vaishya 1</td><td>8,001 – 10,000</td><td>Unlimited</td><td>0</td></tr><tr><td>Ksatriya 3</td><td>10,001 – 20,000</td><td>Unlimited</td><td>1</td></tr><tr><td>Ksatriya 2</td><td>21,000 – 40,000</td><td>Unlimited</td><td>2</td></tr><tr><td>Ksatriya 1</td><td>40,001 – 60,000</td><td>Unlimited</td><td>3</td></tr><tr><td>Braman 3</td><td>60,001 – 80,000</td><td>25</td><td>4</td></tr><tr><td>Braman 2</td><td>80,001 – 100,000</td><td>25</td><td>5</td></tr><tr><td>Braman 1</td><td>100,001 – 150,000</td><td>20</td><td>6</td></tr><tr><td>Avatara 3</td><td>150,001 – 180,000</td><td>10</td><td>7</td></tr><tr><td>Avatara 2</td><td>180,001 – 220,000</td><td>10</td><td>8</td></tr><tr><td>Avatara 1</td><td>220,001 – 260,000</td><td>5</td><td>9</td></tr><tr><td>Mijung 3</td><td>260,001 – 300,000</td><td>2</td><td>10</td></tr><tr><td>Mijung 2</td><td>300,001 – 340,000</td><td>2</td><td>11</td></tr><tr><td>Mijung 1</td><td>340,001+</td><td>1</td><td>12</td></tr></tbody></table>
+
+
+# Chaturanga Guide
+
+
+# Fortress War Guide
+
+
+# Biryu Castle Siege
+
+
+# Non Playable Character
+
+List of Available major NPC in Kathana
+
+<table><thead><tr><th width="288">NPC_NAME</th><th width="85.111083984375">PosX</th><th width="85.111083984375">PosY</th><th width="189.5555419921875">LOCATION</th></tr></thead><tbody><tr><td>Security Soldier Abhei</td><td>482</td><td>274</td><td></td></tr><tr><td>Security Soldier Kumar</td><td>494</td><td>276</td><td></td></tr><tr><td>Hajit</td><td>482</td><td>196</td><td></td></tr><tr><td>Alhi</td><td>155</td><td>518</td><td></td></tr><tr><td>Anjali</td><td>502</td><td>180</td><td></td></tr><tr><td>Moriya</td><td>114</td><td>503</td><td></td></tr><tr><td>Blacksmith Vartan</td><td>434</td><td>203</td><td></td></tr><tr><td>Craftsman Kirika</td><td>544</td><td>201</td><td></td></tr><tr><td>Jeweler Ashuri</td><td>558</td><td>142</td><td></td></tr><tr><td>Priest Vananta</td><td>668</td><td>174</td><td></td></tr><tr><td>Tradesman Buvan</td><td>412</td><td>116</td><td></td></tr><tr><td>Horseman Rahul</td><td>544</td><td>111</td><td></td></tr><tr><td>Pharmacist Karan</td><td>468</td><td>194</td><td></td></tr><tr><td>Defense General Apvas</td><td>484</td><td>250</td><td></td></tr><tr><td>Weapon Man Vibvan</td><td>164</td><td>485</td><td></td></tr><tr><td>Sacrificial Priest Saranu</td><td>164</td><td>540</td><td></td></tr><tr><td>Jeweler Nara</td><td>127</td><td>552</td><td></td></tr><tr><td>Chiefguard Amar</td><td>377</td><td>176</td><td></td></tr><tr><td>Mahomet</td><td>380</td><td>231</td><td></td></tr><tr><td>Bava</td><td>403</td><td>163</td><td></td></tr><tr><td>Security Soldier Kananta</td><td>241</td><td>272</td><td></td></tr><tr><td>Security Soldier Badru</td><td>903</td><td>197</td><td></td></tr><tr><td>Lost Way Boy</td><td>165</td><td>517</td><td></td></tr><tr><td>Discipling Monk</td><td>133</td><td>462</td><td></td></tr><tr><td>Security Soldier Sankar</td><td>734</td><td>741</td><td></td></tr><tr><td>Armor Salesman Wangddaopo</td><td>408</td><td>853</td><td></td></tr><tr><td>Fighting Monk Iddungddashu</td><td>474</td><td>812</td><td></td></tr><tr><td>Elder Zangzu</td><td>336</td><td>654</td><td></td></tr><tr><td>Storehouse Keeper Zongkui</td><td>276</td><td>695</td><td></td></tr><tr><td>Weapon Salesman Ouyez</td><td>412</td><td>783</td><td></td></tr><tr><td>Goods Salesman Rui Shan</td><td>338</td><td>866</td><td></td></tr><tr><td>Storehouse Keeper Borer</td><td>500</td><td>862</td><td></td></tr><tr><td>Elder Haiddungddashu</td><td>539</td><td>661</td><td></td></tr><tr><td>Discipling Monk Ryuzshun</td><td>676</td><td>798</td><td></td></tr><tr><td>Discipling Monk Usong</td><td>410</td><td>816</td><td></td></tr><tr><td>Goods Salesman Ryupuwei</td><td>614</td><td>874</td><td></td></tr><tr><td>Farmer Shunongs</td><td>450</td><td>814</td><td></td></tr><tr><td>Maid Ssunalang</td><td>622</td><td>818</td><td></td></tr><tr><td>Biryu Administrator Yasita</td><td>359</td><td>686</td><td></td></tr><tr><td>Miner Yume</td><td>482</td><td>361</td><td></td></tr><tr><td>Yut Nori Administrator Sato</td><td>661</td><td>397</td><td></td></tr><tr><td>Goods Salesman Mamoru</td><td>453</td><td>473</td><td></td></tr><tr><td>Storehouse Keeper Gubo</td><td>515</td><td>480</td><td></td></tr><tr><td>Merchant Oda</td><td>351</td><td>579</td><td></td></tr><tr><td>Merchant Yuri</td><td>673</td><td>619</td><td></td></tr><tr><td>Craftsman Chin</td><td>682</td><td>880</td><td></td></tr><tr><td>Tongon</td><td>614</td><td>872</td><td></td></tr><tr><td>Senior Zangzu</td><td>684</td><td>920</td><td></td></tr><tr><td>Shop Administrator</td><td>633</td><td>400</td><td></td></tr><tr><td>Akatsuka Saito</td><td>595</td><td>401</td><td></td></tr><tr><td>Futabatei Ichi</td><td>599</td><td>409</td><td></td></tr><tr><td>Hatakeda Tamiyo</td><td>604</td><td>409</td><td></td></tr><tr><td>Hyata Komachi</td><td>609</td><td>409</td><td></td></tr><tr><td>Ieyasu Sue</td><td>614</td><td>409</td><td></td></tr><tr><td>Ichikawa Iku</td><td>614</td><td>415</td><td></td></tr><tr><td>Ishiguro Man</td><td>608</td><td>415</td><td></td></tr><tr><td>Kawasie Yukiko</td><td>604</td><td>415</td><td></td></tr><tr><td>Kobayashi Komachi</td><td>597</td><td>419</td><td></td></tr><tr><td>Kuramochi Nana</td><td>604</td><td>424</td><td></td></tr><tr><td>Makiguchi Kit</td><td>609</td><td>424</td><td></td></tr><tr><td>Mitsui Kit</td><td>614</td><td>424</td><td></td></tr><tr><td>Nagasawa Megumi</td><td>620</td><td>429</td><td></td></tr><tr><td>Nishimoto Okichi</td><td>613</td><td>429</td><td></td></tr><tr><td>Obuchi Misato</td><td>608</td><td>429</td><td></td></tr><tr><td>Saito Machi</td><td>592</td><td>419</td><td></td></tr><tr><td>Seo Miwako</td><td>592</td><td>423</td><td></td></tr><tr><td>Tsukatani Yuri</td><td>592</td><td>428</td><td></td></tr><tr><td>Uno Honami</td><td>592</td><td>432</td><td></td></tr><tr><td>Yamagata Masako</td><td>593</td><td>439</td><td></td></tr><tr><td>Yoshida Rei</td><td>603</td><td>437</td><td></td></tr><tr><td>Drunken Boi</td><td>894</td><td>368</td><td>Mandara</td></tr><tr><td>Yuri</td><td>480</td><td>363</td><td>Biryu</td></tr><tr><td>Naoki</td><td>859</td><td>114</td><td>Biryu</td></tr><tr><td>Warfare of Ruins Safer</td><td>824</td><td>233</td><td>Biryu</td></tr><tr><td>Biryu Safer</td><td>124</td><td>129</td><td>Biryu</td></tr><tr><td>Kaspa Village Safer</td><td>804</td><td>781</td><td>Biryu</td></tr><tr><td>Minga Area Safer</td><td>131</td><td>872</td><td>Biryu</td></tr></tbody></table>
+
+
+# Monster Boss Hunting
+
+Lists of major field bosses & dungeon bosses in Kathana
+
+{% hint style="info" %}
+Bosses typically respawns between 5-8hrs after it was slained.
+
+Bosses drops rare items, refining items & crafting materials
+{% endhint %}
+
+| Boss Name | Location         | Item Drops |
+| --------- | ---------------- | ---------- |
+| Bindu     | Mandara          |            |
+| Yena      | Mandara          |            |
+| Mawei     | Mandara          |            |
+| Asirata   | Mandara          |            |
+| Naroma    | Mandara          |            |
+| Rasenasu  | Mandara Dungeon  |            |
+| Bali      | Mandara Dungeon  |            |
+| Rdhuni    | Mandara Dungeon  |            |
+| Yata      | Mandara Dungeon  |            |
+| Uppari    | Mandara Dungeon  |            |
+| Crama     | Shambala         |            |
+| Sari      | Shambala         |            |
+| Digamvara | Shambala         |            |
+| Dweza     | Shambala         |            |
+| Bumi      | Shambala Dungeon |            |
+| Arzuna    | Shambala Dungeon |            |
+| Murddi    | Shambala Dungeon |            |
+| Nirpati   | Jina             |            |
+| Vatur     | Jina             |            |
+| Sesstaku  | Jina             |            |
+| Astamu    | Jina             |            |
+| Vidyama   | Jina             |            |
+| Taiputa   | Pamir Plains     |            |
+| Purtika   | Pamir Plains     |            |
+| Nuzagama  | Pamir Plains     |            |
+| Shurima   | Pamir Plains     |            |
+| Puriyo    | Pamir Plains     |            |
+| Samuyata  | Exile            |            |
+| Niyavasan | Exile            |            |
+| Sukam     | Exile            |            |
+| Gatva     | Exile            |            |
+|           |                  |            |
+
+
+# Karma System
+
+"no evil deed is unpunished by God, the just judge"
+
+
+# Guilds & Alliances
+
+
+# Auto Hunting System
+
+A Kathana exclusive feature that allows our players to do auto-hunt.
+
+{% hint style="info" %} <mark style="color:$warning;">**This feature is heavily under-development.**</mark>\
+This feature allows our players to auto hunt while working/or multi-tasking.\
+Instead of downloading 3rd party apps from dubious websites or paying a tool to do the same, we are adding this for the safety of our players.
+{% endhint %}
+
+Teaser:
+
+<figure><img src="https://2359489951-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F3ZihNq2k3QooIZjlllqD%2Fuploads%2F0WIxcISHq4P2chqRzMTw%2Fimage.png?alt=media&amp;token=023ec762-7e26-4d32-bca2-37c6ff2a9f8d" alt=""><figcaption><p>A built-in Auto Hunting System</p></figcaption></figure>
+
+{% embed url="<https://www.youtube.com/watch?v=mDjmLUGB-XM>" %}
+
+{% hint style="info" %}
+A full guide will be added later once this feature is released.
+{% endhint %}
+
+
+# Quest Database
+
+List of available quests in Kathana
+
+{% hint style="info" %}
+The quests listed below is taken from Kathana 5 version, therefore the "item rewards" will be different from Kathana 3 (Kathana Version).\
+However the quests, steps & general prana & rupiah rewards will be close to the same.
+
+This is why when you read on the quests below, you will see rewards that aren't being given while Playing Kathana on Steam.
+{% endhint %}
+
+<details>
+
+<summary>Level 1 Quest</summary>
+
+1\. Bring 3 Small Horn to Vartan.\
+:white\_check\_mark:Reward(s): 10 Dahara Amrita, 200 Rupiahs, Chori Gloves
+
+2\. Kill monsters to level up → Apvas.\
+:white\_check\_mark:Reward(s): 50 Pranas, Chori Shoes, 10 Dahara Amrita
+
+3\. Shield chain via Buvan → Kirika → return.\
+:white\_check\_mark:Reward(s): Head Band, 10 Dahara Amrita
+
+&#x20;4\. 3 Low-quality Horn to Vananta.\
+:white\_check\_mark:Reward(s): 100 Pranas, 10 Dahara Amrita&#x20;
+
+5\. Return to Kirika.\
+:white\_check\_mark:Reward(s): 500 Rupiahs, Chori Pants&#x20;
+
+6\. Kill 10 Mlecchas → Apvas.\
+:white\_check\_mark:Reward(s): 200 Pranas, 500 Rupiahs, 10 Dahara Amrita, Chori Armor
+
+</details>
+
+<details>
+
+<summary>Level 8 Quests</summary>
+
+1\. Talk to Anjali, then Vartan, then Buvan → kill Mlecchas Caura.\
+:white\_check\_mark:Reward(s): 2000 Rupiahs, weapon by clan&#x20;
+
+2\. Bring 5 High Horns & 5 Medicine Horns to Vartan.\
+:white\_check\_mark:Reward(s): 2000 Rupiahs, Strong Sword of Vartan&#x20;
+
+3\. Talk to Apvas to complete.&#x20;
+
+4\. Deliver messages to Badru & Kananta.\
+:white\_check\_mark:Reward(s): 2000 Pranas, 20 Dahara Amrita&#x20;
+
+5\. Kill Mlecchas Karmana → bring Leather Sack.\
+:white\_check\_mark:Reward(s): 1 Donkey (Mount), Leather Sack, 3000 Rupiahs&#x20;
+
+6\. Find boy in Tomb of Avatara → return to Apvas.\
+:white\_check\_mark:Reward(s): 3000 Pranas, 5 Nakudo Hammer of Zosimo
+
+</details>
+
+<details>
+
+<summary>Level 10 Quests</summary>
+
+1\. Class change chain via Apvas → Vananta → hunt monsters → recommendation → back to Apvas.\
+:white\_check\_mark:Reward(s): Class Weapon \
+(Satvan's Hand Axe, Duvanta's Dagger, Nirvana's Glove, Mantrika's Staff)
+
+</details>
+
+<details>
+
+<summary>Level 15 Quests</summary>
+
+1\. Tribe-specific NPC chain.\
+:white\_check\_mark:Reward(s): 5000 Pranas, 5000 Rupiahs, Acchada Armor of Protection
+
+2\. Kill 10 Boa & collect Blood.\
+:white\_check\_mark:Reward(s): 7000 Pranas, 7000 Rupiahs, 2 Anahata&#x20;
+
+3\. 10 Mara's Black Blood → Karan.\
+:white\_check\_mark:Reward(s): 10000 Rupiahs, 8000 Pranas, 2 Crafting Items from the following: Manipura, Vishuda, or Azna
+
+</details>
+
+<details>
+
+<summary>Level 20 Quests</summary>
+
+1\. Amar → kill 30 Ulkamukha & 15 Ulkamukha Caura.\
+:white\_check\_mark: Reward(s): 30000 Rupiahs, 20000 Pranas, 20 Panaka&#x20;
+
+2\. Deliver message → pick blanket → return.\
+:white\_check\_mark: Reward(s): Chabi of Holy Army, 20000 Pranas, 50000 Rupiahs&#x20;
+
+3\. Mahomet → deliver to Anjali.\
+:white\_check\_mark:Reward(s): 10197 Pranas&#x20;
+
+4\. Return to Mahomet.\
+:white\_check\_mark:Reward(s): 20000 Pranas, 30000 Rupiahs, Bracelet of God's Force
+
+</details>
+
+<details>
+
+<summary>Level 25 Quests</summary>
+
+Hero Amar → kill 30 Heruka in Town of Ruins.\
+:white\_check\_mark: Reward(s): 30000 Rupiahs, 20000 Pranas, 5 Balance Party
+
+</details>
+
+<details>
+
+<summary>Level 30 Quests</summary>
+
+Bring Vartan's Strong Sword to Vibvan → kill Ananga for Ancient Sword → back-and-forth.\
+:white\_check\_mark: Reward(s): 2 Silfrijan, 5 Party Recall, 100000 Rupiahs, 100000 Pranas
+
+</details>
+
+<details>
+
+<summary>Level 35 Quests</summary>
+
+1\. Saranu → collect 10 Tough Leather → clothing to Kirika → return.\
+:white\_check\_mark:Reward(s): 100000 Pranas, 50000 Rupiahs, Saranu's tribe headband
+
+&#x20;2\. Imperfect Rucaka → Nara → 10 Sorcery Book + 10000 Rupiahs.\
+:white\_check\_mark:Reward(s): 50000 Rupiahs, Revived Kirika's Rucaka
+
+3\. Phalaka from Saranu → bring 5 Azna Stone Heart → return.\
+:white\_check\_mark:Reward(s): 50000 Pranas, Rucaka of Kirika&#x20;
+
+4\. Deliver shield to Karan → 10 Panaka.\
+:white\_check\_mark:Reward(s): 50000 Pranas&#x20;
+
+5\. 1 Jewel of Life + 10 Tough Leather.\
+:white\_check\_mark:Reward(s): Phalaka of Life, 50000 Pranas
+
+</details>
+
+<details>
+
+<summary>Level 40 Quests</summary>
+
+1\. Saranu's Prediction → Karan → Historical Book.\
+:white\_check\_mark:Reward(s): 100000 Pranas, 30000 Rupiahs\
+\
+2\. Return to Saranu.\
+:white\_check\_mark:Reward(s): 100000 Pranas, 30000 Rupiahs&#x20;
+
+3\. Nara → kill Zarku for Voucher → get Ring of Hero.\
+:white\_check\_mark:Reward(s): 100000 Pranas, 50000 Rupiahs
+
+&#x20;4\. Vibvan → bring Spirit Stone.\
+:white\_check\_mark:Reward(s): 100000 Pranas, 50000 Rupiahs&#x20;
+
+5\. Saranu → get Lion's Tear.\
+:white\_check\_mark:Reward(s): 100000 Pranas, 50000 Rupiahs&#x20;
+
+6\. Amar → Light Dragon's Scale.\
+:white\_check\_mark:Reward: Ring of the Brave
+
+7\. Pharmacist Karan → Kaulitara's Egg to Jeweler Nara.\
+:white\_check\_mark:Reward(s): 150000 Pranas
+
+&#x20;8\. Karan → Rudhira's Skeleton Necklace to Jeweler Nara → Priest Vananta.\
+:white\_check\_mark:Reward(s): 150000 Pranas
+
+&#x20;9\. Vananta's Necklace → Priest Vananta.\
+:white\_check\_mark:Reward: 150000 Pranas, Necklace of the Brave
+
+</details>
+
+<details>
+
+<summary>Level 45 - The 2nd Job</summary>
+
+{% hint style="info" %}
+Advancing into the 2nd class needs you to run three quests from Zangzu in Jina Town: Test of Wisdom, Test of Justice, and a third test dependent on your tribe (Preservation or Destruction).
+{% endhint %}
+
+**\[Test of Wisdom]**\
+Talk to Zongkui in Jina Town to fetch Moriya's 20-question ordeal; wrong answers force you to kill 20 Ananga before retry. The answers are as follows:
+
+&#x20;1\. Vartan\
+2\. 10 People\
+3\. Indra\
+4\. Nagamudra Hima\
+5\. 5050\
+6\. Apvas\
+7\. Exile Region\
+8\. 1432 People\
+9\. Ananga Dvanta\
+10\. Amrita\
+11\. 44%\
+12\. Shambala\
+13\. 8 Kings War\
+14\. 15 Kinds\
+15\. Haimayuga\
+16\. Vananta\
+17\. 6 Types\
+18\. 8 Kings Castle\
+19\. Chaturanga\
+20\. 1/126&#x20;
+
+:white\_check\_mark:Reward: Paper Piece
+
+***
+
+**\[Test of Justice]**\
+Form a party in the Duel Arena and slay the Libertine for Huang Dao Pao.\
+:white\_check\_mark:Reward: Friend's Name Cloth
+
+***
+
+**\[Test of Preservation]**\
+Collect Moon Oxhorn, White Tiger Strap Leather, Lizard Boss Bow String Tendon, and Mangriang Glue Cell for Ouyez, then deliver 15 Hard Fabrics to Saranu.
+
+:white\_check\_mark:Reward: Blood Cloth
+
+***
+
+**\[Test of Destruction]**\
+Kill opposing God Scouts in your Fortress (per tribe) for Iddung Dashu, then return to Zangzu to complete your 2nd-job upgrade.
+
+:white\_check\_mark:Reward: Destruction Proof Item
+
+</details>
+
+<details>
+
+<summary>Level 45 - Entry to Jina Fortress</summary>
+
+1\. Talk to Elder Zangzu → Fighting Monk Iddungddashu → hunt 30 Zaku → back to Iddungddashu.
+
+2\. Hunt Zaku Gosu until you get an Operation Order → report to Iddungddashu.\
+:white\_check\_mark:Rewards: 50,000 Pranas, 60 Seito Green Bottle
+
+3\. Confirm Order with Zangzu.\
+:white\_check\_mark:Rewards: 100,000 Rupiahs, 200,000 Pranas
+
+4\. Go to Armor Salesman Wangddaopo → obtain Merchant's Bundle from Zaku Gosus → return to Wangddaopo.\
+:white\_check\_mark:Rewards: 50,000 Rupiahs, 200,000 Pranas, 40 Feather of Holy Bird, 40 Stronger Iron
+
+</details>
+
+<details>
+
+<summary>Level 47 - The Spy </summary>
+
+1\. Talk to Wangddaopo → Collect 20 Poison Stings from Mangriang & 30 Sorcery Books from Pizac Aggana → back to Wangddaopo.
+
+2\. Collect 30 Poison Stings from Mangriang & 30 Sorcery Books from Pizac Aggana.\
+:white\_check\_mark:Rewards: 50,000 Rupiahs, 200,000 Pranas
+
+3\. Go to Bava in Shambala Castle.\
+:white\_check\_mark:Rewards: 75,000 Rupiahs, 300,000 Pranas
+
+4\. Go to Armor Salesman Wangddaopo → Rui Shan → Collect 20 Craniums from Zinmon → return for Rui Shan.
+
+5\. Acquired the \[Amity Medicine] → Deliver to Bava
+
+6\. Obtain \[Left Eye of Ape] from Sinkiu → Deliver to Bava\
+:white\_check\_mark:Rewards: 200,000 Pranas
+
+7\. Talk to Jeweler Nara of Anu Village.\
+:white\_check\_mark:Rewards: 100,000 Pranas, DQ. Atman Charm \[1 Hour], DQ. Peito Charm of Heart, Bangle of the Wise
+
+</details>
+
+<details>
+
+<summary>Level 49 - Ambush</summary>
+
+1\. Rui Shan → Ouyez → hunt 10 Zinmon & 15 Zinmon Gosu → Ouyez.\
+:white\_check\_mark:Rewards: 50,000–75,000 Rupiahs, 200,000–300,000 Pranas
+
+2\. Meet Bava → hunt Byokbo → return to Ouyez.\
+:white\_check\_mark:Rewards: 200,000 Pranas, Earring of Militia Officer, H.Q. Anubaba Spell \[4 Hours]
+
+</details>
+
+<details>
+
+<summary>Level 51 Quests</summary>
+
+1\. Bava → Zangzu → Rui Shan → collect 15 Head Decorations & 20 Jawbones → Rui Shan.\
+:white\_check\_mark:Rewards: 100,000 Rupiahs, 300,000 Pranas
+
+2\. Saranu → Zangzu → Jina Storage.\
+:white\_check\_mark:Rewards: 20 Uta Dru, 20 Seito Purple Bottle, Ganesha, PETA
+
+</details>
+
+<details>
+
+<summary>Level 53 - Slaughterous Sisters</summary>
+
+1\. Jina Storage NPC → Bava → Vibvan → collect 20 Oxhorns & 20 Big Oxhorns → Vibvan.\
+:white\_check\_mark:Rewards: 50,000–75,000 Rupiahs, 200,000–240,000 Pranas
+
+2\. Iddungddashu → hunt 30 Kubasang → Iddungddashu.\
+:white\_check\_mark:Rewards: 240,000 Pranas
+
+3\. Rui Shan → collect 10 Hands of Stained Blood & 20 Sorcery Books → Rui Shan.\
+:white\_check\_mark:Rewards: 300,000 Pranas
+
+4\. Saranu → hunt Lady Ghosts (in Pamir) → Saranu → Iddungddashu.\
+:white\_check\_mark:Rewards: 300,000 Pranas, Earring of the Wise
+
+</details>
+
+<details>
+
+<summary>Level 55 - The Mask</summary>
+
+1\. Borer → collect Mara Horns & Bat Wings → Vibvan.\
+:white\_check\_mark:Rewards: 1,000,000 Pranas, 500,000 Rupiahs, Dvanta's Spirit Stone
+
+2\. Zangzu → Jina & Exile Salesmen → Haiddungdashu (×2).\
+:white\_check\_mark:Rewards: 300,000 Pranas; +1,000,000 Pranas
+
+</details>
+
+<details>
+
+<summary>Level 57 - The Sacrifice</summary>
+
+1\. Usong → Ryuzshun → Haiddungdashu → Iddungddashu → Zangzu → Haiddungdashu.\
+:white\_check\_mark:Rewards: 300,000 Pranas (each major step)
+
+</details>
+
+<details>
+
+<summary>Level 59 - The Pilgrimage of the Dead</summary>
+
+Elder Haiddungddashu → Vananta → Anu Storage NPC → kill 52 named monsters across Mandara, Shambala, Jina/Pamir/Exile maps for huge rewards.\
+:white\_check\_mark:Reward: 10,000,000 Pranas, 4 Pilgrimage Voucher
+
+</details>
+
+<details>
+
+<summary>Level 61 - The Queen</summary>
+
+1\. Collect Red Roses & Branches → Ssunalang → Borer → Zongkui → Borer chain (×2).\
+:white\_check\_mark:Rewards: 300,000–500,000 Pranas, 500,000 Rupiahs, Rose Basket
+
+</details>
+
+<details>
+
+<summary>Level 63 - The Defender</summary>
+
+1\. Shunnongs → Ryupuwei → collect Yakku & Yomrabyang arms → Ryupuwei.
+
+2\. Shunnongs → Ssunalang.\
+:white\_check\_mark:Rewards: 500,000–1,000,000 Pranas, 500,000 Rupiahs, 100 Ultima Amrita, 100 Ultima Panaka\
+Random Reward: Bravery Karna, Life Kakana of Ajaka, or Strong Kambu
+
+</details>
+
+<details>
+
+<summary>Level 65 - The Grave Diggers</summary>
+
+1\. Talk to North Guard Haidungddashu → collect 1 Cabinet Map → return.\
+:white\_check\_mark:Reward: 1,000,000 Pranas
+
+2\. Go to Rui Shan → gather 40 Gun Powders → return.\
+:white\_check\_mark:Reward: 1,000,000 Pranas
+
+3\. Visit Wangdappo → collect 20 Nameless Tapelines → go to Ryupuwei.\
+:white\_check\_mark:Reward: 1,000,000 Pranas
+
+4\. Return to Wangdappo.\
+:white\_check\_mark:Reward: 1,000,000 Pranas + Restored Medicine
+
+5\. Go back to Rui Shan.\
+:white\_check\_mark:Reward: 1,000,000 Pranas + Restored Map
+
+6\. Finally return to Haidungddashu.
+
+</details>
+
+<details>
+
+<summary>Level 67 - Doll Maker</summary>
+
+1\. Talk to Ryupuwei → collect 10 Head of Tongon, 10 Helm of Hwangbyon, 10 Eye of Tongon, 10 Breastplate of Tongon, 10 Leg of Tongon, 10 Item of Tongon → return.\
+:white\_check\_mark:Reward: 1,000,000 Pranas + Resurrected Head of Tongon
+
+2\. Go to Priest Vananta → return.\
+:white\_check\_mark:Reward: 1,000,000 Pranas + Resurrected Helm of Hwangbyon
+
+3\. Visit Kirika → return.\
+:white\_check\_mark:Reward: 1,000,000 Pranas + Resurrected Eye of Tongon
+
+4\. Deliver to Monk (Anu Store Keeper) → return.\
+:white\_check\_mark:Reward: 1,000,000 Pranas + Resurrected Breastplate of Tongon
+
+5\. Go to Haiddengsu → return.\
+:white\_check\_mark:Reward: 1,000,000 Pranas + Resurrected Item of Tongon
+
+6\. Back to Ryupuwei → collect 10 Azna Stone Hearts, 10 Utara Amrita, 10 Utara Panaka → go to Craftsman Chin → kill Resurrected Tongon → return.\
+:white\_check\_mark:Reward: 6,000,000 Pranas + Emperor's Amulet
+
+</details>
+
+<details>
+
+<summary>Level 69 - The Altar of the Dead</summary>
+
+1\. Go to Zangzu → collect 10 General Sword, 10 Palace Piece, 10 Flag of Great Bear → return.\
+:white\_check\_mark:Reward: 4,000,000 Pranas
+
+2\. Visit Priest Vananta → return.\
+:white\_check\_mark:Reward: 4,000,000 Pranas
+
+3\. Donate 1M Rupiah at Pots → back to Zangzu → gather 10 Gems of Spirit, 10 Ancient Sorcery Books, 10 Charm of the Hero, 10 Stone Heart, 1M Rupiah, 5 Azis, Surapa → turn in.\
+:white\_check\_mark:Reward: 8,000,000 Pranas + Rare Accessory
+
+</details>
+
+<details>
+
+<summary>Level 71 - The Never Ending Fun of Learning</summary>
+
+1\. Go to Zonkui → kill 4 library monsters to collect their books (party bonus applies) → return.\
+:white\_check\_mark:Rewards: 8,000,000 Pranas, Platinum Package \[7 Days], Decoration From Great Bear
+
+2\. Meet Zangzu → transform books into charm → visit Chin in ET → trade for item.\
+:white\_check\_mark:Reward: Charm for Tribe Item
+
+</details>
+
+<details>
+
+<summary>Level 73 - The Repose of the Dead</summary>
+
+1\. Go to Zangzu → collect Bronze Pitch, Bronze Armor, Hwang's Army Plate from 3 Che mobs in ET → return.\
+:white\_check\_mark:Rewards: 20,000,000 Pranas, Belt of the Great Bear
+
+2\. Talk to New Elder Zangu in ET → use given sword to slay the Resurrected Emperor → return → Chin trade.\
+:white\_check\_mark:Reward: Charm for Tribe Item
+
+</details>
+
+<details>
+
+<summary>Level 75 - A Strange Eastern Country</summary>
+
+1\. Go to Biryu Administrator Yasita to start the quest. Hunt 20 mining covenants and 20 farming covenants; return to Yasita.\
+:white\_check\_mark:Reward: 1,000,000 Pranas, Yut Nori bet tip
+
+2\. Play Yut Nori (Tue/Thu 18:00, Sat 13:00 & 18:00); after winning, talk to Sato to claim. Then get 30 fans from Skarakoros → Sato.\
+:white\_check\_mark:Reward: 1,000,000 Pranas, 500,000 Rupiahs
+
+3\. Visit Gubo (Biryu) for Necklace of Magasi → Miner Yume repairs → collect 20 Kaspa Black Shells → Yume.\
+:white\_check\_mark:Reward: 1,000,000 Pranas
+
+4\. Give Yume 3 Azis & 2 Surapas → return repaired necklace to Gubo.\
+:white\_check\_mark:Reward: 20,000,000 Pranas, 500,000 Rupiahs
+
+</details>
+
+<details>
+
+<summary>Level 76 - Lost</summary>
+
+1\. Yasita (Biryu) → collect 30 Gentle Leathers → Mamoru (Biryu).\
+:white\_check\_mark:Reward: 1,000,000 Pranas, 500,000 Rupiahs
+
+2\. Zongkui (Jina) for Portrait of the King → Amar (Shambala) for 30 Ancient Sorcery Books.\
+:white\_check\_mark:Reward: 1,000,000 Pranas
+
+3\. Apvas (Mandara) → 20 Artificial Tooth & 30 Rakers.\
+:white\_check\_mark:Reward: 1,000,000 Pranas
+
+4\. Kumar (Mandara) → find Drunken Boi (Sporvada) → back to Kumar → Karan (pharmacist) for 10 Utara Panaka & Yellow Bar of Rama.\
+:white\_check\_mark:Reward: 1,000,000 Pranas
+
+5\. "Conditioner" to Drunken Boi → return to Kumar with Scriptures of Rama.\
+:white\_check\_mark:Reward: 20,000,000 Pranas, 1,000,000 Rupiahs, Ring of Rama
+
+</details>
+
+<details>
+
+<summary>Level 77 - The Ring of Rama</summary>
+
+1\. Miner Yume (Biryu) → Yasita → hunt 10 Boras → return.\
+:white\_check\_mark:Reward: 2,000,000 Pranas
+
+2\. Zangzu (Jina) for Booklet of Rama → Zongkui.\
+:white\_check\_mark:Reward: 1,500,000 Pranas
+
+3\. Collect Mysterious Sketch in Chatu → Zongkui.\
+:white\_check\_mark:Reward: 1,000,000 Pranas
+
+4\. Karan for 20 Maras Source Liquids.\
+:white\_check\_mark:Reward: 1,000,000 Pranas
+
+5\. Candle Flower, King's Portrait, Three Bloods, Territory items → Zongkui.\
+:white\_check\_mark:Reward: 20,000,000 Pranas, 1,000,000 Rupiahs
+
+</details>
+
+<details>
+
+<summary>Level 78 - Yuri and Naoki</summary>
+
+1\. Elder Haiddungddashu → acquire Moonlight → Bibingka & King's Flower → Yume.\
+:white\_check\_mark:Reward: 1,500,000 Pranas, Jewel of Separation Voucher
+
+2\. Yuri → kill Naoki (845/125) → Talk to Naoki (858/113)→ return.\
+:white\_check\_mark:Reward: 1,500,000 Pranas
+
+3\. Hunt Abi Konsa & Wotelya for Written Contract → Naoki.\
+:white\_check\_mark:Reward: 2,000,000 Pranas, Jewel of Height Voucher
+
+4\. Hunt 3 Arichus → Yume → return Ring of Rama → Oda (Biryu).\
+:white\_check\_mark:Reward: 20,000,000 Pranas, 2,000,000 Rupiahs
+
+</details>
+
+<details>
+
+<summary>Level 79 - Trace of Eight Kings</summary>
+
+1\. Yasita (Biryu) → 1st Safer in Warfare of Ruins (824/234) × 20 Safe Hats → return.\
+:white\_check\_mark:Reward: 1,000,000 Pranas, King's Red Paper Bag
+
+2\. 2nd Safer in Kaspa Mineros (132/871) for Golden Toad → return.\
+:white\_check\_mark:Reward: 1,000,000 Pranas, King's Blue Sack
+
+3\. 3rd Safer in Kaspa Village for Soma → return.\
+:white\_check\_mark:Reward: 1,000,000 Pranas, King's Green Sack
+
+4\. Last Safer in Biryu (125/131) for 20 Gentle Leathers & 30 Cabinets of Nali → return.\
+:white\_check\_mark:Reward: 1,000,000 Pranas, King's Yellow Sack
+
+5\. Yasita → Zongkui (Jina) → Yakoru Booklet → Vananta offering.\
+:white\_check\_mark:Reward: 1,000,000 Pranas, Yakoru Booklet
+
+6\. Sama Booklet in Anu → Saranu → return.\
+:white\_check\_mark:Reward: 1,000,000 Pranas, Sama Booklet
+
+7\. Yata Booklet in Jina → 15 Fox Tails → Zangzu.\
+:white\_check\_mark:Reward: 1,000,000 Pranas, Yata Booklet
+
+8\. Rigu Booklet in Exile → 30 Yomrabyang → Ssunalang.\
+:white\_check\_mark:Reward: 1,000,000 Pranas, Rigu Booklet
+
+9\. Zongkui for Jewel of Lamp → blessings by Vananta, Buvan & Zangzu (1M Rupiahs).\
+:white\_check\_mark:Reward: Jewel of Lamp, 2 × 50,000 Rupiahs
+
+10\. Yasita after ritual.\
+:white\_check\_mark:Reward: 22,000,000 Pranas, 2,000,000 Rupiahs
+
+</details>
+
+<details>
+
+<summary>Level 80 - Awakening of the Sealed Shiva</summary>
+
+1. Find Merchant Oda in Biryu Castle, then visit Miner Yume in Biryu.
+2. Kill 20 Buchin, return to Miner Yume.
+3. Find Biryu Administrator Yasita. \
+   :white\_check\_mark:Reward: 1,000,000 Pranas
+4. Get a Skull from Scarecrow → back to Yasita.
+5. Visit Elder Zangzu & Armor Salesman Wangddaopo in Jina.
+6. Collect 1 Kundala of Nerve, 2 Branches, 2 Smell Gjost Arms, 2 Safe Hats → Elder Zangzu with Earring of Whisper.
+7. Visit Storehouse Keeper Gubo in Biryu, get a Fruit from Abi Konsa, return to Gubo.
+8. Visit Goods Salesman Mamoru in Biryu. \
+   :white\_check\_mark:Reward: 1,000,000 Pranas
+9. Get Book of Mamoru from Kaspa Konsa → return to Mamoru.
+10. Visit Jeweler Ashuri in Mandara. \
+    :white\_check\_mark:Reward: 1,000,000 Pranas
+11. Get a Yakku Member from Yakku → return to Ashuri.
+12. Visit Mamoru with Potion.
+
+</details>
+
+<details>
+
+<summary>Level 82 - The Queen of Karya</summary>
+
+1. Visit Darksa in Mudha → Blacksmith Vartan in Mandara.
+2. Get Steel Piece from Dae Mi in Emperor's Tomb → back to Vartan.\
+   :white\_check\_mark:Reward: 1,000,000 Pranas
+3. Visit Storehouse Keeper Zongkui in Jina, collect 10 Decoration Oxhorns → Salesman Rui Shan. \
+   :white\_check\_mark:Reward: 1,000,000 Pranas
+4. Collect 10 Tiger's Leather, 10 White Tiger's Leather, 5 Cabinets of Nali, 5 Gentle Leather, 5 Safe Hat, 5 Kaspa Back Shell → Darksa. :white\_check\_mark:Reward: 300,000 Pranas
+5. Visit Elder Haiddungddashu in Exile → hunt 20 Ban Zankun → back to Haiddungddashu.
+6. Get Eye of Dead Body from Bongbo → back to Haiddungddashu. :white\_check\_mark:Reward: 2,000,000 Pranas
+7. Visit Priest Vananta in Mandara → get Moon Piece from Kyukrong → back to Vananta. \
+   :white\_check\_mark:Reward: 500,000 Pranas
+8. Visit Weapon Man Vibvan in Shambala → collect 10 Hand of Stained Blood → back to Vibvan.
+9. Visit Weapon Salesman Ouyez in Jina Village → get Yomrabyang Flesh → back to Ouyez. \
+   :white\_check\_mark:Reward: Unique Class Belt, 2,000,000 Pranas
+
+</details>
+
+<details>
+
+<summary>Level 84 - Free the soul of the Four Warriors</summary>
+
+1. Visit Mamoru in Biryu → hunt 20 Kaspa Saka → back to Mamoru. :white\_check\_mark:Reward: 2,000,000 Pranas
+2. Visit Storehouse Keeper Zongkui → hunt 30 Balastha Tundela → back to Zongkui. \
+   :white\_check\_mark:Reward: 1,000,000 Pranas
+3. Visit Jeweler Ashuri → get Yuv Candle → back to Ashuri. \
+   :white\_check\_mark:Reward: 2,000,000 Pranas
+4. Visit Mamoru → Biryu Administrator Yasita → Kirika → get 10 Tooth of Boraga → back to Kirika. \
+   :white\_check\_mark:Reward: 1,000,000 Pranas
+5. Hunt Chandi Asura, Naga, Garuda, Gandharva in succession, returning to Yasita after each: \
+   :white\_check\_mark:Reward: 4 × 6,000,000 Pranas, 1 Uta Sambadu
+
+</details>
+
+<details>
+
+<summary>Level 86 - Finding Jimunchana</summary>
+
+1. Visit Pharmacist Karan in Mandara → collect 10 Spider Legs from Hadi in Mudha Dungeon → Discipling Monk in Anu Village.
+2. Get 10 Malady Lump from Masan → back to Discipling Monk. \
+   :white\_check\_mark:Reward: 4,000,000 Pranas
+3. Visit Blacksmith Vartan → collect 10 Shell from Akusra → back to Vartan. \
+   :white\_check\_mark:Reward: 4,000,000 Pranas
+4. Visit Darksa in Mudha → kill Jimunchana in Mudha Dungeon → back to Darksa. \
+   :white\_check\_mark:Reward: 10,000,000 Pranas, 1 Gavi
+
+</details>
+
+<details>
+
+<summary>Level 88 - The Mystery of Forge</summary>
+
+1. Talk to Vartan.
+2. Speak with Sunanda in the Forge hall.
+3. Kill 30 Kaspa Birta (Vrta Kapa).
+4. Kill 30 Zaku Birta (Vrta Zaku).
+5. Turn in written contract + 30 Sunanda items to Sunanda.
+6. Kill 50 Ulkamukha Birta (Vrta Ulkamukha).
+7. Kill 50 Miryoka Birta (Vrta Mlecchas).
+8. Deliver 30 Textile Ethane (Vrta Ulkamukha).
+9. Fetch Hemaza's leg on floor 1. \
+   :white\_check\_mark:Reward: 200,000 Pranas
+10. Fetch scrap of Ulapin's Axe on floor 1. \
+    :white\_check\_mark:Reward: 200,000 Pranas
+11. Fetch Pilakah's Feller on floor 1. \
+    :white\_check\_mark:Reward: 200,000 Pranas
+12. Fetch Anuva's Cloth on floor 1. \
+    :white\_check\_mark:Reward: 700,000 Pranas + Sunanda's Necklace
+
+</details>
+
+<details>
+
+<summary>Level 89 - Lost Weapon</summary>
+
+1. Kill 50 Ram.
+2. Kill 50 Arun.
+3. Return to Sunanda with green (turns blue) feather + 30 old fetter.\
+   :white\_check\_mark:Reward: 300,000 Pranas
+4. Kill one mini-boss (e.g. Darah Forge, Kasani...); return.\
+   :white\_check\_mark:Reward: 300,000 Pranas
+5. Fetch Hand of Hemaza; return.\
+   :white\_check\_mark:Reward: 300,000 Pranas
+6. Fetch scrap of Ulapin's Axe; return.\
+   :white\_check\_mark:Reward: 300,000 Pranas
+7. Fetch Pilakah's Feller; return.\
+   :white\_check\_mark:Reward: 300,000 Pranas
+8. Fetch Anuva's Cloth; return.\
+   :white\_check\_mark:Reward: 300,000 Pranas
+9. Kill 50 Chumsums/Dancers.
+10. Visit Yasita; return to Sunanda to face Asuramaya; bring Caly's Curtain.\
+    :white\_check\_mark:Reward: 500,000 Pranas
+11. Deliver letter to Yasita.\
+    :white\_check\_mark:Reward: 500,000 Pranas
+12. Visit Yume; kill 50 Boras.\
+    :white\_check\_mark:Reward: 300,000 Pranas
+13. Return to Yasita.\
+    :white\_check\_mark:Reward: Pranas + Darani of Biryu Castle Owner
+
+</details>
+
+<details>
+
+<summary>Level 91 - Ruins Quest</summary>
+
+1. Talk to Vagra.
+2. Hunt 10 Kaulitara or Piscachi Srunca; return to Vagra.
+3. Collect sample of Pizac Kara (577 / 747); return.
+4. Collect sample of Tarantula Shama (833 / 665); return.
+5. Collect sample of Pisachi Vacini (348 / 176); return.
+6. Collect sample of Virgin Ghost (295 / 234); return.
+7. Collect sample of Wild Tiger (864 / 145); return.
+8. Collect sample of Polluted Grave Robber (711 / 732); return.
+9. Collect sample of Polluted Warrior (865 / 880); return.
+10. Collect sample of Wild Boar (814 / 231); return.
+
+</details>
+
+<details>
+
+<summary>Level 94 - Mandara Dungeon 2</summary>
+
+{% hint style="info" %}
+Quest: Strange phenomenon in Mandara Dungeon and existence of Naga Village
+{% endhint %}
+
+1. Talk to Yasita of Biryu Castle.
+2. Talk to Padu of Mandara Village.
+3. Hunt 5 Sauba or Masi; return to Padu.\
+   :white\_check\_mark:Reward: 100,000 Pranas
+4. Collect 20 Skin Scrap; return to Padu.\
+   :white\_check\_mark:Reward: 200,000 Pranas
+5. Hunt 50 Masi or Kankara; return.\
+   :white\_check\_mark:Reward: 200,000 Pranas
+6. Collect 20 Skin Scrap from Pena/Kankara; return.\
+   :white\_check\_mark:Reward: 200,000 Pranas
+7. Collect 20 Skin Scrap from Roon Masi/Kankara; return.\
+   :white\_check\_mark:Reward: 200,000 Pranas
+8. Hunt 70 Roon Pena/Roon Sauba; return.\
+   :white\_check\_mark:Reward: 200,000 Pranas
+9. Get 1 Nagamudra Stuba or hunt 100 Roon Masi; return.\
+   :white\_check\_mark:Reward: 400,000 Pranas + Shining Scrap
+10. Talk to Yasita; then Yume.
+11. Obtain Handle Decoration from Soko; return to Yume.\
+    :white\_check\_mark:Reward: 100,000 Pranas
+12. Return to Yasita.\
+    :white\_check\_mark:Reward: 700,000 Pranas + Shining Certificate
+
+{% hint style="info" %}
+Exchange Shining Certificate to Yasita for tribe-specific "First" or "Second Necklace."
+{% endhint %}
+
+</details>
+
+<details>
+
+<summary>Level 97 - Naga Village</summary>
+
+{% hint style="info" %}
+Quest: Follow and recover lost weapon
+{% endhint %}
+
+1. Talk to Elder Clan Rasi Mukhara; hunt 50 Syena or Samila; return.\
+   :white\_check\_mark:Reward: 200,000 Pranas
+2. Hunt 70 Huta Syena or Huta Samila; return.\
+   :white\_check\_mark:Reward: 200,000 Pranas
+3. Collect 10 Claw of Snu or Blue Spore of Katu; return.\
+   :white\_check\_mark:Reward: 200,000 Pranas
+4. Collect 10 Claw of Huta Snu or Blue Spore of Huta Katu; return.\
+   :white\_check\_mark:Reward: 200,000 Pranas
+5. Talk to Ironmaster Sastra; obtain Hair of Namaka; return.\
+   :white\_check\_mark:Reward: 200,000 Pranas
+6. Get Green Skin of Roha; return.\
+   :white\_check\_mark:Reward: 200,000 Pranas
+7. Get Blue Tendon of Huta Namaka; return.\
+   :white\_check\_mark:Reward: 200,000 Pranas
+8. Get Black Claw of Huta Roha; return.\
+   :white\_check\_mark:Reward: 200,000 Pranas
+9. Retrieve Sealed Weapon (938 / 70 in Rumbak); return.\
+   :white\_check\_mark:Reward: 200,000 Pranas
+10. Talk to Varman of Naga Village; hunt 100 Huta Roha; return.\
+    :white\_check\_mark:Reward: 200,000 Pranas
+11. Return to Rasi Mukhara.\
+    :white\_check\_mark:Reward: 700,000 Pranas + Certificate of Tribe Head
+
+{% hint style="info" %}
+Exchange Certificate for Sastra's Crystal Weapon.
+{% endhint %}
+
+</details>
+
+<details>
+
+<summary>Level Amara 2 - Missions of the Jail of Naga</summary>
+
+1. Talk to Tribe Leader Rasi Mukhara; kill 50 Harin or Bharendur; return.\
+   :white\_check\_mark:Reward: 100,000 Pranas
+2. Return to Harina; autodrop Murita sign; return.\
+   :white\_check\_mark:Reward: 200,000 Pranas
+3. Auto-kill Hadi Cite or Vanga; return.\
+   :white\_check\_mark:Reward: 200,000 Pranas
+4. Auto-kill Harin & Bharendur; return.\
+   :white\_check\_mark:Reward: 200,000 Pranas
+5. Talk to Stupa Suga; collect 10 Network Horn; return.\
+   :white\_check\_mark:Reward: 300,000 Pranas
+6. Collect 10 Poison Bags; return.\
+   :white\_check\_mark:Reward: 300,000 Pranas
+7. Collect 10 Mossy Stone; return.\
+   :white\_check\_mark:Reward: 300,000 Pranas
+8. Collect 5 Blue Horn; return.\
+   :white\_check\_mark:Reward: 400,000 Pranas
+9. Return to Harina; talk to Murita; return; kill Holeather; return.\
+   :white\_check\_mark:Reward: 800,000 Pranas + Symbol of Harina
+
+{% hint style="info" %}
+Exchange the Symbol of Harina for the Bracelet of Harina 1 or 2.
+{% endhint %}
+
+</details>
+
+<details>
+
+<summary>Level Amara 6 - Mysterious Land Paroksya</summary>
+
+1. Collect 5 Golem Kuchi's Stone; return to Harina.
+2. Visit Storehouse Keeper Moaca.
+3. After purse from Namaka, return to Moaca.
+4. Return to Harina; receive Nagamudra Hima's Flute.
+5. Speak with Sarosa.
+6. Hunt 40 Sutika; return.\
+   :white\_check\_mark:Reward: 300,000 Pranas
+7. Hunt 40 Katra; return.\
+   :white\_check\_mark:Reward: 300,000 Pranas
+8. Deliver intro letter to Paroksya Elder.
+9. Hunt 20 Horn of Sutika; return.\
+   :white\_check\_mark:Reward: 400,000 Pranas
+10. Hunt 20 Armor of Katra; return.\
+    :white\_check\_mark:Reward: 400,000 Pranas
+11. Hunt 20 Claw of Abha; return.\
+    :white\_check\_mark:Reward: 400,000 Pranas
+12. Hunt 20 Dogtooth of Badhi; return.\
+    :white\_check\_mark:Reward: 400,000 Pranas + Senagra's Box
+13. Use Box at Conjurator Hekara; hunt 10 Heman Sutika; return.\
+    :white\_check\_mark:Reward: 400,000 Pranas + Hekara's Letter
+14. Return to General Senagra with Letter; hunt 20 Horn of Heman Sutika; return.\
+    :white\_check\_mark:Reward: 500,000 Pranas
+15. Hunt 20 Armor of Heman Katra; return.\
+    :white\_check\_mark:Reward: 500,000 Pranas
+16. Hunt 20 Claw of Heman Abha; return.\
+    :white\_check\_mark:Reward: 500,000 Pranas
+17. Hunt 20 Dogtooth of Heman Badhi; return.\
+    :white\_check\_mark:Reward: 500,000 Pranas + Senagra's Box
+18. Return to Conjurator Hekara with Box; then to Craftsman Yapa.
+19. Collect Yumboo from Heman Katra; return to Yapa.
+20. Back to Hekara; gather abnormal Sutika Marks; return.\
+    :white\_check\_mark:Reward: 500,000 Pranas + Red Jewelry
+21. Gather abnormal Katra Marks; return.\
+    :white\_check\_mark:Reward: 500,000 Pranas + Blue Jewelry
+22. Gather abnormal Abha Marks; return.\
+    :white\_check\_mark:Reward: 500,000 Pranas + Ruins Flute
+23. Gather abnormal Badhi Marks; return.\
+    :white\_check\_mark:Reward: 500,000 Pranas + Naga Tribe Flute
+24. Visit Alchemist Hora; collect Wild Boar Hair; return.\
+    :white\_check\_mark:Reward: 500,000 Pranas
+25. Use all Jewels; return to Hekara; get Caster Horn from Haoma.\
+    :white\_check\_mark:Reward: 1,000,000 Pranas
+26. Investigate Gathering Site; return.\
+    :white\_check\_mark:Reward: 2,000,000 Pranas + Hekara's Letter
+27. Go to Elder Huban with Letter\
+    :white\_check\_mark:Reward: Sagara Protection Charm
+
+</details>
+
+
+# Item Database
+
+
+# Rare Item List
+
+A collection of rare items and where to get them
+
+{% hint style="info" %}
+Rare items below is taken from Kathana 2 version whereas we are using Kathana 3.\
+The monsters who drops the items did not changed since then.\
+However, taken into consideration the naming conversion.
+{% endhint %}
+
+| Item Name                                        | Drop by Monster                                      | Item Stats                                                                       |
+| ------------------------------------------------ | ---------------------------------------------------- | -------------------------------------------------------------------------------- |
+| **SWORD**                                        |                                                      |                                                                                  |
+| Kindjal of Thunder                               | Azna Heruka (Shambala)                               | 1h Sword, atk 27-29, Lightning atk 40-50, Lightning Resist 20, Muscle 5, Nerve 5 |
+| Kindjal of Deadly Poison                         | Heruka (Shambala)                                    | 1h Sword, atk 27-29, Poison atk 25-35, Accuracy 25, Poison Resist 15, Muscle 5   |
+| Ara of Deadly Poison                             | Sarpa (Mandara Dungeon Lv2)                          | 1h Sword, atk 32-36, Poison atk 35-45, Poison Resist 25, Heart 7, Nerve 3        |
+| Strong Ara                                       | Sarpa Raja (Mandara Dungeon Lv2)                     | 1h Sword, atk 32-36, Poison 40-50, Muscle 7, Heart 7, Accuracy 10                |
+| <p>Bisa Dantaka /<br>Talwar of Deadly Poison</p> | Nagamudra (Shambala Dungeon)                         | 1h Sword, atk 46-50, Poison atk 60-70, Poison Resist 20, Muscle 7, Heart 7       |
+| Talwar of Origin Warrior                         | Byokbo (Jina)                                        | 1h Sword, atk 51-55, Accuracy 30, 20% chance increase attack 100%, HP 50         |
+| Talwar of Warrior                                | Zarku Rudhira (Shambala Dungeon)                     | 1h Sword, atk 51-55, All chakra 5, All elemental Resist 10, Accuracy 20          |
+| Strong Pattra                                    | Tarantula (Shambala)                                 | 2h Sword, atk 60-66, 20% chance increase attack 100%, Muscle 5, Heart 5          |
+| Pattra of Curse                                  | Tarantula Caura (Mandara Dungeon Lv1)                | 2h Sword, atk 60-66, 20% chance increase attack 100%, Nerve 7, HP 50, TP 50      |
+| Rauti Kukri                                      | Samuyata (Exile)                                     | 2h Sword, atk 73-81, Lightning atk 50-100, Lightning Resist 5, Muscle 3, Heart 3 |
+| **DAGGER**                                       |                                                      |                                                                                  |
+| Hima Kinjar / Hima Khanjar                       | Purtika (Pamir)                                      | Dagger, atk 24-36, Ice atk 50-100, Ice Resist 10, Nerve 5                        |
+| Suraka of the Muscle                             | Mangriang (Jina)                                     | Dagger, atk 29-43, Muscle 7, Nerve 3, Accuracy 25                                |
+| Suraka of the Wild Beast                         | Astamu (Jina)                                        | Dagger, atk 29-43, ignore defense 15%, Muscle 5, HP 50                           |
+| **SPEAR**                                        |                                                      |                                                                                  |
+| Trizika of Life                                  | Ananga Dhvanta (Shambala)                            | Spear, atk 67-101, HP 80, ignore defense-attack +10%                             |
+| Trizika of Destruction                           | Ananga (Shambala)                                    | Spear, atk 67-101, Muscle 7, Heart 7                                             |
+| Yakatu Engkus                                    | Zonbu / Niyavasan (Exile)                            | Spear, atk 87-130, Reduce Fire/Ice/Lightning Resist 20 for 5 seconds             |
+| **AXE**                                          |                                                      |                                                                                  |
+| Kisu of Origin Warrior                           | Ulkamukha (Shambala)                                 | 1h Axe, atk 30-40, Muscle 5, Heart 5, Nerve 5                                    |
+| Strong Kisu                                      | Ulkamukha Caura (Shambala)                           | 1h Axe, atk 30-40, Accuracy 20, Lightning Resist 15                              |
+| Agni Kisu / Agi Kisu                             | Ulkamukha Satvan (Shambala)                          | 1h Axe, atk 30-40, Fire atk 30-50, Fire Resist 15, Muscle 5, Nerve 5             |
+| Hirana of Deadly Poison                          | Choniokusin (Jina)                                   | 1h Axe, atk 49-66, Poison atk 50-100, Poison Resist 15, Muscle 5, Heart 5        |
+| Lu Berdysh                                       | NAROMA, BALI, Ugra Ulkamukha (Shambala)              | 2h Axe, atk 50-68, Lightning atk 30-40, Muscle 5, Heart 5, Lightning Resist 15   |
+| Hima Berdysh                                     | Ugra Ulkamukha Caura (Shambala)                      | 2h Axe, atk 50-68, Ice atk 30-40, Nerve 5, Heart 5, Ice Resist 15                |
+| Strong Berdysh                                   | Ugra Ulkamukha Satvan (Shambala)                     | 2h Axe, atk 50-68, 20% chance atk +100%                                          |
+| Dead Person’s Rohiparaz                          | Pisaci Caura (Mandara Dungeon Lv2)                   | 2h Axe, atk 81-110, Ice atk 50-60, Heart 9, def 20                               |
+| **DULL WEAPONS**                                 |                                                      |                                                                                  |
+| Mara’s Kaja                                      | Srbinda (Mandara)                                    | Mace, atk 23-28, Evasion 20, Muscle 5, Heart 5                                   |
+| Tapas Lagda                                      | MURRDI                                               | Mace, atk 45-55, TP -5, HP 50, TP 50                                             |
+| Hima Ghana                                       | Balastha Tundela (Pamir)                             | Mace, atk 54-66, Ice atk 50-100, Ice Resist 10, Muscle 5                         |
+| Ghana of Muscle                                  | Vidyama (Jina)                                       | Mace, atk 54-66, Muscle 10, HP 50                                                |
+| Ghana of Mantra                                  | Bongbo (Exile)                                       | Mace, atk 54-66, Muscle 10, Spirit 20, 20% chance atk +80%                       |
+| **BATTLE WEAPONS**                               |                                                      |                                                                                  |
+| Mara’s Nakhara                                   | NAROMA, Srbinda (Mandara)                            | Glove, atk 25-31, Accuracy 20, Muscle 5, Heart 5                                 |
+| Tapas Karasna                                    | Visatula Caura (Mandara Dungeon)                     | Glove, atk 53-65, TP -2, Muscle 7, Heart 7                                       |
+| Karasuna of Gushu / Karasna of Gushu             | Ban / Ban Gosu (Pamir)                               | Glove, atk 53-65, ignore def-attack +20%, Nerve 5                                |
+| **STAFF**                                        |                                                      |                                                                                  |
+| Lu Vajradhara                                    | Aggana Tara (Shambala)                               | 1h Staff, atk 35-42, Lightning Resist 20, HP 100, Spirit 5                       |
+| Agni Vajradhara                                  | Pizac Aggana (Shambala)                              | 1h Staff, atk 35-42, Fire Resist 20, Heart 10, Spirit 5                          |
+| Vajra of the Dead / Dead Person’s Vajra          | Pizac (Mandara Dungeon)                              | 1h Staff, atk 43-53, Ice Resist 30, Heart 5, Spirit 5                            |
+| Hima Zalas                                       | Kyokrung / Kyokrun Guso (Pamir)                      | 1h Staff, atk 54-66, Ice atk 5-5, Ice resist 10                                  |
+| Rauti Zalas                                      | Ghorayogi (Shambala Dungeon Lv1)                     | 1h Staff, atk 54-66, Lightning Resist 30, HP 50, TP 50, Spirit 7                 |
+| Agni Vera                                        | Ban (Pamir)                                          | 2h Staff, atk 67-82, Fire skill atk 5%-5%, Fire Resist 15                        |
+| Pataka of Flame                                  | Yakku, Yomrabyang (Exile)                            | 2h Staff, atk 81-99, Fire skill atk 5%-5%, Fire Resist 15                        |
+| **BOW**                                          |                                                      |                                                                                  |
+| Hard Hastacapa                                   | NAROMA, Ugra Mlecchas Karmana (Mandara Dungeon Lv1)  | Bow, atk 55-83, HP 75, atk reduced 5-5, Range +2, TP +100                        |
+| Hastacapa of Deadly Poison                       | MURRDI, Mermam (Jina)                                | Bow, atk 55-83, Poison atk 50-100, Poison Resist 15, Nerve 5, Heart 5            |
+| Agni Urnacapa                                    | NUZAGAMA, Bull King (Exile)                          | Bow, atk 73-109, Fire atk 50-100, Fire Resist 5, Nerve 5, Heart 5                |
+| Rada Bakurakava of Gurapa                        | Special Event                                        | Bow, atk 96-144, ignore wound 20%, Nerve 5                                       |
+| **HEADGEAR**                                     |                                                      |                                                                                  |
+| Bahamut’s Jirastra                               | Srbinda (Mandara)                                    | Headgear, def 4, HP 20                                                           |
+| Turate of Adana                                  | Srbinda (Mandara)                                    | Headgear, def 8, HP 5                                                            |
+| Shuipara of Gurapa                               | Srbinda Satvan (Mandara)                             | Headgear, def 12, ignore wound 3%                                                |
+| **ARMOR**                                        |                                                      |                                                                                  |
+| Bahamut’s Gana                                   | Srbinda (Mandara)                                    | Armor, def 20, HP 30                                                             |
+| Achada Armor of Adhana                           | Srbinda (Mandara)                                    | Armor, def 30, HP 5                                                              |
+| Varman Armor of Grava                            | Srbinda Satvan (Mandara)                             | Armor, def 40, ignore wound 3%                                                   |
+| **PANTS**                                        |                                                      |                                                                                  |
+| Bahamut’s Zvas                                   | Srbinda (Mandara)                                    | Pants, def 16, HP 30                                                             |
+| Achada Pants of Adana                            | Srbinda (Mandara)                                    | Pants, def 24, HP 5                                                              |
+| Varman Pants of Gurapa                           | Srbinda Satvan (Mandara)                             | Pants, def 30, ignore wound 3%                                                   |
+| **GLOVE**                                        |                                                      |                                                                                  |
+| Bahamut’s Nakha                                  | Srbinda (Mandara)                                    | Glove, def 3, HP 20                                                              |
+| Achada Glove of Adana                            | Srbinda (Mandara)                                    | Glove, def 5, HP 5                                                               |
+| Baruman Gloves of Gurapa                         | Srbinda Satvan (Mandara)                             | Glove, def 7, ignore wound 3%                                                    |
+| **BOOTS**                                        |                                                      |                                                                                  |
+| Bahamut’s Patika                                 | Srbinda (Mandara)                                    | Boots, def 4, HP 20                                                              |
+| Leather Upana of Adana                           | Srbinda (Mandara)                                    | Boots, def 7, HP 5                                                               |
+| Arapada of Adana                                 | Srbinda Satvan (Mandara)                             | Boots, def 10, absorb wound 3%                                                   |
+| **BELT**                                         |                                                      |                                                                                  |
+| Leather Hira of Caulitara                        | Kaulitara (Shambala)                                 | Belt, def 4, HP regen rate +40                                                   |
+| Rohachavi of Life                                | Balastha Tundela, Balastha Drbhika, Bat Boss (Pamir) | Belt, def 6, HP 50, HP regen rate +30                                            |
+| Rohachavi of Spells                              | Baoku (Exile)                                        | Belt, def 6, TP 50, TP regen rate +30                                            |
+| **SHIELD**                                       |                                                      |                                                                                  |
+| Savitri Phalaka                                  | BALI, Kavanda Jatu (Mandara Dungeon)                 | Shield, def 64, recover received wound/Reflect 15%                               |
+| Yakatu Phalaka                                   | Kavanda Raja (Mandara Dungeon)                       | Shield, def 64, Fire/Ice/Lightning Resist 20                                     |
+| Wild Carman / Karuman of Wild                    | Sinkiu Guso / Sinkiu (Jina)                          | Shield, def 77, Muscle 5, Nerve 5, absorb wound 15%                              |
+| **EARRING**                                      |                                                      |                                                                                  |
+| Karna of Brave = Skill Karna                     | Varaha Raja (Mandara)                                | Earring, HP 20, Muscle 4, Heart 2                                                |
+| Karna of Magic                                   | Aprah Varaha Raja (Mandara)                          | Earring, HP 20, TP 20                                                            |
+| Karna of Sorcery                                 | Varaha (Mandara)                                     | Earring, Spirit 5, HP 20                                                         |
+| Karna of Life = Life Kakana of Ajaka             | Boa, Aprah Varaha Raja (Mandara)                     | Earring, HP 20, Heart 6                                                          |
+| **BRACELET**                                     |                                                      |                                                                                  |
+| Bangle of Sorcery/Spell                          | Mlecchas Karmana (Mandara)                           | Bracelet, All chakra +3                                                          |
+| Strong Kamvu                                     | Monk Ghost (Pamir)                                   | Bracelet, def 5, HP 45                                                           |
+| Kamvu of Spell                                   | Jina Laborman (Jina)                                 | Bracelet, Nerve 7, TP 50                                                         |
+| **RING**                                         |                                                      |                                                                                  |
+| Ran of Brave                                     | Vasabhum, Mlecchas Caura (Mandara)                   | Ring, Muscle 5, Accuracy 5                                                       |
+| Ran of Luck                                      | Vasabhum Caura (Mandara)                             | Ring, Heart 5, Evasion 5                                                         |
+| Ran of Life                                      | Vasabhum Kulapra (Mandara)                           | Ring, Spirit 5, HP 20                                                            |
+| Hima Mudra                                       | Vrcadara (Mandara)                                   | Ring, HP 20, Ice resist 10                                                       |
+| **NECKLACE**                                     |                                                      |                                                                                  |
+| Rucaka of Wind                                   | Mouse Boss (Jina)                                    | Necklace, def 5, Nerve 10, HP 50                                                 |
+| Rucaka of Warrior                                | Tiger (Jina) / VATUR / SESTAKU                       | Necklace, Muscle 10, HP 100                                                      |
+| Rucaka of Magic                                  | Lizard (Pamir)                                       | Necklace, Spirit 10, TP 100                                                      |
+| Rucaka of Life                                   | Visa Cumi (Shambala)                                 | Necklace, HP 50, Spirit 8                                                        |
+| Agni Rucaka                                      | Mouse (Jina)                                         | Necklace, Fire Resist 15, Evasion 10, Accuracy 10, Muscle 5                      |
+| Strong Dechanda                                  | Balastha Drbika (Pamir)                              | Necklace, def 10, HP 80                                                          |
+
+
+# Rare Armor Crafting
+
+{% hint style="info" %}
+Since the [latest patch](https://discord.com/channels/1363839027114934315/1392923460854091868), we can now craft **rare set armors**! These rare sets grant valuable stats, for example, the **Lv. 58 rare set** gives **damage absorption**. And the best part? **Crafting never fails!** That's right, 100% success, guaranteed!
+{% endhint %}
+
+Depending on the level of the rare set you're aiming for, speak to one of the following NPCs:
+
+* Sacrificial Priest Saranu in Shambala – Rare Set Lv. 46,
+* Armor Salesman Wangddaopo in Jina – Rare Set Lv. 58,
+* Farmer Shunongs in Exile – Rare Set Lv. 64,
+
+After hunting monsters and gathering raw materials, follow these three simple steps to craft a rare armor piece:
+
+1. Process raw materials into usable materials,
+2. Use those materials to form armor components,
+3. Craft your final armor piece using those components
+
+{% stepper %}
+{% step %}
+
+### Process the Raw Materials
+
+Once you’ve collected raw materials from monsters, head to **Wangddaopo**, choose `Armor Crafting`, then select `Process Raw Materials`. Here, you’ll be able to process various types of materials. Each one requires specific raw drops from certain groups of monsters. The materials you can process include:
+
+* **PL** – Processed Leather,
+* **LS** – Thick Leather Strap,
+* **ST** – Sacrificial Texture,
+* **SS** – Sacrificial String,
+* **GA** – Gluelike Agyo,
+* **OG** – Ornaspirit Gongs,
+
+Select any material to see which monster drops you need to gather. There are also **two special materials** obtained through quests only:
+
+* **SI** – Strong Irons,
+* **FH** – Feather of Holy Bird
+
+{% hint style="info" %}
+**Note the abbreviations**! These will be used later when forming armor components. Keep track of them!
+{% endhint %}
+{% endstep %}
+
+{% step %}
+
+### Form Armor Components
+
+Now it’s time to form Armor Components using your processed materials. Each tribe prefers a specific type of component:
+
+* **Satvan** – for Naga and Kimnara,
+* **Dvanta** – for Asura and Rakshasa,
+* **Nirvana** – for Yaksa and Gandharva,
+* **Mantrika** – for Deva and Garuda
+
+{% hint style="info" %}
+Let’s say you’re crafting armor for **Banar** (a Naga), then you’ll be forming **Satvan components**. Return to **Wangddaopo**, go to `Armor Crafting`, then `Form Armor Components`. Choose Satvan from the options.
+{% endhint %}
+
+Each armor piece requires **four components**:
+
+* **FR** – Frame
+* **SP** – Sangpan (Outer Layer)
+* **NP** – Nepi (Inner Layer)
+* **AC** – Accessory
+
+{% hint style="info" %}
+For example, if you need **Satvan Pants Nepi**, select the option: `Satvan Pants NP: 2ST, 1SS` . This means you need:
+
+* 2 × Sacrificial Texture (ST),
+* 1 × Sacrificial String (SS)
+  {% endhint %}
+
+Once you form the **Nepi**, repeat the process for:
+
+* Satvan Pants Frame,
+* Satvan Pants Sangpan,
+* Satvan Pants Accessory,
+
+This completes all the components required for crafting rare Naga pants. Want rare gloves next? Then form:
+
+* Satvan Gloves Frame,
+* Satvan Gloves Sangpan,
+* Satvan Gloves Nepi,
+* Satvan Gloves Accessory
+  {% endstep %}
+
+{% step %}
+
+### Craft the Armor Itself
+
+You’ve made it! It’s time to use your components and **craft your final equipment**. Each piece requires a certain amount of:
+
+* Frame (FR),
+* Outer Layer – Sangpan (SP),
+* Inner Layer – Nepi (NP),
+* Accessory (AC),
+
+Continuing with our example, you're crafting **Naga Pants**, and Naga uses Satvan Components. You’ll need the specific components for the piece:
+
+* Satvan Pants Frame,
+* Satvan Pants Sangpan,
+* Satvan Pants Nepi,
+* Satvan Pants Accessory,
+
+To finish, go to `Armor Crafting`, then `Craft Final Equipment`. Choose the option for **Armor for Naga and Kimnara**. You’ll see something like: `Pants: 5FR, 5SP, 5NP, 5AC`. This means you need:
+
+* 5 Frames,
+* 5 Sangpans,
+* 5 Nepis,
+* 5 Accessories,
+* 5,000,000 Rupiah,
+
+Once you’ve gathered everything and clicked on it… BOOM! You’ve crafted the **Sumatri Amsatra Pants of Grapa**!
+
+{% hint style="info" %}
+
+### Final Notes
+
+Each level of rare set requires a different amount of **Rupiah** and **components** to craft:
+
+* **Shambala** (Lv. 46): 3,000,000 Rupiah and **2 of each component**,
+* **Jina** (Lv. 58): 5,000,000 Rupiah and **5 of each component**,
+* **Exile** (Lv. 64): 8,000,000 Rupiah and **10 of each component**,
+
+Sure, it’s a bit of a journey—but where’s the fun in getting everything too easily? And don’t forget: **the success rate is 100%!**
+{% endhint %}
+{% endstep %}
+{% endstepper %}
+
+
+# Rare Accessory Crafting
+
+
+# Crystal Weapon & Armors
+
+
+# Monster Database
+
+
+# Kathana Item Database
+
+| ID   | Item Name                                                                                                                          | Description    | Level Requirement | Shop Price | Sell Price | Taney Price | Max Durability | Class                          |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------- | ----------------: | ---------: | ---------: | ----------: | -------------: | ------------------------------ |
+| 4001 | <p><img src="https://dbuena.github.io/Kathana/itemdb/weapons/icon/UI_WEAPON-SWORD01.bmp" alt=""><br>Old Sword</p>                  | One Hand Blade |                 0 |         25 |          4 |           0 |           4500 | Naga, Kimnara, Asura, Rakshasa |
+| 4002 | <p><img src="https://dbuena.github.io/Kathana/itemdb/weapons/icon/UI_WEAPON-SWORD01.bmp" alt=""><br>Long Sword</p>                 | One Hand Blade |                 6 |        225 |         37 |           0 |           4500 | Naga, Kimnara, Asura, Rakshasa |
+| 4003 | <p><img src="https://dbuena.github.io/Kathana/itemdb/weapons/icon/UI_WEAPON-SWORD02.bmp" alt=""><br>Shamshir</p>                   | One Hand Blade |                12 |        900 |        150 |           0 |           4500 | Naga, Kimnara, Asura, Rakshasa |
+| 4004 | <p><img src="https://dbuena.github.io/Kathana/itemdb/weapons/icon/UI_WEAPON-SWORD02.bmp" alt=""><br>Earth Shamshir</p>             | One Hand Blade |                10 |        900 |        150 |           0 |           4500 | Naga, Kimnara, Asura, Rakshasa |
+| 4005 | <p><img src="https://dbuena.github.io/Kathana/itemdb/weapons/icon/UI_WEAPON-SWORD03.bmp" alt=""><br>Pata</p>                       | One Hand Blade |                20 |       2500 |        416 |           0 |           4500 | Naga, Kimnara, Asura, Rakshasa |
+| 4006 | <p><img src="https://dbuena.github.io/Kathana/itemdb/weapons/icon/UI_WEAPON-SWORD04.bmp" alt=""><br>Kindjal</p>                    | One Hand Blade |                28 |       9000 |       1500 |           0 |           4500 | Naga, Kimnara, Asura, Rakshasa |
+| 4007 | <p><img src="https://dbuena.github.io/Kathana/itemdb/weapons/icon/UI_WEAPON-SWORD05.bmp" alt=""><br>Ara</p>                        | One Hand Blade |                34 |      11000 |       3750 |           0 |           4500 | Naga, Kimnara, Asura, Rakshasa |
+| 4008 | <p><img src="https://dbuena.github.io/Kathana/itemdb/weapons/icon/UI_WEAPON-SWORD06.bmp" alt=""><br>Khora</p>                      | One Hand Blade |                40 |      13000 |       6666 |           0 |           4500 | Naga, Kimnara, Asura, Rakshasa |
+| 4009 | <p><img src="https://dbuena.github.io/Kathana/itemdb/weapons/icon/UI_WEAPON-SWORD07.bmp" alt=""><br>Talwar</p>                     | One Hand Blade |                46 |      16000 |      11666 |           0 |           4500 | Naga, Kimnara, Asura, Rakshasa |
+| 4010 | <p><img src="https://dbuena.github.io/Kathana/itemdb/weapons/icon/UI_WEAPON-SWORD07_RARE.bmp" alt=""><br>Talwar of The Spirits</p> | One Hand Blade |                 0 |      16000 |      11666 |           0 |           4500 | Naga, Kimnara, Asura, Rakshasa |
+
+
+

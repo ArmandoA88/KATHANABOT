@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -41,6 +41,68 @@ public sealed partial class SecurePakArchive
             }
         }
 
+        return SaveCore(destination, replacements.Count,
+            index => replacements.TryGetValue(index, out byte[]? content) ? content : null,
+            progress, cancellationToken, verify: false);
+    }
+
+    public SecurePakSaveResult PackFolder(string sourceFolder, string destinationPath,
+        IProgress<int>? progress = null, CancellationToken cancellationToken = default)
+    {
+        string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(sourceFolder));
+        string destination = Path.GetFullPath(destinationPath);
+        if (!Directory.Exists(root)) throw new DirectoryNotFoundException(root);
+        if (destination.Equals(FilePath, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Choose a new PAK filename; the source archive is protected.");
+        if (destination.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Save the PAK outside the extracted folder.");
+        if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("Choose a regular folder, not a directory link.");
+        var entriesByPath = Entries.ToLookup(e => e.Path.Replace('\\', '/'), StringComparer.OrdinalIgnoreCase);
+        var files = new Dictionary<int, string>();
+        var folders = new Stack<string>();
+        folders.Push(root);
+        while (folders.TryPop(out string? folder))
+        {
+            foreach (string path in Directory.EnumerateFileSystemEntries(folder))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                FileAttributes attributes = File.GetAttributes(path);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidDataException($"Links are not supported: {path}");
+                if ((attributes & FileAttributes.Directory) != 0) { folders.Push(path); continue; }
+                string relative = Path.GetRelativePath(root, path).Replace('\\', '/');
+                if (!entriesByPath.Contains(relative))
+                    throw new InvalidDataException($"File is not in the original PAK: {relative}. Select the extraction root and preserve its folder structure.");
+                if (new FileInfo(path).Length > MaxExtractedFileSize)
+                    throw new InvalidDataException($"File exceeds the size limit: {relative}");
+                // Extraction maps duplicate/case-equivalent archive paths to one Windows file.
+                // Keep every original index/hash and apply that disk file to all matching entries.
+                foreach (SecurePakEntry entry in entriesByPath[relative])
+                {
+                    if (!files.TryAdd(entry.Index, path))
+                        throw new InvalidDataException($"Multiple disk files match the same archive path: {relative}");
+                }
+            }
+        }
+        if (files.Count == 0) throw new InvalidDataException("The selected folder contains no files to pack.");
+        return SaveCore(destination, files.Count, index =>
+        {
+            if (!files.TryGetValue(index, out string? path)) return null;
+            using FileStream input = new(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            if (input.Length > MaxExtractedFileSize) throw new InvalidDataException($"File exceeds the size limit: {path}");
+            byte[] content = new byte[checked((int)input.Length)];
+            input.ReadExactly(content);
+            return content;
+        }, progress, cancellationToken, verify: true);
+    }
+
+    private SecurePakSaveResult SaveCore(string destination, int replacementCount,
+        Func<int, byte[]?> getReplacement, IProgress<int>? progress,
+        CancellationToken cancellationToken, bool verify)
+    {
+        if (DataOffset != EncryptedHeaderSize)
+            throw new NotSupportedException("This archive uses an unsupported data offset for rebuilding.");
         string? destinationDirectory = Path.GetDirectoryName(destination);
         if (string.IsNullOrEmpty(destinationDirectory))
         {
@@ -66,7 +128,8 @@ public sealed partial class SecurePakArchive
                     SecurePakEntry entry = Entries[index];
                     ulong relativeOffset = checked((ulong)output.Position - DataOffset);
 
-                    if (replacements.TryGetValue(index, out byte[]? replacement))
+                    byte[]? replacement = getReplacement(index);
+                    if (replacement is not null)
                     {
                         WriteReplacementBlock(output, entry, replacement, relativeOffset, writableEntries);
                     }
@@ -96,10 +159,20 @@ public sealed partial class SecurePakArchive
                 output.Flush(flushToDisk: true);
             }
 
+            if (verify)
+            {
+                using SecurePakArchive rebuilt = Open(temporaryPath);
+                foreach (SecurePakEntry entry in rebuilt.Entries)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    rebuilt.ReadEntry(entry); // Authenticate/decompress and verify every CRC before publishing.
+                }
+            }
+            cancellationToken.ThrowIfCancellationRequested();
             File.Move(temporaryPath, destination, overwrite: true);
             completed = true;
             FileInfo saved = new(destination);
-            return new SecurePakSaveResult(destination, saved.Length, replacements.Count);
+            return new SecurePakSaveResult(destination, saved.Length, replacementCount);
         }
         finally
         {

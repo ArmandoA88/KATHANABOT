@@ -1,0 +1,43 @@
+﻿# Kathana Wiki
+
+## Guides
+
+- [Welcome to Kathana Wiki](https://kathana.gitbook.io/wiki/readme.md)
+- [Quickstart](https://kathana.gitbook.io/wiki/getting-started/quickstart.md)
+- [Installing the game](https://kathana.gitbook.io/wiki/getting-started/quickstart/installing-the-game.md)
+- [Game Settings](https://kathana.gitbook.io/wiki/getting-started/quickstart/game-settings.md)
+- [Game Interface](https://kathana.gitbook.io/wiki/getting-started/quickstart/game-interface.md)
+- [Game Hotkeys](https://kathana.gitbook.io/wiki/getting-started/quickstart/game-hotkeys.md)
+- [Automated Events](https://kathana.gitbook.io/wiki/getting-started/system-events.md): Kathana supports automated events in game that is triggered by schedule.
+- [Beginner's Guide](https://kathana.gitbook.io/wiki/beginner-guide.md)
+- [Movement & Camera](https://kathana.gitbook.io/wiki/beginner-guide/movement-and-camera.md)
+- [Tribes & Jobs](https://kathana.gitbook.io/wiki/beginner-guide/tribes-and-jobs.md)
+- [Basic Skill Build](https://kathana.gitbook.io/wiki/beginner-guide/basic-skill-build.md)
+- [Basic Skill Combo](https://kathana.gitbook.io/wiki/beginner-guide/basic-skill-combo.md)
+- [Kathana Maps](https://kathana.gitbook.io/wiki/beginner-guide/kathana-maps.md): All playable maps in Kathana, open the interactive map links!
+- [Status Effects & Chakra](https://kathana.gitbook.io/wiki/beginner-guide/status-effects-and-chakra.md)
+- [What is Taney?](https://kathana.gitbook.io/wiki/what-is-taney.md): Taney is the secondary premium currency that is used solely to purchase items from the premium shop.
+- [How to buy Taney?](https://kathana.gitbook.io/wiki/what-is-taney/how-to-buy-taney.md): Purchasing Taney is only available on Kathana's Steam page
+- [Taney Delivery Expectations](https://kathana.gitbook.io/wiki/what-is-taney/taney-delivery-expectations.md)
+- [Refining System](https://kathana.gitbook.io/wiki/refining-system.md): Refining is the process of upgrading your equipments with better stats. You can also augment it with add-on stones to further increase the stat of your equipment.
+- [PvP System](https://kathana.gitbook.io/wiki/pvp-system.md): Kathana as variety of PvP System ranging from 1v1 duel to group pvp in specialized maps.
+- [Kruma Mechanics](https://kathana.gitbook.io/wiki/pvp-system/kruma-mechanics.md): Kruma is just like a Capture the Flag game mode
+- [Caste System](https://kathana.gitbook.io/wiki/pvp-system/caste-system.md)
+- [Caste Ranking](https://kathana.gitbook.io/wiki/pvp-system/caste-system/caste-ranking.md): Caste System is how you are ranked in Kruma using your Master points.
+- [Chaturanga Guide](https://kathana.gitbook.io/wiki/pvp-system/chaturanga-guide.md)
+- [Fortress War Guide](https://kathana.gitbook.io/wiki/pvp-system/fortress-war-guide.md)
+- [Biryu Castle Siege](https://kathana.gitbook.io/wiki/pvp-system/biryu-castle-siege.md)
+- [Non Playable Character](https://kathana.gitbook.io/wiki/game-information/npc.md): List of Available major NPC in Kathana
+- [Monster Boss Hunting](https://kathana.gitbook.io/wiki/game-information/boss-hunt.md): Lists of major field bosses & dungeon bosses in Kathana
+- [Karma System](https://kathana.gitbook.io/wiki/game-information/karma-system.md): "no evil deed is unpunished by God, the just judge"
+- [Guilds & Alliances](https://kathana.gitbook.io/wiki/game-information/guilds-and-alliances.md)
+- [Auto Hunting System](https://kathana.gitbook.io/wiki/game-information/auto-hunting-system.md): A Kathana exclusive feature that allows our players to do auto-hunt.
+- [Quest Database](https://kathana.gitbook.io/wiki/kathana-db/quests.md): List of available quests in Kathana
+- [Item Database](https://kathana.gitbook.io/wiki/kathana-db/items.md)
+- [Rare Item List](https://kathana.gitbook.io/wiki/kathana-db/items/rare-item-list.md): A collection of rare items and where to get them
+- [Rare Armor Crafting](https://kathana.gitbook.io/wiki/kathana-db/items/rare-armor-crafting.md)
+- [Rare Accessory Crafting](https://kathana.gitbook.io/wiki/kathana-db/items/rare-accessory-crafting.md)
+- [Crystal Weapon & Armors](https://kathana.gitbook.io/wiki/kathana-db/items/crystal-weapon-and-armors.md)
+- [Monster Database](https://kathana.gitbook.io/wiki/kathana-db/monsters.md)
+- [Kathana Item Database](https://kathana.gitbook.io/wiki/kathana-item-database.md)
+

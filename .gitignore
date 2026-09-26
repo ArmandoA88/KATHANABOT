@@ -79,3 +79,7 @@ ru/
 tr/
 zh-Hans/
 zh-Hant/
+
+# Generated RemoteDesktopMosaic executables and backups
+/RemoteDesktopMosaic*.exe
+/RemoteDesktopMosaic*.exe.bak*

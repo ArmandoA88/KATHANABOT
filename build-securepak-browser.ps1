@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 $ErrorActionPreference = 'Stop'
@@ -13,6 +13,8 @@ dotnet publish $projectPath `
     --runtime win-x64 `
     --self-contained true `
     --output $publishPath
+
+if ($LASTEXITCODE -ne 0) { throw "SecurePak browser publish failed (exit $LASTEXITCODE)." }
 
 $publishedExecutable = Join-Path $publishPath 'HTRD KAT MOD Browser.exe'
 if (-not (Test-Path -LiteralPath $publishedExecutable -PathType Leaf)) {

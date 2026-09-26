@@ -1,4 +1,4 @@
-# HTRD KAT MOD Browser
+﻿# HTRD KAT MOD Browser
 
 This is a browser and safe editor for the SecurePak v4 archive loaded by the
 matching `KathanaGame.exe`. It reconstructs the original folder tree and
@@ -37,6 +37,40 @@ The currently open source archive cannot be overwritten directly. Save under a
 new name such as `data.modified.pak`, test it, and keep the original as a backup.
 To use the result with the game, close both programs and deliberately rename or
 copy the tested archive to the filename expected by the game.
+
+## Pack extracted files back into an encrypted PAK
+
+1. Open the original `data.pak` as the format/metadata template.
+2. Click **Pack folder to PAK...** on the toolbar.
+3. Select the extraction root containing the original relative folders (for example
+   `resource` and `system`), not a nested subfolder.
+4. Choose a new `.pak` filename outside that folder. The opened original cannot be overwritten.
+5. Wait for packing and verification. The browser opens the completed result.
+
+Matching disk files replace their original entries. Duplicate archive paths (including
+case-only differences) retain every index entry and original name hash; the one
+extracted disk file updates all matching entries. If that disk file is absent,
+each duplicate retains its own original content. Entries missing from the folder
+stay unchanged, so both full extractions and partial sets work. Unknown/new paths
+are rejected rather than assigned an unverified client filename hash. Save or
+revert pending editor changes first; this operation imports the versions on disk.
+
+Packing uses the existing SecurePak v4 encryption and key derivation, encrypted
+filename handling, original name hashes/flags, LZ4 policy and CRC32. Fresh salt and
+nonces mean the resulting encrypted bytes differ even when content is unchanged.
+Each file is loaded separately rather than buffering the whole extracted tree.
+The completed temporary archive is authenticated, reopened and every entry's CRC
+verified before it replaces the chosen destination. Folder links are rejected.
+Empty directories are not archive entries.
+
+This verifies compatibility with the existing reader; live client acceptance still
+needs testing with a backup of the original PAK.
+
+Developer round-trip test:
+
+```powershell
+dotnet run --project tools/SecurePakBrowser/research/PackProbe/PackProbe.csproj -c Release
+```
 
 ## Built-in TANTRA_MAP (`.tcc`) editor
 

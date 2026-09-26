@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>HTRD KAT MOD Browser</AssemblyName>
     <RootNamespace>KathanaSecurePakBrowser</RootNamespace>
-    <Version>1.2.0</Version>
+    <Version>1.3.1</Version>
     <Product>HTRD KAT MOD Browser</Product>
     <AssemblyTitle>HTRD KAT MOD Browser</AssemblyTitle>
     <Description>SecurePak browser and editor for HTRD KAT MOD</Description>

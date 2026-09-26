@@ -1,0 +1,23 @@
+{
+  "Computers": [
+    {
+      "Link": "https://remotedesktop.google.com/access/session/3a04fbf0-8f09-0541-2657-ddd8692806c0",
+      "Nickname": "laptop"
+    },
+    {
+      "Link": "https://remotedesktop.google.com/access/session/41b9c0e9-e029-b129-4e10-e273f7bc99cc",
+      "Nickname": ""
+    },
+    {
+      "Link": "https://remotedesktop.google.com/access/session/1540a462-f2e0-dd1f-c3a5-4d5fb6dc80c1",
+      "Nickname": ""
+    }
+  ],
+  "WindowX": -1367,
+  "WindowY": 833,
+  "WindowWidth": 1280,
+  "WindowHeight": 820,
+  "WindowMaximized": true,
+  "ExpandHotkey": "Ctrl\u002BShift\u002BA",
+  "MosaicHotkey": "Ctrl\u002BShift\u002BZ"
+}
