@@ -48,15 +48,22 @@ patch*.ps1
 patch*.py
 Automatic.exe
 
-# Personal Remote Desktop Mosaic tool - unrelated to KathanaBot, holds real session links/settings, never commit
+# Remote Desktop Mosaic: keep personal sessions and generated data local.
+# Track the source and the explicitly selected latest portable build.
 OpenAllRemoteDesktops.ps1
 OpenAllRemoteDesktops-README.txt
 RemoteDesktopLinks.txt
 RemoteDesktopNicknames.json
 RemoteDesktopMosaic.settings.json
 RemoteDesktopMosaic*.exe
+!RemoteDesktopMosaic_20260929_AllScreens.exe
 RemoteDesktopMosaic*.exe.bak*
-tools/RemoteDesktopMosaic/
+tools/RemoteDesktopMosaic/*
+!tools/RemoteDesktopMosaic/*.cs
+!tools/RemoteDesktopMosaic/*.csproj
+!tools/RemoteDesktopMosaic/*.ico
+!tools/RemoteDesktopMosaic/*.md
+!tools/RemoteDesktopMosaic/Inspect-Input.ps1
 
 # Obsolete Python backend
 backend/
@@ -90,3 +97,4 @@ ru/
 tr/
 zh-Hans/
 zh-Hant/
+recordings/

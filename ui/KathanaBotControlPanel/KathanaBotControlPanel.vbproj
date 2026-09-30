@@ -7,13 +7,14 @@
     <StartupObject>Sub Main</StartupObject>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>assets\KathanaBot.ico</ApplicationIcon>
-    <Version>1.0.217</Version>
-    <FileVersion>1.0.217.0</FileVersion>
-    <AssemblyVersion>1.0.217.0</AssemblyVersion>
+    <Version>1.0.222</Version>
+    <FileVersion>1.0.222.0</FileVersion>
+    <AssemblyVersion>1.0.222.0</AssemblyVersion>
     <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <Import Include="System.Data" />
     <Import Include="System.Drawing" />
     <Import Include="System.Windows.Forms" />

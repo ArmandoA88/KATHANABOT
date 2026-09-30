@@ -10071,6 +10071,7 @@ Partial Public Class Form1
 
     Protected Overrides Sub OnShown(e As EventArgs)
         MyBase.OnShown(e)
+        StartLocalApi()
         ' The very first SelectedIndexChanged fires while BuildFullUi() is still adding tabs, before
         ' layout has resolved _mainTabs.Top/Left - the indicator's "first call, snap immediately"
         ' branch can latch onto that pre-layout position. Now that the form is actually shown and
@@ -20573,6 +20574,7 @@ Partial Public Class Form1
     End Sub
 
     Protected Overrides Sub OnFormClosing(e As FormClosingEventArgs)
+        StopLocalApi()
         _dashboardEntranceTimer.Stop()
         _tradeCancellation?.Cancel()
         _tradeAnalysisCancellation?.Cancel()
