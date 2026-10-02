@@ -51,6 +51,7 @@ Partial Public Class Form1
     End Class
 
     Private Class PersistedQuizState
+        Public Property KeywordNoticesEnabled As Boolean = True
         Public Property EncryptedApiKey As String = ""
         Public Property ScanIntervalMs As Decimal = 350D
         Public Property Model As String = DefaultQuizModel
@@ -72,7 +73,7 @@ Partial Public Class Form1
         tab.Controls.Add(scroller)
 
         Dim heading As New Label With {
-            .Text = "QUIZ SOLVER",
+            .Text = "QUIZ & RAFFLE",
             .Dock = DockStyle.Top,
             .Height = 38,
             .Font = New Font("Segoe UI", 18.0F, FontStyle.Bold),
@@ -86,6 +87,7 @@ Partial Public Class Form1
             .ForeColor = ThemeTextSecondary
         }
         body.Controls.Add(heading)
+        body.Controls.Add(BuildQuizNoticeControls())
         body.Controls.Add(description)
 
         Dim settings As New TableLayoutPanel With {.Dock = DockStyle.Top, .Height = 120, .ColumnCount = 6, .RowCount = 2, .Padding = New Padding(14), .BackColor = ThemeCard, .Margin = New Padding(0, 8, 0, 12)}
@@ -194,12 +196,11 @@ Partial Public Class Form1
     End Function
 
     Private Async Sub QuizScanTimerTick(sender As Object, e As EventArgs)
-        ' Keep the visual preview live while an API request is in flight. The solver request itself
-        ' remains single-flight, but a 100 ms timer can still refresh the calibrated game image.
-        If _quizSolveInProgress Then
-            Return
-        End If
-        Await RunQuizSolverOnceAsync(False)
+        ' Notices remain independent of answer solving, API waits, calibration,
+        ' combat state and the currently displayed tab. Each path is single-flight.
+        Dim notices = RunQuizNoticeScanAsync()
+        If Not _quizSolveInProgress Then Await RunQuizSolverOnceAsync(False)
+        Await notices
     End Sub
 
     Private Shared Function CreateQuizButton(text As String) As Button
@@ -343,12 +344,11 @@ Partial Public Class Form1
             SetQuizStatus("Loading and indexing the encrypted quiz database...", ThemeAccent)
             Await QuizLocalKnowledge.WarmUpAsync()
             If Not chkQuizSolverEnabled.Checked Then Return
-            _quizScanTimer.Interval = CInt(nudQuizScanMs.Value)
-            _quizScanTimer.Start()
+            UpdateQuizScanTimer()
             SetQuizStatus("Solver is watching for a quiz; local database is ready.", ThemeGood)
             Await RunQuizSolverOnceAsync(False)
         Else
-            _quizScanTimer.Stop()
+            UpdateQuizScanTimer()
             If _quizCancellation IsNot Nothing Then _quizCancellation.Cancel()
             SetQuizStatus("Solver is off.", ThemeTextSecondary)
         End If
@@ -356,7 +356,7 @@ Partial Public Class Form1
 
     Private Sub QuizScanIntervalChanged(sender As Object, e As EventArgs)
         If nudQuizScanMs Is Nothing Then Return
-        _quizScanTimer.Interval = CInt(nudQuizScanMs.Value)
+        UpdateQuizScanTimer()
         If Not _quizSettingsLoading Then SavePersistedListState(False)
     End Sub
 
@@ -809,16 +809,19 @@ Partial Public Class Form1
                 cboQuizModel.SelectedIndex = If(index >= 0, index, 0)
             End If
             If chkQuizSolverEnabled IsNot Nothing Then chkQuizSolverEnabled.Checked = False
-            _quizScanTimer.Interval = If(nudQuizScanMs IsNot Nothing, CInt(nudQuizScanMs.Value), 350)
+            If chkQuizNoticesEnabled IsNot Nothing Then chkQuizNoticesEnabled.Checked = state.KeywordNoticesEnabled
         Finally
             _quizSettingsLoading = False
         End Try
         UpdateQuizUiState()
         RefreshQuizDatabaseGrid()
+        ResetQuizNoticeCancellation()
+        UpdateQuizScanTimer()
     End Sub
 
     Private Function BuildPersistedQuizState() As PersistedQuizState
         Return New PersistedQuizState With {
+            .KeywordNoticesEnabled = If(chkQuizNoticesEnabled IsNot Nothing, chkQuizNoticesEnabled.Checked, True),
             .EncryptedApiKey = If(_quizEncryptedApiKey, ""),
             .ScanIntervalMs = If(nudQuizScanMs IsNot Nothing, nudQuizScanMs.Value, 350D),
             .Model = If(cboQuizModel IsNot Nothing AndAlso cboQuizModel.SelectedItem IsNot Nothing, cboQuizModel.SelectedItem.ToString(), DefaultQuizModel),
@@ -837,7 +840,10 @@ Partial Public Class Form1
     End Function
 
     Private Sub ShutdownQuizSolver()
+        _quizScannerStarted = False
         _quizScanTimer.Stop()
+        _quizNoticeCancellation.Cancel()
+        _quizNoticeCancellation.Dispose()
         If _quizCancellation IsNot Nothing Then
             _quizCancellation.Cancel()
             _quizCancellation.Dispose()

@@ -11,6 +11,7 @@ Module Program
     Private Const Source As String = "https://kathana.gitbook.io/wiki/beginner-guide/status-effects-and-chakra"
 
     Sub Main()
+        QuizNoticeTests.Run()
         Test("game answer needs real web evidence", AddressOf GameEvidence)
         Test("game answer can use bundled local evidence", AddressOf LocalGameEvidence)
         Test("bundled index matches NPC coordinates", AddressOf LocalNpcMatch)

@@ -1,4 +1,7 @@
-﻿## 1.0.217
+﻿## 1.0.223
+- Added background monitoring with configurable alerts for smoother long-running sessions, plus internal reliability fixes and expanded regression coverage.
+
+## 1.0.217
 - Added a fresh 5-15 ms delay before each generated key-down (including Unicode text and modifier presses) and mouse-button-down, across all features using the foreground input backend.
 - Skill cooldowns remain unchanged. Key/button releases and cursor moves have no added delay; focus and click coverage are checked again after the wait.
 - Timing variation is not a guarantee against server disconnections or automation detection.

@@ -10072,6 +10072,7 @@ Partial Public Class Form1
     Protected Overrides Sub OnShown(e As EventArgs)
         MyBase.OnShown(e)
         StartLocalApi()
+        StartQuizNoticeMonitoring()
         ' The very first SelectedIndexChanged fires while BuildFullUi() is still adding tabs, before
         ' layout has resolved _mainTabs.Top/Left - the indicator's "first call, snap immediately"
         ' branch can latch onto that pre-layout position. Now that the form is actually shown and
@@ -20166,7 +20167,7 @@ Partial Public Class Form1
         AppendLogSafe(message)
     End Sub
 
-    Private Async Function SendPhoneNotificationToTopicAsync(title As String, body As String, topic As String, Optional maxAttempts As Integer = 1, Optional priority As String = "urgent", Optional tags As String = "warning,gamepad", Optional discordWebhookUrl As String = Nothing, Optional discordDestinationLabel As String = "Discord webhook", Optional forceNtfy As Boolean = False) As Task(Of Boolean)
+    Private Async Function SendPhoneNotificationToTopicAsync(title As String, body As String, topic As String, Optional maxAttempts As Integer = 1, Optional priority As String = "urgent", Optional tags As String = "warning,gamepad", Optional discordWebhookUrl As String = Nothing, Optional discordDestinationLabel As String = "Discord webhook", Optional forceNtfy As Boolean = False, Optional cancellationToken As Threading.CancellationToken = Nothing) As Task(Of Boolean)
         If Not forceNtfy AndAlso GetNotificationProviderName() = NotificationProviderDiscord Then
             Return Await SendDiscordNotificationAsync(title, body, If(String.IsNullOrWhiteSpace(discordWebhookUrl), GetDiscordGlobalWebhookUrl(), discordWebhookUrl), discordDestinationLabel, maxAttempts)
         End If
@@ -20187,19 +20188,21 @@ Partial Public Class Form1
                     request.Headers.Add("Priority", priority)
                     request.Headers.Add("Tags", tags)
 
-                    Dim response As HttpResponseMessage = Await NtfyClient.SendAsync(request)
+                    Dim response As HttpResponseMessage = Await NtfyClient.SendAsync(request, cancellationToken)
                     If response.IsSuccessStatusCode Then
                         Return True
                     End If
 
                     AppendLogSafe($"Phone alert failed ({CInt(response.StatusCode)}) for topic '{cleanedTopic}' (attempt {attempt}/{attempts}).")
                 End Using
+            Catch ex As OperationCanceledException When cancellationToken.IsCancellationRequested
+                Throw
             Catch ex As Exception
                 AppendLogSafe($"Phone alert failed (attempt {attempt}/{attempts}) for topic '{cleanedTopic}': {ex.Message}")
             End Try
 
             If attempt < attempts Then
-                Await Task.Delay(1500)
+                Await Task.Delay(1500, cancellationToken)
             End If
         Next
 
