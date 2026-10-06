@@ -25,15 +25,17 @@ Partial Public Class BotEngine
 
     Private Shared Function SendPhysicalSkillShortcut(modifier As Integer, digit As Integer, holdMs As Integer, token As CancellationToken) As Boolean
         If WindowsInput.BackgroundOnly OrElse token.IsCancellationRequested Then Return False
-        Dim modifierScan = CByte(NativeMethods.MapVirtualKey(CUInt(modifier), 0))
-        Dim digitScan = CByte(NativeMethods.MapVirtualKey(CUInt(digit), 0))
+        Dim backgroundClient = TypeOf WindowsInput.Current Is SdlBackgroundWindowsInput
+        Dim modifierScan = If(backgroundClient, CByte(0), CByte(NativeMethods.MapVirtualKey(CUInt(modifier), 0)))
+        Dim digitScan = If(backgroundClient, CByte(0), CByte(NativeMethods.MapVirtualKey(CUInt(digit), 0)))
+        Dim pressMs = WindowsInput.KeyPressDurationMs(Math.Clamp(holdMs, 5, 5000))
         Try
             SendKeyboardInput(CByte(modifier), modifierScan, 0, UIntPtr.Zero)
             SendKeyboardInput(CByte(digit), digitScan, 0, UIntPtr.Zero)
             If token.CanBeCanceled Then
-                token.WaitHandle.WaitOne(Math.Clamp(holdMs, 5, 5000))
+                token.WaitHandle.WaitOne(pressMs)
             Else
-                Thread.Sleep(Math.Clamp(holdMs, 5, 5000))
+                Thread.Sleep(pressMs)
             End If
             Return Not token.IsCancellationRequested
         Finally

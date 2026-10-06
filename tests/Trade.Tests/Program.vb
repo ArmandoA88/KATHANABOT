@@ -9,6 +9,24 @@ Imports System.Reflection
 Module Program
     <STAThread>
     Sub Main()
+        If Environment.GetCommandLineArgs().Contains("--owned-native-trade-target", StringComparer.Ordinal) Then
+            NativeTradeTargetTests.RunOwnedTarget()
+            Return
+        End If
+        If Environment.GetCommandLineArgs().Contains("--browser-capture-render-only", StringComparer.Ordinal) Then
+            DiscordBrowserCaptureTests.RenderDialogOnly()
+            Return
+        End If
+        TradeAiBatchTests.RunAsync().GetAwaiter().GetResult()
+        TradeAiEconomyTests.RunAsync().GetAwaiter().GetResult()
+        TradeAiValidationTests.RunAsync().GetAwaiter().GetResult()
+        DiscordBrowserCaptureTests.RunAsync().GetAwaiter().GetResult()
+        DiscordImportTests.RunAsync().GetAwaiter().GetResult()
+        DiscordImportTests.RunUiTests()
+        DiscordBrowserCaptureTests.RunUiTests()
+        ForegroundTradeTests.RunTests()
+        NativeTradeTargetTests.RunTests()
+        TradeStartTests.RunTests()
         TestAiExtraction().GetAwaiter().GetResult()
         TestTradePrices()
         Dim example = "PulgaAPP9/14/2026 10:24 PM" & vbLf & "**SELL ROR YASKA-- SELL LIFE KAKANA 5M --S= VOUCHER 1.7KK- S=ASBA RING 2.5"
@@ -135,7 +153,7 @@ Module Program
         Dim fixture = FixtureListings()
         fixture.Add(fixture(0)) ' Reposts must not increase an item's popularity.
         Using transport As New HttpClient(New AiHandler(ApiResponse(fixture)))
-            Dim result = Await TradeAiService.AnalyzeAsync(Posts, "test-key", "gpt-5.4-mini", CancellationToken.None, transport)
+            Dim result = Await TradeAiService.AnalyzeAsync(Posts, "test-key", "gpt-5.4-mini", CancellationToken.None, transport, useCache:=False)
             Dim ranked = TradeAiService.RankItems(result, False)
             Check(ranked(0).ItemKey = "ASBA RING" AndAlso ranked(0).Characters = 2, "Popularity must count distinct buyers, not reposts or sellers")
             Dim rows = TradeAiService.BuildQueue(result, False, ranked.Take(3).Select(Function(item) item.ItemKey), TradeService.SellTemplate)
@@ -150,7 +168,7 @@ Module Program
         Using transport As New HttpClient(New AiHandler("{}", HttpStatusCode.Unauthorized))
             Dim rejected = False
             Try
-                Await TradeAiService.AnalyzeAsync(Posts, "test-key", "gpt-5.4-mini", CancellationToken.None, transport)
+                Await TradeAiService.AnalyzeAsync(Posts, "test-key", "gpt-5.4-mini", CancellationToken.None, transport, useCache:=False)
             Catch ex As InvalidOperationException
                 rejected = ex.Message.Contains("key")
             End Try
@@ -171,16 +189,15 @@ Module Program
 
     Private Async Function LiveAiCheck() As Task
         Dim key = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
-        Dim model = "gpt-5.4-mini"
+        Dim model = TradeAiService.DefaultAnalysisModel
         If String.IsNullOrWhiteSpace(key) Then
             Dim path = CStr(GetType(Form1).GetField("PersistFilePath", BindingFlags.NonPublic Or BindingFlags.Static).GetValue(Nothing))
             If IO.File.Exists(path) Then
                 Using document = JsonDocument.Parse(IO.File.ReadAllText(path))
-                    Dim quiz As JsonElement, encrypted As JsonElement, savedModel As JsonElement
+                    Dim quiz As JsonElement, encrypted As JsonElement
                     If document.RootElement.TryGetProperty("Quiz", quiz) AndAlso quiz.TryGetProperty("EncryptedApiKey", encrypted) Then
                         Dim secretType = GetType(Form1).Assembly.GetType("KathanaBotControlPanel.QuizSecretStore")
                         key = CStr(secretType.GetMethod("Unprotect").Invoke(Nothing, {encrypted.GetString()}))
-                        If quiz.TryGetProperty("Model", savedModel) AndAlso Not String.IsNullOrWhiteSpace(savedModel.GetString()) Then model = savedModel.GetString()
                     End If
                 End Using
             End If
@@ -222,11 +239,15 @@ Module Program
         Dim form = Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(formType)
         Using timer As New System.Windows.Forms.Timer()
             formType.GetField("_tradeStopTimer", flags).SetValue(form, timer)
+            ' UI event callbacks must not save the user's real profile from this fixture.
+            formType.GetField("_applyingSettings", flags).SetValue(form, True)
             Dim page = DirectCast(formType.GetMethod("BuildTradeTab", flags).Invoke(form, Nothing), TabPage)
             Using page
                 formType.GetMethod("ApplyPersistedTradeState", flags).Invoke(form, {settings})
                 Dim saved = DirectCast(formType.GetMethod("BuildPersistedTradeState", flags).Invoke(form, Nothing), TradeSettings)
-                Check(JsonSerializer.Serialize(saved) = JsonSerializer.Serialize(settings), "Actual Trade UI omitted saved inputs")
+                Dim expectedDisplayed = JsonSerializer.Deserialize(Of TradeSettings)(JsonSerializer.Serialize(settings))
+                expectedDisplayed.DiscordText = settings.DiscordText.Replace(vbCrLf, vbLf).Replace(vbCr, vbLf).Replace(vbLf, vbCrLf)
+                Check(JsonSerializer.Serialize(saved) = JsonSerializer.Serialize(expectedDisplayed), "Actual Trade UI omitted saved inputs or failed Windows line-break normalization")
                 Dim search = DirectCast(formType.GetField("_tradeItemSearch", flags).GetValue(form), TextBox)
                 Dim items = DirectCast(formType.GetField("_tradeDetectedItems", flags).GetValue(form), CheckedListBox)
                 search.Text = "dm"
@@ -238,7 +259,71 @@ Module Program
                 formType.GetMethod("ApplyPersistedTradeState", flags).Invoke(form, {saved})
                 search.Clear()
                 Check(items.CheckedItems.Count = 2, "Clearing a restored search lost selected items")
+                Dim selectMatches = DirectCast(formType.GetField("_tradeSelectAllMatches", flags).GetValue(form), Button)
+                Dim unselectAll = DirectCast(formType.GetField("_tradeUnselectAll", flags).GetValue(form), Button)
+                Dim bulkSettings = JsonSerializer.Deserialize(Of TradeSettings)(JsonSerializer.Serialize(settings))
+                bulkSettings.ItemSearch = "dM"
+                bulkSettings.SelectedItemKeys = New List(Of String) From {"ASBA RING"}
+                bulkSettings.ExtractedListings.AddRange({
+                    New TradeListing With {.CharacterName = "BuyerDM2", .Intent = "buy", .ItemText = "DM2", .ItemKey = "DM2", .Evidence = "B> DM2"},
+                    New TradeListing With {.CharacterName = "BuyerUnmatched", .Intent = "buy", .ItemText = "ROR", .ItemKey = "ROR", .Evidence = "BUY ROR"},
+                    New TradeListing With {.CharacterName = "OppositeSeller", .Intent = "sell", .ItemText = "DM SELL ONLY", .ItemKey = "DM SELL ONLY", .Evidence = "SELL DM SELL ONLY"}})
+                formType.GetMethod("ApplyPersistedTradeState", flags).Invoke(form, {bulkSettings})
+                Check(items.Items.Count = 2 AndAlso selectMatches.Enabled AndAlso items.CheckedItems.Count = 0 AndAlso unselectAll.Enabled, "Bulk-selection fixture did not isolate visible unchecked DM buyers or allow clearing the hidden selection")
+                Dim beforeBulk = JsonSerializer.Serialize(formType.GetMethod("BuildPersistedTradeState", flags).Invoke(form, Nothing))
+                For Each busyField In {"_tradeLoading", "_tradeRunning", "_tradeAnalyzing"}
+                    formType.GetField(busyField, flags).SetValue(form, True)
+                    formType.GetMethod("SelectAllMatchingTradeItems", flags).Invoke(form, Nothing)
+                    formType.GetMethod("UnselectAllTradeItems", flags).Invoke(form, Nothing)
+                    formType.GetField(busyField, flags).SetValue(form, False)
+                    Check(JsonSerializer.Serialize(formType.GetMethod("BuildPersistedTradeState", flags).Invoke(form, Nothing)) = beforeBulk, "Busy bulk selection changed reviewed Trade state: " & busyField)
+                Next
+                formType.GetMethod("SelectAllMatchingTradeItems", flags).Invoke(form, Nothing)
+                saved = DirectCast(formType.GetMethod("BuildPersistedTradeState", flags).Invoke(form, Nothing), TradeSettings)
+                Check(New HashSet(Of String)(saved.SelectedItemKeys, StringComparer.OrdinalIgnoreCase).SetEquals({"ASBA RING", "DM1", "DM2"}) AndAlso
+                      DirectCast(formType.GetField("_tradeChosenItems", flags).GetValue(form), HashSet(Of String)).SetEquals({"ASBA RING", "DM1", "DM2"}) AndAlso items.CheckedItems.Count = 2, "Select all matches lost hidden selection or added unfiltered/opposite-mode items")
+                Check(New HashSet(Of String)(saved.Recipients.Select(Function(row) row.CharacterName), StringComparer.Ordinal).SetEquals({"complex", "BuyerTwo", "Azshahadin", "BuyerDM2"}), "Bulk selection did not rebuild the matching buyer whisper queue")
+                Dim grid = DirectCast(formType.GetField("_tradeGrid", flags).GetValue(form), DataGridView)
+                grid.Rows(0).Cells("Message").Value = "reviewed message must survive redundant or no-match selection"
+                Dim beforeRepeatedSelection = JsonSerializer.Serialize(formType.GetMethod("BuildPersistedTradeState", flags).Invoke(form, Nothing))
+                formType.GetMethod("SelectAllMatchingTradeItems", flags).Invoke(form, Nothing)
+                Check(JsonSerializer.Serialize(formType.GetMethod("BuildPersistedTradeState", flags).Invoke(form, Nothing)) = beforeRepeatedSelection, "Redundant bulk selection rebuilt and overwrote reviewed messages")
+                search.Text = "nothing matches this filter"
+                Check(items.Items.Count = 0 AndAlso Not selectMatches.Enabled, "Select all matches remained enabled without filter results")
+                Dim beforeNoMatches = JsonSerializer.Serialize(formType.GetMethod("BuildPersistedTradeState", flags).Invoke(form, Nothing))
+                formType.GetMethod("SelectAllMatchingTradeItems", flags).Invoke(form, Nothing)
+                Check(JsonSerializer.Serialize(formType.GetMethod("BuildPersistedTradeState", flags).Invoke(form, Nothing)) = beforeNoMatches, "No-match bulk selection changed selected items or reviewed messages")
+                search.Clear()
+                Check(items.Items.Count = 4 AndAlso items.CheckedItems.Count = 3 AndAlso items.Items.Cast(Of TradeItemFrequency)().All(Function(item) item.ItemKey <> "DM SELL ONLY"), "Clearing filter lost checks or included the opposite trade side")
+                formType.GetMethod("SelectAllMatchingTradeItems", flags).Invoke(form, Nothing)
+                saved = DirectCast(formType.GetMethod("BuildPersistedTradeState", flags).Invoke(form, Nothing), TradeSettings)
+                Check(items.CheckedItems.Count = 4 AndAlso DirectCast(formType.GetField("_tradeChosenItems", flags).GetValue(form), HashSet(Of String)).SetEquals({"ASBA RING", "DM1", "DM2", "ROR"}) AndAlso
+                      saved.Recipients.Any(Function(row) row.CharacterName = "BuyerUnmatched") AndAlso saved.Recipients.All(Function(row) row.CharacterName <> "OppositeSeller"), "Unfiltered Select all matches did not include every current-mode item and exclude opposite-side listings")
+                search.Text = "dm"
+                Check(items.Items.Count = 2 AndAlso items.CheckedItems.Count = 2 AndAlso unselectAll.Enabled, "Unselect fixture did not retain checked visible and hidden items")
+                formType.GetMethod("UnselectAllTradeItems", flags).Invoke(form, Nothing)
+                saved = DirectCast(formType.GetMethod("BuildPersistedTradeState", flags).Invoke(form, Nothing), TradeSettings)
+                Check(saved.SelectedItemKeys.Count = 0 AndAlso DirectCast(formType.GetField("_tradeChosenItems", flags).GetValue(form), HashSet(Of String)).Count = 0 AndAlso
+                      items.CheckedItems.Count = 0 AndAlso saved.Recipients.Count = 0 AndAlso Not unselectAll.Enabled AndAlso saved.ExtractedListings.Count = bulkSettings.ExtractedListings.Count,
+                      "Unselect all failed to clear hidden/visible keys, checkboxes and queue while keeping extracted posts")
+                grid.Rows.Add(True, "ManualBuyer", "manual item", "manually reviewed row after clearing selections", "Ready")
+                Dim beforeRepeatedClear = JsonSerializer.Serialize(formType.GetMethod("BuildPersistedTradeState", flags).Invoke(form, Nothing))
+                formType.GetMethod("UnselectAllTradeItems", flags).Invoke(form, Nothing)
+                Check(JsonSerializer.Serialize(formType.GetMethod("BuildPersistedTradeState", flags).Invoke(form, Nothing)) = beforeRepeatedClear AndAlso Not unselectAll.Enabled,
+                      "Repeated Unselect all rebuilt or erased manually reviewed rows when no item keys were selected")
+                formType.GetMethod("ApplyPersistedTradeState", flags).Invoke(form, {bulkSettings})
+                search.Text = "nothing matches this filter"
+                Check(items.Items.Count = 0 AndAlso Not selectMatches.Enabled AndAlso unselectAll.Enabled, "No-match filter prevented clearing hidden item selections")
+                formType.GetMethod("UnselectAllTradeItems", flags).Invoke(form, Nothing)
+                saved = DirectCast(formType.GetMethod("BuildPersistedTradeState", flags).Invoke(form, Nothing), TradeSettings)
+                Check(saved.SelectedItemKeys.Count = 0 AndAlso saved.Recipients.Count = 0 AndAlso Not unselectAll.Enabled, "Unselect all with no filter matches retained hidden keys or recipients")
+                search.Text = "dm"
+                items.SetItemChecked(0, True)
+                Check(unselectAll.Enabled, "Checking one item did not enable Unselect all")
+                items.SetItemChecked(0, False)
+                Check(Not unselectAll.Enabled, "Unchecking the last item did not disable Unselect all")
                 formType.GetMethod("ApplyPersistedTradeState", flags).Invoke(form, {settings})
+                search.Text = "dm"
                 formType.GetMethod("ApplyDarkTheme", flags).Invoke(form, {page})
                 Using host As New Form With {.ClientSize = New Drawing.Size(1360, 760), .ShowInTaskbar = False, .StartPosition = FormStartPosition.Manual, .Location = New Drawing.Point(-30000, -30000)}, tabs As New TabControl With {.Dock = DockStyle.Fill}
                     host.Controls.Add(tabs)
@@ -251,18 +336,49 @@ Module Program
                     host.PerformLayout()
                     tabs.PerformLayout()
                     page.PerformLayout()
+                    selectMatches.PerformClick()
+                    Application.DoEvents()
+                    saved = DirectCast(formType.GetMethod("BuildPersistedTradeState", flags).Invoke(form, Nothing), TradeSettings)
+                    Check(selectMatches.Text = "Select all matches" AndAlso items.CheckedItems.Count = 1 AndAlso New HashSet(Of String)(saved.SelectedItemKeys, StringComparer.OrdinalIgnoreCase).SetEquals({"ASBA RING", "DM1"}), "Rendered Select all matches button is not wired to filtered bulk selection")
+                    Dim queueClearEvents As Integer
+                    Dim removedHandler As DataGridViewRowsRemovedEventHandler = Sub(sender, e) queueClearEvents += 1
+                    AddHandler grid.RowsRemoved, removedHandler
+                    Try
+                        unselectAll.PerformClick()
+                        Application.DoEvents()
+                    Finally
+                        RemoveHandler grid.RowsRemoved, removedHandler
+                    End Try
+                    saved = DirectCast(formType.GetMethod("BuildPersistedTradeState", flags).Invoke(form, Nothing), TradeSettings)
+                    Check(unselectAll.Text = "Unselect all" AndAlso items.CheckedItems.Count = 0 AndAlso saved.SelectedItemKeys.Count = 0 AndAlso saved.Recipients.Count = 0 AndAlso
+                          Not unselectAll.Enabled AndAlso queueClearEvents = 1, $"Rendered Unselect all did not clear hidden/visible selections and rebuild the queue once (clear events: {queueClearEvents})")
+                    formType.GetMethod("ApplyPersistedTradeState", flags).Invoke(form, {settings})
+                    search.Text = "dm"
+                    selectMatches.PerformClick()
+                    Application.DoEvents()
                     Dim startButton = DirectCast(formType.GetField("_tradeStart", flags).GetValue(form), Button)
                     Dim priceGrid = DirectCast(formType.GetField("_tradePriceGrid", flags).GetValue(form), DataGridView)
-                    For Each control As Control In New Control() {items, startButton, priceGrid}
+                    Dim browserCapture = DirectCast(formType.GetField("_tradeCaptureButton", flags).GetValue(form), Button)
+                    Check(browserCapture.Text = "Browser capture" AndAlso browserCapture.Parent.Controls.Count = 1, "Trade source toolbar should contain only Browser capture")
+                    For Each retiredField In {"_tradeDiscordConfigure", "_tradeDiscordImport", "_tradeDiscordAuto", "_tradeDiscordCountLabel"}
+                        Check(formType.GetField(retiredField, flags).GetValue(form) Is Nothing, "Retired reader control still exists: " & retiredField)
+                    Next
+                    Using bitmap As New Drawing.Bitmap(host.Width, host.Height)
+                        host.DrawToBitmap(bitmap, New Drawing.Rectangle(0, 0, host.Width, host.Height))
+                        bitmap.Save(IO.Path.Combine(AppContext.BaseDirectory, "trade-tab.png"))
+                    End Using
+                    For Each control As Control In New Control() {items, search, selectMatches, unselectAll, startButton, priceGrid, browserCapture}
                         Dim bounds = host.RectangleToClient(control.RectangleToScreen(control.ClientRectangle))
                         Check(host.ClientRectangle.Contains(bounds), "Trade control outside the single-view layout: " & control.GetType().Name)
                     Next
-                    Check(items.Height >= items.ItemHeight * 10 + 4, "Detected item list cannot show ten rows")
+                    Dim searchBounds = search.RectangleToScreen(search.ClientRectangle)
+                    Dim selectBounds = selectMatches.RectangleToScreen(selectMatches.ClientRectangle)
+                    Dim unselectBounds = unselectAll.RectangleToScreen(unselectAll.ClientRectangle)
+                    Check(Not searchBounds.IntersectsWith(selectBounds) AndAlso Not searchBounds.IntersectsWith(unselectBounds) AndAlso Not selectBounds.IntersectsWith(unselectBounds), "Trade item search and bulk-selection buttons overlap")
+                    Check(search.Width >= 80 AndAlso selectMatches.Width >= selectMatches.PreferredSize.Width AndAlso unselectAll.Width >= unselectAll.PreferredSize.Width,
+                          $"Trade item filter or bulk-selection captions are clipped (search: {search.Width}, select: {selectMatches.Width}/{selectMatches.PreferredSize.Width}, unselect: {unselectAll.Width}/{unselectAll.PreferredSize.Width})")
+                    Check(items.Height >= items.ItemHeight * 10 + 4, $"Detected item list cannot show ten rows: Height={items.Height}, ItemHeight={items.ItemHeight}, ParentHeight={items.Parent.Height}, ButtonHeight={selectMatches.Height}")
                     Check(Not DirectCast(page.Controls(0), Panel).VerticalScroll.Visible, "Trade page requires vertical scrolling")
-                    Using bitmap As New Drawing.Bitmap(host.ClientSize.Width, host.ClientSize.Height)
-                        host.DrawToBitmap(bitmap, host.ClientRectangle)
-                        bitmap.Save(IO.Path.Combine(AppContext.BaseDirectory, "trade-tab.png"))
-                    End Using
                     tabs.TabPages.Remove(page)
                 End Using
             End Using

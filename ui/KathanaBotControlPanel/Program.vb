@@ -26,6 +26,11 @@ Friend Module Program
 
     <STAThread()>
     Friend Sub Main(args As String())
+        If args.Contains("--input-diagnostics") Then
+            Application.SetHighDpiMode(HighDpiMode.SystemAware)
+            Environment.ExitCode = InputDiagnostics.Run(args)
+            Return
+        End If
         AddHandler AppDomain.CurrentDomain.UnhandledException, AddressOf OnUnhandledDomainException
         AddHandler Application.ThreadException, AddressOf OnUnhandledThreadException
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException)

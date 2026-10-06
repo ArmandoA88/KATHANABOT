@@ -1,6 +1,11 @@
 [CmdletBinding()]
 param()
 $ErrorActionPreference = 'Stop'
+if (!(Get-Command dotnet -ErrorAction SilentlyContinue)) {
+    $dotnetDirectory = Join-Path $env:ProgramFiles 'dotnet'
+    if (!(Test-Path -LiteralPath (Join-Path $dotnetDirectory 'dotnet.exe'))) { throw '.NET SDK is required.' }
+    $env:PATH = "$dotnetDirectory;$env:PATH"
+}
 & (Join-Path $PSScriptRoot 'run-all-tests.ps1')
 $project = Join-Path $PSScriptRoot 'ui\KathanaBotControlPanel\KathanaBotControlPanel.vbproj'
 [xml]$metadata = Get-Content -LiteralPath $project

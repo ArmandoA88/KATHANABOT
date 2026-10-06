@@ -18,11 +18,11 @@ When Quiz Solver is enabled, it decrypts and indexes the bundled data in the bac
 
 ## Speed and request limits
 
-The default remains `gpt-5.4-mini`; the existing `gpt-5-mini` selection is preserved. Both now use low reasoning rather than the old `none` setting. The response budget is 1,600 tokens, including reasoning and structured answer output; the previous 220-token limit left very little room to assess evidence.
+Quiz offers **GPT-6 Luna — Fast / Cheap** (default) and **GPT-6 Astra — Ultrafast / Expensive**. The user chooses the model in Quiz; the profile stores its API ID, independently of Trade's GPT-5 nano model. Older `gpt-5.4-mini` and `gpt-5-mini` settings migrate to Luna. Luna uses `service_tier: fast` and `reasoning.effort: none`; Astra uses `service_tier: ultrafast` and `reasoning.effort: low`. These are speed/cost labels, not measured Kathana quiz latency or accuracy. The response budget remains 1,600 tokens, including reasoning and structured answer output. See the [Fast](https://developers.openai.com/api/docs/guides/fast-mode) and [Ultrafast](https://developers.openai.com/api/docs/guides/ultrafast-mode) API guides.
 
 When local lookup is inconclusive, the fallback uses a single Responses API request with both existing images and the hosted `web_search` tool. Search context is `low`, with at most two tool actions. If it returns a game answer without executing search, one additional request makes search mandatory. There is no silent fallback to an unsourced game guess.
 
-All requests in one solve share a 30-second client deadline, including the existing fallback from Priority to standard processing if Priority is unavailable. A timeout, unsupported search, rate limit, incomplete response, or unresolved answer causes no click. Automatic retries wait 15 seconds; **Solve Now** can explicitly retry sooner. The local preview continues refreshing during requests and retry delays.
+All requests in one solve share a 30-second client deadline. The selected model and tier remain fixed during mandatory-search retry. An unavailable tier or a response explicitly reporting a lower tier produces an error instead of silently switching processing. A timeout, unsupported search, rate limit, incomplete response, or unresolved answer causes no click. Automatic retries wait 15 seconds; **Solve Now** can explicitly retry sooner. The local preview continues refreshing during requests and retry delays.
 
 Screen-refresh ticks do not themselves call OpenAI. Actual web searches have additional tool charges plus model token usage; see [OpenAI web search documentation](https://developers.openai.com/api/docs/guides/tools-web-search) and [API pricing](https://developers.openai.com/api/docs/pricing).
 
@@ -44,4 +44,4 @@ Run:
 dotnet run --project tests/QuizSolver.Tests/QuizSolver.Tests.vbproj
 ```
 
-The test transport never reaches the network. Tests cover the evidence policy, GM-only guesses, invalid mappings, unsafe/invented URLs, response parsing, mandatory-search retry, Priority fallback, rate limits, unsupported tools, and cancellation. Live API behavior, actual quiz accuracy, and in-game timing still need an in-game check.
+The test transport never reaches the network. Tests cover model/tier/effort selection, saved model IDs and old-setting migration, evidence policy, GM-only guesses, invalid mappings, unsafe/invented URLs, response parsing, mandatory-search retry, tier rejection, rate limits, unsupported tools, and cancellation. Live API behavior, actual quiz accuracy, and in-game timing remain unverified.

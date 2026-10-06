@@ -530,7 +530,7 @@ Partial Public Class Form1
             _resuTimer.Start()
             UpdateMainTabIndicators()
             SetResuStatus("RESU started; waiting for a configured chat keyword.")
-            AppendLog("RESU started. Any running Full or Lite bot was stopped first. F12 stops RESU; background input is enabled.")
+            AppendLog("RESU started. Any running Full or Lite bot was stopped first. F12 stops RESU.")
         Catch ex As Exception
             SilentMessageBox.Show(Me, ex.Message, "RESU")
         End Try

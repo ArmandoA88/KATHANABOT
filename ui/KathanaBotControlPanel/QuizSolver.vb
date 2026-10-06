@@ -339,9 +339,20 @@ End Class
 Friend NotInheritable Class QuizOpenAiClient
     Private Shared ReadOnly Client As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(35)}
     Friend Const SolveBudgetSeconds As Integer = 30
+    Friend Const DefaultModel As String = "gpt-6-luna"
+    Friend Const UltrafastModel As String = "gpt-6-astra"
 
     Private Sub New()
     End Sub
+
+    Friend Shared Function NormalizeModel(model As String) As String
+        If String.Equals(model?.Trim(), UltrafastModel, StringComparison.OrdinalIgnoreCase) Then Return UltrafastModel
+        Return DefaultModel
+    End Function
+
+    Friend Shared Function ProcessingTier(model As String) As String
+        Return If(NormalizeModel(model) = UltrafastModel, "ultrafast", "fast")
+    End Function
 
     Public Shared Async Function SolveAsync(apiKey As String, model As String, cleanImage As Bitmap, annotatedImage As Bitmap, cancellationToken As CancellationToken) As Task(Of QuizSolveResult)
         Dim cleanDataUrl As String
@@ -359,26 +370,21 @@ Friend NotInheritable Class QuizOpenAiClient
     End Function
 
     ' One normal request; only retry with mandatory search if a game answer ignored the tool.
-    ' Both requests and the optional priority-tier fallback share one wall-clock deadline.
+    ' Both requests share one wall-clock deadline and preserve the selected model and speed tier.
     Friend Shared Async Function SolveRequestAsync(apiKey As String, model As String, cleanDataUrl As String, annotatedDataUrl As String,
                                                    cancellationToken As CancellationToken, Optional transport As HttpClient = Nothing) As Task(Of QuizSolveResult)
         Using deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
             deadline.CancelAfter(TimeSpan.FromSeconds(SolveBudgetSeconds))
-            Dim priority As Boolean = True
             Dim forceSearch As Boolean = False
             Try
                 Do
                     deadline.Token.ThrowIfCancellationRequested()
-                    Using response = Await PostAsync(apiKey, BuildPayload(model, cleanDataUrl, annotatedDataUrl, priority, forceSearch), deadline.Token, If(transport, Client)).ConfigureAwait(False)
+                    Using response = Await PostAsync(apiKey, BuildPayload(model, cleanDataUrl, annotatedDataUrl, forceSearch), deadline.Token, If(transport, Client)).ConfigureAwait(False)
                         Dim body = Await response.Content.ReadAsStringAsync(deadline.Token).ConfigureAwait(False)
                         If Not response.IsSuccessStatusCode Then
-                            If priority AndAlso response.StatusCode = Net.HttpStatusCode.BadRequest AndAlso
-                                (body.IndexOf("service_tier", StringComparison.OrdinalIgnoreCase) >= 0 OrElse body.IndexOf("priority", StringComparison.OrdinalIgnoreCase) >= 0) Then
-                                priority = False
-                                Continue Do
-                            End If
                             Throw New InvalidOperationException($"OpenAI request failed ({CInt(response.StatusCode)}): {LimitError(body)}")
                         End If
+                        ValidateProcessingTier(body, ProcessingTier(model))
                         Dim answer = ParseResponse(body)
                         If answer.Category = "game" AndAlso Not answer.SearchPerformed AndAlso Not forceSearch Then
                             forceSearch = True
@@ -393,7 +399,8 @@ Friend NotInheritable Class QuizOpenAiClient
         End Using
     End Function
 
-    Friend Shared Function BuildPayload(model As String, cleanDataUrl As String, annotatedDataUrl As String, priority As Boolean, Optional forceSearch As Boolean = False) As JsonObject
+    Friend Shared Function BuildPayload(model As String, cleanDataUrl As String, annotatedDataUrl As String, Optional forceSearch As Boolean = False) As JsonObject
+        Dim selectedModel = NormalizeModel(model)
         Dim schema As New JsonObject From {
             {"type", "object"},
             {"additionalProperties", False},
@@ -442,7 +449,8 @@ Friend NotInheritable Class QuizOpenAiClient
             }
         }
         Dim root As New JsonObject From {
-            {"model", If(String.IsNullOrWhiteSpace(model), "gpt-5.4-mini", model.Trim())},
+            {"model", selectedModel},
+            {"service_tier", ProcessingTier(selectedModel)},
             {"instructions", String.Join(vbLf, {
                 "You solve a timed multiple-choice quiz in Kathana Online / Tantra Online. Accuracy comes before guessing; minimize latency.",
                 "Classify the question as game, general, or gm_personal. Most questions are game questions, even if they do not explicitly name the game. Items, monsters, NPCs, maps, skills, tribes, gods in game, quests, mechanics, and server events belong to game. Do not confuse game terminology with religious/philosophical Tantra.",
@@ -455,7 +463,7 @@ Friend NotInheritable Class QuizOpenAiClient
                 "Copy the chosen visible answer exactly and map it to the annotated numbered button. No answer is valid merely because it is a plausible game term. Keep evidence under 35 words; output only the requested JSON."
             })},
             {"input", input},
-            {"reasoning", New JsonObject From {{"effort", "low"}}},
+            {"reasoning", New JsonObject From {{"effort", If(selectedModel = UltrafastModel, "low", "none")}}},
             {"tools", New JsonArray(New JsonObject From {{"type", "web_search"}, {"search_context_size", "low"}})},
             {"tool_choice", If(forceSearch, "required", "auto")},
             {"max_tool_calls", 2},
@@ -464,9 +472,18 @@ Friend NotInheritable Class QuizOpenAiClient
             {"max_output_tokens", 1600},
             {"store", False}
         }
-        If priority Then root("service_tier") = "priority"
         Return root
     End Function
+
+    Private Shared Sub ValidateProcessingTier(body As String, expectedTier As String)
+        Using document = JsonDocument.Parse(body)
+            Dim actualTier = GetString(document.RootElement, "service_tier")
+            If String.IsNullOrWhiteSpace(actualTier) Then Return
+            If actualTier = expectedTier OrElse (expectedTier = "fast" AndAlso actualTier = "priority") Then Return
+            If Not {"default", "flex", "batch", "fast", "priority", "ultrafast"}.Contains(actualTier, StringComparer.Ordinal) Then Return
+            Throw New InvalidOperationException($"OpenAI used {actualTier} instead of the selected {expectedTier} processing tier; no answer will be clicked. Select another Quiz model or try again.")
+        End Using
+    End Sub
 
     Private Shared Async Function PostAsync(apiKey As String, payload As JsonObject, cancellationToken As CancellationToken, transport As HttpClient) As Task(Of HttpResponseMessage)
         Using request As New HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/responses")

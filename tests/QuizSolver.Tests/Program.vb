@@ -12,6 +12,7 @@ Module Program
 
     Sub Main()
         QuizNoticeTests.Run()
+        QuizModelTests.Run()
         Test("game answer needs real web evidence", AddressOf GameEvidence)
         Test("game answer can use bundled local evidence", AddressOf LocalGameEvidence)
         Test("bundled index matches NPC coordinates", AddressOf LocalNpcMatch)
@@ -41,7 +42,10 @@ Module Program
         Test("omitted game search gets one mandatory-search retry", Sub() ForcedSearch().GetAwaiter().GetResult())
         Test("mandatory-search retry cannot loop forever", Sub() BoundedRetry().GetAwaiter().GetResult())
         Test("general knowledge and GM guesses need no search retry", Sub() NoUnneededRetry().GetAwaiter().GetResult())
-        Test("priority fallback preserves search and evidence schema", Sub() PriorityFallback().GetAwaiter().GetResult())
+        Test("speed tier errors never silently downgrade the selected model", Sub() TierUnavailable().GetAwaiter().GetResult())
+        Test("explicit speed tier downgrade stops before using the answer", Sub() TierDowngrade().GetAwaiter().GetResult())
+        Test("Astra search retry keeps Ultrafast and low reasoning", Sub() AstraForcedSearch().GetAwaiter().GetResult())
+        Test("model migration stays scoped to Quiz choices", AddressOf ModelMigration)
         Test("unsupported search does not silently fall back to guessing", Sub() UnsupportedSearch().GetAwaiter().GetResult())
         Test("rate-limit response does not cause a retry storm", Sub() RateLimit().GetAwaiter().GetResult())
         Test("caller cancellation stops before sending a request", Sub() CancelBeforeSend().GetAwaiter().GetResult())
@@ -72,7 +76,7 @@ Module Program
         Return result
     End Function
 
-    Private Function Wire(answer As QuizSolveResult, Optional searched As Boolean = True, Optional toolSource As String = Source, Optional citation As String = "", Optional status As String = "completed") As String
+    Private Function Wire(answer As QuizSolveResult, Optional searched As Boolean = True, Optional toolSource As String = Source, Optional citation As String = "", Optional status As String = "completed", Optional tier As String = "") As String
         Dim output As New JsonArray()
         output.Add(New JsonObject From {{"type", "reasoning"}, {"summary", New JsonArray()}})
         If searched Then
@@ -86,7 +90,9 @@ Module Program
             {"type", "message"}, {"role", "assistant"}, {"status", "completed"},
             {"content", New JsonArray(New JsonObject From {{"type", "output_text"}, {"text", JsonSerializer.Serialize(answer)}, {"annotations", annotations}})}
         })
-        Return New JsonObject From {{"status", status}, {"output", output}}.ToJsonString()
+        Dim response As New JsonObject From {{"status", status}, {"output", output}}
+        If tier.Length > 0 Then response("service_tier") = tier
+        Return response.ToJsonString()
     End Function
 
     Private Sub GameEvidence()
@@ -252,25 +258,41 @@ Module Program
     End Sub
 
     Private Sub Payload()
-        Dim payload = QuizOpenAiClient.BuildPayload("gpt-5.4-mini", "clean", "annotated", True)
-        Check(payload("tools")(0)("type").GetValue(Of String)() = "web_search", "Enable the supported search tool")
-        Check(payload("tools")(0)("search_context_size").GetValue(Of String)() = "low", "Use small search context for speed")
-        Check(payload("max_tool_calls").GetValue(Of Integer)() = 2, "Bound search actions")
-        Check(payload("reasoning")("effort").GetValue(Of String)() = "low", "Allow evidence assessment without long reasoning")
-        Check(payload("include")(0).GetValue(Of String)() = "web_search_call.action.sources", "Request actual source metadata")
-        Check(payload("text")("format")("schema")("properties")("can_answer") IsNot Nothing, "Model must be able to abstain")
-        Check(payload("input")(0)("content").AsArray().Count = 3, "Keep clean and annotated image inputs")
-        Dim mini = QuizOpenAiClient.BuildPayload("gpt-5-mini", "clean", "annotated", False)
-        Check(mini("reasoning")("effort").GetValue(Of String)() = "low", "Older mini also needs supported reasoning, not none")
+        For Each model In {"gpt-6-luna", "gpt-6-astra"}
+            Dim payload = QuizOpenAiClient.BuildPayload(model, "clean", "annotated")
+            Check(payload("model").GetValue(Of String)() = model, "Store and send the exact Quiz model API ID")
+            Check(payload("service_tier").GetValue(Of String)() = If(model = "gpt-6-astra", "ultrafast", "fast"), "Keep the selected speed tier")
+            Check(payload("reasoning")("effort").GetValue(Of String)() = If(model = "gpt-6-astra", "low", "none"), "Use the supported lowest Quiz reasoning effort")
+            Check(payload("tools")(0)("type").GetValue(Of String)() = "web_search", "Enable the supported search tool")
+            Check(payload("tools")(0)("search_context_size").GetValue(Of String)() = "low", "Use small search context for speed")
+            Check(payload("max_tool_calls").GetValue(Of Integer)() = 2, "Bound search actions")
+            Check(payload("include")(0).GetValue(Of String)() = "web_search_call.action.sources", "Request actual source metadata")
+            Check(payload("text")("format")("strict").GetValue(Of Boolean)(), "Preserve strict structured output")
+            Check(payload("text")("format")("schema")("properties")("can_answer") IsNot Nothing, "Model must be able to abstain")
+            Check(payload("input")(0)("content").AsArray().Count = 3, "Keep clean and annotated image inputs")
+            Check(payload("input")(0)("content")(1)("image_url").GetValue(Of String)() = "clean" AndAlso payload("input")(0)("content")(2)("image_url").GetValue(Of String)() = "annotated", "Keep both exact screenshot inputs")
+            Check(payload("temperature") Is Nothing AndAlso payload("top_p") Is Nothing AndAlso payload("logprobs") Is Nothing, "Do not send unsupported GPT-6 sampling settings")
+            Check(Not payload("store").GetValue(Of Boolean)(), "Do not store screenshot requests")
+        Next
+    End Sub
+
+    Private Sub ModelMigration()
+        For Each legacy In {Nothing, "", "gpt-5.4-mini", "gpt-5-mini", "gpt-5-nano", "unavailable-model"}
+            Check(QuizOpenAiClient.NormalizeModel(legacy) = "gpt-6-luna", "Legacy Quiz models must migrate to the cheap default")
+            Check(QuizOpenAiClient.BuildPayload(legacy, "clean", "annotated")("model").GetValue(Of String)() = "gpt-6-luna", "Do not submit legacy or display labels to the API")
+        Next
+        Check(QuizOpenAiClient.NormalizeModel(" GPT-6-ASTRA ") = "gpt-6-astra", "Retain explicit Astra selection")
+        Check(QuizOpenAiClient.NormalizeModel(" GPT-6-LUNA ") = "gpt-6-luna", "Canonicalize Luna selection")
+        Check(QuizOpenAiClient.SolveBudgetSeconds = 30, "Keep the existing Quiz wall-clock budget")
     End Sub
 
     Private Function Reply(body As String, Optional status As HttpStatusCode = HttpStatusCode.OK) As HttpResponseMessage
         Return New HttpResponseMessage(status) With {.Content = New StringContent(body)}
     End Function
 
-    Private Async Function Solve(handler As FakeHandler, Optional token As CancellationToken = Nothing) As Task(Of QuizSolveResult)
+    Private Async Function Solve(handler As FakeHandler, Optional token As CancellationToken = Nothing, Optional model As String = "gpt-6-luna") As Task(Of QuizSolveResult)
         Using client As New HttpClient(handler)
-            Return Await QuizOpenAiClient.SolveRequestAsync("fixture-not-a-real-key", "gpt-5.4-mini", "clean", "annotated", token, client)
+            Return Await QuizOpenAiClient.SolveRequestAsync("fixture-not-a-real-key", model, "clean", "annotated", token, client)
         End Using
     End Function
 
@@ -299,11 +321,35 @@ Module Program
         Next
     End Function
 
-    Private Async Function PriorityFallback() As Task
-        Dim handler As New FakeHandler(Reply("service_tier priority unavailable", HttpStatusCode.BadRequest), Reply(Wire(Answer())))
-        Check(Allowed(Await Solve(handler)), "Priority fallback should still produce evidence")
-        Check(handler.Requests.Count = 2 AndAlso handler.Requests(1)("service_tier") Is Nothing, "Drop only priority on its specific error")
-        Check(handler.Requests(1)("tools")(0)("type").GetValue(Of String)() = "web_search", "Fallback must preserve search")
+    Private Async Function TierUnavailable() As Task
+        For Each model In {"gpt-6-luna", "gpt-6-astra"}
+            Dim handler As New FakeHandler(Reply("service_tier unavailable for this account", HttpStatusCode.BadRequest))
+            Await ExpectInvalidAsync(Function() Solve(handler, model:=model))
+            Check(handler.Requests.Count = 1, "Never retry tier errors at Standard speed or with another model")
+            Check(handler.Requests(0)("model").GetValue(Of String)() = model AndAlso handler.Requests(0)("service_tier").GetValue(Of String)() = If(model = "gpt-6-astra", "ultrafast", "fast"), "Honor the exact selection on failure")
+        Next
+    End Function
+
+    Private Async Function TierDowngrade() As Task
+        For Each model In {"gpt-6-luna", "gpt-6-astra"}
+            Dim handler As New FakeHandler(Reply(Wire(Answer(), tier:="default")))
+            Await ExpectInvalidAsync(Function() Solve(handler, model:=model))
+            Check(handler.Requests.Count = 1, "Explicit server downgrade must not trigger a retry")
+        Next
+        Dim fastAlias As New FakeHandler(Reply(Wire(Answer(), tier:="priority")))
+        Check(Allowed(Await Solve(fastAlias)), "Accept the documented Fast/priority alias")
+        Dim unknownMetadata As New FakeHandler(Reply(Wire(Answer(), tier:="auto")))
+        Check(Allowed(Await Solve(unknownMetadata)), "Unknown tier metadata must not break normal answers")
+    End Function
+
+    Private Async Function AstraForcedSearch() As Task
+        Dim handler As New FakeHandler(Reply(Wire(Answer("game", "knowledge"), False, tier:="ultrafast")), Reply(Wire(Answer(), tier:="ultrafast")))
+        Check(Allowed(Await Solve(handler, model:="gpt-6-astra")), "Astra mandatory-search retry must recover supported evidence")
+        Check(handler.Requests.Count = 2, "Keep the one mandatory-search retry bound")
+        For Each requestPayload In handler.Requests
+            Check(requestPayload("model").GetValue(Of String)() = "gpt-6-astra" AndAlso requestPayload("service_tier").GetValue(Of String)() = "ultrafast" AndAlso requestPayload("reasoning")("effort").GetValue(Of String)() = "low", "Do not downgrade Astra on its evidence retry")
+        Next
+        Check(handler.Requests(1)("tool_choice").GetValue(Of String)() = "required", "Second Astra request must force the search")
     End Function
 
     Private Async Function UnsupportedSearch() As Task

@@ -98,3 +98,10 @@ tr/
 zh-Hans/
 zh-Hant/
 recordings/
+native/InputHook/out/
+input-diagnostics/
+
+# Local Discord exports and generated extension bundles
+/Discord_posts_names_and_messages_*.txt
+/KathanaDiscordCapture_*/
+/KathanaDiscordCapture_*.zip

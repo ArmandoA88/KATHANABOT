@@ -1,4 +1,4 @@
-﻿Imports System.Threading
+Imports System.Threading
 Imports System.Threading.Tasks
 
 Partial Public Class Form1
@@ -6,10 +6,16 @@ Partial Public Class Form1
     Private _tradeSource As TextBox
     Private _tradeDetectedItems As CheckedListBox
     Private _tradeItemSearch As TextBox
+    Private _tradeSelectAllMatches As Button
+    Private _tradeUnselectAll As Button
     Private _tradeChosenItems As HashSet(Of String)
     Private _tradeExtracted As New List(Of TradeListing)()
     Private _tradeAnalyzing As Boolean
     Private _tradeAnalysisCancellation As CancellationTokenSource
+    Private _tradeAnalysisGeneration As Integer
+    Private _tradeAnalysisPostCount As Integer
+    Private _tradeAnalysisSourcePosts As List(Of DiscordTradeMessage)
+    Private _tradeAnalysisSourceText As String
     Private _tradeMode As ComboBox
     Private _tradeTemplate As TextBox
     Private _tradeDelay As NumericUpDown
@@ -22,6 +28,27 @@ Partial Public Class Form1
     Private _tradeLoading As Boolean
     Private ReadOnly _tradeStopTimer As New System.Windows.Forms.Timer With {.Interval = 50}
 
+    Private NotInheritable Class TradeAnalysisUiProgress
+        Implements IProgress(Of TradeAnalysisProgress)
+        Private ReadOnly _display As IProgress(Of TradeAnalysisProgress)
+        Private _totalPosts As Integer
+
+        Public Sub New(display As IProgress(Of TradeAnalysisProgress))
+            _display = display
+        End Sub
+
+        Public ReadOnly Property TotalPosts As Integer
+            Get
+                Return Volatile.Read(_totalPosts)
+            End Get
+        End Property
+
+        Public Sub Report(value As TradeAnalysisProgress) Implements IProgress(Of TradeAnalysisProgress).Report
+            Volatile.Write(_totalPosts, value.TotalPosts)
+            _display.Report(value)
+        End Sub
+    End Class
+
     Private Function BuildTradeTab() As TabPage
         Dim tab As New TabPage("Trade") With {.BackColor = ThemeBg}
         Dim scroll As New Panel With {.Dock = DockStyle.Fill, .AutoScroll = False, .Padding = New Padding(8)}
@@ -31,33 +58,51 @@ Partial Public Class Form1
         Next
         body.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
         body.Controls.Add(New Label With {.Text = "TRADE / DISCORD WHISPERS", .AutoSize = True, .Font = New Font("Segoe UI", 17, FontStyle.Bold), .ForeColor = ThemeAccent})
-        body.Controls.Add(New Label With {.Text = "Paste posts > Analyze > review checked whispers > Start. Select the Full game window with chat closed. F12 stops.", .AutoSize = True, .Margin = New Padding(0, 3, 0, 5)})
+        body.Controls.Add(New Label With {.Text = "Paste or import posts > Analyze > review checked whispers > Start. Whispers focus the Full game; keep chat closed before Start. Switching apps stops the queue. F12 stops.", .AutoSize = True, .Margin = New Padding(0, 3, 0, 5)})
         Dim options As New TableLayoutPanel With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 1}
         options.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 35))
         options.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 25))
         options.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 40))
         options.RowStyles.Add(New RowStyle(SizeType.Percent, 100))
         _tradeOptions = options
-        _tradeSource = New TextBox With {.Multiline = True, .ScrollBars = ScrollBars.Vertical, .Dock = DockStyle.Fill, .Height = 180, .MaxLength = 200000, .PlaceholderText = "Paste the Discord posts here, including their authors and item listings."}
+        _tradeSource = New TextBox With {.Multiline = True, .ScrollBars = ScrollBars.Vertical, .Dock = DockStyle.Fill, .Height = 180, .MaxLength = DiscordTradeService.MaximumImportedCharacters, .PlaceholderText = "Paste posts or connect Browser capture."}
         _tradeMode = New ComboBox With {.DropDownStyle = ComboBoxStyle.DropDownList, .Dock = DockStyle.Fill}
         _tradeMode.Items.AddRange({"Buy from sellers", "Sell to buyers"})
         _tradeMode.SelectedIndex = 0
         _tradeExtracted = New List(Of TradeListing)()
         _tradeChosenItems = New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
         _tradeItemSearch = New TextBox With {.Dock = DockStyle.Fill, .PlaceholderText = "Find detected items, e.g. ASBA or ROR (optional)"}
+        _tradeSelectAllMatches = New Button With {.Text = "Select all matches", .AutoSize = True, .Dock = DockStyle.Fill, .Margin = New Padding(3, 0, 0, 0), .Enabled = False}
+        AddHandler _tradeSelectAllMatches.Click, Sub() SelectAllMatchingTradeItems()
+        _tradeUnselectAll = New Button With {.Text = "Unselect all", .AutoSize = True, .Dock = DockStyle.Fill, .Margin = New Padding(3, 0, 0, 0), .Enabled = False}
+        AddHandler _tradeUnselectAll.Click, Sub() UnselectAllTradeItems()
         _tradeDetectedItems = New CheckedListBox With {.Dock = DockStyle.Fill, .IntegralHeight = False, .CheckOnClick = True}
         _tradeTemplate = New TextBox With {.Dock = DockStyle.Fill, .Text = TradeService.BuyTemplate, .MaxLength = 220}
         _tradeDelay = New NumericUpDown With {.Minimum = 1, .Maximum = 300, .Value = 5, .Dock = DockStyle.Fill}
         Dim posts As New GroupBox With {.Text = "Discord posts / names", .Dock = DockStyle.Fill, .Padding = New Padding(6)}
-        posts.Controls.Add(_tradeSource)
+        Dim postsBody As New TableLayoutPanel With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 2, .Margin = New Padding(0)}
+        postsBody.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
+        postsBody.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+        postsBody.RowStyles.Add(New RowStyle(SizeType.Percent, 100))
+        postsBody.Controls.Add(InitializeTradeDiscordControls(), 0, 0)
+        postsBody.Controls.Add(_tradeSource, 0, 1)
+        posts.Controls.Add(postsBody)
         options.Controls.Add(posts, 0, 0)
         Dim items As New TableLayoutPanel With {.Dock = DockStyle.Fill, .ColumnCount = 1, .RowCount = 3}
         items.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
         items.RowStyles.Add(New RowStyle(SizeType.AutoSize))
-        items.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+        items.RowStyles.Add(New RowStyle(SizeType.Absolute, 30))
         items.RowStyles.Add(New RowStyle(SizeType.Percent, 100))
         items.Controls.Add(New Label With {.Text = "Detected items (top 3 auto-selected)", .AutoSize = True}, 0, 0)
-        items.Controls.Add(_tradeItemSearch, 0, 1)
+        Dim itemFilter As New TableLayoutPanel With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 1, .Margin = New Padding(0)}
+        itemFilter.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
+        itemFilter.ColumnStyles.Add(New ColumnStyle(SizeType.AutoSize))
+        itemFilter.ColumnStyles.Add(New ColumnStyle(SizeType.AutoSize))
+        itemFilter.RowStyles.Add(New RowStyle(SizeType.Percent, 100))
+        itemFilter.Controls.Add(_tradeItemSearch, 0, 0)
+        itemFilter.Controls.Add(_tradeSelectAllMatches, 1, 0)
+        itemFilter.Controls.Add(_tradeUnselectAll, 2, 0)
+        items.Controls.Add(itemFilter, 0, 1)
         items.Controls.Add(_tradeDetectedItems, 0, 2)
         options.Controls.Add(items, 1, 0)
         Dim settings As New TableLayoutPanel With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 5}
@@ -77,12 +122,12 @@ Partial Public Class Form1
         Dim parse As New Button With {.Text = "Analyze posts with AI", .AutoSize = True}
         AddHandler parse.Click, AddressOf ParseTradeQueue
         Dim help As New Button With {.Text = "Help", .AutoSize = True}
-        AddHandler help.Click, Sub() SilentMessageBox.Show(Me, "Analyze sends pasted posts to OpenAI using the encrypted key/model configured in Quiz. It does not send whispers. AI selects the three most common items for Buy/Sell, counting distinct characters. Search filters the detected list; checked hidden items stay selected. Change checkboxes to rebuild the queue." & vbCrLf & vbCrLf & "{items} inserts matching items per character. Buying matches SELL posts; selling matches BUY posts. Character names are case-sensitive. Edit the queue, then Start sends checked rows once in order. Stop / F12 cancels. After successful completion the previous combat mode resumes (Full if none was running)." & vbCrLf & vbCrLf & "Chat price scanning uses Regions > chat_rect every 3 seconds. Offers are cheapest first; review OCR quotes. Clear offers removes collected prices.", "Trade Help")
+        AddHandler help.Click, Sub() SilentMessageBox.Show(Me, "Paste character names and messages, or use Browser capture with the local extension and your signed-in Discord web channel. Choose 1 to 10,000 posts in Browser capture, start the local connection and paste its setup into the extension. Capture pauses during analysis, sending, or while checked whispers await review. Review the imported count, then Analyze and review the whisper queue before Start. Discord author names are not verified game character names." & vbCrLf & vbCrLf & "Analyze uses GPT-5 nano with minimal reasoning and the encrypted API key configured in Quiz; the Quiz model setting does not affect Trade. Up to 50 complete posts or 8,000 characters are processed per batch, with up to four requests at once. Completed verified batches are reused during this app session when their exact posts and model are unchanged; cached batches make no API request. Larger imports still take longer. Progress shows processed posts and extracted listings. Sorting, item counts, filtering and queue creation run locally without API charges. There is no automatic fallback to a more expensive model. All batches must complete before results replace your previous reviewed queue; cancellation or errors keep it. Analyze does not send whispers. The app selects the three most common items for Buy/Sell locally, counting distinct characters. Search filters the detected list; checked hidden items stay selected. Select all matches checks visible results; clear the search first to select every item in this mode. Unselect all clears every checked item, including items hidden by the search, and empties the review queue. Repeated posts from one character become one whisper." & vbCrLf & vbCrLf & "{items} inserts matching items per character. Buying matches SELL posts; selling matches BUY posts. Character names are case-sensitive. Edit the queue, then Start whispers (foreground) pauses combat and sends checked rows once in order with the game focused. Switching apps stops the queue, including between messages. Stop / F12 cancels; close any unfinished chat draft before retrying unsent rows. After successful completion the previous combat mode resumes (Full if none was running) only while its original game window is still focused. Background combat keeps its configured keyboard method." & vbCrLf & vbCrLf & "Chat price scanning uses Regions > chat_rect every 3 seconds. Offers are cheapest first; review OCR quotes. Clear offers removes collected prices.", "Trade Help")
         Dim setupActions As New FlowLayoutPanel With {.Dock = DockStyle.Fill, .AutoSize = True}
         setupActions.Controls.AddRange({aiKey, parse, help})
         settings.Controls.Add(setupActions, 0, 3)
         settings.SetColumnSpan(setupActions, 2)
-        Dim privacy As New Label With {.Text = "Analyze sends pasted posts to OpenAI. Review the queue before Start. Optional: {items} inserts matching items; plain messages are sent as written.", .AutoSize = True, .Dock = DockStyle.Fill}
+        Dim privacy As New Label With {.Text = "AI: GPT-5 nano (lowest cost). Completed results are reused during this app session; sorting and filtering are local. Top 3 items start checked; Select all matches includes more. Review before Start.", .AutoSize = True, .Dock = DockStyle.Fill}
         settings.Controls.Add(privacy, 0, 4)
         settings.SetColumnSpan(privacy, 2)
         options.Controls.Add(settings, 2, 0)
@@ -98,13 +143,15 @@ Partial Public Class Form1
         body.Controls.Add(options)
         body.Controls.Add(BuildTradePriceTables())
         Dim actions As New FlowLayoutPanel With {.AutoSize = True, .Dock = DockStyle.Top}
-        _tradeStart = New Button With {.Text = "Start whispers", .AutoSize = True, .Height = 34}
+        _tradeStart = New Button With {.Text = "Start whispers (foreground)", .AutoSize = True, .Height = 34}
         AddHandler _tradeStart.Click, AddressOf StartTradeQueue
         Dim stopButton As New Button With {.Text = "Stop / F12", .AutoSize = True, .Height = 34}
         AddHandler stopButton.Click,
             Sub()
                 _tradeCancellation?.Cancel()
                 _tradeAnalysisCancellation?.Cancel()
+                StopTradeBrowserCapture()
+                StopTradeDiscordImport()
                 _tradePriceScan.Checked = False
             End Sub
         Dim save As New Button With {.Text = "Save settings", .AutoSize = True, .Height = 34}
@@ -134,6 +181,7 @@ Partial Public Class Form1
                 Else
                     _tradeChosenItems.Remove(key)
                 End If
+                UpdateTradeSelectionButtons()
                 If Not _tradeLoading AndAlso _tradeDetectedItems.IsHandleCreated Then _tradeDetectedItems.BeginInvoke(New Action(Sub() RebuildAiTradeQueue()))
             End Sub
         AddHandler _tradeItemSearch.TextChanged,
@@ -145,6 +193,13 @@ Partial Public Class Form1
         AddHandler _tradeSource.TextChanged,
             Sub()
                 If _tradeLoading Then Return
+                If Not _tradeCaptureApplying AndAlso _tradeCaptureServer IsNot Nothing Then StopTradeBrowserCapture()
+                _tradeAnalysisGeneration += 1
+                _tradeAnalysisCancellation?.Cancel()
+                _tradeAnalysisPostCount = 0
+                _tradeAnalysisSourcePosts = Nothing
+                _tradeAnalysisSourceText = Nothing
+                ClearTradeDiscordCache()
                 _tradeExtracted.Clear()
                 PopulateTradeItems(Nothing)
                 _tradeGrid.Rows.Clear()
@@ -162,6 +217,8 @@ Partial Public Class Form1
                 If (GetAsyncKeyState(CInt(Keys.F12)) And &H8000S) <> 0 Then
                     _tradeCancellation?.Cancel()
                     _tradeAnalysisCancellation?.Cancel()
+                    StopTradeBrowserCapture()
+                    StopTradeDiscordImport()
                     _tradePriceScan.Checked = False
                 End If
             End Sub
@@ -180,7 +237,10 @@ Partial Public Class Form1
             .ItemSearch = _tradeItemSearch.Text,
             .ExtractedListings = _tradeExtracted.ToList(), .SelectedItemKeys = SelectedTradeItems(),
             .Buying = _tradeMode.SelectedIndex = 0, .MessageTemplate = _tradeTemplate.Text, .DelaySeconds = CInt(_tradeDelay.Value),
-            .Recipients = ReadTradeRows(), .PriceOffers = _tradeOffers.ToList()}
+            .Recipients = ReadTradeRows(), .PriceOffers = _tradeOffers.ToList(),
+            .DiscordChannelUrl = _tradeDiscordChannelUrl, .EncryptedDiscordBotToken = _tradeDiscordEncryptedBotToken,
+            .DiscordAutoImport = _tradeDiscordAuto IsNot Nothing AndAlso _tradeDiscordAuto.Checked,
+            .DiscordImportMessageCount = _tradeDiscordImportMessageCount}
     End Function
 
     Private Function ReadTradeRows() As List(Of TradeRecipient)
@@ -197,12 +257,20 @@ Partial Public Class Form1
     Private Sub ApplyPersistedTradeState(settings As TradeSettings)
         If _tradeSource Is Nothing Then Return
         _tradeCancellation?.Cancel()
+        _tradeAnalysisCancellation?.Cancel()
+        _tradeAnalysisGeneration += 1
+        _tradeAnalysisPostCount = 0
+        _tradeAnalysisSourcePosts = Nothing
+        _tradeAnalysisSourceText = Nothing
+        StopTradeBrowserCapture()
+        StopTradeDiscordImport(False)
         _tradePriceScan.Checked = False
         _tradePriceGeneration += 1
         _tradeLoading = True
         Try
             settings = If(settings, New TradeSettings())
-            _tradeSource.Text = settings.DiscordText
+            ApplyTradeDiscordSettings(settings)
+            _tradeSource.Text = NormalizeTradeSourceText(settings.DiscordText)
             _tradeItemSearch.Text = If(settings.ItemSearch, "")
             _tradeMode.SelectedIndex = If(settings.Buying, 0, 1)
             _tradeTemplate.Text = settings.MessageTemplate
@@ -215,7 +283,12 @@ Partial Public Class Form1
         Finally
             _tradeLoading = False
         End Try
+        UpdateTradeDiscordPolling()
     End Sub
+
+    Private Shared Function NormalizeTradeSourceText(value As String) As String
+        Return If(value, "").Replace(vbCrLf, vbLf).Replace(vbCr, vbLf).Replace(vbLf, vbCrLf)
+    End Function
 
     Private Sub SetTradeRows(rows As IEnumerable(Of TradeRecipient))
         _tradeGrid.Rows.Clear()
@@ -240,19 +313,54 @@ Partial Public Class Form1
             For Each item In ranked.Where(Function(entry) query.Length = 0 OrElse entry.ItemKey.Contains(query, StringComparison.OrdinalIgnoreCase))
                 _tradeDetectedItems.Items.Add(item, _tradeChosenItems.Contains(item.ItemKey))
             Next
+            UpdateTradeSelectionButtons()
         Finally
             _tradeLoading = wasLoading
         End Try
     End Sub
 
+    Private Sub UpdateTradeSelectionButtons()
+        _tradeSelectAllMatches.Enabled = _tradeDetectedItems.Items.Count > 0
+        _tradeUnselectAll.Enabled = _tradeChosenItems IsNot Nothing AndAlso _tradeChosenItems.Count > 0
+    End Sub
+
+    Private Sub SelectAllMatchingTradeItems()
+        If _tradeLoading OrElse _tradeRunning OrElse _tradeAnalyzing OrElse _tradeDetectedItems.Items.Count = 0 Then Return
+        Dim changed As Boolean
+        _tradeLoading = True
+        Try
+            For i As Integer = 0 To _tradeDetectedItems.Items.Count - 1
+                If _tradeChosenItems.Add(DirectCast(_tradeDetectedItems.Items(i), TradeItemFrequency).ItemKey) Then changed = True
+                _tradeDetectedItems.SetItemChecked(i, True)
+            Next
+        Finally
+            _tradeLoading = False
+        End Try
+        UpdateTradeSelectionButtons()
+        If changed Then RebuildAiTradeQueue()
+    End Sub
+
+    Private Sub UnselectAllTradeItems()
+        If _tradeLoading OrElse _tradeRunning OrElse _tradeAnalyzing OrElse _tradeChosenItems Is Nothing OrElse _tradeChosenItems.Count = 0 Then Return
+        _tradeLoading = True
+        Try
+            _tradeChosenItems.Clear()
+            For i As Integer = 0 To _tradeDetectedItems.Items.Count - 1
+                _tradeDetectedItems.SetItemChecked(i, False)
+            Next
+        Finally
+            _tradeLoading = False
+        End Try
+        UpdateTradeSelectionButtons()
+        RebuildAiTradeQueue()
+    End Sub
+
     Private Sub RebuildAiTradeQueue()
-        If _tradeLoading OrElse _tradeRunning Then Return
+        If _tradeLoading OrElse _tradeRunning OrElse _tradeAnalyzing Then Return
         Try
             Dim rows = TradeAiService.BuildQueue(_tradeExtracted, _tradeMode.SelectedIndex = 0, SelectedTradeItems(), _tradeTemplate.Text)
             SetTradeRows(rows)
-            _tradeStatus.Text = If(rows.Count > 0, $"AI found {TradeAiService.RankItems(_tradeExtracted, _tradeMode.SelectedIndex = 0).Count} item(s). {SelectedTradeItems().Count} selected; {rows.Count} character(s) ready. Review the queue, then Start.",
-                If(_tradeExtracted.Count = 0, "AI found no clear buy/sell listings in these posts. Include the original authors and listing text.",
-                    "No recipients for this selection. Check an item above or switch Buy/Sell; only the opposite-side listings are contacted."))
+            _tradeStatus.Text = TradeAnalysisQueueStatus(rows.Count)
             TradeInputChanged(Me, EventArgs.Empty)
         Catch ex As Exception
             _tradeGrid.Rows.Clear()
@@ -260,8 +368,78 @@ Partial Public Class Form1
         End Try
     End Sub
 
+    Private Function TradeAnalysisQueueStatus(recipientCount As Integer) As String
+        Dim mode = If(_tradeMode.SelectedIndex = 0, "seller", "buyer")
+        Dim rankedCount = TradeAiService.RankItems(_tradeExtracted, _tradeMode.SelectedIndex = 0).Count
+        Dim prefix = If(_tradeAnalysisPostCount > 0, $"Analyzed {_tradeAnalysisPostCount:N0} posts. ", "")
+        prefix &= $"Extracted {_tradeExtracted.Count:N0} buy/sell listings from {_tradeExtracted.Select(Function(entry) entry.CharacterName).Distinct(StringComparer.Ordinal).Count():N0} character(s). "
+        Return prefix & $"{rankedCount:N0} {mode} item(s); {SelectedTradeItems().Count:N0} checked; {recipientCount:N0} character(s) ready. " &
+            If(_tradeExtracted.Count = 0, "No clear listings found; include original names and messages.",
+                "Top 3 start checked. Clear the filter and Select all matches for all items in this mode. Review before Start.")
+    End Function
+
+    Private Sub BeginTradeAnalysis(cancellation As CancellationTokenSource)
+        StopTradeDiscordImport(False)
+        _tradeAnalysisGeneration += 1
+        _tradeAnalysisCancellation = cancellation
+        _tradeAnalyzing = True
+        UpdateTradeBrowserCaptureState()
+        _tradeOptions.Enabled = False
+        _tradeGrid.Enabled = False
+        _tradeStart.Enabled = False
+        _tradeStopTimer.Start()
+        _tradeStatus.Text = "GPT-5 nano is reading all posts, with up to four batches at once. Completed results are reused during this app session. Stop / F12 cancels; your existing review queue is kept until completion."
+    End Sub
+
+    Private Function IsCurrentTradeAnalysis(cancellation As CancellationTokenSource, sourceText As String, generation As Integer,
+                                            Optional allowCancelled As Boolean = False) As Boolean
+        Return Not IsDisposed AndAlso Not Disposing AndAlso Not _tradeLoading AndAlso _tradeAnalyzing AndAlso
+            Object.ReferenceEquals(_tradeAnalysisCancellation, cancellation) AndAlso _tradeAnalysisGeneration = generation AndAlso
+            String.Equals(_tradeSource.Text, sourceText, StringComparison.Ordinal) AndAlso (allowCancelled OrElse Not cancellation.IsCancellationRequested)
+    End Function
+
+    Private Sub ReportTradeAnalysisProgress(progress As TradeAnalysisProgress, cancellation As CancellationTokenSource, sourceText As String, generation As Integer)
+        If progress Is Nothing OrElse Not IsCurrentTradeAnalysis(cancellation, sourceText, generation) Then Return
+        _tradeStatus.Text = $"GPT-5 nano: batch {progress.CompletedBatches:N0}/{progress.TotalBatches:N0}; {progress.ProcessedPosts:N0}/{progress.TotalPosts:N0} posts processed; {progress.ListingCount:N0} buy/sell listings. Stop / F12 cancels. Existing review queue is kept until all batches complete."
+    End Sub
+
+    Private Function ApplyCompletedTradeAnalysis(listings As List(Of TradeListing), processedPosts As Integer, cancellation As CancellationTokenSource,
+                                                 sourceText As String, generation As Integer) As Boolean
+        If Not IsCurrentTradeAnalysis(cancellation, sourceText, generation) Then Return False
+        Dim chosen = TradeAiService.RankItems(listings, _tradeMode.SelectedIndex = 0).Take(3).Select(Function(item) item.ItemKey).ToList()
+        ' Build the complete queue before replacing any reviewed state (e.g. a bad template can fail).
+        Dim rows = TradeAiService.BuildQueue(listings, _tradeMode.SelectedIndex = 0, chosen, _tradeTemplate.Text)
+        _tradeExtracted = listings
+        _tradeAnalysisPostCount = processedPosts
+        PopulateTradeItems(chosen)
+        SetTradeRows(rows)
+        _tradeStatus.Text = TradeAnalysisQueueStatus(rows.Count)
+        Return True
+    End Function
+
+    Private Sub EndTradeAnalysis(cancellation As CancellationTokenSource)
+        If Not Object.ReferenceEquals(_tradeAnalysisCancellation, cancellation) Then Return
+        _tradeAnalyzing = False
+        _tradeAnalysisCancellation = Nothing
+        If Not IsDisposed AndAlso Not Disposing Then
+            _tradeStopTimer.Stop()
+            _tradeOptions.Enabled = True
+            _tradeGrid.Enabled = True
+            _tradeStart.Enabled = True
+            Dim analysisStatus = _tradeStatus.Text
+            UpdateTradeDiscordPolling()
+            UpdateTradeBrowserCaptureState()
+            _tradeStatus.Text = analysisStatus
+            SavePersistedListState(False)
+        End If
+    End Sub
+
     Private Async Sub ParseTradeQueue(sender As Object, e As EventArgs)
         If _tradeRunning OrElse _tradeAnalyzing Then Return
+        If _tradeSource.TextLength > TradeAiService.MaximumAnalysisCharacters Then
+            _tradeStatus.Text = "Posts exceed the analysis text limit. Existing posts and reviewed whispers are kept. Reduce the source before Analyze."
+            Return
+        End If
         If String.IsNullOrWhiteSpace(_quizApiKey) Then
             ConfigureQuizApiKey()
             If String.IsNullOrWhiteSpace(_quizApiKey) Then
@@ -270,47 +448,94 @@ Partial Public Class Form1
             End If
         End If
         Dim cancellation As New CancellationTokenSource()
-        _tradeAnalysisCancellation = cancellation
-        _tradeAnalyzing = True
-        _tradeOptions.Enabled = False
-        _tradeGrid.Enabled = False
-        _tradeStart.Enabled = False
-        _tradeGrid.Rows.Clear()
-        _tradeExtracted.Clear()
-        PopulateTradeItems(Nothing)
-        _tradeStopTimer.Start()
-        _tradeStatus.Text = "AI is reading authors, Buy/Sell intent and item names from all posts... Stop or F12 cancels."
+        Dim sourceText = _tradeSource.Text
+        Dim sourcePosts = If(String.Equals(sourceText, _tradeAnalysisSourceText, StringComparison.Ordinal), _tradeAnalysisSourcePosts?.ToList(), Nothing)
+        Dim model = TradeAiService.DefaultAnalysisModel
+        Dim apiKey = _quizApiKey
+        BeginTradeAnalysis(cancellation)
+        Dim generation = _tradeAnalysisGeneration
+        Dim progress As New TradeAnalysisUiProgress(New Progress(Of TradeAnalysisProgress)(
+            Sub(value) ReportTradeAnalysisProgress(value, cancellation, sourceText, generation)))
         Try
-            Dim model = If(cboQuizModel?.SelectedItem?.ToString(), DefaultQuizModel)
-            Dim listings = Await TradeAiService.AnalyzeAsync(_tradeSource.Text, _quizApiKey, model, cancellation.Token)
+            Dim listings = Await Task.Run(Function() TradeAiService.AnalyzeAsync(sourceText, apiKey, model, cancellation.Token,
+                progress:=progress, sourcePosts:=sourcePosts), cancellation.Token)
             cancellation.Token.ThrowIfCancellationRequested()
-            If IsDisposed OrElse Disposing Then Return
-            _tradeExtracted = listings
-            PopulateTradeItems(Nothing)
-            RebuildAiTradeQueue()
+            ApplyCompletedTradeAnalysis(listings, progress.TotalPosts, cancellation, sourceText, generation)
         Catch ex As OperationCanceledException
-            If Not IsDisposed Then _tradeStatus.Text = "AI analysis cancelled. No whispers were sent."
+            If IsCurrentTradeAnalysis(cancellation, sourceText, generation, True) Then _tradeStatus.Text = "AI analysis cancelled. Your previous analyzed items and reviewed whispers are kept."
         Catch ex As Exception
-            If Not IsDisposed Then _tradeStatus.Text = "AI analysis failed: " & ex.Message
+            If IsCurrentTradeAnalysis(cancellation, sourceText, generation, True) Then _tradeStatus.Text = "AI analysis failed; previous analyzed items and reviewed whispers are kept. " & ex.Message
         Finally
-            _tradeAnalyzing = False
-            _tradeAnalysisCancellation = Nothing
+            EndTradeAnalysis(cancellation)
             cancellation.Dispose()
-            If Not IsDisposed AndAlso Not Disposing Then
-                _tradeStopTimer.Stop()
-                _tradeOptions.Enabled = True
-                _tradeGrid.Enabled = True
-                _tradeStart.Enabled = True
-                SavePersistedListState(False)
-            End If
         End Try
     End Sub
 
+    Private Function GetTradeStartBlockReason() As String
+        If _tradeRunning Then Return "Whispers are already running. Stop / F12 cancels the queue."
+        If _tradeAnalyzing Then Return "Wait for AI analysis to finish before starting whispers."
+        If Not _quizUnlocked Then Return "Trade is locked. Unlock the extra tabs before starting whispers."
+        If _workflowModes IsNot Nothing AndAlso _workflowModes.Current <> OperatingMode.Idle Then Return "Stop the active " & _workflowModes.Current.ToString() & " workflow before starting whispers."
+        Return ""
+    End Function
+
+    Private Async Function WaitForTradeInputWorkersAsync(cancellation As CancellationToken, initialWorkers As IEnumerable(Of Task),
+                                                        Optional timeoutMs As Integer = 10000) As Task
+        Dim workers As New HashSet(Of Task)(If(initialWorkers, Enumerable.Empty(Of Task)()).Where(Function(worker) worker IsNot Nothing))
+        Dim started = Environment.TickCount64
+        Do
+            cancellation.ThrowIfCancellationRequested()
+            If (GetAsyncKeyState(CInt(Keys.F12)) And &H8000S) <> 0 Then Throw New OperationCanceledException()
+            For Each engine In {_fullEngine, _liteEngine}
+                If engine Is Nothing Then Continue For
+                For Each worker In engine.GetInputWorkerTasks()
+                    workers.Add(worker)
+                Next
+            Next
+            If workers.All(Function(worker) worker.IsCompleted) Then Return
+            If Environment.TickCount64 - started >= timeoutMs Then Throw New InvalidOperationException("Combat input is still stopping. No whisper was started; wait and try again.")
+            Await Task.Delay(25, cancellation)
+        Loop
+    End Function
+
+    Private Shared Async Function WaitForTradeForegroundAsync(hwnd As IntPtr, expectedPid As UInteger, delayMs As Integer, cancellation As CancellationToken,
+                                                              Optional foregroundWindow As Func(Of IntPtr) = Nothing) As Task
+        If foregroundWindow Is Nothing Then foregroundWindow = Function() NativeMethods.GetForegroundWindow()
+        Dim started = Environment.TickCount64
+        Do
+            cancellation.ThrowIfCancellationRequested()
+            If (GetAsyncKeyState(CInt(Keys.F12)) And &H8000S) <> 0 Then Throw New OperationCanceledException()
+            Dim pid As UInteger
+            If NativeMethods.GetWindowThreadProcessId(hwnd, pid) = 0 OrElse pid <> expectedPid OrElse NativeMethods.IsIconic(hwnd) Then Throw New InvalidOperationException("The selected game window closed, changed, or was minimized.")
+            If foregroundWindow() <> hwnd Then Throw New InvalidOperationException("The game lost focus. Whispers stopped; close any unfinished chat draft before retrying the unsent rows.")
+            Dim remaining = CLng(delayMs) - (Environment.TickCount64 - started)
+            If remaining <= 0 Then Return
+            Await Task.Delay(CInt(Math.Min(50L, remaining)), cancellation)
+        Loop
+    End Function
+
+    Private Function ApplyTradeWhisperSubmission(characterName As String, generation As Integer, cancellation As CancellationTokenSource,
+                                                 Optional submittedFailure As Boolean = False) As Boolean
+        If IsDisposed OrElse Disposing OrElse _tradeLoading OrElse Not _tradeRunning OrElse
+            generation <> _tradeAnalysisGeneration OrElse Not Object.ReferenceEquals(_tradeCancellation, cancellation) Then Return False
+        For Each gridRow As DataGridViewRow In _tradeGrid.Rows
+            If Not gridRow.IsNewRow AndAlso String.Equals(Convert.ToString(gridRow.Cells("Character").Value).Trim(), characterName, StringComparison.Ordinal) Then
+                gridRow.Cells("Status").Value = If(submittedFailure, "Sent; input stopped", "Sent to game")
+                gridRow.Cells("Send").Value = False
+            End If
+        Next
+        Return True
+    End Function
+
     Private Async Sub StartTradeQueue(sender As Object, e As EventArgs)
-        If RejectForegroundWorkflow("Trade") Then Return
-        If _tradeRunning OrElse _tradeAnalyzing OrElse Not _quizUnlocked Then Return
+        Dim blocked = GetTradeStartBlockReason()
+        If blocked.Length > 0 Then
+            _tradeStatus.Text = blocked
+            Return
+        End If
         Dim cancellation As CancellationTokenSource = Nothing
         Dim completed As Boolean = False
+        Dim generation = _tradeAnalysisGeneration
         Dim resumeEdition As BotEdition = BotEdition.Full
         Dim resumeWindow As IntPtr = IntPtr.Zero
         Dim resumePid As UInteger
@@ -332,47 +557,63 @@ Partial Public Class Form1
                 resumeWindow = resumeSelected.MainWindowHandle
                 NativeMethods.GetWindowThreadProcessId(resumeWindow, resumePid)
             End If
-            If _fullEngine.IsRunning() Then StopEdition(BotEdition.Full, False, "starting Trade")
-            If _liteEngine.IsRunning() Then StopEdition(BotEdition.Lite, False, "starting Trade")
             Dim hwnd = selected.MainWindowHandle
             Dim pid As UInteger
-            If NativeMethods.GetWindowThreadProcessId(hwnd, pid) = 0 Then Throw New InvalidOperationException("The selected game window is no longer available.")
+            If NativeMethods.GetWindowThreadProcessId(hwnd, pid) = 0 OrElse selected.ProcessId <= 0 OrElse pid <> CUInt(selected.ProcessId) Then
+                Throw New InvalidOperationException("The selected game window is no longer available or its process changed. Refresh the Full window list and select the game again.")
+            End If
             SavePersistedListState(True)
+            If Not _workflowModes.Transition(OperatingMode.Trade, "foreground whisper queue started") Then Throw New InvalidOperationException("Another workflow is active.")
             cancellation = New CancellationTokenSource()
+            StopTradeDiscordImport(False)
             _tradeCancellation = cancellation
-            If Not _workflowModes.Transition(OperatingMode.Trade, "whisper queue started") Then Throw New InvalidOperationException("Another workflow is active.")
             _tradeRunning = True
+            UpdateTradeBrowserCaptureState()
             _tradeStart.Enabled = False
             _tradeOptions.Enabled = False
             _tradeGrid.Enabled = False
             _tradeStopTimer.Start()
             UpdateMainTabIndicators()
+            _tradeStatus.Text = "Stopping combat input before foreground whispers. Keep the game focused while typing; Stop / F12 cancels."
+            ' Retain tasks before Stop clears detached scanner references.
+            Dim inputWorkers = _fullEngine.GetInputWorkerTasks().Concat(_liteEngine.GetInputWorkerTasks()).ToArray()
+            If _fullEngine.IsRunning() Then StopEdition(BotEdition.Full, False, "starting Trade")
+            If _liteEngine.IsRunning() Then StopEdition(BotEdition.Lite, False, "starting Trade")
+            Await WaitForTradeInputWorkersAsync(cancellation.Token, inputWorkers)
             Dim delay = CInt(_tradeDelay.Value) * 1000
             For i = 0 To queue.Count - 1
                 cancellation.Token.ThrowIfCancellationRequested()
+                If generation <> _tradeAnalysisGeneration Then Throw New OperationCanceledException()
+                If i > 0 Then Await WaitForTradeForegroundAsync(hwnd, pid, 0, cancellation.Token)
                 Dim recipient = queue(i)
-                _tradeStatus.Text = $"Typing {i + 1}/{queue.Count}: {recipient.CharacterName}. F12 or Stop cancels."
-                Dim sent = Await Task.Run(Function() TradeService.SendWhisper(hwnd, pid, recipient.CharacterName, recipient.Message, cancellation.Token), cancellation.Token)
+                _tradeStatus.Text = If(i = 0,
+                    $"Starting {recipient.CharacterName}: click the selected Full game within 10 seconds with chat closed. F12 or Stop cancels.",
+                    $"Typing {i + 1}/{queue.Count}: {recipient.CharacterName}. F12 or Stop cancels.")
+                Dim activateTarget = i = 0
+                Dim sent As Boolean
+                Dim submittedFailure As TradeWhisperSubmittedException = Nothing
+                Try
+                    sent = Await Task.Run(Function() TradeService.SendForegroundWhisper(hwnd, pid, recipient.CharacterName, recipient.Message, cancellation.Token, activateTarget:=activateTarget), cancellation.Token)
+                Catch ex As TradeWhisperSubmittedException
+                    sent = True
+                    submittedFailure = ex
+                End Try
                 If Not sent Then Throw New InvalidOperationException("Could not send to " & recipient.CharacterName & ". Queue stopped; verify the game chat before restarting.")
                 If IsDisposed OrElse Disposing Then Return
-                For Each gridRow As DataGridViewRow In _tradeGrid.Rows
-                    If Not gridRow.IsNewRow AndAlso String.Equals(Convert.ToString(gridRow.Cells("Character").Value).Trim(), recipient.CharacterName, StringComparison.Ordinal) Then
-                        gridRow.Cells("Status").Value = "Sent to game"
-                        gridRow.Cells("Send").Value = False
-                    End If
-                Next
+                If Not ApplyTradeWhisperSubmission(recipient.CharacterName, generation, cancellation, submittedFailure IsNot Nothing) Then Throw New OperationCanceledException()
+                If submittedFailure IsNot Nothing Then Throw submittedFailure
                 _tradeStatus.Text = $"Sent to game: {recipient.CharacterName} ({i + 1}/{queue.Count})."
-                If i < queue.Count - 1 Then Await Task.Delay(delay, cancellation.Token)
+                If i < queue.Count - 1 Then Await WaitForTradeForegroundAsync(hwnd, pid, delay, cancellation.Token)
             Next
             cancellation.Token.ThrowIfCancellationRequested()
             If (GetAsyncKeyState(CInt(Keys.F12)) And &H8000S) <> 0 Then Throw New OperationCanceledException()
             completed = True
             _tradeStatus.Text = $"Completed: {queue.Count} whisper(s) sent to the game. Sent rows are unchecked."
         Catch ex As OperationCanceledException
-            If Not IsDisposed Then _tradeStatus.Text = "Stopped. Completed rows stay unchecked; review remaining rows before restarting."
+            If Not IsDisposed AndAlso generation = _tradeAnalysisGeneration Then _tradeStatus.Text = "Stopped. Completed rows stay unchecked; close any unfinished game chat draft and review remaining rows before restarting."
         Catch ex As Exception
-            If Not IsDisposed Then
-                _tradeStatus.Text = "Trade stopped: " & ex.Message
+            If Not IsDisposed AndAlso generation = _tradeAnalysisGeneration Then
+                _tradeStatus.Text = "Trade stopped: " & ex.Message & " Review game chat before retrying unsent rows."
                 SilentMessageBox.Show(Me, ex.Message, "Trade")
             End If
         Finally
@@ -387,6 +628,10 @@ Partial Public Class Form1
                     _tradeStart.Enabled = True
                     _tradeOptions.Enabled = True
                     _tradeGrid.Enabled = True
+                    Dim tradeStatus = _tradeStatus.Text
+                    UpdateTradeDiscordPolling()
+                    UpdateTradeBrowserCaptureState()
+                    _tradeStatus.Text = tradeStatus
                     UpdateMainTabIndicators()
                     SavePersistedListState(False)
                 End If
@@ -400,6 +645,7 @@ Partial Public Class Form1
                     NativeMethods.GetWindowThreadProcessId(resumeWindow, currentPid) = 0 OrElse currentPid <> resumePid OrElse NativeMethods.IsIconic(resumeWindow) Then
                     Throw New InvalidOperationException("The selected game window changed, closed, or was minimized.")
                 End If
+                If NativeMethods.GetForegroundWindow() <> resumeWindow Then Throw New InvalidOperationException("The game lost focus after the last whisper. Combat remains stopped.")
                 StartEdition(resumeEdition, False)
                 _tradeStatus.Text &= If(IsEditionRunning(resumeEdition), $" {resumeEdition} bot resumed automatically.", " Bot could not restart; check Diagnostics.")
             Catch ex As Exception

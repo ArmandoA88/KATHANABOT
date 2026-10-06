@@ -6,7 +6,7 @@ Imports System.Diagnostics
 
 Partial Public Class Form1
     Private Const QuizUnlockSequence As String = "126974"
-    Private Const DefaultQuizModel As String = "gpt-5.4-mini"
+    Private Const DefaultQuizModel As String = QuizOpenAiClient.DefaultModel
     Private ReadOnly _quizScanTimer As New System.Windows.Forms.Timer()
     Private _quizCancellation As CancellationTokenSource
     Private _quizSolveInProgress As Boolean
@@ -37,6 +37,20 @@ Partial Public Class Form1
     Private picQuizPreview As PictureBox
     Private dgvQuizAnswerDatabase As DataGridView
     Private lblQuizDatabaseCount As Label
+
+    Private NotInheritable Class QuizModelChoice
+        Public ReadOnly Property ApiId As String
+        Public ReadOnly Property DisplayLabel As String
+
+        Public Sub New(apiId As String, displayLabel As String)
+            Me.ApiId = apiId
+            Me.DisplayLabel = displayLabel
+        End Sub
+
+        Public Overrides Function ToString() As String
+            Return DisplayLabel
+        End Function
+    End Class
 
     Private Class PersistedQuizAnswer
         Public Property SolvedAtLocal As DateTime
@@ -90,7 +104,7 @@ Partial Public Class Form1
         body.Controls.Add(BuildQuizNoticeControls())
         body.Controls.Add(description)
 
-        Dim settings As New TableLayoutPanel With {.Dock = DockStyle.Top, .Height = 120, .ColumnCount = 6, .RowCount = 2, .Padding = New Padding(14), .BackColor = ThemeCard, .Margin = New Padding(0, 8, 0, 12)}
+        Dim settings As New TableLayoutPanel With {.Dock = DockStyle.Top, .Height = 164, .ColumnCount = 6, .RowCount = 3, .Padding = New Padding(14), .BackColor = ThemeCard, .Margin = New Padding(0, 8, 0, 12)}
         settings.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 210))
         settings.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 115))
         settings.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 110))
@@ -99,19 +113,21 @@ Partial Public Class Form1
         settings.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
         settings.RowStyles.Add(New RowStyle(SizeType.Absolute, 44))
         settings.RowStyles.Add(New RowStyle(SizeType.Absolute, 44))
+        settings.RowStyles.Add(New RowStyle(SizeType.Absolute, 44))
 
         chkQuizSolverEnabled = New CheckBox With {.Text = "Quiz Solver", .Dock = DockStyle.Fill, .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold), .ForeColor = ThemeTextPrimary}
         nudQuizScanMs = New NumericUpDown With {.Minimum = 100D, .Maximum = 10000D, .Increment = 50D, .Value = 350D, .Dock = DockStyle.Fill}
-        cboQuizModel = New ComboBox With {.DropDownStyle = ComboBoxStyle.DropDownList, .Dock = DockStyle.Fill}
-        cboQuizModel.Items.AddRange({DefaultQuizModel, "gpt-5-mini"})
-        cboQuizModel.SelectedIndex = 0
+        cboQuizModel = BuildQuizModelSelector()
         settings.Controls.Add(chkQuizSolverEnabled, 0, 0)
         settings.Controls.Add(New Label With {.Text = "Scan every", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleRight, .ForeColor = ThemeTextSecondary}, 1, 0)
         settings.Controls.Add(nudQuizScanMs, 2, 0)
         settings.Controls.Add(New Label With {.Text = "milliseconds", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = ThemeTextSecondary}, 3, 0)
         settings.Controls.Add(New Label With {.Text = "Model", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleRight, .ForeColor = ThemeTextSecondary}, 0, 1)
         settings.Controls.Add(cboQuizModel, 1, 1)
-        settings.SetColumnSpan(cboQuizModel, 2)
+        settings.SetColumnSpan(cboQuizModel, 3)
+        Dim modelLegend As New Label With {.Name = "QuizModelLegend", .Text = "Luna: Fast / Cheap. Astra: Ultrafast / Expensive. Web search charges are additional.", .Dock = DockStyle.Fill, .TextAlign = ContentAlignment.MiddleLeft, .ForeColor = ThemeTextSecondary}
+        settings.Controls.Add(modelLegend, 0, 2)
+        settings.SetColumnSpan(modelLegend, 6)
         body.Controls.Add(settings)
 
         Dim actions As New FlowLayoutPanel With {.Dock = DockStyle.Top, .AutoSize = True, .FlowDirection = FlowDirection.LeftToRight, .WrapContents = True, .BackColor = ThemeBg, .Margin = New Padding(0, 0, 0, 8)}
@@ -194,6 +210,29 @@ Partial Public Class Form1
         _quizScanTimer.Interval = CInt(nudQuizScanMs.Value)
         Return tab
     End Function
+
+    Private Function BuildQuizModelSelector() As ComboBox
+        Dim selector As New ComboBox With {.DropDownStyle = ComboBoxStyle.DropDownList, .Dock = DockStyle.Fill}
+        selector.Items.AddRange({New QuizModelChoice(DefaultQuizModel, "GPT-6 Luna — Fast / Cheap"), New QuizModelChoice(QuizOpenAiClient.UltrafastModel, "GPT-6 Astra — Ultrafast / Expensive")})
+        selector.SelectedIndex = 0
+        Return selector
+    End Function
+
+    Private Function GetSelectedQuizModel() As String
+        Return QuizOpenAiClient.NormalizeModel(TryCast(cboQuizModel?.SelectedItem, QuizModelChoice)?.ApiId)
+    End Function
+
+    Private Sub ApplyQuizModelSelection(model As String)
+        If cboQuizModel Is Nothing Then Return
+        Dim wanted = QuizOpenAiClient.NormalizeModel(model)
+        For index As Integer = 0 To cboQuizModel.Items.Count - 1
+            If TryCast(cboQuizModel.Items(index), QuizModelChoice)?.ApiId = wanted Then
+                cboQuizModel.SelectedIndex = index
+                Return
+            End If
+        Next
+        cboQuizModel.SelectedIndex = 0
+    End Sub
 
     Private Async Sub QuizScanTimerTick(sender As Object, e As EventArgs)
         ' Notices remain independent of answer solving, API waits, calibration,
@@ -380,7 +419,7 @@ Partial Public Class Form1
     End Function
 
     Private Async Function RunQuizSolverOnceAsync(manual As Boolean) As Task
-        If WindowsInput.BackgroundOnly Then
+        If WindowsInput.BackgroundOnly OrElse WindowsInput.KeyboardOnlyMode Then
             If manual Then RejectForegroundWorkflow("Quiz solver")
             Return
         End If
@@ -447,7 +486,7 @@ Partial Public Class Form1
                     SetQuizStatus($"Reading {buttons.Count} choices; checking the local Kathana index first...", ThemeAccent)
                     lblQuizEvidence.Links.Clear()
                     lblQuizEvidence.Text = "Reading locally; the API is used only if the bundled index cannot answer confidently."
-                    Dim model = If(cboQuizModel.SelectedItem?.ToString(), DefaultQuizModel)
+                    Dim model = GetSelectedQuizModel()
                     Dim answer As QuizSolveResult = Nothing
                     Dim localAttempt = Await QuizLocalKnowledge.SolveAsync(quizImage, relativeAnswers, buttons, cancellationToken)
                     localTiming = localAttempt.Timing
@@ -609,6 +648,7 @@ Partial Public Class Form1
     End Function
 
     Private Shared Function PerformQuizClickBurst(hwnd As IntPtr, screenPoint As NativeMethods.POINT) As Boolean
+        If WindowsInput.KeyboardOnlyMode Then Return False
         SyncLock WindowsInput.SequenceLock
         WindowsInput.BindTarget(hwnd)
         If WindowsInput.BackgroundOnly Then Return False
@@ -628,7 +668,7 @@ Partial Public Class Form1
             Next
             Return True
         Finally
-            If hadCursor Then NativeMethods.MoveCursorInput(previous.X, previous.Y)
+            If hadCursor AndAlso Not WindowsInput.UsesTargetedInput Then NativeMethods.MoveCursorInput(previous.X, previous.Y)
         End Try
         End SyncLock
     End Function
@@ -803,11 +843,7 @@ Partial Public Class Form1
                 _quizAnswerDatabase.AddRange(savedAnswers.Where(Function(entry) entry IsNot Nothing).Take(2000).Select(Function(entry) CloneQuizAnswer(entry)))
             End If
             If nudQuizScanMs IsNot Nothing Then nudQuizScanMs.Value = Math.Max(nudQuizScanMs.Minimum, Math.Min(nudQuizScanMs.Maximum, state.ScanIntervalMs))
-            If cboQuizModel IsNot Nothing Then
-                Dim wanted = If(String.IsNullOrWhiteSpace(state.Model), DefaultQuizModel, state.Model.Trim())
-                Dim index = cboQuizModel.FindStringExact(wanted)
-                cboQuizModel.SelectedIndex = If(index >= 0, index, 0)
-            End If
+            ApplyQuizModelSelection(state.Model)
             If chkQuizSolverEnabled IsNot Nothing Then chkQuizSolverEnabled.Checked = False
             If chkQuizNoticesEnabled IsNot Nothing Then chkQuizNoticesEnabled.Checked = state.KeywordNoticesEnabled
         Finally
@@ -824,7 +860,7 @@ Partial Public Class Form1
             .KeywordNoticesEnabled = If(chkQuizNoticesEnabled IsNot Nothing, chkQuizNoticesEnabled.Checked, True),
             .EncryptedApiKey = If(_quizEncryptedApiKey, ""),
             .ScanIntervalMs = If(nudQuizScanMs IsNot Nothing, nudQuizScanMs.Value, 350D),
-            .Model = If(cboQuizModel IsNot Nothing AndAlso cboQuizModel.SelectedItem IsNot Nothing, cboQuizModel.SelectedItem.ToString(), DefaultQuizModel),
+            .Model = GetSelectedQuizModel(),
             .ReferenceClientWidth = _quizReferenceWidth,
             .ReferenceClientHeight = _quizReferenceHeight,
             .QuizRegion = CloneQuizRegion(_quizRegion),

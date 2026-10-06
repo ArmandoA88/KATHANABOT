@@ -42,6 +42,24 @@ Public NotInheritable Class BackgroundModePolicy
         Return disabled
     End Function
 
+    Public Shared Function ApplyKeyboardOnly(cfg As BotConfig) As List(Of String)
+        ' Apply only to fresh runtime configs; saved UI/profile preferences stay intact.
+        Dim disabled As New List(Of String)
+        For Each name In {"AutoLootForceForeground", "LootScannerEnabled", "LootPickupEnabled", "ArrowUnbundleEnabled",
+                          "AutoPartyInviteEnabled", "AutoPartyMessageEnabled", "PartyAskEnabled", "AskForResurrectEnabled",
+                          "LootRejectClickEnabled", "ResurrectAutoAcceptEnabled", "PartyInviteAutoAcceptEnabled",
+                          "PartyRessAutoAcceptEnabled", "FullSupportTankEnabled", "FullSupportIndividualEnabled",
+                          "FullSupportPartyResurrectEnabled"}
+            Dim prop = GetType(BotConfig).GetProperty(name)
+            If CBool(prop.GetValue(cfg)) Then
+                prop.SetValue(cfg, False)
+                disabled.Add(name)
+            End If
+        Next
+        ' Movement, chords, F pickup and keyboard support/self-target actions remain enabled.
+        Return disabled
+    End Function
+
     Public Shared Function RequiresForeground(key As String) As Boolean
         Dim value = If(key, "").Trim().ToUpperInvariant()
         Return value.Contains("+") OrElse {"W", "A", "S", "D", "ALT", "LALT", "RALT", "MENU", "LMENU", "RMENU", "CTRL", "CONTROL", "SHIFT"}.Contains(value)

@@ -13,6 +13,7 @@ Module Program
         Dim input As New ForegroundWindowsInput(backend)
         Check(Not input.MoveCursor(10, 10), "unbound cursor move must fail")
         Check(input.Activate(game), "target binds and verifies foreground")
+        Check(input.IsWindowForeground(game), "foreground eligibility does not require a prior binding")
         Check(input.Post(game, &H100UI, New IntPtr(65), New IntPtr(1 Or (&H1E << 16))), "key down")
         Check(backend.Events.Last().Keyboard AndAlso backend.Events.Last().Key = 65 AndAlso backend.Events.Last().Flags = 0, "SendInput keyboard payload")
         Check(input.Post(game, &H101UI, New IntPtr(65), IntPtr.Zero), "key release")
@@ -20,6 +21,7 @@ Module Program
         Check(input.Post(game, &H100UI, New IntPtr(&H25), New IntPtr(&H1000001)), "extended key down")
         Check(backend.Events.Last().Flags = 1, "extended key preserved")
         backend.Active = other
+        Check(Not input.IsWindowForeground(game), "foreground eligibility rejects focus loss")
         input.ReleaseUnfocused()
         Check(backend.Events.Last().Flags = 3, "focus loss releases only bot-owned extended key")
         Dim before = backend.Events.Count
@@ -92,6 +94,11 @@ Module Program
         input.Keyboard(81, 0, 0, UIntPtr.Zero)
         input.ReleaseAll()
         Check(backend.Events.Last().Key = 81 AndAlso backend.Events.Last().Flags = 2, "shutdown releases owned input")
+        input.Keyboard(82, 0, 0, UIntPtr.Zero)
+        input.ReleaseTarget(other)
+        Check(backend.Events.Last().Flags = 0, "stopping another target does not release this target's key")
+        input.ReleaseTarget(game)
+        Check(backend.Events.Last().Key = 82 AndAlso backend.Events.Last().Flags = 2, "target stop releases its held key")
         backend.FailReleaseKey = 49
         input.BindTarget(game)
         WindowsInput.Current = input
@@ -126,9 +133,70 @@ Module Program
         losingFocus.Activate(game)
         before = backend.Events.Count
         Check(Not losingFocus.Post(game, &H100UI, New IntPtr(65), IntPtr.Zero) AndAlso backend.Events.Count = before, "focus must be rechecked after randomized wait")
+        VerifyWindowsInputSelectorAndKeyTiming(game, other)
         AuditNativeImports()
-        Console.WriteLine($"PASS: {count} foreground SendInput routing, focus, releases, cursor, Unicode and native-import assertions.")
+        Console.WriteLine($"PASS: {count} foreground SendInput routing, selector eligibility, key hold timing, focus, releases, cursor, Unicode and native-import assertions.")
     End Sub
+
+    Private Sub VerifyWindowsInputSelectorAndKeyTiming(game As IntPtr, other As IntPtr)
+        Dim originalInput = WindowsInput.Current
+        Dim backend As New FakePlatform With {.Active = game}
+        Dim input As New ForegroundWindowsInput(backend, Sub(milliseconds) Return)
+        WindowsInput.Current = input
+        Try
+            Check(WindowsInput.InputMode = "foreground" AndAlso Not WindowsInput.UsesInternalHook AndAlso Not WindowsInput.UsesTargetedInput,
+                  "selected foreground backend reports physical input mode")
+            Check(WindowsInput.TargetIsForeground(game) AndAlso WindowsInput.TargetCanReceiveInput(game),
+                  "selector accepts the foreground game without an earlier binding")
+            backend.Active = other
+            Check(Not WindowsInput.TargetIsForeground(game) AndAlso Not WindowsInput.TargetCanReceiveInput(game),
+                  "selector rejects a selected foreground backend after focus loss")
+            backend.Active = game
+            backend.Available = False
+            Check(Not WindowsInput.TargetIsForeground(game) AndAlso Not WindowsInput.TargetCanReceiveInput(game),
+                  "selector rejects an unavailable foreground target")
+            backend.Available = True
+            Check(backend.ActivateCalls = 0 AndAlso backend.Events.Count = 0,
+                  "eligibility checks never activate a window or emit input")
+
+            For Each sample In {("1", 12, 140.0R), ("CTRL+1", 12, 140.0R), ("ALT+1", 12, 140.0R), ("1", 300, 280.0R)}
+                Dim downAt As Long = -1, upAt As Long = -1
+                backend.Events.Clear()
+                backend.BeforeSend = Sub(value)
+                                         If value.Keyboard AndAlso (value.Flags And 2UI) = 0 Then downAt = Diagnostics.Stopwatch.GetTimestamp()
+                                         If value.Keyboard AndAlso (value.Flags And 2UI) <> 0 AndAlso upAt < 0 Then upAt = Diagnostics.Stopwatch.GetTimestamp()
+                                     End Sub
+                Check(BotEngine.SendKey(game, sample.Item1, sample.Item2), sample.Item1 & " timed foreground request succeeds")
+                Check(downAt >= 0 AndAlso upAt >= downAt, sample.Item1 & " has observable foreground down/up timestamps")
+                Dim dwellMs = (upAt - downAt) * 1000.0R / Diagnostics.Stopwatch.Frequency
+                Check(dwellMs >= sample.Item3, $"{sample.Item1} requested {sample.Item2}ms preserves foreground dwell; observed {dwellMs:0.0}ms")
+                Check(backend.Events.All(Function(value) value.Keyboard) AndAlso
+                      backend.Events.GroupBy(Function(value) value.Key).All(Function(group) group.Count(Function(value) (value.Flags And 2UI) = 0) = group.Count(Function(value) (value.Flags And 2UI) <> 0)),
+                      sample.Item1 & " releases every foreground digit and modifier")
+            Next
+
+            For Each key In {"1", "CTRL+1", "ALT+1"}
+                backend.Events.Clear()
+                Using cancellation As New Threading.CancellationTokenSource
+                    backend.BeforeSend = Sub(value)
+                                             If value.Keyboard AndAlso value.Key = 49 AndAlso (value.Flags And 2UI) = 0 Then cancellation.Cancel()
+                                         End Sub
+                    Check(Not BotEngine.SendKey(game, key, 5000, cancellationToken:=cancellation.Token), key & " reports cancellation during its foreground hold")
+                    Check(backend.Events.Count > 0 AndAlso
+                          backend.Events.GroupBy(Function(value) value.Key).All(Function(group) group.Count(Function(value) (value.Flags And 2UI) = 0) = group.Count(Function(value) (value.Flags And 2UI) <> 0)),
+                          key & " cancellation releases every owned foreground digit and modifier")
+                    Dim before = backend.Events.Count
+                    input.ReleaseAll()
+                    Check(backend.Events.Count = before, key & " cancellation leaves no pending held input")
+                End Using
+            Next
+        Finally
+            backend.BeforeSend = Nothing
+            input.ReleaseAll()
+            WindowsInput.Current = originalInput
+        End Try
+    End Sub
+
     Private Sub AuditNativeImports()
         Dim root = New DirectoryInfo(AppContext.BaseDirectory)
         While root IsNot Nothing AndAlso Not Directory.Exists(Path.Combine(root.FullName, "ui", "KathanaBotControlPanel"))
@@ -136,7 +204,9 @@ Module Program
         End While
         If root Is Nothing Then Throw New Exception("Cannot locate source for input API audit")
         Dim source = Path.Combine(root.FullName, "ui", "KathanaBotControlPanel")
-        Dim text = String.Join(vbLf, Directory.EnumerateFiles(source, "*.vb").Select(Function(p) File.ReadAllText(p)))
+        ' This suite audits the retained foreground backend. The production SDL
+        ' backend uses target messages and has its own API audit.
+        Dim text = File.ReadAllText(Path.Combine(source, "ForegroundWindowsInput.vb"))
         For Each name In {"PostMessage", "keybd_event", "mouse_event", "SetCursorPos", "SendMessage", "SendKeys"}
             Check(Not System.Text.RegularExpressions.Regex.IsMatch(text, "(?i)DllImport\([^\r\n]*EntryPoint\s*:=\s*""" & name & "(?:A|W)?"""), "legacy native import remains: " & name)
         Next
@@ -153,6 +223,8 @@ Friend Class FakePlatform
     Public Accept As Boolean = True
     Public Covered As Boolean
     Public FailReleaseKey As UShort
+    Public ActivateCalls As Integer
+    Public BeforeSend As Action(Of ForegroundInputEvent)
     Public Events As New List(Of ForegroundInputEvent)
     Public Overrides Function Foreground() As IntPtr
         Return Active
@@ -164,6 +236,7 @@ Friend Class FakePlatform
         Return Available AndAlso hwnd <> IntPtr.Zero
     End Function
     Public Overrides Function Activate(hwnd As IntPtr) As Boolean
+        ActivateCalls += 1
         If AllowActivate Then Active = hwnd
         Return AllowActivate
     End Function
@@ -177,6 +250,7 @@ Friend Class FakePlatform
         Return New Rectangle(-1920, -1080, 3840, 2160)
     End Function
     Public Overrides Function Send(value As ForegroundInputEvent) As Boolean
+        BeforeSend?.Invoke(value)
         If FailReleaseKey <> 0 AndAlso value.Keyboard AndAlso value.Key = FailReleaseKey AndAlso (value.Flags And 2UI) <> 0 Then Return False
         If Accept Then Events.Add(value)
         Return Accept

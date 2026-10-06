@@ -57,6 +57,9 @@ Public NotInheritable Class ForegroundWindowsInput
     Public Function IsTargetForeground(hwnd As IntPtr) As Boolean
         Return target.Value IsNot Nothing AndAlso target.Value.Hwnd = hwnd AndAlso Focused(target.Value)
     End Function
+    Public Function IsWindowForeground(hwnd As IntPtr) As Boolean
+        Return Focused(New Binding With {.Hwnd = hwnd, .Pid = platform.ProcessId(hwnd)})
+    End Function
     Public Function Activate(hwnd As IntPtr) As Boolean Implements IWindowsInput.Activate
         BindTarget(hwnd)
         If hwnd = IntPtr.Zero Then Return False
@@ -68,7 +71,7 @@ Public NotInheritable Class ForegroundWindowsInput
         RuntimeJournal.Record("Input failure", "SendInput was blocked or failed; no message fallback was used.")
         Return False
     End Function
-    Private Sub SendKeyEvent(key As UShort, scan As UShort, flags As UInteger, extra As UIntPtr)
+    Private Sub SendKeyEvent(key As UShort, scan As UShort, flags As UInteger, extra As UIntPtr, Optional afterEmitted As Action = Nothing)
         ' Add pacing before down events, outside the release lock. Recheck focus afterward.
         If (flags And 2UI) = 0 Then actionDelay(NextActionDelayMs())
         SyncLock gate
@@ -88,8 +91,22 @@ Public NotInheritable Class ForegroundWindowsInput
             If Not Emit(value) Then Throw New InvalidOperationException("SendInput key down failed.")
             value.Flags = flags Or 2UI
             held(id) = New HeldInput With {.Owner = target.Value, .Release = value}
+            afterEmitted?.Invoke()
         End SyncLock
     End Sub
+
+    ' Trade needs to distinguish a delivered submit key from focus changing immediately
+    ' after SendInput. The receipt follows emission and owned-release registration.
+    Public Function PostKeyDownWithReceipt(hwnd As IntPtr, key As UShort, scan As UShort, afterEmitted As Action) As Boolean
+        BindTarget(hwnd)
+        Try
+            SendKeyEvent(key, scan, 0UI, UIntPtr.Zero, afterEmitted)
+            Return Focused(target.Value)
+        Catch ex As Exception
+            RuntimeJournal.Record("Input skipped", ex.Message)
+            Return False
+        End Try
+    End Function
     Public Sub Keyboard(key As Byte, scan As Byte, flags As UInteger, extra As UIntPtr) Implements IWindowsInput.Keyboard
         SendKeyEvent(key, scan, flags, extra)
     End Sub
@@ -182,6 +199,14 @@ Public NotInheritable Class ForegroundWindowsInput
         End SyncLock
         ReleaseUnfocused()
     End Sub
+    Public Sub ReleaseTarget(hwnd As IntPtr)
+        SyncLock gate
+            For Each value In held.Values
+                If value.Owner.Hwnd = hwnd Then value.ReleaseRequested = True
+            Next
+        End SyncLock
+        ReleaseUnfocused()
+    End Sub
     Public Sub ReleaseUnfocused()
         SyncLock gate
             For Each pair In held.ToArray()
@@ -195,6 +220,22 @@ End Class
 
 Friend NotInheritable Class NativeInputPlatform
     Inherits InputPlatform
+    ' Reuse exact game-image validation only; this helper never dispatches input here.
+    Private ReadOnly gameTarget As New NativeBackgroundInputPlatform()
+    Private ReadOnly explicitTarget As Boolean
+    Private ReadOnly targetWindow As IntPtr
+    Private ReadOnly targetPid As UInteger
+
+    Public Sub New()
+    End Sub
+
+    ' Explicit foreground Trade binds the user's selected window for the entire run.
+    ' It does not need process-image access or the background backend's installation path.
+    Public Sub New(hwnd As IntPtr, expectedPid As UInteger)
+        explicitTarget = True
+        targetWindow = hwnd
+        targetPid = expectedPid
+    End Sub
     <StructLayout(LayoutKind.Sequential)>
     Private Structure KeyboardPacket
         Public Key As UShort
@@ -240,10 +281,27 @@ Friend NotInheritable Class NativeInputPlatform
         Return pid
     End Function
     Public Overrides Function Valid(hwnd As IntPtr) As Boolean
-        Return hwnd <> IntPtr.Zero AndAlso IsWindow(hwnd) AndAlso Not NativeMethods.IsIconic(hwnd) AndAlso ProcessId(hwnd) <> Environment.ProcessId
+        If explicitTarget Then
+            Return hwnd <> IntPtr.Zero AndAlso hwnd = targetWindow AndAlso targetPid <> 0 AndAlso
+                targetPid <> CUInt(Environment.ProcessId) AndAlso IsWindow(hwnd) AndAlso Not NativeMethods.IsIconic(hwnd) AndAlso
+                ProcessId(hwnd) = targetPid
+        End If
+        Return gameTarget.Valid(hwnd)
     End Function
     Public Overrides Function Activate(hwnd As IntPtr) As Boolean
-        Return NativeMethods.RawSetForegroundWindow(hwnd)
+        If Not Valid(hwnd) Then Return False
+        If NativeMethods.RawSetForegroundWindow(hwnd) AndAlso Foreground() = hwnd Then Return True
+        Dim currentThread = NativeMethods.GetCurrentThreadId()
+        Dim unusedPid As UInteger
+        Dim foregroundThread = NativeMethods.GetWindowThreadProcessId(Foreground(), unusedPid)
+        Dim attached = foregroundThread <> 0 AndAlso foregroundThread <> currentThread AndAlso NativeMethods.AttachThreadInput(currentThread, foregroundThread, True)
+        Try
+            NativeMethods.BringWindowToTop(hwnd)
+            NativeMethods.RawSetForegroundWindow(hwnd)
+        Finally
+            If attached Then NativeMethods.AttachThreadInput(currentThread, foregroundThread, False)
+        End Try
+        Return Foreground() = hwnd
     End Function
     Public Overrides Function Desktop() As Rectangle
         Return System.Windows.Forms.SystemInformation.VirtualScreen

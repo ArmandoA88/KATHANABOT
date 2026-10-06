@@ -1,4 +1,4 @@
-﻿Imports System.Collections.Generic
+Imports System.Collections.Generic
 Imports System.Diagnostics
 Imports System.Drawing
 Imports System.Drawing.Drawing2D
@@ -765,6 +765,7 @@ Friend Module NativeMethods
     Private Function RawShowWindow(hWnd As IntPtr, nCmdShow As Integer) As Boolean
     End Function
     Friend Function ShowWindow(hWnd As IntPtr, nCmdShow As Integer) As Boolean
+        If WindowsInput.UsesTargetedInput Then Return WindowsInput.TargetCanReceiveInput(hWnd)
         Return Not WindowsInput.BackgroundOnly AndAlso RawShowWindow(hWnd, nCmdShow)
     End Function
 
@@ -772,6 +773,7 @@ Friend Module NativeMethods
     Private Function RawBringWindowToTop(hWnd As IntPtr) As Boolean
     End Function
     Friend Function BringWindowToTop(hWnd As IntPtr) As Boolean
+        If WindowsInput.UsesTargetedInput Then Return WindowsInput.TargetCanReceiveInput(hWnd)
         Return Not WindowsInput.BackgroundOnly AndAlso RawBringWindowToTop(hWnd)
     End Function
 
@@ -1561,6 +1563,13 @@ Partial Public Class BotEngine
         End SyncLock
     End Function
 
+    Public Function GetInputWorkerTasks() As Task()
+        SyncLock _sync
+            Return {_task, _directKpTask, _autoLootArrowTask, _lootScannerProcessingTask}.
+                Where(Function(worker) worker IsNot Nothing).Distinct().ToArray()
+        End SyncLock
+    End Function
+
     Public Function IsChatInputPaused() As Boolean
         SyncLock _sync
             Return _chatInputPaused
@@ -1987,6 +1996,7 @@ Partial Public Class BotEngine
             _rupiahsOcrTask = Nothing
         End SyncLock
         ReleaseLootScannerAltKey()
+        WindowsInput.ReleaseTarget(ResolveGameWindow(_config))
         ClearLatestLoopFrame()
 
         If sessionStartedAtUtc <> DateTime.MinValue Then
@@ -2419,7 +2429,7 @@ Partial Public Class BotEngine
             ResolveVisionRegions(cfg, fullClientWidth, fullClientHeight, hpRegion, mpRegion, mobNameRegion, mobHpRegion, unreachableTextRegion, pranaExpRegion, rupiahsRegion, partyInviteScanRegion, partyListRegion, disconnectMessageRegion, mapCoordinateXRegion, mapCoordinateYRegion, chatRegion)
             Dim mobLifeRegion As RectRegion = ResolveMobLifeRegion(cfg, fullClientWidth, fullClientHeight)
             Dim lootScanPolygon As List(Of DrawingPoint) = ResolveLootScanPolygon(cfg, fullClientWidth, fullClientHeight)
-            Dim activeHwnd As IntPtr = NativeMethods.GetForegroundWindow()
+            Dim activeHwnd As IntPtr = If(WindowsInput.UsesTargetedInput AndAlso WindowsInput.TargetCanReceiveInput(hwnd), hwnd, NativeMethods.GetForegroundWindow())
             Dim configuredFullFrameMs As Integer = Math.Max(100, If(cfg Is Nothing, FullFrameRefreshMs, cfg.FullFrameRefreshIntervalMs))
             Dim fullFrameIntervalMs As Integer = If(deferOptionalWork, configuredFullFrameMs * 3, configuredFullFrameMs)
             Dim lastFullFrameTime As DateTime = If(_latestLoopFrameCapturedAt <> DateTime.MinValue, _latestLoopFrameCapturedAt, _lastFullFrameCaptureAttemptAt)
@@ -8026,7 +8036,7 @@ Partial Public Class BotEngine
             If Not cfg.LootScannerEnabled OrElse detection Is Nothing Then Return False
             If detection.DetectedAtUtc <= _lastAutoLootArrowMotionAt OrElse
                 _lootPickupGeneration <> _runGeneration OrElse _lootPickupWindow <> hwnd OrElse
-                NativeMethods.GetForegroundWindow() <> hwnd OrElse
+                Not WindowsInput.TargetCanReceiveInput(hwnd) OrElse
                 Not IsLootPickupObservationFresh(detection.DetectedAtUtc, DateTime.UtcNow) OrElse
                 Not IsLootPickupCentered(detection.ClickPoint, _lootPickupFrameSize) OrElse
                 Not IsAllowedLootName(detection.ItemName, cfg.LootAllowedNames, cfg.LootNameMatchThresholdPercent) Then
@@ -8164,6 +8174,7 @@ Partial Public Class BotEngine
     End Function
 
     Private Sub TryForceAutoLootForeground(cfg As BotConfig, hwnd As IntPtr, now As DateTime)
+        If WindowsInput.UsesTargetedInput Then Return
         If Not ShouldForceAutoLootForeground(cfg) OrElse hwnd = IntPtr.Zero OrElse IsChatInputPaused() Then Return
         If NativeMethods.GetForegroundWindow() = hwnd OrElse (now - _lastAutoLootForegroundAttempt).TotalMilliseconds < 2000 Then Return
         _lastAutoLootForegroundAttempt = now
@@ -8195,7 +8206,7 @@ Partial Public Class BotEngine
 
     Private Sub TryHandleAutoLootArrowHold(cfg As BotConfig, hwnd As IntPtr, token As CancellationToken)
         WindowsInput.BindTarget(hwnd)
-        If hwnd = IntPtr.Zero OrElse NativeMethods.GetForegroundWindow() <> hwnd OrElse cfg.ResuHoldPlaceOnlyModeEnabled Then Return
+        If hwnd = IntPtr.Zero OrElse Not WindowsInput.TargetCanReceiveInput(hwnd) OrElse cfg.ResuHoldPlaceOnlyModeEnabled Then Return
         SyncLock _sync
             If token.IsCancellationRequested OrElse _chatInputPaused OrElse Not _status.Running Then Return
             If _autoLootArrowTask IsNot Nothing AndAlso Not _autoLootArrowTask.IsCompleted Then Return
@@ -8208,7 +8219,7 @@ Partial Public Class BotEngine
                 Try
                     SyncLock _sync
                         If token.IsCancellationRequested OrElse generation <> _runGeneration OrElse _chatInputPaused OrElse
-                            NativeMethods.GetForegroundWindow() <> hwnd Then Return
+                            Not WindowsInput.TargetCanReceiveInput(hwnd) Then Return
                         _heldAutoLootArrow = key
                         _lastAutoLootArrowMotionAt = DateTime.UtcNow
                         SendKeyboardInput(CByte(key), CByte(NativeMethods.MapVirtualKey(CUInt(key), 0UI)), &H1UI, UIntPtr.Zero)
@@ -8223,7 +8234,7 @@ Partial Public Class BotEngine
                                 settings Is Nothing OrElse Not settings.Enabled(key) OrElse
                                 holdWatch.ElapsedMilliseconds >= settings.HoldMs(key) OrElse _heldAutoLootArrow = 0 Then Exit While
                         End SyncLock
-                        If NativeMethods.GetForegroundWindow() <> hwnd Then Exit While
+                        If Not WindowsInput.TargetCanReceiveInput(hwnd) Then Exit While
                         Await Task.Delay(20, token)
                     End While
                 Catch ex As OperationCanceledException
@@ -9758,7 +9769,7 @@ Partial Public Class BotEngine
         End Try
     End Function
 
-    ' Foreground SendInput Ctrl+V with unconditional modifier cleanup.
+    ' Clipboard paste for backends that use system input, with modifier cleanup.
     Private Shared Function SendCtrlVPaste(hwnd As IntPtr) As Boolean
         SyncLock WindowsInput.SequenceLock
             WindowsInput.BindTarget(hwnd)
@@ -9779,11 +9790,11 @@ Partial Public Class BotEngine
         End SyncLock
     End Function
 
-    ' Paste and UTF-16 typing both use foreground SendInput. Clipboard access is not input injection.
+    ' Targeted backends type UTF-16 directly into the game; system backends may paste.
     Private Shared Function SendPartyAskCommand(hwnd As IntPtr, rawText As String, useCtrlV As Boolean) As Boolean
         Dim commandText As String = NormalizePartyAskCommand(rawText)
 
-        If useCtrlV Then
+        If useCtrlV AndAlso Not WindowsInput.UsesTargetedInput Then
             Dim previousClipboardText As String = GetClipboardText()
             If SetClipboardText(commandText) Then
                 Dim pasted As Boolean = SendCtrlVPaste(hwnd)
@@ -13692,20 +13703,22 @@ Partial Public Class BotEngine
         If cancellationToken.IsCancellationRequested Then Return False
 
         ' All key requests, including legacy forceBackgroundPost calls, use the same
-        ' foreground-only SendInput backend. The old flags remain source-compatible.
-        Dim scanPost As UInteger = NativeMethods.MapVirtualKey(CUInt(vk), 0UI)
+        ' selected input backend. The old flags remain source-compatible.
+        Dim backgroundClient = TypeOf WindowsInput.Current Is SdlBackgroundWindowsInput
+        Dim scanPost As UInteger = If(backgroundClient, 0UI, NativeMethods.MapVirtualKey(CUInt(vk), 0UI))
         Dim lparamDown As Integer = 1 Or (CInt(scanPost) << 16)
-        If {&HA5, &H25, &H26, &H27, &H28, &H21, &H22, &H23, &H24, &H2D, &H2E}.Contains(vk) Then lparamDown = lparamDown Or &H1000000
+        If Not backgroundClient AndAlso {&HA5, &H25, &H26, &H27, &H28, &H21, &H22, &H23, &H24, &H2D, &H2E}.Contains(vk) Then lparamDown = lparamDown Or &H1000000
         Dim lparamUp As Integer = lparamDown Or (1 << 30) Or (1 << 31)
+        Dim holdMs = WindowsInput.KeyPressDurationMs(pressMs)
 
         Try
             If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(&H100), New IntPtr(vk), New IntPtr(lparamDown)) Then Return False
             Dim released As Boolean
             Try
                 If cancellationToken.CanBeCanceled Then
-                    cancellationToken.WaitHandle.WaitOne(Math.Max(5, pressMs))
+                    cancellationToken.WaitHandle.WaitOne(holdMs)
                 Else
-                    Thread.Sleep(Math.Max(5, pressMs))
+                    Thread.Sleep(holdMs)
                 End If
             Finally
                 released = NativeMethods.SendForegroundInputRequest(hwnd, CUInt(&H101), New IntPtr(vk), New IntPtr(lparamUp))
@@ -13760,6 +13773,7 @@ Partial Public Class BotEngine
     End Function
 
     Public Shared Function ClickClientPoint(hwnd As IntPtr, x As Integer, y As Integer, Optional moveDelayMs As Integer = 10, Optional downUpDelayMs As Integer = 25) As Boolean
+        If WindowsInput.KeyboardOnlyMode Then Return False
         SyncLock WindowsInput.SequenceLock
         WindowsInput.BindTarget(hwnd)
         If Not WindowsInput.Current.Activate(hwnd) Then Return False
@@ -13808,6 +13822,10 @@ Partial Public Class BotEngine
     ''' block regardless of the return value so the cursor and foreground window get restored.
     ''' </summary>
     Private Shared Function TryBeginVerifiedClick(hwnd As IntPtr, x As Integer, y As Integer, state As VerifiedClickState, ByRef diagnostic As String) As Boolean
+        If WindowsInput.KeyboardOnlyMode Then
+            diagnostic = "Background keyboard mode does not send mouse input."
+            Return False
+        End If
         WindowsInput.BindTarget(hwnd)
         diagnostic = ""
         If WindowsInput.BackgroundOnly Then
@@ -13831,7 +13849,7 @@ Partial Public Class BotEngine
         End Try
 
         state.PreviousForegroundWindow = NativeMethods.GetForegroundWindow()
-        state.GameAlreadyActive = (state.PreviousForegroundWindow = hwnd)
+        state.GameAlreadyActive = WindowsInput.UsesTargetedInput OrElse (state.PreviousForegroundWindow = hwnd)
 
         If Not state.GameAlreadyActive AndAlso state.PreviousForegroundWindow <> IntPtr.Zero Then
             Try
@@ -13858,7 +13876,13 @@ Partial Public Class BotEngine
         ' while a tight tolerance means a persistent few-pixel drift now correctly fails closed instead
         ' of silently clicking wherever the cursor actually landed.
         If Not WindowsInput.Current.Activate(hwnd) OrElse Not WindowsInput.TargetIsForeground(hwnd) Then
-            diagnostic = "Selected game could not gain foreground focus"
+            diagnostic = "Selected game input backend could not connect"
+            Return False
+        End If
+        If WindowsInput.UsesTargetedInput Then
+            ' Targeted backends update their game cursor without moving the Windows cursor.
+            If NativeMethods.MoveCursorInput(state.ScreenPoint.X, state.ScreenPoint.Y) Then Return True
+            diagnostic = "Game cursor update failed"
             Return False
         End If
         Const cursorPositionTolerancePixels As Integer = 2
@@ -13892,7 +13916,7 @@ Partial Public Class BotEngine
     End Function
 
     Private Shared Sub EndVerifiedClick(hwnd As IntPtr, state As VerifiedClickState, restoreCursor As Boolean)
-        If restoreCursor AndAlso state.HadCursor Then
+        If Not WindowsInput.UsesTargetedInput AndAlso restoreCursor AndAlso state.HadCursor Then
             Try
                 NativeMethods.MoveCursorInput(state.PreviousCursor.X, state.PreviousCursor.Y)
             Catch

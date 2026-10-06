@@ -9,9 +9,63 @@ Module Program
     <STAThread>
     Sub Main()
         TestBackground()
+        TestKeyboardOnlyPolicy()
         TestKeysAndHold()
         TestSkillUi()
-        Console.WriteLine("PASS: foreground-only migration, compatibility policy, shortcut sequences, cancellable loot hold, editable skill colors and profile roundtrip.")
+        Console.WriteLine("PASS: common input routing, compatibility and keyboard-only policies, shortcut sequences, cancellable loot hold, editable skill colors and profile roundtrip.")
+    End Sub
+
+    Private Sub TestKeyboardOnlyPolicy()
+        Dim disabledNames = {"AutoLootForceForeground", "LootScannerEnabled", "LootPickupEnabled", "ArrowUnbundleEnabled",
+                             "AutoPartyInviteEnabled", "AutoPartyMessageEnabled", "PartyAskEnabled", "AskForResurrectEnabled",
+                             "LootRejectClickEnabled", "ResurrectAutoAcceptEnabled", "PartyInviteAutoAcceptEnabled",
+                             "PartyRessAutoAcceptEnabled", "FullSupportTankEnabled", "FullSupportIndividualEnabled", "FullSupportPartyResurrectEnabled"}
+        Dim retainedNames = {"EvadeDadatiEnabled", "LevelingAgentEnabled", "NavigationEnabled", "NavigationTravelExecutionEnabled", "HoldPlaceEnabled",
+                             "LootAfterKillEnabled", "FullSupportModeEnabled", "FullSupportPartyHealEnabled", "FullSupportAssistEnabled",
+                             "FullSupportSelfSurvivalEnabled", "BuffWatchEnabled", "BuffWatchSelfClickEnabled"}
+        Dim profile As New BotConfig With {
+            .AutoLootArrowHolds = New AutoLootArrowHoldSettings With {.LeftEnabled = True, .RightEnabled = True, .LeftHoldMs = 750, .RightHoldMs = 900},
+            .Actions = New List(Of ActionRule) From {
+                New ActionRule With {.Enabled = True, .KeyName = "CTRL+1"}, New ActionRule With {.Enabled = True, .KeyName = "ALT+2"},
+                New ActionRule With {.Enabled = True, .KeyName = "W"}, New ActionRule With {.Enabled = True, .KeyName = "RALT"}, New ActionRule With {.Enabled = True, .KeyName = "8"}},
+            .BuffWatchSlots = New List(Of BuffWatchSlot) From {New BuffWatchSlot With {.Enabled = True, .Name = "self buff", .KeyName = "CTRL+3", .SelfClickBeforeCast = True}}}
+        For Each name In disabledNames.Concat(retainedNames)
+            GetType(BotConfig).GetProperty(name).SetValue(profile, True)
+        Next
+        Dim profileJson = JsonSerializer.Serialize(profile)
+        Dim runtimeConfig = JsonSerializer.Deserialize(Of BotConfig)(profileJson)
+        Dim disabled = BackgroundModePolicy.ApplyKeyboardOnly(runtimeConfig)
+        Check(New HashSet(Of String)(disabled).SetEquals(disabledNames), "keyboard-only policy must report every suppressed mouse/text feature")
+        For Each name In disabledNames
+            Check(Not CBool(GetType(BotConfig).GetProperty(name).GetValue(runtimeConfig)), "keyboard-only runtime left an unsupported feature enabled: " & name)
+            Check(CBool(GetType(BotConfig).GetProperty(name).GetValue(profile)), "keyboard-only runtime changed a saved profile preference: " & name)
+        Next
+        For Each name In retainedNames
+            Check(CBool(GetType(BotConfig).GetProperty(name).GetValue(runtimeConfig)), "keyboard-only runtime disabled a supported keyboard feature: " & name)
+        Next
+        Check(runtimeConfig.AutoLootArrowHolds.LeftEnabled AndAlso runtimeConfig.AutoLootArrowHolds.RightEnabled AndAlso
+              runtimeConfig.AutoLootArrowHolds.LeftHoldMs = 750 AndAlso runtimeConfig.AutoLootArrowHolds.RightHoldMs = 900, "keyboard-only policy must preserve configured arrow holds")
+        Check(runtimeConfig.Actions.All(Function(action) action.Enabled) AndAlso runtimeConfig.Actions.Select(Function(action) action.KeyName).SequenceEqual({"CTRL+1", "ALT+2", "W", "RALT", "8"}),
+              "keyboard-only policy must preserve combat actions, chords and movement keys")
+        Check(runtimeConfig.BuffWatchSlots.Count = 1 AndAlso runtimeConfig.BuffWatchSlots(0).Enabled AndAlso runtimeConfig.BuffWatchSlots(0).SelfClickBeforeCast AndAlso
+              runtimeConfig.BuffWatchSlots(0).KeyName = "CTRL+3", "keyboard-only policy must preserve buff self-target key actions")
+        Check(JsonSerializer.Serialize(profile) = profileJson AndAlso BackgroundModePolicy.ApplyKeyboardOnly(runtimeConfig).Count = 0,
+              "runtime policy must leave profile values intact and report no repeated changes")
+
+        Dim originalInput = WindowsInput.Current
+        WindowsInput.Current = Nothing
+        Try
+            Check(WindowsInput.KeyboardOnlyMode, "production keyboard-only policy must be active")
+            Dim owner = Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(GetType(Form1))
+            Using enabled As New CheckBox With {.Checked = True}
+                GetType(Form1).GetField("chkAutoRelaunchGame", InstanceFlags).SetValue(owner, enabled)
+                GetType(Form1).GetMethod("ScheduleGameRelaunch", InstanceFlags).Invoke(owner, {"keyboard-only regression", False, True})
+                Check(Not CBool(GetType(Form1).GetField("_autoRelaunchPending", InstanceFlags).GetValue(owner)) AndAlso enabled.Checked,
+                      "keyboard-only mode must reject even forced relaunch without changing the saved checkbox")
+            End Using
+        Finally
+            WindowsInput.Current = originalInput
+        End Try
     End Sub
     Private Sub Check(value As Boolean, message As String)
         If Not value Then Throw New Exception(message)

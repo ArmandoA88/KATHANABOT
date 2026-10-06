@@ -62,12 +62,14 @@ Partial Public Class Form1
             Case "/stop"
                 StopEdition(BotEdition.Full, False, "local API")
             Case "/key", "/click"
+                If route = "/click" AndAlso WindowsInput.KeyboardOnlyMode Then Throw New InvalidOperationException("This background build supports key presses only.")
                 If selected Is Nothing OrElse selected.ProcessId <> command.ProcessId Then Throw New InvalidOperationException("Selected process does not match processId.")
                 If _fullEngine.IsRunning() OrElse _liteEngine.IsRunning() OrElse _workflowModes.Current <> OperatingMode.Idle OrElse _tradeRunning Then Throw New InvalidOperationException("Stop active automation before manual API input.")
                 If route = "/key" AndAlso (command.Key < 8 OrElse command.Key > 254) Then Throw New InvalidOperationException("key must be a Windows virtual-key code from 8 to 254.")
                 SyncLock WindowsInput.SequenceLock
                     WindowsInput.BindTarget(selected.MainWindowHandle)
-                    If Not WindowsInput.TargetIsForeground(selected.MainWindowHandle) Then Throw New InvalidOperationException("Selected game must be foreground.")
+                    If Not WindowsInput.Current.Activate(selected.MainWindowHandle) Then Throw New InvalidOperationException("Selected game is unavailable. Keep Kathana open and not minimized.")
+                    If Not WindowsInput.TargetCanReceiveInput(selected.MainWindowHandle) Then Throw New InvalidOperationException("Selected game cannot receive background keys; input skipped.")
                     Dim input = WindowsInput.Current
                     Dim flags As UInteger = If({33, 34, 35, 36, 37, 38, 39, 40, 45, 46, 91, 92, 93, 111, 144, 163, 165}.Contains(command.Key), 1UI, 0UI)
                     Dim pressed = False
@@ -78,6 +80,8 @@ Partial Public Class Form1
                             input.Mouse(2UI, 0UI, 0UI, 0UI, UIntPtr.Zero)
                         End If
                         pressed = True
+                        ' Games that poll state once per frame can miss an immediate down/up pair.
+                        Threading.Thread.Sleep(If(route = "/key", WindowsInput.KeyPressDurationMs(120), 120))
                     Finally
                         If pressed Then
                             If route = "/key" Then
@@ -92,6 +96,7 @@ Partial Public Class Form1
         Return New With {.running = _fullEngine.IsRunning(),
             .processId = If(selected Is Nothing, 0, selected.ProcessId),
             .windowTitle = If(selected Is Nothing, "", selected.WindowTitle),
-            .inputMode = "foreground", .botProcessId = Environment.ProcessId}
+            .inputMode = WindowsInput.InputMode,
+            .inputError = WindowsInput.LastConnectionError, .botProcessId = Environment.ProcessId}
     End Function
 End Class

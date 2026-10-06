@@ -1,4 +1,4 @@
-﻿Imports System.Net.Http
+Imports System.Net.Http
 Imports System.Runtime.InteropServices
 Imports System.Text
 Imports System.Text.RegularExpressions
@@ -2346,6 +2346,7 @@ Partial Public Class Form1
         Public Property ActiveProfileName As String = ""
         Public Property LiteDirectKpSelected As Boolean = False
         Public Property BackgroundOnlyEnabled As Boolean = False
+        Public Property BackgroundKeyboardMethod As String = "posted-scan"
         Public Property WindowTitle As String = DefaultGameWindowTitle
         Public Property PeriodicScreenshotsEnabled As Boolean = False
         Public Property PeriodicScreenshotIntervalMinutes As Decimal = 15D
@@ -10059,6 +10060,7 @@ Partial Public Class Form1
     End Sub
 
     Private Sub AutoStartOnLaunch()
+        If Environment.GetCommandLineArgs().Contains("--no-auto-start") Then Return
         If _autoStarted Then
             Return
         End If
@@ -11880,6 +11882,10 @@ Partial Public Class Form1
     ' (restored immediately after). Finishes with a verify-and-retry in case the first attempt didn't
     ' actually land.
     Private Shared Sub ForceSetForegroundWindow(target As IntPtr)
+        If WindowsInput.UsesTargetedInput Then
+            WindowsInput.Current.Activate(target)
+            Return
+        End If
         If target = IntPtr.Zero Then
             Return
         End If
@@ -15445,6 +15451,7 @@ Partial Public Class Form1
     End Sub
 
     Private Sub ExecuteAutoRelaunchClickSteps(steps As List(Of PersistedAutoRelaunchClick), trigger As String, preferredHwnd As IntPtr, preferredTitle As String)
+        If WindowsInput.KeyboardOnlyMode Then Return
         If steps Is Nothing OrElse steps.Count = 0 Then
             Return
         End If
@@ -15492,7 +15499,7 @@ Partial Public Class Form1
             End SyncLock
         Next
 
-        If hadCursor Then
+        If hadCursor AndAlso Not WindowsInput.UsesTargetedInput Then
             NativeMethods.MoveCursorInput(previousCursor.X, previousCursor.Y)
         End If
     End Sub
@@ -15525,6 +15532,10 @@ Partial Public Class Form1
 
     Private Sub EnsureAutoRelaunchClickWindowForeground(hwnd As IntPtr, stepNumber As Integer)
         If hwnd = IntPtr.Zero Then
+            Return
+        End If
+        If WindowsInput.UsesTargetedInput Then
+            WindowsInput.Current.Activate(hwnd)
             Return
         End If
 
@@ -15591,7 +15602,7 @@ Partial Public Class Form1
     End Function
 
     Private Sub ScheduleGameRelaunch(trigger As String, Optional stopRunningBots As Boolean = True, Optional force As Boolean = False)
-        If WindowsInput.BackgroundOnly Then Return
+        If WindowsInput.BackgroundOnly OrElse WindowsInput.KeyboardOnlyMode Then Return
         If (Not force) AndAlso Not IsAutoRelaunchGameEnabled() Then
             Return
         End If
@@ -15659,7 +15670,7 @@ Partial Public Class Form1
                         End If
                     End If
 
-                    If WindowsInput.BackgroundOnly Then Return
+                    If WindowsInput.BackgroundOnly OrElse WindowsInput.KeyboardOnlyMode Then Return
                     Dim launchedProcess As Process = Process.Start(psi)
                     AppendLogSafe($"Auto relaunch started game ({trigger}).")
                     If launchedProcess IsNot Nothing Then
@@ -15982,6 +15993,7 @@ Partial Public Class Form1
     End Function
 
     Private Shared Function TryLeftClickDisconnectOk(hwnd As IntPtr, okRegion As RectRegion) As Boolean
+        If WindowsInput.KeyboardOnlyMode Then Return False
         SyncLock WindowsInput.SequenceLock
         WindowsInput.BindTarget(hwnd)
         If hwnd = IntPtr.Zero OrElse okRegion Is Nothing Then
@@ -16015,7 +16027,7 @@ Partial Public Class Form1
         Catch
             Return False
         Finally
-            If hadCursor Then
+            If hadCursor AndAlso Not WindowsInput.UsesTargetedInput Then
                 NativeMethods.MoveCursorInput(previousCursor.X, previousCursor.Y)
             End If
         End Try
@@ -16419,11 +16431,16 @@ Partial Public Class Form1
     End Function
 
     Private Function BuildFullConfig() As BotConfig
+        Return BuildFullConfigCore(True)
+    End Function
+
+    Private Function BuildFullConfigCore(applyRuntimePolicy As Boolean) As BotConfig
         Dim cfg = BuildConfig()
         cfg.AutoAssistOnlyEnabled = _autoAssistOnlyEnabled
         cfg.DirectKpEnabled = _directKpEnabled
         cfg.DirectKpIntervalMs = CInt(If(_directKpInterval Is Nothing, 1000D, _directKpInterval.Value))
-        If WindowsInput.BackgroundOnly Then BackgroundModePolicy.Apply(cfg)
+        If applyRuntimePolicy AndAlso WindowsInput.BackgroundOnly Then BackgroundModePolicy.Apply(cfg)
+        If applyRuntimePolicy AndAlso WindowsInput.KeyboardOnlyMode Then BackgroundModePolicy.ApplyKeyboardOnly(cfg)
         Return cfg
     End Function
 
@@ -16503,6 +16520,7 @@ Partial Public Class Form1
         End If
 
         If WindowsInput.BackgroundOnly Then BackgroundModePolicy.Apply(cfg)
+        If WindowsInput.KeyboardOnlyMode Then BackgroundModePolicy.ApplyKeyboardOnly(cfg)
         Return cfg
     End Function
 
@@ -17542,8 +17560,12 @@ Partial Public Class Form1
             End If
 
             _directKpEnabled = appState IsNot Nothing AndAlso appState.LiteDirectKpSelected
-            ' Legacy background settings are ignored by the foreground-only input layer.
+            ' Legacy flags do not select an input backend; preserve the explicit key method.
             If suppliedJson Is Nothing Then WindowsInput.BackgroundOnly = appState IsNot Nothing AndAlso appState.BackgroundOnlyEnabled
+            If suppliedJson Is Nothing AndAlso Not Environment.GetCommandLineArgs().Contains("--background-key-mode") Then
+                Dim mode As BackgroundKeyboardMode
+                If WindowsInput.TryParseKeyboardMode(If(appState?.BackgroundKeyboardMethod, "posted-scan"), mode) Then WindowsInput.TrySetBackgroundKeyMode(mode)
+            End If
             UpdateBackgroundOnlyButton()
             UpdateDirectKpButton()
             _dashboardModeLoading = True
@@ -17944,7 +17966,7 @@ Partial Public Class Form1
                 .AutoRelaunchDelaySeconds = If(nudAutoRelaunchDelaySeconds IsNot Nothing, nudAutoRelaunchDelaySeconds.Value, 5D),
                 .AutoRelaunchClickOverlayEnabled = (chkAutoRelaunchClickOverlay IsNot Nothing AndAlso chkAutoRelaunchClickOverlay.Checked),
                 .AutoRelaunchClicks = GetAutoRelaunchClickSteps(),
-                .SavedConfig = If(includeFullConfig, BuildFullConfig(), Nothing),
+                .SavedConfig = If(includeFullConfig, BuildFullConfigCore(False), Nothing),
                 .MonsterNames = GetListBoxItems(lstMonsterFilter),
                 .LootDefaultsVersion = DefaultLootItems.Version,
                 .LootNames = GetListBoxItems(lstLootFilter),
@@ -17976,6 +17998,7 @@ Partial Public Class Form1
                 .ActiveProfileName = _activeProfileName,
                 .LiteDirectKpSelected = _directKpEnabled,
                 .BackgroundOnlyEnabled = WindowsInput.BackgroundOnly,
+                .BackgroundKeyboardMethod = WindowsInput.KeyboardModeId(WindowsInput.BackgroundKeyMode),
                 .WindowTitle = GetSelectedWindowTitleForFallback(If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full)),
                 .PeriodicScreenshotsEnabled = (chkPeriodicScreenshots IsNot Nothing AndAlso chkPeriodicScreenshots.Checked),
                 .PeriodicScreenshotIntervalMinutes = If(nudPeriodicScreenshotMinutes IsNot Nothing, nudPeriodicScreenshotMinutes.Value, 15D),
@@ -20581,6 +20604,8 @@ Partial Public Class Form1
         _dashboardEntranceTimer.Stop()
         _tradeCancellation?.Cancel()
         _tradeAnalysisCancellation?.Cancel()
+        ShutdownTradeBrowserCapture()
+        ShutdownTradeDiscordImport()
         _tradePriceGeneration += 1
         _tradePriceTimer?.Stop()
         _tradeStopTimer.Stop()

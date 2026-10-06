@@ -10,6 +10,114 @@ KathanaBot is a self-contained VB WinForms application. Both the Velopack-instal
 
 ## Build / Rebuild
 
+Version 1.0.244 replaces Quiz's model choices with **GPT-6 Luna — Fast / Cheap**
+and **GPT-6 Astra — Ultrafast / Expensive**. The choice is saved; older model
+selections migrate to Luna. Requests use the selected processing tier and do not
+silently downgrade it. Trade analysis remains GPT-5 nano.
+
+Trade foreground whispers now validate the selected window and process directly
+instead of requiring access to a hardcoded Steam executable path. Start waits up
+to 10 seconds for that exact game window to gain focus; click it with chat closed
+if Windows does not activate it automatically. No typing begins before focus is
+confirmed. Changing apps after typing begins still stops the queue.
+
+Version 1.0.243 fixes Trade rejecting verifiable AI listings because of capitalized
+items, collapsed whitespace or evidence including the post's author header.
+Matches are checked within the original named post and restored to its source
+spelling. Character names, punctuation, upgrade digits and buy/sell clauses still
+must match; unverified results cannot create a queue. Trade keeps GPT-5 nano and
+Quiz keeps its selected model. Failed validation identifies the affected batch.
+
+Version 1.0.242 removes **Configure Discord**, **Import latest**, **Auto** and the
+reader count from Trade. Saved reader Auto settings cannot restart polling.
+Use **Browser capture** or paste names and messages, then analyze and review the
+whisper queue. Existing posts and saved queues are preserved.
+
+Version 1.0.241 makes Trade analysis use **GPT-5 nano** with minimal reasoning,
+independently of the Quiz model. It processes up to 50 complete posts or 8,000
+characters per batch, with up to four requests at once, and reuses verified
+batch results in a bounded cache during the app session. Sorting, filtering,
+item counts and whisper queue creation run locally without API charges.
+Analysis still covers every post and keeps the previous queue on failure or
+cancellation. There is no automatic fallback to a more expensive model.
+
+Version 1.0.240 fixes Trade Start silently returning in the background keyboard
+build. **Start whispers (foreground)** uses a separate foreground text sender
+while combat input stops; it preserves the configured background combat backend.
+Keep the selected game focused while whispers run. Changing apps, cancellation
+or errors stop the queue; close any unfinished chat draft before retrying.
+Successful completion resumes the original combat mode only if the original
+game window is still valid and focused.
+
+Version 1.0.239 adds **Unselect all** beside Select all matches. It clears every
+checked item, including items hidden by a filter, and clears the whisper review
+queue. The button is disabled when nothing is selected.
+
+Version 1.0.238 fixes collapsed Discord name/message lines and analyzes large
+captures in batches of up to 20 complete posts or 8,000 characters, with visible
+progress. Analysis covers the whole source; failed or cancelled runs preserve
+your previous reviewed queue. The status separates processed posts, extracted
+buy/sell listings and selected recipients. Clear the item filter and click
+**Select all matches** to include all detected items for the current Buy/Sell mode.
+
+Version 1.0.237 adds **Select all matches** beside the detected-item search box in
+Trade. It checks every visible search result and rebuilds the whisper review
+queue in one action. Checked items outside the filter stay selected; an empty
+filter selects all detected items for the current Buy/Sell mode.
+
+Version 1.0.236 displays imported Discord posts as **name and message only**,
+without generated timestamps or message links. Exact message text is preserved.
+Already saved text keeps its previous format until imported again.
+
+Version 1.0.235 slows browser capture to at least **10 seconds between scrolls**,
+with a pause for message loading and rendering to settle. Slow pages receive up
+to 45 seconds to load. Browser batches can run for up to 60 minutes, and the local
+connection expires after 90 minutes, allowing larger batches at this slower pace.
+Update/reload the unpacked extension as well as the app before starting again.
+
+Version 1.0.234 adds **Browser capture** in Trade. A separately installed local
+Chrome/Edge extension can scroll a signed-in Discord channel and send a selected
+batch of 1 to 10,000 messages into KathanaBot, including embedded trade listings.
+This requires a one-time extension installation and one connection setup per
+capture session; it removes page-by-page copying. The browser session must remain
+open. Personal-account automation is prohibited by Discord and carries an account
+risk; this is not a supported Discord integration. The user confirmed that
+collection starts in their browser; the slower 1.0.235 pacing still needs live
+confirmation. See
+[capture setup and limits](docs/DISCORD_TRADE_IMPORT.md#browser-capture).
+
+Version 1.0.233 added reader-bot history imports through Discord Following.
+Those controls and polling were retired in 1.0.242. See the current
+[Discord Trade setup](docs/DISCORD_TRADE_IMPORT.md) for Browser capture and manual paste.
+
+Version 1.0.231 supports **background keyboard input** while another application
+stays active. Keep Kathana open and not minimized. It does not take game focus or
+move the system cursor; mouse/text workflows are unavailable in this keyboard build.
+Numbers, letters, function keys, movement keys and Ctrl/Alt shortcuts share the same
+target-only route. Short holds independently sample 150-250 ms; longer configured
+holds remain exact, and cancellation releases promptly.
+
+Stop automation, then click **Background keys** to choose Queued / scan,
+Direct / scan, Queued / virtual or Direct / virtual. Queued / scan is the default.
+The method is saved with app settings. A mode cannot change while a key release is
+pending. CLI override: `--background-key-mode posted-scan|send-scan|posted-zero|send-zero`.
+
+Close older bot copies before opening the new standalone. Earlier executables are
+retained. These are four delivery/encoding options within Windows keyboard messages;
+they do not establish that the game's enforcement permits automation. No DLL
+injection, driver or game-file change is required. Validation and experiments are
+recorded in [input testing](docs/INTERNAL_INPUT_HOOK.md).
+The packaged v1.0.231 EXE visibly toggled inventory with all four methods while
+another window stayed active. The default also passed two isolated Lite-engine
+checks. All 13 managed test programs passed; sustained combat and detection
+behavior remain unverified.
+Subsequent user use of v1.0.231 was reported terminated for suspicious activity;
+the running panel selected posted scan codes. Background key acceptance alone
+has therefore not solved continued-use detection. See S03 in the experiment log.
+The running [background-input experiment log](BACKGROUND_INPUT_EXPERIMENTS.md)
+records successes, failures, evidence and pending checks.
+Create the root-folder standalone EXE with `./build-standalone-release.ps1`.
+
 ```powershell
 dotnet build .\ui\KathanaBotControlPanel\KathanaBotControlPanel.vbproj -c Release
 ```
