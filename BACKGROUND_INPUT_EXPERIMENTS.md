@@ -1,13 +1,73 @@
 # Background input experiment log
 
-Last updated: 2026-10-03. Append each new experiment and update the current status below.
+Last updated: 2026-10-06. Append each new experiment and update the current status below.
 
-The requirement is to operate the **existing Kathana window on the same desktop while another application remains active**, with keyboard delivery as the minimum useful result. The v1.0.231 implementation returns to background keyboard messages with four selectable variants and posted scan-code messages as the default. v1.0.230 remains a separate foreground alternative; earlier standalone files are retained.
+## 2026-10-06 — Default game focus restoration (1.0.247)
+
+The user explicitly requests that running foreground automation restore and
+keep the selected game active by default. This supersedes 1.0.246's manual
+focus requirement. The input button and its help notice are removed. A paced
+supervisor validates the selected HWND/PID and KathanaGame process before
+restoring or activating it; combat stays running when focus is temporarily
+unavailable. Stop/F12 and shutdown cancel focus maintenance. Individual
+SendInput events still require actual game focus and release owned inputs on
+focus loss. The control panel has a brief Stop grace period and modal dialogs
+suspend restoration until closed.
+
+This changes focus management, not the input transport or evidence about
+detection. No live game trial or detection-avoidance result is claimed.
+
+## 2026-10-06 — All four background methods reported detected; foreground build (1.0.246)
+
+The user now reports detection with all four menu choices: Queued / scan,
+Direct / scan, Queued / virtual and Direct / virtual. Treat all four as failed
+for the user's continued-use requirement. The exact enforcement trigger is
+unknown; the report does not establish whether delivery, timing, another bot
+feature or another component caused the termination.
+
+All four use synthetic window-message delivery. They differ in queued versus
+synchronous delivery and scan-code metadata, rather than supplying physical
+keyboard device input. The user requests a new foreground SendInput version
+for every game interaction, so 1.0.246 makes that the production backend for
+keys, modifiers, mouse/cursor operations and chat. Old preferences cannot
+select a background backend. Foreground input skips new events after focus
+loss and releases owned keys/buttons. The previous standalone files remain.
+
+SendInput inserts synthetic events into the Windows input stream; Windows
+provides an injected-event flag to keyboard hook listeners. This is a transport
+change, not evidence that Kathana will accept the automation.
+[Microsoft SendInput documentation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput),
+[injected-event flags](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-kbdllhookstruct).
+No live game trial is performed for this change. Retain the experiment history
+below rather than repeating an already rejected method as a new solution.
+
+## 2026-10-06 — Loot After Kill retry correction (1.0.245)
+
+The user requested an Auto Loot detection fix. Active Loot After Kill already
+routes F through the same selected background keyboard backend as combat; the
+scanner, centered pickup and mouse actions remain disabled by keyboard-only
+runtime policy. Inspection found an independent retry defect: when F dispatch
+returned false after uncertain delivery or failed cleanup, the target
+disappearance stayed armed and subsequent frames could repeat F.
+
+The attempt is now consumed before dispatch and its attempt time recorded.
+Failure or cancellation cannot repeat F for the same attacked-target
+disappearance. Configured holds, the selected key method and owned-release
+cleanup are preserved. Offline regressions exercise all four delivery modes,
+uncertain down/release, cancellation and rearming on a fresh living target.
+
+This fixes repeated input after an uncertain result; it does not identify the
+game's detection trigger or establish enforcement compatibility. No live game
+input or new detection-bypass method was used for this change.
+
+The earlier requirement was to operate the **existing Kathana window on the same desktop while another application remains active**, with keyboard delivery as the minimum useful result. The v1.0.231 implementation returned to background keyboard messages with four selectable variants and posted scan-code messages as the default. The latest request instead adds foreground SendInput for all interactions in v1.0.246; earlier standalone files are retained.
 
 The user explicitly confirmed after S03 that everything must stay in **this Windows session**. Separate PCs, virtual machines and child sessions are outside the current implementation scope; retain their audit findings as history only.
 
 ## Current status
 
+- **Latest requested behavior:** v1.0.247 automatically restores selected game focus while automation is running and removes the input button/notice. Focus loss does not stop the combat engine; failed activation is retried. Stop/F12 remains available. No live game trial was performed.
+- **Latest detection report (S04):** all four background keyboard choices are detected. v1.0.246 switches all game interactions to foreground SendInput as requested, and fixes one-shot launch startup being consumed before success. No new game input was sent during implementation; enforcement compatibility remains unverified.
 - **Latest failure (S03):** the user reports suspicious-activity termination after trying v1.0.231 and supplies another terminated-session screenshot. The running v1.0.231 panel (PID 38048) reported `inputMode=background-keys-posted-scan`, `running=true` and the old selected game PID 7016; the game process snapshot at that point was PID 27772. Posted scan-code background delivery has failed the user's continued-use requirement despite the earlier short inventory successes. The exact detecting component and causal trigger remain unknown. Other variants were not individually identified in this latest report.
 - **Process observation after S03:** the failed panel exited before the attempted stop request could reach it. A later read-only process check found no bot and a restarted game PID 8532. No new game input or restart was performed by the agent in response to S03.
 - **Measured raw-input result (R02):** the user's manual run obtained focus and sent two complete F24 presses. The separate background receiver received all four marker-matched events as `RIM_INPUTSINK`; the foreground sentinel also received both down/up pairs. Raw delivery works in this fixture, but global SendInput does not isolate keys from the active app. Focus changed after the final release, truncating the observation period and producing the reported abort. No key remained held. [Preserved report](input-diagnostics/raw-keyboard-manual-focus_20261003_145037.json). Game acceptance and continued-use compatibility remain untested; this is not a replacement bot.

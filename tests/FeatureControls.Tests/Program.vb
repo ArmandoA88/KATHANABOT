@@ -12,7 +12,9 @@ Module Program
         TestKeyboardOnlyPolicy()
         TestKeysAndHold()
         TestSkillUi()
-        Console.WriteLine("PASS: common input routing, compatibility and keyboard-only policies, shortcut sequences, cancellable loot hold, editable skill colors and profile roundtrip.")
+        StartupTests.Run()
+        FocusMaintenanceTests.Run()
+        Console.WriteLine("PASS: foreground production default, common input routing, retained keyboard-only policy, shortcut sequences, cancellable loot hold, editable skill colors and profile roundtrip.")
     End Sub
 
     Private Sub TestKeyboardOnlyPolicy()
@@ -55,7 +57,12 @@ Module Program
         Dim originalInput = WindowsInput.Current
         WindowsInput.Current = Nothing
         Try
-            Check(WindowsInput.KeyboardOnlyMode, "production keyboard-only policy must be active")
+            Check(TypeOf WindowsInput.Current Is ForegroundWindowsInput AndAlso Not WindowsInput.KeyboardOnlyMode AndAlso
+                  WindowsInput.InputMode = "foreground" AndAlso Not WindowsInput.UsesTargetedInput,
+                  "production foreground mode must permit guarded mouse/text features")
+            ' Retained keyboard-only policy is tested explicitly; no native input is used.
+            WindowsInput.Current = New SdlBackgroundWindowsInput(New InertBackgroundPlatform, Sub(milliseconds) Return, keyboardOnly:=True)
+            Check(WindowsInput.KeyboardOnlyMode, "the explicitly injected background fixture must enforce keyboard-only policy")
             Dim owner = Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(GetType(Form1))
             Using enabled As New CheckBox With {.Checked = True}
                 GetType(Form1).GetField("chkAutoRelaunchGame", InstanceFlags).SetValue(owner, enabled)
@@ -67,6 +74,24 @@ Module Program
             WindowsInput.Current = originalInput
         End Try
     End Sub
+    Private NotInheritable Class InertBackgroundPlatform
+        Inherits BackgroundInputPlatform
+        Public Overrides Function Valid(hwnd As IntPtr) As Boolean
+            Return False
+        End Function
+        Public Overrides Function ProcessId(hwnd As IntPtr) As UInteger
+            Return 0UI
+        End Function
+        Public Overrides Function ClientPoint(hwnd As IntPtr, x As Integer, y As Integer) As Point?
+            Return Nothing
+        End Function
+        Public Overrides Function ScreenToClient(hwnd As IntPtr, x As Integer, y As Integer) As Point?
+            Return Nothing
+        End Function
+        Public Overrides Function Send(hwnd As IntPtr, message As UInteger, wParam As IntPtr, lParam As IntPtr) As Boolean
+            Throw New InvalidOperationException("The policy fixture must not send input.")
+        End Function
+    End Class
     Private Sub Check(value As Boolean, message As String)
         If Not value Then Throw New Exception(message)
     End Sub

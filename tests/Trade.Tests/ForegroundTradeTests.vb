@@ -10,7 +10,8 @@ Module ForegroundTradeTests
         Dim originalInput = WindowsInput.Current
         Dim originalMode = WindowsInput.InputMode
         Dim originalKeyMode = WindowsInput.BackgroundKeyMode
-        Check(WindowsInput.KeyboardOnlyMode, "Foreground Trade fixture must leave the production background keyboard backend selected")
+        Check(TypeOf originalInput Is ForegroundWindowsInput AndAlso WindowsInput.InputMode = "foreground" AndAlso Not WindowsInput.KeyboardOnlyMode,
+              "Foreground Trade fixture must retain the foreground production backend")
         Using window As New Form With {.Text = "Owned offline foreground Trade fixture", .ShowInTaskbar = False,
                 .StartPosition = FormStartPosition.Manual, .Location = New Point(-30000, -30000)}
             window.Show()
@@ -25,7 +26,7 @@ Module ForegroundTradeTests
             TestSequenceLock(window.Handle)
         End Using
         Check(Object.ReferenceEquals(WindowsInput.Current, originalInput) AndAlso WindowsInput.InputMode = originalMode AndAlso
-              WindowsInput.BackgroundKeyMode = originalKeyMode AndAlso WindowsInput.KeyboardOnlyMode, "Foreground Trade switched the combat input object or background keyboard mode")
+              WindowsInput.BackgroundKeyMode = originalKeyMode AndAlso Not WindowsInput.KeyboardOnlyMode, "Foreground Trade switched the combat input object or legacy keyboard preference")
         Console.WriteLine($"PASS: {checks} offline dedicated foreground Trade assertions: exact UTF-16 text, activation/strict focus, HWND/PID/minimized guards, cancellation/commit, owned releases and combat backend isolation.")
     End Sub
 

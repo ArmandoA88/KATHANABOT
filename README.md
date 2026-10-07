@@ -10,6 +10,59 @@ KathanaBot is a self-contained VB WinForms application. Both the Velopack-instal
 
 ## Build / Rebuild
 
+Version 1.0.249 fixes Home never becoming visible at launch: the first-run Activity & Setup handler
+selected a page the sidebar removes, leaving no tab selected, so Home showed stale
+stopped/pink pixels and no live stats while the bot ran. Home is now always selected.
+Version 1.0.248 immediately synchronizes Home's active status, play/pause control,
+green frame and sidebar indicator with the running engine at startup. It clears
+the initial stopped tint without requiring a tab change, even before the first
+game or HP reading. Late status callbacks cannot repaint a running bot as stopped.
+
+This is the **Foreground SendInput** build. Every game key, click,
+cursor movement and text request uses the same foreground input backend;
+saved background-method preferences cannot switch it back. The input-method
+button and its help notice have been removed. Running automation automatically
+restores the selected Kathana window and reacquires its foreground focus. Focus
+loss skips new input and releases owned keys/buttons while the engine keeps
+running; input resumes after focus returns. Windows can deny activation, so the
+supervisor retries instead of reporting success or stopping combat.
+
+Stop, F12 and Ctrl+Shift pause cancel focus maintenance. F12 is reserved for
+the user's emergency stop rather than automated skill presses. The control
+panel allows three seconds to click Stop when activated; active modal dialogs
+suspend restoration until they close. The supervisor validates the exact
+selected game window and process before restoring even a minimized game.
+
+Launch starts Full automatically after the initial process-list refresh. A
+blocked or failed start remains pending and retries instead of being marked
+complete. Stop/F12 cancels a pending launch start, and a successful launch start
+does not restart after an intentional stop. The Home display follows the actual
+engine state. The release script creates
+`KathanaBotControlPanel_Standalone_Foreground_1.0.249.exe` plus the regular
+versioned filename, with identical verified contents. Earlier background EXEs
+are retained. SendInput remains injected software input; the game's detection
+cause and continued-use compatibility remain unverified.
+
+Version 1.0.245 adds **EXTRAS**, hidden until the existing **126974** Home-page
+sequence unlocks the extra tabs. Choose a Kathana installation folder and apply
+the bundled **x2 zoom** or **x3 POV** preset to its relative `userdata/engine.cfg`.
+Close all Kathana windows first. Every existing config is renamed to a unique
+backup; **Restore previous engine.cfg** rolls back a change while preserving the
+replaced config too.
+
+Both exact zoom presets and **Remote Desktop Mosaic 1.0.4** are embedded in the
+standalone EXE. Extras can save that Mosaic build offline or download the newest
+dated Mosaic build from this repository's `agent-ai` branch. Downloads verify
+the size and SHA-256 before replacement, preserve the previous copy and support
+cancellation. Mosaic is saved to `Extras/RemoteDesktopMosaic.exe` beside the app.
+The Open button reuses `RemoteDesktopMosaic.settings.json` beside KathanaBot when
+present. No additional preset or Mosaic source files are needed at runtime.
+
+Loot After Kill now consumes each attacked-target disappearance before attempting
+F, so a failed or cancelled send cannot repeat it every frame. It retains the
+configured hold and combat input backend. This fixes a retry defect; in-game
+detection compatibility remains unverified.
+
 Version 1.0.244 replaces Quiz's model choices with **GPT-6 Luna — Fast / Cheap**
 and **GPT-6 Astra — Ultrafast / Expensive**. The choice is saved; older model
 selections migrate to Luna. Requests use the selected processing tier and do not

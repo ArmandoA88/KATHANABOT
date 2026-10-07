@@ -78,11 +78,10 @@ Friend NotInheritable Class InputDiagnostics
         Dim report As New List(Of String) From {"Input backend: " & WindowsInput.InputMode,
             "Diagnostic: " & action, "Input method: " & If(background, action & " (target-only client input)", WindowsInput.InputMode)}
         Try
-            If (backendMouse OrElse postedMouse OrElse hoverPair OrElse mouseState) AndAlso WindowsInput.KeyboardOnlyMode Then Throw New InvalidOperationException("This build supports background key presses only.")
-            If (backendInventory OrElse backendEscape OrElse backendKey OrElse backendMouse OrElse engineInventory) AndAlso
-                Not TypeOf WindowsInput.Current Is SdlBackgroundWindowsInput Then
-                Throw New InvalidOperationException("Production background diagnostics require the SDL background build; this release uses foreground input.")
+            If background AndAlso Not TypeOf WindowsInput.Current Is SdlBackgroundWindowsInput Then
+                Throw New InvalidOperationException("Background diagnostics are unavailable in this foreground SendInput release. Use capture, inventory or escape with the game in the foreground.")
             End If
+            If (backendMouse OrElse postedMouse OrElse hoverPair OrElse mouseState) AndAlso WindowsInput.KeyboardOnlyMode Then Throw New InvalidOperationException("This build supports background key presses only.")
             Dim games = Process.GetProcessesByName("KathanaGame")
             If games.Length <> 1 Then Throw New InvalidOperationException("Open exactly one Kathana game for this controlled test.")
             Dim hwnd = games(0).MainWindowHandle
@@ -93,7 +92,7 @@ Friend NotInheritable Class InputDiagnostics
                 report.Add("Game HWND: " & hwnd.ToString() & "; foreground HWND: " & foreground.ToString())
                 CheckBackground(hwnd, foreground)
             ElseIf action <> "capture" Then
-                If Not WindowsInput.Current.Activate(hwnd) Then Throw New InvalidOperationException("Game activation was denied. Click the game before retrying.")
+                If Not WindowsInput.Current.Activate(hwnd) Then Throw New InvalidOperationException("The selected game must be restored and in the foreground. Click the game before retrying.")
                 Thread.Sleep(150)
             End If
             SaveCapture(hwnd, stem & "_before.png", report)

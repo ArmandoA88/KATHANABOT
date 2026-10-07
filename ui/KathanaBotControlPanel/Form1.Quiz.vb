@@ -294,6 +294,7 @@ Partial Public Class Form1
         ApplyDarkTheme(_quizTab)
         ApplyDarkTheme(_resuTab)
         ApplyDarkTheme(_tradeTab)
+        ApplyDarkTheme(_extrasTab)
         ' Use the same authoritative tab builder as edition/developer-mode changes. It inserts Quiz
         ' after Diagnostics (when visible) and immediately before Update, and now preserves it on
         ' every later sidebar refresh for the rest of this executable session.

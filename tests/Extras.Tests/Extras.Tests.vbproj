@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
+    <RootNamespace>ExtrasTests</RootNamespace>
+    <UseWindowsForms>true</UseWindowsForms>
+    <OptionStrict>On</OptionStrict>
+    <OptionInfer>On</OptionInfer>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../ui/KathanaBotControlPanel/KathanaBotControlPanel.vbproj" />
+    <Import Include="KathanaBotControlPanel" />
+    <Import Include="System.Windows.Forms" />
+    <Import Include="System.Data" />
+    <Import Include="System.Drawing" />
+  </ItemGroup>
+</Project>

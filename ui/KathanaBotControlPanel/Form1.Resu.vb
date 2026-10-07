@@ -627,6 +627,7 @@ Partial Public Class Form1
         If Not _resuRunning OrElse generation <> _resuGeneration OrElse IsDisposed OrElse Disposing Then Return False
         If ResuSelectedWindow() <> hwnd OrElse NativeMethods.IsIconic(hwnd) Then Return False
         If Not IsResuCompatibleBotState(hwnd) Then Return False
+        If TypeOf WindowsInput.Current Is ForegroundWindowsInput AndAlso Not WindowsInput.TargetIsForeground(hwnd) Then Return False
         Dim rect As NativeMethods.RECT
         Return NativeMethods.GetClientRect(hwnd, rect) AndAlso rect.Right - rect.Left = _resuSettings.ReferenceWidth AndAlso rect.Bottom - rect.Top = _resuSettings.ReferenceHeight
     End Function
@@ -644,7 +645,7 @@ Partial Public Class Form1
             Return
         End If
         If Not CanResuAct(generation, hwnd) Then
-            SetResuStatus("Paused: restore the selected game at the calibrated client size.")
+            SetResuStatus("Paused: waiting for the selected game focus at the calibrated client size; automatic focus restoration remains active.")
             ' Invalidate a worker even if the window is restored before its OCR finishes.
             _resuGeneration += 1
             _resuService.PauseMonitoring()
@@ -719,7 +720,20 @@ Partial Public Class Form1
             End If
             SetResuStatus(_resuService.Status)
         Catch ex As Exception
-            If generation = _resuGeneration AndAlso Not IsDisposed AndAlso Not Disposing Then StopResu("RESU stopped: " & ex.Message)
+            If generation = _resuGeneration AndAlso Not IsDisposed AndAlso Not Disposing Then
+                Dim selectedWindow = GetSelectedProcessWindowForEdition(BotEdition.Full)
+                Dim currentPid As UInteger
+                If TypeOf ex Is InvalidOperationException AndAlso ex.Message.Contains("foreground", StringComparison.OrdinalIgnoreCase) AndAlso
+                    TypeOf WindowsInput.Current Is ForegroundWindowsInput AndAlso _resuRunning AndAlso
+                    selectedWindow IsNot Nothing AndAlso selectedWindow.MainWindowHandle = hwnd AndAlso selectedWindow.ProcessId > 0 AndAlso
+                    NativeMethods.GetWindowThreadProcessId(hwnd, currentPid) <> 0 AndAlso currentPid = CUInt(selectedWindow.ProcessId) AndAlso
+                    Not WindowsInput.TargetIsForeground(hwnd) Then
+                    _resuService.PauseMonitoring()
+                    SetResuStatus("Paused: the game lost focus during input; automatic focus restoration will resume monitoring.")
+                Else
+                    StopResu("RESU stopped: " & ex.Message)
+                End If
+            End If
         Finally
             _resuBusy = False
             If tradeVisibleThisScan Then

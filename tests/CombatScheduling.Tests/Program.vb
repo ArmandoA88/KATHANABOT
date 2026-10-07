@@ -60,6 +60,7 @@ Module Program
         Check(RuntimeJournal.Snapshot().Any(Function(item) item.Kind = "Skill skipped"), "skip reason reaches timeline")
         TestAutoAssistOnly()
         TestLootAfterKill()
+        LootAfterKillFailureTests.Run()
         TestStuckTargetRecovery()
         TestDisappearedTargetRecovery()
         Console.WriteLine($"PASS: {passed} combat scheduling, timing, mode and injected-input assertions.")
@@ -214,16 +215,17 @@ Module Program
             tick(False, 11100, True)
             input.Accept = True
             tick(False, 11200, True)
-            Check(input.Messages.Count = 5, "failed F is retried rather than dropping the pickup")
+            Check(input.Messages.Count = 4 AndAlso input.Messages.Skip(2).SequenceEqual({&H100UI, &H101UI}),
+                  "failed F attempts one down and owned cleanup, then consumes this disappearance without another pickup")
             tick(True, 12000, True)
             cfg.LootAfterKillEnabled = False
             tick(False, 12100, True)
             cfg.LootAfterKillEnabled = True
             tick(False, 12200, True)
-            Check(input.Messages.Count = 5, "disabled pickup clears pending death")
+            Check(input.Messages.Count = 4, "disabled pickup clears pending death")
             tick(True, 13000, True)
             tick(False, 17000, True)
-            Check(input.Messages.Count = 5, "stale target disappearance does not loot")
+            Check(input.Messages.Count = 4, "stale target disappearance does not loot")
         Finally
             WindowsInput.Current = Nothing
         End Try

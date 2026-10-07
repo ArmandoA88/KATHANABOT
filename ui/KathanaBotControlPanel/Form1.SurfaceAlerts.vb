@@ -14,13 +14,13 @@ Partial Public Class Form1
         RefreshSurfaceAlerts()
     End Sub
 
-    Private Sub RefreshSurfaceAlerts()
+    Private Sub RefreshSurfaceAlerts(Optional advancePulse As Boolean = True, Optional forceRefresh As Boolean = False)
         If Not _themeSnapshotCaptured OrElse IsDisposed Then Return
         Dim edition = GetRunningEdition()
         Dim status = GetEngineForEdition(edition.GetValueOrDefault(BotEdition.Full)).GetStatus()
-        _surfaceAlertPhase = Not _surfaceAlertPhase
+        If advancePulse Then _surfaceAlertPhase = Not _surfaceAlertPhase
         Dim state = GetSurfaceAlertState(status, edition.HasValue, _dashboardTab.Visible, _surfaceAlertPhase)
-        If state = _lastSurfaceAlert AndAlso _lastAlertTab Is _mainTabs.SelectedTab Then Return
+        If Not forceRefresh AndAlso state = _lastSurfaceAlert AndAlso _lastAlertTab Is _mainTabs.SelectedTab Then Return
         _lastSurfaceAlert = state
         _lastAlertTab = _mainTabs.SelectedTab
         CaptureThemeSnapshot(Me)

@@ -12,7 +12,8 @@ Module TradeStartTests
         Dim originalInput = WindowsInput.Current
         Dim originalMode = WindowsInput.InputMode
         Dim originalKeyMode = WindowsInput.BackgroundKeyMode
-        Check(WindowsInput.KeyboardOnlyMode, "Trade Start must be tested with the production keyboard-only backend selected")
+        Check(TypeOf originalInput Is ForegroundWindowsInput AndAlso WindowsInput.InputMode = "foreground" AndAlso Not WindowsInput.KeyboardOnlyMode,
+              "Trade Start must be tested with the production foreground SendInput backend selected")
         TestStartGuards()
         Check(Object.ReferenceEquals(originalInput, WindowsInput.Current), "Building Trade or checking Start guards changed the production input backend")
         Dim noInput As New NoInput()
@@ -27,7 +28,7 @@ Module TradeStartTests
             WindowsInput.Current = originalInput
         End Try
         Check(Object.ReferenceEquals(originalInput, WindowsInput.Current) AndAlso WindowsInput.InputMode = originalMode AndAlso
-              WindowsInput.BackgroundKeyMode = originalKeyMode AndAlso WindowsInput.KeyboardOnlyMode,
+              WindowsInput.BackgroundKeyMode = originalKeyMode AndAlso Not WindowsInput.KeyboardOnlyMode,
               "Trade Start fixture changed the combat backend or its configured keyboard mode")
         Console.WriteLine($"PASS: {checks} offline Trade Start assertions: visible guards/caption, all worker references and bounded waits, focus/cancellation between recipients, and exact-case submission ownership without game input.")
     End Sub
@@ -37,8 +38,8 @@ Module TradeStartTests
             Check(DirectCast(fixture.Field("_tradeStart"), Button).Text = "Start whispers (foreground)", "Start does not expose foreground whisper behavior")
             Check(CStr(fixture.Invoke("GetTradeStartBlockReason")).Contains("locked", StringComparison.OrdinalIgnoreCase), "Locked Trade exits without an explicit reason")
             fixture.SetField("_quizUnlocked", True)
-            Check(CStr(fixture.Invoke("GetTradeStartBlockReason")) = "" AndAlso WindowsInput.KeyboardOnlyMode,
-                  "Unlocked idle Trade is still blocked by the production keyboard-only combat backend")
+            Check(CStr(fixture.Invoke("GetTradeStartBlockReason")) = "" AndAlso WindowsInput.InputMode = "foreground" AndAlso Not WindowsInput.KeyboardOnlyMode,
+                  "Unlocked idle Trade is still blocked with the foreground combat backend")
             fixture.SetField("_tradeRunning", True)
             Check(CStr(fixture.Invoke("GetTradeStartBlockReason")).Contains("already running", StringComparison.OrdinalIgnoreCase), "Running Trade has no explicit Start guard")
             fixture.SetField("_tradeRunning", False)
@@ -157,6 +158,22 @@ Module TradeStartTests
             Check(probes = 2, "A transient focus loss was tolerated after the target regained focus")
             WaitUi(WaitForeground(hwnd, pid, 0, CancellationToken.None, changing))
             Check(probes = 3, "Owned focus restoration fixture did not recover after the already-stopped wait")
+            Dim active = IntPtr.Zero
+            Dim restoreCalls As Integer
+            Dim recoveryLookup As Func(Of IntPtr) = Function() active
+            Dim restore As Func(Of IntPtr, UInteger, Boolean) =
+                Function(target, expectedPid)
+                    Check(target = hwnd AndAlso expectedPid = pid, "Between-row recovery changed its frozen window or PID")
+                    restoreCalls += 1
+                    If restoreCalls = 2 Then active = hwnd
+                    Return active = hwnd
+                End Function
+            WaitUi(WaitForeground(hwnd, pid, 0, CancellationToken.None, recoveryLookup, restore))
+            Check(restoreCalls = 2 AndAlso active = hwnd, "Between-row focus wait did not retain the queue through temporary restoration failure")
+            active = IntPtr.Zero
+            Dim beforeInvalidRestore = restoreCalls
+            ExpectInvalid(Sub() WaitUi(WaitForeground(hwnd, pid + 1UI, 0, CancellationToken.None, recoveryLookup, restore)), "window")
+            Check(restoreCalls = beforeInvalidRestore, "Changed PID reached a focus restoration callback")
             ExpectInvalid(Sub() WaitUi(WaitForeground(hwnd, pid + 1UI, 0, CancellationToken.None, lookup)), "window")
             ExpectInvalid(Sub() WaitUi(WaitForeground(IntPtr.Zero, pid, 0, CancellationToken.None, lookup)), "window")
             Using before As New CancellationTokenSource(), during As New CancellationTokenSource()
@@ -169,6 +186,18 @@ Module TradeStartTests
                                                              Return hwnd
                                                          End Function
                 ExpectCancelled(Sub() WaitUi(WaitForeground(hwnd, pid, 100, during.Token, cancelLookup)))
+            End Using
+            Using stopRecovery As New CancellationTokenSource()
+                Dim stopCalls As Integer
+                Dim stopRestore As Func(Of IntPtr, UInteger, Boolean) =
+                    Function(target, expectedPid)
+                        stopCalls += 1
+                        stopRecovery.Cancel()
+                        Return False
+                    End Function
+                active = IntPtr.Zero
+                ExpectCancelled(Sub() WaitUi(WaitForeground(hwnd, pid, 0, stopRecovery.Token, recoveryLookup, stopRestore)))
+                Check(stopCalls = 1, "Stop during focus recovery permitted another restoration attempt")
             End Using
         End Using
     End Sub
@@ -221,8 +250,9 @@ Module TradeStartTests
         GetType(BotEngine).GetField(name, PrivateInstance).SetValue(engine, value)
     End Sub
 
-    Private Function WaitForeground(hwnd As IntPtr, pid As UInteger, milliseconds As Integer, cancellation As CancellationToken, foreground As Func(Of IntPtr)) As Task
-        Return DirectCast(GetType(Form1).GetMethod("WaitForTradeForegroundAsync", PrivateStatic).Invoke(Nothing, {hwnd, pid, milliseconds, cancellation, foreground}), Task)
+    Private Function WaitForeground(hwnd As IntPtr, pid As UInteger, milliseconds As Integer, cancellation As CancellationToken, foreground As Func(Of IntPtr),
+                                    Optional restoreForeground As Func(Of IntPtr, UInteger, Boolean) = Nothing) As Task
+        Return DirectCast(GetType(Form1).GetMethod("WaitForTradeForegroundAsync", PrivateStatic).Invoke(Nothing, {hwnd, pid, milliseconds, cancellation, foreground, restoreForeground}), Task)
     End Function
 
     Private Sub WaitUi(work As Task)

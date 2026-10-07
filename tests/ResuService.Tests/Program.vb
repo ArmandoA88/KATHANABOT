@@ -58,6 +58,7 @@ Module Program
         Test("auto-loot foreground toggle requires active Full auto-loot", AddressOf AutoLootForegroundToggle)
         Test("default loot list merges without losing custom entries", AddressOf DefaultLootCatalog)
         Test("dashboard icon ignores stale telemetry from either edition", AddressOf DashboardRunIcon)
+        Test("Home initially renders live running state without a tab change", AddressOf HomeDashboardTests.Run)
         Test("reset stats clears mobs killed and pending kill tracking", AddressOf ResetStatsClearsKills)
         Test("invalid message patterns rejected", AddressOf InvalidPatterns)
         Test("settings and blacklist survive JSON roundtrip", AddressOf Persistence)

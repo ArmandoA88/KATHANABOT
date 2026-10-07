@@ -11,8 +11,10 @@ End Interface
 
 Public NotInheritable Class WindowsInput
     Private Shared ReadOnly LocalInput As New AsyncLocal(Of IWindowsInput)
-    Private Shared ReadOnly DefaultInput As New SdlBackgroundWindowsInput(New NativeBackgroundInputPlatform(),
-        keyboardMode:=InitialKeyboardMode(), keyboardOnly:=True)
+    ' This release uses the OS foreground input stream for every gameplay request.
+    ' Old profile/command-line background selections cannot change the production backend.
+    Private Shared ReadOnly DefaultInput As New ForegroundWindowsInput(
+        New NativeInputPlatform(useKathanaProcessNameValidation:=True), allowActivation:=False)
     Private Shared ReadOnly ReleaseTimer As New System.Threading.Timer(AddressOf MonitorReleases, Nothing, 20, 20)
     Public Shared ReadOnly SequenceLock As New Object
     ' Retained for old profiles; the selected backend controls its supported inputs.
@@ -25,20 +27,49 @@ Public NotInheritable Class WindowsInput
     End Property
     Private Shared Sub MonitorReleases(state As Object)
         Try
-            DefaultInput.Maintain()
+            DefaultInput.ReleaseUnfocused()
         Catch ex As Exception
             RuntimeJournal.Record("Input release error", ex.Message)
         End Try
     End Sub
     Public Shared Sub ReleaseAll()
-        DefaultInput.ReleaseAll()
+        Dim foreground = TryCast(Current, ForegroundWindowsInput)
+        If foreground IsNot Nothing Then
+            foreground.ReleaseAll()
+            Return
+        End If
+        TryCast(Current, SdlBackgroundWindowsInput)?.ReleaseAll()
     End Sub
     Public Shared Sub ReleaseTarget(hwnd As IntPtr)
-        If LocalInput.Value Is Nothing Then DefaultInput.ReleaseTarget(hwnd)
+        Dim foreground = TryCast(Current, ForegroundWindowsInput)
+        If foreground IsNot Nothing Then
+            foreground.ReleaseTarget(hwnd)
+            Return
+        End If
+        TryCast(Current, SdlBackgroundWindowsInput)?.ReleaseTarget(hwnd)
     End Sub
     Public Shared Sub BindTarget(hwnd As IntPtr)
-        DefaultInput.BindTarget(hwnd)
+        Dim foreground = TryCast(Current, ForegroundWindowsInput)
+        If foreground IsNot Nothing Then
+            foreground.BindTarget(hwnd)
+            Return
+        End If
+        TryCast(Current, SdlBackgroundWindowsInput)?.BindTarget(hwnd)
     End Sub
+    Public Shared Function TryRestoreGameForeground(hwnd As IntPtr, expectedPid As UInteger) As Boolean
+        Dim foreground = TryCast(Current, ForegroundWindowsInput)
+        If foreground Is Nothing OrElse Not Monitor.TryEnter(SequenceLock) Then Return False
+        Try
+            Return foreground.TryRestoreGameForeground(hwnd, expectedPid)
+        Finally
+            Monitor.Exit(SequenceLock)
+        End Try
+    End Function
+    Public Shared ReadOnly Property IsProductionForegroundInput As Boolean
+        Get
+            Return Object.ReferenceEquals(Current, DefaultInput)
+        End Get
+    End Property
     Public Shared ReadOnly Property LastConnectionError As String
         Get
             Return ""
@@ -46,7 +77,7 @@ Public NotInheritable Class WindowsInput
     End Property
     Public Shared Sub RequireConnection(hwnd As IntPtr)
         If Not Current.Activate(hwnd) Then
-            Throw New InvalidOperationException("Selected game is unavailable for background keys. Keep Kathana open and not minimized; another app can remain active.")
+            Throw New InvalidOperationException("Selected Kathana window must be open, restored and in the foreground for input.")
         End If
     End Sub
     Public Shared Function TargetIsForeground(hwnd As IntPtr) As Boolean
@@ -77,12 +108,14 @@ Public NotInheritable Class WindowsInput
     End Property
     Public Shared ReadOnly Property BackgroundKeyMode As BackgroundKeyboardMode
         Get
-            Return DefaultInput.KeyboardMode
+            Dim background = TryCast(Current, SdlBackgroundWindowsInput)
+            Return If(background Is Nothing, BackgroundKeyboardMode.PostedScanCode, background.KeyboardMode)
         End Get
     End Property
     Public Shared Function TrySetBackgroundKeyMode(mode As BackgroundKeyboardMode) As Boolean
         SyncLock SequenceLock
-            Return DefaultInput.SetKeyboardMode(mode)
+            Dim background = TryCast(Current, SdlBackgroundWindowsInput)
+            Return background IsNot Nothing AndAlso background.SetKeyboardMode(mode)
         End SyncLock
     End Function
     Public Shared Function KeyboardModeId(mode As BackgroundKeyboardMode) As String
@@ -103,16 +136,6 @@ Public NotInheritable Class WindowsInput
             Case Else : Return False
         End Select
         Return True
-    End Function
-    Private Shared Function InitialKeyboardMode() As BackgroundKeyboardMode
-        Dim arguments = Environment.GetCommandLineArgs()
-        Dim index = Array.IndexOf(arguments, "--background-key-mode")
-        If index < 0 Then Return BackgroundKeyboardMode.PostedScanCode
-        Dim mode As BackgroundKeyboardMode
-        If index + 1 >= arguments.Length OrElse Not TryParseKeyboardMode(arguments(index + 1), mode) Then
-            Throw New ArgumentException("--background-key-mode requires posted-scan, send-scan, posted-zero or send-zero.")
-        End If
-        Return mode
     End Function
     Public Shared Function KeyPressDurationMs(requested As Integer) As Integer
         If Not TypeOf Current Is SdlBackgroundWindowsInput AndAlso Not TypeOf Current Is ForegroundWindowsInput Then Return Math.Max(5, requested)

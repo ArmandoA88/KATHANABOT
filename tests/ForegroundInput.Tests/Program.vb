@@ -1,5 +1,6 @@
 Imports System.Drawing
 Imports System.IO
+Imports System.Reflection
 
 Module Program
     Private count As Integer
@@ -134,6 +135,7 @@ Module Program
         before = backend.Events.Count
         Check(Not losingFocus.Post(game, &H100UI, New IntPtr(65), IntPtr.Zero) AndAlso backend.Events.Count = before, "focus must be rechecked after randomized wait")
         VerifyWindowsInputSelectorAndKeyTiming(game, other)
+        count += CommonGameInteractionTests.Verify()
         AuditNativeImports()
         Console.WriteLine($"PASS: {count} foreground SendInput routing, selector eligibility, key hold timing, focus, releases, cursor, Unicode and native-import assertions.")
     End Sub
@@ -204,13 +206,27 @@ Module Program
         End While
         If root Is Nothing Then Throw New Exception("Cannot locate source for input API audit")
         Dim source = Path.Combine(root.FullName, "ui", "KathanaBotControlPanel")
-        ' This suite audits the retained foreground backend. The production SDL
-        ' backend uses target messages and has its own API audit.
+        ' Production uses this foreground backend for keys, text and mouse input.
+        ' Retained experimental implementations have separate owned unit coverage.
         Dim text = File.ReadAllText(Path.Combine(source, "ForegroundWindowsInput.vb"))
         For Each name In {"PostMessage", "keybd_event", "mouse_event", "SetCursorPos", "SendMessage", "SendKeys"}
             Check(Not System.Text.RegularExpressions.Regex.IsMatch(text, "(?i)DllImport\([^\r\n]*EntryPoint\s*:=\s*""" & name & "(?:A|W)?"""), "legacy native import remains: " & name)
         Next
         Check(System.Text.RegularExpressions.Regex.Matches(text, "Private Shared Function SendInput\(").Count = 1, "one native SendInput entry point required")
+        Dim inputPlatformType = GetType(WindowsInput).Assembly.GetType("KathanaBotControlPanel.NativeInputPlatform", throwOnError:=True)
+        Dim nativeImports = inputPlatformType.GetMethods(Reflection.BindingFlags.Static Or Reflection.BindingFlags.NonPublic).
+            Select(Function(method) New With {.Method = method, .Attribute = method.GetCustomAttribute(Of Runtime.InteropServices.DllImportAttribute)()}).
+            Where(Function(item) item.Attribute IsNot Nothing).ToArray()
+        For Each name In {"PostMessage", "SendMessage", "SendMessageTimeout", "keybd_event", "mouse_event", "SetCursorPos", "SendKeys"}
+            Check(Not nativeImports.Any(Function(item) String.Equals(item.Method.Name, name, StringComparison.OrdinalIgnoreCase) OrElse
+                System.Text.RegularExpressions.Regex.IsMatch(item.Attribute.EntryPoint, "(?i)^" & name & "(?:A|W)?$")),
+                "compiled foreground platform contains a retired input dispatch API: " & name)
+        Next
+        Check(nativeImports.Count(Function(item) item.Method.Name = "SendInput") = 1, "compiled foreground platform must have exactly one SendInput entry point")
+        Dim selector = File.ReadAllText(Path.Combine(source, "WindowsInput.vb"))
+        Check(selector.Contains("DefaultInput As New ForegroundWindowsInput") AndAlso
+              Not selector.Contains("DefaultInput As New SdlBackgroundWindowsInput") AndAlso Not selector.Contains("DefaultInput As New InternalHookWindowsInput"),
+              "production selector must create only the foreground input backend")
     End Sub
 End Module
 
@@ -224,6 +240,7 @@ Friend Class FakePlatform
     Public Covered As Boolean
     Public FailReleaseKey As UShort
     Public ActivateCalls As Integer
+    Public SendAttempts As Integer
     Public BeforeSend As Action(Of ForegroundInputEvent)
     Public Events As New List(Of ForegroundInputEvent)
     Public Overrides Function Foreground() As IntPtr
@@ -250,6 +267,7 @@ Friend Class FakePlatform
         Return New Rectangle(-1920, -1080, 3840, 2160)
     End Function
     Public Overrides Function Send(value As ForegroundInputEvent) As Boolean
+        SendAttempts += 1
         BeforeSend?.Invoke(value)
         If FailReleaseKey <> 0 AndAlso value.Keyboard AndAlso value.Key = FailReleaseKey AndAlso (value.Flags And 2UI) <> 0 Then Return False
         If Accept Then Events.Add(value)

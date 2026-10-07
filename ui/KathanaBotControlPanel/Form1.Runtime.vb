@@ -110,9 +110,12 @@ Partial Public Class Form1
         UpdateSetupText()
         WatchSettingEdits(Me)
         If Not File.Exists(Path.Combine(PersistDirectoryPath, "setup-complete.txt")) Then
+            ' The Activity & Setup page is not part of the sidebar (RefreshMainTabsVisibility drops it),
+            ' so selecting it here left the tab control with no selected page: Home never became
+            ' visible and kept showing its first stopped/pink paint while the bot ran. Land on Home.
             AddHandler Shown, Sub()
-                                  _mainTabs.SelectedTab = tab
                                   sections.SelectedTab = setup
+                                  EnsureMainTabSelected()
                               End Sub
         End If
         _runtimeTimer = New System.Windows.Forms.Timer With {.Interval = 500}

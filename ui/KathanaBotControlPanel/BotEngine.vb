@@ -762,18 +762,20 @@ Friend Module NativeMethods
     End Function
 
     <DllImport("user32.dll", EntryPoint:="ShowWindow", SetLastError:=True)>
-    Private Function RawShowWindow(hWnd As IntPtr, nCmdShow As Integer) As Boolean
+    Friend Function RawShowWindow(hWnd As IntPtr, nCmdShow As Integer) As Boolean
     End Function
     Friend Function ShowWindow(hWnd As IntPtr, nCmdShow As Integer) As Boolean
         If WindowsInput.UsesTargetedInput Then Return WindowsInput.TargetCanReceiveInput(hWnd)
+        If TypeOf WindowsInput.Current Is ForegroundWindowsInput AndAlso Not WindowsInput.TargetIsForeground(hWnd) Then Return False
         Return Not WindowsInput.BackgroundOnly AndAlso RawShowWindow(hWnd, nCmdShow)
     End Function
 
     <DllImport("user32.dll", EntryPoint:="BringWindowToTop", SetLastError:=True)>
-    Private Function RawBringWindowToTop(hWnd As IntPtr) As Boolean
+    Friend Function RawBringWindowToTop(hWnd As IntPtr) As Boolean
     End Function
     Friend Function BringWindowToTop(hWnd As IntPtr) As Boolean
         If WindowsInput.UsesTargetedInput Then Return WindowsInput.TargetCanReceiveInput(hWnd)
+        If TypeOf WindowsInput.Current Is ForegroundWindowsInput Then Return WindowsInput.Current.Activate(hWnd)
         Return Not WindowsInput.BackgroundOnly AndAlso RawBringWindowToTop(hWnd)
     End Function
 
@@ -8159,9 +8161,16 @@ Partial Public Class BotEngine
             _lootAfterKillArmed = False
             Return
         End If
-        If Not SendKey(hwnd, "F", Math.Clamp(cfg.LootAfterKillHoldMs, 50, 5000), cancellationToken:=If(_cts Is Nothing, CancellationToken.None, _cts.Token)) Then Return
+        ' Consume this disappearance before dispatch: a failed return can mean the F down
+        ' reached the client but its release or cancellation could not be confirmed.
+        ' Retrying that same observation would issue another pickup after an uncertain send.
         _lootAfterKillArmed = False
+        _lootAfterKillLastLivingAt = DateTime.MinValue
         _lastLootPickup = now
+        If Not SendKey(hwnd, "F", Math.Clamp(cfg.LootAfterKillHoldMs, 50, 5000), cancellationToken:=If(_cts Is Nothing, CancellationToken.None, _cts.Token)) Then
+            RaiseEvent LogLine("Loot After Kill: F attempt failed or was cancelled; the same target disappearance will not retry.")
+            Return
+        End If
         SetLastAction("F (Loot After Kill)")
         RaiseEvent LogLine($"Loot After Kill: held F for {Math.Clamp(cfg.LootAfterKillHoldMs, 50, 5000)}ms after target disappeared.")
     End Sub
@@ -13673,6 +13682,9 @@ Partial Public Class BotEngine
     End Function
 
     Public Shared Function SendKey(hwnd As IntPtr, keyName As String, pressMs As Integer, Optional forceBackgroundPost As Boolean = False, Optional forcePhysicalKeyEvent As Boolean = False, Optional cancellationToken As CancellationToken = Nothing) As Boolean
+        ' F12 is the user's emergency stop in this foreground build. A saved skill
+        ' binding must not synthesize it and stop the running bot itself.
+        If WindowsInput.IsProductionForegroundInput AndAlso String.Equals(If(keyName, "").Trim(), "F12", StringComparison.OrdinalIgnoreCase) Then Return False
         SyncLock WindowsInput.SequenceLock
             If cancellationToken.IsCancellationRequested Then Return False
             WindowsInput.BindTarget(hwnd)
@@ -13712,9 +13724,11 @@ Partial Public Class BotEngine
         Dim holdMs = WindowsInput.KeyPressDurationMs(pressMs)
 
         Try
-            If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(&H100), New IntPtr(vk), New IntPtr(lparamDown)) Then Return False
             Dim released As Boolean
             Try
+                ' Down may have been accepted just before focus changed. Cleanup must
+                ' run even when its receipt returns false; the backend releases owned keys only.
+                If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(&H100), New IntPtr(vk), New IntPtr(lparamDown)) Then Return False
                 If cancellationToken.CanBeCanceled Then
                     cancellationToken.WaitHandle.WaitOne(holdMs)
                 Else
@@ -13787,12 +13801,16 @@ Partial Public Class BotEngine
             If moveDelayMs > 0 Then
                 Thread.Sleep(moveDelayMs)
             End If
-            If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(NativeMethods.WM_LBUTTONDOWN), New IntPtr(NativeMethods.MK_LBUTTON), New IntPtr(lParam)) Then Return False
-            If downUpDelayMs > 0 Then
-                Thread.Sleep(downUpDelayMs)
-            End If
-            If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(NativeMethods.WM_LBUTTONUP), IntPtr.Zero, New IntPtr(lParam)) Then Return False
-            Return True
+            Dim released As Boolean
+            Try
+                ' A false result can follow accepted mouse-down plus immediate focus loss.
+                ' Always request owned cleanup before returning, including that uncertain case.
+                If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(NativeMethods.WM_LBUTTONDOWN), New IntPtr(NativeMethods.MK_LBUTTON), New IntPtr(lParam)) Then Return False
+                If downUpDelayMs > 0 Then Thread.Sleep(downUpDelayMs)
+            Finally
+                released = NativeMethods.SendForegroundInputRequest(hwnd, CUInt(NativeMethods.WM_LBUTTONUP), IntPtr.Zero, New IntPtr(lParam))
+            End Try
+            Return released AndAlso WindowsInput.TargetIsForeground(hwnd)
         Catch
             Return False
         End Try
@@ -13834,6 +13852,10 @@ Partial Public Class BotEngine
         End If
         If hwnd = IntPtr.Zero Then
             diagnostic = "invalid window handle"
+            Return False
+        End If
+        If TypeOf WindowsInput.Current Is ForegroundWindowsInput AndAlso Not WindowsInput.TargetIsForeground(hwnd) Then
+            diagnostic = "Keep the selected Kathana window in the foreground before clicking."
             Return False
         End If
 
@@ -13956,9 +13978,14 @@ Partial Public Class BotEngine
             ' it reads GetCursorPos rather than trusting the message's own coordinates.
             Dim lParam As Integer = (x And &HFFFF) Or ((y And &HFFFF) << 16)
             For clickIndex As Integer = 0 To 1
-                If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(NativeMethods.WM_RBUTTONDOWN), New IntPtr(NativeMethods.MK_RBUTTON), New IntPtr(lParam)) Then Return False
-                Thread.Sleep(Math.Max(1, pressHoldMs))
-                If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(NativeMethods.WM_RBUTTONUP), IntPtr.Zero, New IntPtr(lParam)) Then Return False
+                Dim released As Boolean
+                Try
+                    If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(NativeMethods.WM_RBUTTONDOWN), New IntPtr(NativeMethods.MK_RBUTTON), New IntPtr(lParam)) Then Return False
+                    Thread.Sleep(Math.Max(1, pressHoldMs))
+                Finally
+                    released = NativeMethods.SendForegroundInputRequest(hwnd, CUInt(NativeMethods.WM_RBUTTONUP), IntPtr.Zero, New IntPtr(lParam))
+                End Try
+                If Not released Then Return False
                 If clickIndex = 0 AndAlso clickGapMs > 0 Then
                     Thread.Sleep(clickGapMs)
                 End If
@@ -13992,10 +14019,14 @@ Partial Public Class BotEngine
 
         Try
             Dim lParam As Integer = (x And &HFFFF) Or ((y And &HFFFF) << 16)
-            If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(NativeMethods.WM_LBUTTONDOWN), New IntPtr(NativeMethods.MK_LBUTTON), New IntPtr(lParam)) Then Return False
-            Thread.Sleep(Math.Max(1, pressHoldMs))
-            If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(NativeMethods.WM_LBUTTONUP), IntPtr.Zero, New IntPtr(lParam)) Then Return False
-            Return True
+            Dim released As Boolean
+            Try
+                If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(NativeMethods.WM_LBUTTONDOWN), New IntPtr(NativeMethods.MK_LBUTTON), New IntPtr(lParam)) Then Return False
+                Thread.Sleep(Math.Max(1, pressHoldMs))
+            Finally
+                released = NativeMethods.SendForegroundInputRequest(hwnd, CUInt(NativeMethods.WM_LBUTTONUP), IntPtr.Zero, New IntPtr(lParam))
+            End Try
+            Return released AndAlso WindowsInput.TargetIsForeground(hwnd)
         Catch ex As Exception
             diagnostic = $"exception ({ex.GetType().Name}): {ex.Message}"
             Return False

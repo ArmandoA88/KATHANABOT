@@ -19,7 +19,7 @@ Partial Public Class Form1
     Private Shared ReadOnly FunctionKeys As String() = {"F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10"}
     Private Shared ReadOnly LitePrimarySkillKeys As String() = {"1", "2", "3", "4", "5", "6", "7", "8"}
     Private Shared ReadOnly LiteSecondarySkillKeys As String() = {"F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10"}
-    Private Shared ReadOnly CustomCombatDefaultKeys As String() = {"F11", "F12", "F13"}
+    Private Shared ReadOnly CustomCombatDefaultKeys As String() = {"F11", "F14", "F13"}
     Private Shared ReadOnly DefaultGameWindowTitle As String = "Kathana - The Reign of Shadow"
     Private Const PreferredProcessName As String = "KathanaGame"
     Private Shared ReadOnly LiteWindowSize As New Size(920, 720)
@@ -1995,7 +1995,6 @@ Partial Public Class Form1
     Private _inGameBotToggleWidth As Integer = 220
     Private _inGameBotToggleHeight As Integer = 76
     Private _inGameBotToggleEdition As BotEdition = BotEdition.Full
-    Private _autoStarted As Boolean = False
     Private _hpZeroAlarmActive As Boolean = False
     Private _lastStatsNotificationUtc As DateTime = DateTime.MinValue
     Private _hpZeroPending As Boolean = False
@@ -3780,6 +3779,7 @@ Partial Public Class Form1
         _quizTab = BuildQuizTab()
         _resuTab = BuildResuTab()
         _tradeTab = BuildTradeTab()
+        _extrasTab = BuildExtrasTab()
         _updateTab = BuildUpdateTab()
         _mainTabs.TabPages.Add(_updateTab)
         _mainTabs.FitTabsToHeight()
@@ -3978,14 +3978,19 @@ Partial Public Class Form1
 
     Private Sub RefreshDashboardFromEngine()
         ' Home must not depend on queued StatusUpdated callbacks or a tab-selection event.
-        Dim edition As BotEdition = GetRunningEdition().GetValueOrDefault(BotEdition.Full)
+        Dim runningEdition = GetRunningEdition()
+        Dim edition As BotEdition = runningEdition.GetValueOrDefault(BotEdition.Full)
         Dim status As BotStatus = GetEngineForEdition(edition).GetStatus()
         If edition = BotEdition.Full Then
             _fullStatus = status
         Else
             _liteStatus = status
         End If
+        ' Clear the constructor's stopped tint before drawing the live Home state.
+        ' Keep the death-alert pulse on its own timer rather than every status update.
+        RefreshSurfaceAlerts(advancePulse:=False)
         UpdateDashboardUi(status, edition)
+        ApplyHealthUiTint(status.HpPercent, runningEdition.HasValue)
         If _dashboardTab IsNot Nothing AndAlso _dashboardTab.Visible Then
             _dashboardTab.Invalidate(True)
         End If
@@ -4171,6 +4176,10 @@ Partial Public Class Form1
             statusDetail = "The game client connection was lost."
         ElseIf status.Running AndAlso Not String.IsNullOrWhiteSpace(status.NotAttackingReason) Then
             statusDetail = status.NotAttackingReason
+        ElseIf Not status.Running AndAlso IsLaunchAutoStartPending() Then
+            statusValue = "Waiting to start"
+            statusColor = ThemeWarn
+            statusDetail = GetLaunchAutoStartStatus()
         End If
         cardDashStatus.AccentColor = statusColor
         cardDashStatus.SetValue(statusValue, statusColor)
@@ -6915,7 +6924,7 @@ Partial Public Class Form1
 
     Private Function CreateFullSupportKeyCombo(defaultKey As String) As ComboBox
         Dim combo As ComboBox = CreateFullSupportCombo()
-        combo.Items.AddRange(New Object() {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12"})
+        combo.Items.AddRange(New Object() {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11"})
         combo.SelectedItem = defaultKey
         Return combo
     End Function
@@ -8892,7 +8901,7 @@ Partial Public Class Form1
 
         Dim controls As Control() = {
             lblFullEdition, lblRunState, lblShortcutHint, lblState, lblSystem, hpMpLayout,
-            lblMobName, lblExpRate, lblRupiahsRate, runRow, BuildDirectKpControls(), BuildAutoAssistButton(), BuildBackgroundOnlyButton(), btnSaveSettings, btnStopBot,
+            lblMobName, lblExpRate, lblRupiahsRate, runRow, BuildDirectKpControls(), BuildAutoAssistButton(), btnSaveSettings, btnStopBot,
             btnFullSupport, btnBypassStuck, BuildLootAfterKillControls(), btnPartyInviteAutoAccept, btnRessAutoAccept,
             lblPartyAskEvery, nudPartyAskSeconds, lblPartyAskText, txtPartyAskText, partyAskRow, BuildProfileSettingsButtons(), btnHelp,
             chkDeveloperMode
@@ -9388,6 +9397,10 @@ Partial Public Class Form1
     End Function
 
     Private Sub StartEdition(edition As BotEdition, autoStart As Boolean)
+        If _extrasBusy AndAlso _extrasApplyingZoom Then
+            AppendLog("Wait for the zoom config operation to finish before starting combat.")
+            Return
+        End If
         If edition = BotEdition.Lite Then Return ' The separate Lite engine has been retired.
         If _workflowModes.Current <> OperatingMode.Idle Then
             RuntimeJournal.Record("Mode blocked", "Stop " & _workflowModes.Current.ToString() & " before starting combat")
@@ -9433,10 +9446,12 @@ Partial Public Class Form1
         If Not _modes.Transition(If(edition = BotEdition.Full, OperatingMode.Full, OperatingMode.Lite), "combat start") Then Return
         Try
             engine.Start()
+            ResetGameFocusMaintenance()
         Catch
             _modes.Transition(OperatingMode.Idle, "start failed")
             Throw
         End Try
+        RefreshSurfaceAlerts(advancePulse:=False, forceRefresh:=True)
         RefreshDashboardFromEngine()
         UpdateAttackButtonAppearance(False)
         QueueMainSurfaceRefresh()
@@ -9450,8 +9465,15 @@ Partial Public Class Form1
     End Sub
 
     Private Sub StopEdition(edition As BotEdition, triggeredByButton As Boolean, context As String)
+        If triggeredByButton OrElse String.Equals(context, "ctrl+shift toggle", StringComparison.OrdinalIgnoreCase) OrElse
+            String.Equals(context, "local API", StringComparison.OrdinalIgnoreCase) Then
+            CancelLaunchAutoStart()
+            CancelActiveGameplayOnUserStop()
+        End If
         If edition = BotEdition.Full Then _fullEngine.StopDirectKpWorker()
         Dim engine As BotEngine = GetEngineForEdition(edition)
+        ' Cancel running holds before the stop macro waits for their input sequence.
+        engine.Stop()
         Dim hardStopSent As Boolean = engine.HardStopMovement(GetSelectedWindowTitleForFallback(edition), context)
         If triggeredByButton Then
             If hardStopSent Then
@@ -9461,12 +9483,11 @@ Partial Public Class Form1
             End If
         End If
 
-        engine.Stop()
+        RefreshSurfaceAlerts(advancePulse:=False, forceRefresh:=True)
         RefreshDashboardFromEngine()
         _modes.Transition(OperatingMode.Idle, context)
         If edition = BotEdition.Full Then
             _notificationWarmupUntilUtc = DateTime.MinValue
-            ApplyHealthUiTint(100.0, False)
             ResetHpZeroAlarmState("Alarm state reset for bot stop.")
         End If
         UpdateAttackButtonAppearance(False)
@@ -10059,18 +10080,6 @@ Partial Public Class Form1
         End If
     End Sub
 
-    Private Sub AutoStartOnLaunch()
-        If Environment.GetCommandLineArgs().Contains("--no-auto-start") Then Return
-        If _autoStarted Then
-            Return
-        End If
-        _autoStarted = True
-        If _fullEngine.IsRunning() OrElse _liteEngine.IsRunning() Then
-            Return
-        End If
-        StartEdition(BotEdition.Full, True)
-    End Sub
-
     Protected Overrides Sub OnShown(e As EventArgs)
         MyBase.OnShown(e)
         StartLocalApi()
@@ -10083,9 +10092,10 @@ Partial Public Class Form1
         _tabIndicatorPlaced = False
         UpdateTabIndicatorTarget()
         StartDashboardEntranceTransition()
-        AutoStartOnLaunch()
         QueueMainSurfaceRefresh()
         RefreshProcessWindowList(False, IntPtr.Zero)
+        AutoStartOnLaunch()
+        EnsureMainTabSelected()
         BeginInvoke(New Action(AddressOf ShowStartupNoticeAndCheckUpdates))
     End Sub
 
@@ -11668,7 +11678,7 @@ Partial Public Class Form1
         ' PageUp/PageDown are deliberately excluded: Keys aliases them to Prior/Next, so
         ' Keys.ToString() would return a name that doesn't match this list and break the combo selection.
         Return New String() {
-            "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
+            "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11",
             "Insert", "Home", "End", "Pause", "Scroll"
         }
     End Function
@@ -11754,6 +11764,7 @@ Partial Public Class Form1
                 desired.Add(_quizTab)
                 desired.Add(_resuTab)
                 desired.Add(_tradeTab)
+                desired.Add(_extrasTab)
             End If
             desired.Add(_updateTab)
             desired.RemoveAll(Function(page) page Is Nothing)
@@ -11774,6 +11785,19 @@ Partial Public Class Form1
         Finally
             _isRefreshingMainTabsVisibility = False
         End Try
+        EnsureMainTabSelected()
+    End Sub
+
+    ' A removed or reentrant tab selection can leave SelectedIndex = -1. Nothing is then visible,
+    ' so Home keeps its first (stopped, red-tinted) paint and never shows live bot stats.
+    Private Sub EnsureMainTabSelected()
+        If _mainTabs Is Nothing OrElse _dashboardTab Is Nothing OrElse _isRefreshingMainTabsVisibility Then
+            Return
+        End If
+        If _mainTabs.SelectedIndex >= 0 OrElse _mainTabs.TabCount = 0 Then
+            Return
+        End If
+        _mainTabs.SelectedTab = If(_mainTabs.TabPages.Contains(_dashboardTab), _dashboardTab, _mainTabs.TabPages(0))
     End Sub
 
     Private Sub ToggleHoldToShowGameWindowClicked(sender As Object, e As EventArgs)
@@ -11882,6 +11906,9 @@ Partial Public Class Form1
     ' (restored immediately after). Finishes with a verify-and-retry in case the first attempt didn't
     ' actually land.
     Private Shared Sub ForceSetForegroundWindow(target As IntPtr)
+        ' The running-game supervisor restores only the captured Kathana HWND/PID.
+        ' Legacy helpers must not bypass its lifecycle and target checks.
+        If TypeOf WindowsInput.Current Is ForegroundWindowsInput Then Return
         If WindowsInput.UsesTargetedInput Then
             WindowsInput.Current.Activate(target)
             Return
@@ -14063,6 +14090,8 @@ Partial Public Class Form1
     End Sub
 
     Private Sub UiTimerTick(sender As Object, e As EventArgs)
+        EnsureMainTabSelected()
+        TryLaunchAutoStart()
         RefreshDashboardFromEngine()
         Dim uiWatch As Stopwatch = Stopwatch.StartNew()
         MonitorEngineWorkers()
@@ -14242,6 +14271,7 @@ Partial Public Class Form1
     End Sub
 
     Private Sub EnterToggleTimerTick(sender As Object, e As EventArgs)
+        If HandleGameplayF12Stop() Then Return
         Dim ctrlDown As Boolean = (GetAsyncKeyState(CInt(Keys.LControlKey)) And &H8000S) <> 0 OrElse (GetAsyncKeyState(CInt(Keys.RControlKey)) And &H8000S) <> 0
         Dim shiftDown As Boolean = (GetAsyncKeyState(CInt(Keys.LShiftKey)) And &H8000S) <> 0 OrElse (GetAsyncKeyState(CInt(Keys.RShiftKey)) And &H8000S) <> 0
         Dim comboDown As Boolean = ctrlDown AndAlso shiftDown
@@ -14258,6 +14288,7 @@ Partial Public Class Form1
         HandlePendingResurrectOkPointCapture()
         HandlePendingAutoPartyPointCapture()
         HandlePendingAutoRelaunchClickCapture()
+        MaintainSelectedGameForeground()
     End Sub
 
     Private Sub CombatChatPauseSettingChanged(_sender As Object, _e As EventArgs)
@@ -14564,7 +14595,6 @@ Partial Public Class Form1
         HandleGameDisconnectedAlert(status)
         HandleHpZeroAlarm(status)
         HandleWindowMissingAlarm(status)
-        ApplyHealthUiTint(status.HpPercent, status.Running)
         UpdateTaskbarStatusIndicator()
 
         If Not String.IsNullOrWhiteSpace(status.RouteRecordingLastSavedPath) AndAlso Not status.RouteRecordingLastSavedPath.Equals(_lastRouteRecordingSavedPath, StringComparison.OrdinalIgnoreCase) Then
@@ -17560,13 +17590,16 @@ Partial Public Class Form1
             End If
 
             _directKpEnabled = appState IsNot Nothing AndAlso appState.LiteDirectKpSelected
-            ' Legacy flags do not select an input backend; preserve the explicit key method.
+            ' Foreground builds preserve the old keyboard preference as metadata only.
+            Dim persistedKeyMode As BackgroundKeyboardMode
+            If appState IsNot Nothing AndAlso WindowsInput.TryParseKeyboardMode(appState.BackgroundKeyboardMethod, persistedKeyMode) Then
+                _legacyBackgroundKeyboardMethod = WindowsInput.KeyboardModeId(persistedKeyMode)
+            End If
             If suppliedJson Is Nothing Then WindowsInput.BackgroundOnly = appState IsNot Nothing AndAlso appState.BackgroundOnlyEnabled
             If suppliedJson Is Nothing AndAlso Not Environment.GetCommandLineArgs().Contains("--background-key-mode") Then
                 Dim mode As BackgroundKeyboardMode
                 If WindowsInput.TryParseKeyboardMode(If(appState?.BackgroundKeyboardMethod, "posted-scan"), mode) Then WindowsInput.TrySetBackgroundKeyMode(mode)
             End If
-            UpdateBackgroundOnlyButton()
             UpdateDirectKpButton()
             _dashboardModeLoading = True
             Try
@@ -17998,7 +18031,7 @@ Partial Public Class Form1
                 .ActiveProfileName = _activeProfileName,
                 .LiteDirectKpSelected = _directKpEnabled,
                 .BackgroundOnlyEnabled = WindowsInput.BackgroundOnly,
-                .BackgroundKeyboardMethod = WindowsInput.KeyboardModeId(WindowsInput.BackgroundKeyMode),
+                .BackgroundKeyboardMethod = _legacyBackgroundKeyboardMethod,
                 .WindowTitle = GetSelectedWindowTitleForFallback(If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full)),
                 .PeriodicScreenshotsEnabled = (chkPeriodicScreenshots IsNot Nothing AndAlso chkPeriodicScreenshots.Checked),
                 .PeriodicScreenshotIntervalMinutes = If(nudPeriodicScreenshotMinutes IsNot Nothing, nudPeriodicScreenshotMinutes.Value, 15D),
@@ -19349,24 +19382,9 @@ Partial Public Class Form1
         Dim selectedEdition As BotEdition = If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full)
         RefreshMainTabsVisibility()
 
-        ' Flip the header action immediately on Start/Stop. The richer status card normally comes
-        ' from UpdateDashboardUi; only seed it here while a newly-started engine has not published
-        ' its first running snapshot yet, so an error/disconnect message is never overwritten.
-        UpdateDashboardRunButton()
-        If cardDashStatus IsNot Nothing Then
-            If Not runningEdition.HasValue Then
-                cardDashStatus.AccentColor = ThemeTextSecondary
-                cardDashStatus.SetValue("Ready", ThemeTextSecondary)
-                cardDashStatus.SetSecondary("Bot is paused. Settings are ready to edit.")
-            Else
-                Dim currentDashboardStatus As BotStatus = GetStatusForEdition(runningEdition.Value)
-                If currentDashboardStatus Is Nothing OrElse Not currentDashboardStatus.Running Then
-                    cardDashStatus.AccentColor = ThemeGood
-                    cardDashStatus.SetValue("Starting", ThemeGood)
-                    cardDashStatus.SetSecondary("Connecting to the selected game client...")
-                End If
-            End If
-        End If
+        ' Start/Stop, startup and sidebar refreshes share the complete live Home state.
+        ' A cached stopped snapshot must not leave Ready/red visible after engine.Start.
+        RefreshDashboardFromEngine()
 
         If btnAttack IsNot Nothing Then
             If fullRunning Then
@@ -19374,7 +19392,7 @@ Partial Public Class Form1
                 btnAttack.BackColor = BotRunningColor
                 btnAttack.ForeColor = Color.White
             Else
-                btnAttack.Text = "STOPPED"
+                btnAttack.Text = If(IsLaunchAutoStartPending(), "WAITING TO START", "STOPPED")
                 btnAttack.BackColor = StatusStoppedOrDeadColor
                 btnAttack.ForeColor = Color.White
             End If
@@ -19388,7 +19406,7 @@ Partial Public Class Form1
 
         UpdateDirectKpButton()
         If btnStopBot IsNot Nothing Then
-            btnStopBot.Enabled = fullRunning
+            btnStopBot.Enabled = fullRunning OrElse IsLaunchAutoStartPending()
         End If
         If btnLiteStop IsNot Nothing Then
             btnLiteStop.Enabled = liteRunning
@@ -19397,7 +19415,7 @@ Partial Public Class Form1
         End If
 
         If lblRunState IsNot Nothing Then
-            lblRunState.Text = If(_directKpEnabled, "LITE Direct KP", "FULL BOT") & If(fullRunning, " RUNNING", " STOPPED")
+            lblRunState.Text = If(_directKpEnabled, "LITE Direct KP", "FULL BOT") & If(fullRunning, " RUNNING", If(IsLaunchAutoStartPending(), " WAITING TO START", " STOPPED"))
             lblRunState.BackColor = If(fullRunning, BotRunningColor, StatusStoppedOrDeadColor)
             lblRunState.ForeColor = Color.White
         End If
@@ -20384,11 +20402,11 @@ Partial Public Class Form1
     Private Sub UpdateTaskbarStatusIndicator()
         Dim runningEdition As BotEdition? = GetRunningEdition()
         Dim active As Boolean = runningEdition.HasValue
-        Dim status As BotStatus = If(active, GetStatusForEdition(runningEdition.Value), Nothing)
+        Dim status As BotStatus = If(active, GetEngineForEdition(runningEdition.Value).GetStatus(), Nothing)
         Dim hpPercent As Double = If(status Is Nothing, 0.0, NormalizePercent(status.HpPercent, 0.0))
 
         If active AndAlso status IsNot Nothing Then
-            ApplyHealthUiTint(hpPercent, status.Running)
+            ApplyHealthUiTint(hpPercent, active)
         Else
             ApplyHealthUiTint(0.0, False)
         End If
@@ -20600,12 +20618,15 @@ Partial Public Class Form1
     End Sub
 
     Protected Overrides Sub OnFormClosing(e As FormClosingEventArgs)
+        ShutdownGameFocusMaintenance()
+        CancelLaunchAutoStart()
         StopLocalApi()
         _dashboardEntranceTimer.Stop()
         _tradeCancellation?.Cancel()
         _tradeAnalysisCancellation?.Cancel()
         ShutdownTradeBrowserCapture()
         ShutdownTradeDiscordImport()
+        ShutdownExtras()
         _tradePriceGeneration += 1
         _tradePriceTimer?.Stop()
         _tradeStopTimer.Stop()

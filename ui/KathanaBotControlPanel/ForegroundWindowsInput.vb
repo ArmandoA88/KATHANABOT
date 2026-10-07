@@ -1,6 +1,7 @@
 ﻿Imports System.Runtime.InteropServices
 Imports System.Threading
 Imports System.Drawing
+Imports System.Diagnostics
 
 Public Structure ForegroundInputEvent
     Public Keyboard As Boolean
@@ -18,6 +19,11 @@ Public MustInherit Class InputPlatform
     Public MustOverride Function ProcessId(hwnd As IntPtr) As UInteger
     Public MustOverride Function Valid(hwnd As IntPtr) As Boolean
     Public MustOverride Function Activate(hwnd As IntPtr) As Boolean
+    Public Overridable Function RestoreGameForeground(hwnd As IntPtr, expectedPid As UInteger) As Boolean
+        If hwnd = IntPtr.Zero OrElse expectedPid = 0 OrElse ProcessId(hwnd) <> expectedPid OrElse Not Valid(hwnd) Then Return False
+        If Foreground() <> hwnd AndAlso Not Activate(hwnd) Then Return False
+        Return Valid(hwnd) AndAlso ProcessId(hwnd) = expectedPid AndAlso Foreground() = hwnd
+    End Function
     Public MustOverride Function ClientPoint(hwnd As IntPtr, x As Integer, y As Integer) As System.Drawing.Point?
     Public MustOverride Function CursorOnTarget(hwnd As IntPtr) As Boolean
     Public MustOverride Function Desktop() As Rectangle
@@ -28,6 +34,7 @@ Public NotInheritable Class ForegroundWindowsInput
     Implements IWindowsInput
     Private ReadOnly platform As InputPlatform
     Private ReadOnly actionDelay As Action(Of Integer)
+    Private ReadOnly allowActivation As Boolean
     Private ReadOnly target As New AsyncLocal(Of Binding)
     Private ReadOnly gate As New Object
     Private ReadOnly held As New Dictionary(Of String, HeldInput)
@@ -40,9 +47,10 @@ Public NotInheritable Class ForegroundWindowsInput
         Public Release As ForegroundInputEvent
         Public ReleaseRequested As Boolean
     End Class
-    Public Sub New(backend As InputPlatform, Optional delay As Action(Of Integer) = Nothing)
+    Public Sub New(backend As InputPlatform, Optional delay As Action(Of Integer) = Nothing, Optional allowActivation As Boolean = True)
         platform = backend
         actionDelay = If(delay, New Action(Of Integer)(AddressOf Thread.Sleep))
+        Me.allowActivation = allowActivation
     End Sub
     Public Shared Function NextActionDelayMs() As Integer
         Return Random.Shared.Next(5, 16)
@@ -63,8 +71,23 @@ Public NotInheritable Class ForegroundWindowsInput
     Public Function Activate(hwnd As IntPtr) As Boolean Implements IWindowsInput.Activate
         BindTarget(hwnd)
         If hwnd = IntPtr.Zero Then Return False
-        If platform.Foreground() <> hwnd Then platform.Activate(hwnd)
+        If allowActivation AndAlso platform.Foreground() <> hwnd Then platform.Activate(hwnd)
         Return Focused(target.Value)
+    End Function
+    ' Only the running-game supervisor calls this. Individual input requests retain
+    ' their strict foreground guard and cannot restore an arbitrary active window.
+    Public Function TryRestoreGameForeground(hwnd As IntPtr, expectedPid As UInteger) As Boolean
+        If hwnd = IntPtr.Zero OrElse expectedPid = 0 OrElse platform.ProcessId(hwnd) <> expectedPid Then Return False
+        ReleaseUnfocused()
+        If Not platform.RestoreGameForeground(hwnd, expectedPid) Then Return False
+        Dim owner As New Binding With {.Hwnd = hwnd, .Pid = expectedPid}
+        If Not Focused(owner) Then Return False
+        ' A release blocked while another window was active must stay pending and
+        ' retry once the verified game has regained focus, before later game input.
+        ReleaseUnfocused()
+        If Not Focused(owner) Then Return False
+        target.Value = owner
+        Return True
     End Function
     Private Function Emit(value As ForegroundInputEvent) As Boolean
         If platform.Send(value) Then Return True
@@ -72,6 +95,12 @@ Public NotInheritable Class ForegroundWindowsInput
         Return False
     End Function
     Private Sub SendKeyEvent(key As UShort, scan As UShort, flags As UInteger, extra As UIntPtr, Optional afterEmitted As Action = Nothing)
+        ' F12 is the user's global stop key. The production backend cannot generate
+        ' its own stop press; owned key-up cleanup and injected test backends remain valid.
+        If (flags And (2UI Or 4UI)) = 0 AndAlso key = CUShort(Keys.F12) AndAlso
+            WindowsInput.IsProductionForegroundInput AndAlso Object.ReferenceEquals(Me, WindowsInput.Current) Then
+            Throw New InvalidOperationException("F12 is reserved for stopping automation; its automated press was skipped.")
+        End If
         ' Add pacing before down events, outside the release lock. Recheck focus afterward.
         If (flags And 2UI) = 0 Then actionDelay(NextActionDelayMs())
         SyncLock gate
@@ -211,6 +240,7 @@ Public NotInheritable Class ForegroundWindowsInput
         SyncLock gate
             For Each pair In held.ToArray()
                 If pair.Value.ReleaseRequested OrElse Not Focused(pair.Value.Owner) Then
+                    pair.Value.ReleaseRequested = True
                     If Emit(pair.Value.Release) Then held.Remove(pair.Key)
                 End If
             Next
@@ -223,10 +253,17 @@ Friend NotInheritable Class NativeInputPlatform
     ' Reuse exact game-image validation only; this helper never dispatches input here.
     Private ReadOnly gameTarget As New NativeBackgroundInputPlatform()
     Private ReadOnly explicitTarget As Boolean
+    Private ReadOnly useKathanaProcessNameValidation As Boolean
     Private ReadOnly targetWindow As IntPtr
     Private ReadOnly targetPid As UInteger
 
     Public Sub New()
+    End Sub
+
+    ' The shared foreground backend accepts Kathana installations selected by the
+    ' user. Exact HWND/PID ownership is captured by ForegroundWindowsInput.Binding.
+    Public Sub New(useKathanaProcessNameValidation As Boolean)
+        Me.useKathanaProcessNameValidation = useKathanaProcessNameValidation
     End Sub
 
     ' Explicit foreground Trade binds the user's selected window for the entire run.
@@ -286,6 +323,19 @@ Friend NotInheritable Class NativeInputPlatform
                 targetPid <> CUInt(Environment.ProcessId) AndAlso IsWindow(hwnd) AndAlso Not NativeMethods.IsIconic(hwnd) AndAlso
                 ProcessId(hwnd) = targetPid
         End If
+        If useKathanaProcessNameValidation Then
+            If hwnd = IntPtr.Zero OrElse Not IsWindow(hwnd) OrElse NativeMethods.IsIconic(hwnd) Then Return False
+            Dim pid = ProcessId(hwnd)
+            If pid = 0 OrElse pid = CUInt(Environment.ProcessId) OrElse pid > Integer.MaxValue Then Return False
+            Try
+                Using game = Process.GetProcessById(CInt(pid))
+                    Return Not game.HasExited AndAlso String.Equals(game.ProcessName, "KathanaGame", StringComparison.OrdinalIgnoreCase) AndAlso
+                        IsWindow(hwnd) AndAlso Not NativeMethods.IsIconic(hwnd) AndAlso ProcessId(hwnd) = pid
+                End Using
+            Catch
+                Return False
+            End Try
+        End If
         Return gameTarget.Valid(hwnd)
     End Function
     Public Overrides Function Activate(hwnd As IntPtr) As Boolean
@@ -296,12 +346,56 @@ Friend NotInheritable Class NativeInputPlatform
         Dim foregroundThread = NativeMethods.GetWindowThreadProcessId(Foreground(), unusedPid)
         Dim attached = foregroundThread <> 0 AndAlso foregroundThread <> currentThread AndAlso NativeMethods.AttachThreadInput(currentThread, foregroundThread, True)
         Try
-            NativeMethods.BringWindowToTop(hwnd)
+            NativeMethods.RawBringWindowToTop(hwnd)
             NativeMethods.RawSetForegroundWindow(hwnd)
         Finally
             If attached Then NativeMethods.AttachThreadInput(currentThread, foregroundThread, False)
         End Try
         Return Foreground() = hwnd
+    End Function
+    Private Function MatchesGameWindow(hwnd As IntPtr, expectedPid As UInteger, allowMinimized As Boolean) As Boolean
+        If hwnd = IntPtr.Zero OrElse expectedPid = 0 OrElse expectedPid = CUInt(Environment.ProcessId) OrElse
+            expectedPid > Integer.MaxValue OrElse Not IsWindow(hwnd) OrElse ProcessId(hwnd) <> expectedPid Then Return False
+        If Not allowMinimized AndAlso NativeMethods.IsIconic(hwnd) Then Return False
+        If explicitTarget AndAlso (hwnd <> targetWindow OrElse expectedPid <> targetPid) Then Return False
+        Try
+            Using game = Process.GetProcessById(CInt(expectedPid))
+                Return Not game.HasExited AndAlso String.Equals(game.ProcessName, "KathanaGame", StringComparison.OrdinalIgnoreCase) AndAlso
+                    IsWindow(hwnd) AndAlso ProcessId(hwnd) = expectedPid AndAlso (allowMinimized OrElse Not NativeMethods.IsIconic(hwnd))
+            End Using
+        Catch
+            Return False
+        End Try
+    End Function
+    Public Overrides Function RestoreGameForeground(hwnd As IntPtr, expectedPid As UInteger) As Boolean
+        ' Verify the selected game even while minimized, before restoring any window.
+        If Not MatchesGameWindow(hwnd, expectedPid, allowMinimized:=True) Then Return False
+        Try
+            If NativeMethods.IsIconic(hwnd) Then NativeMethods.RawShowWindow(hwnd, NativeMethods.SW_RESTORE)
+            For attempt As Integer = 0 To 1
+                If Not MatchesGameWindow(hwnd, expectedPid, allowMinimized:=False) Then Return False
+                If Foreground() = hwnd Then Return True
+                NativeMethods.RawSetForegroundWindow(hwnd)
+                If Foreground() = hwnd AndAlso MatchesGameWindow(hwnd, expectedPid, allowMinimized:=False) Then Return True
+                Dim currentThread = NativeMethods.GetCurrentThreadId()
+                Dim unusedPid As UInteger
+                Dim foregroundThread = NativeMethods.GetWindowThreadProcessId(Foreground(), unusedPid)
+                Dim attached = foregroundThread <> 0 AndAlso foregroundThread <> currentThread AndAlso
+                    NativeMethods.AttachThreadInput(currentThread, foregroundThread, True)
+                Try
+                    If Not MatchesGameWindow(hwnd, expectedPid, allowMinimized:=False) Then Return False
+                    NativeMethods.RawBringWindowToTop(hwnd)
+                    If Not MatchesGameWindow(hwnd, expectedPid, allowMinimized:=False) Then Return False
+                    NativeMethods.RawSetForegroundWindow(hwnd)
+                Finally
+                    If attached Then NativeMethods.AttachThreadInput(currentThread, foregroundThread, False)
+                End Try
+                If Foreground() = hwnd AndAlso MatchesGameWindow(hwnd, expectedPid, allowMinimized:=False) Then Return True
+            Next
+        Catch
+            Return False
+        End Try
+        Return False
     End Function
     Public Overrides Function Desktop() As Rectangle
         Return System.Windows.Forms.SystemInformation.VirtualScreen

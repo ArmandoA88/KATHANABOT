@@ -57,15 +57,17 @@ Friend Module KeyboardModeTests
             Check(rejected AndAlso input.KeyboardMode = BackgroundKeyboardMode.PostedScanCode, "invalid enum cannot change a background backend")
             Check(platform.Events.Count = 0 AndAlso platform.KeyboardAttempts.Count = 0, "method helpers and invalid values emit no target input")
 
-            ' The production default owns no keys in this controlled test program.
-            ' Switching its delivery setting must not activate any real target.
+            ' Legacy delivery preferences cannot reactivate the retired production path.
+            ' The four retained backend implementations are covered with fakes below.
             WindowsInput.Current = Nothing
+            Dim productionInput = WindowsInput.Current
             For Each sample In {(BackgroundKeyboardMode.PostedScanCode, "posted-scan"), (BackgroundKeyboardMode.SynchronousScanCode, "send-scan"),
                                 (BackgroundKeyboardMode.PostedZeroScanCode, "posted-zero"), (BackgroundKeyboardMode.SynchronousZeroScanCode, "send-zero")}
-                Check(WindowsInput.TrySetBackgroundKeyMode(sample.Item1) AndAlso WindowsInput.BackgroundKeyMode = sample.Item1,
-                      "production selector accepts method " & sample.Item2 & " with no owned keys")
-                Check(WindowsInput.KeyboardOnlyMode AndAlso WindowsInput.InputMode = "background-keys-" & sample.Item2,
-                      "production selector reports its complete keyboard-only method ID")
+                Check(Not WindowsInput.TrySetBackgroundKeyMode(sample.Item1) AndAlso WindowsInput.BackgroundKeyMode = originalMode,
+                      "retired method " & sample.Item2 & " cannot change the production input preference")
+                Check(Object.ReferenceEquals(WindowsInput.Current, productionInput) AndAlso TypeOf productionInput Is ForegroundWindowsInput AndAlso
+                      Not WindowsInput.KeyboardOnlyMode AndAlso WindowsInput.InputMode = "foreground",
+                      "retired method " & sample.Item2 & " cannot replace foreground SendInput")
             Next
         Finally
             WindowsInput.TrySetBackgroundKeyMode(originalMode)

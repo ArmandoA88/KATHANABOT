@@ -7,9 +7,10 @@
     <StartupObject>Sub Main</StartupObject>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>assets\KathanaBot.ico</ApplicationIcon>
-    <Version>1.0.244</Version>
-    <FileVersion>1.0.244.0</FileVersion>
-    <AssemblyVersion>1.0.244.0</AssemblyVersion>
+    <Version>1.0.249</Version>
+    <FileVersion>1.0.249.0</FileVersion>
+    <AssemblyVersion>1.0.249.0</AssemblyVersion>
+    <InputBuildVariant>Foreground</InputBuildVariant>
     <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
 
@@ -24,6 +25,9 @@
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>QuizSolver.Tests</_Parameter1>
     </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Extras.Tests</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 
   <ItemGroup>
@@ -37,6 +41,18 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="assets\Extras\engine-x2.cfg">
+      <LogicalName>KathanaBotControlPanel.Extras.engine-x2.cfg</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="assets\Extras\engine-x3.cfg">
+      <LogicalName>KathanaBotControlPanel.Extras.engine-x3.cfg</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\..\RemoteDesktopMosaic_20260929_AllScreens.exe">
+      <LogicalName>KathanaBotControlPanel.Extras.RemoteDesktopMosaic.exe</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\..\RemoteDesktopMosaic_20260929_AllScreens.exe.sha256">
+      <LogicalName>KathanaBotControlPanel.Extras.RemoteDesktopMosaic.exe.sha256</LogicalName>
+    </EmbeddedResource>
     <EmbeddedResource Include="DefaultUserSettings.json">
       <LogicalName>KathanaBotControlPanel.DefaultUserSettings.json</LogicalName>
     </EmbeddedResource>

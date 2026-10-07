@@ -325,8 +325,9 @@ Module Program
                 formType.GetMethod("ApplyPersistedTradeState", flags).Invoke(form, {settings})
                 search.Text = "dm"
                 formType.GetMethod("ApplyDarkTheme", flags).Invoke(form, {page})
-                Using host As New Form With {.ClientSize = New Drawing.Size(1360, 760), .ShowInTaskbar = False, .StartPosition = FormStartPosition.Manual, .Location = New Drawing.Point(-30000, -30000)}, tabs As New TabControl With {.Dock = DockStyle.Fill}
-                    host.Controls.Add(tabs)
+                Using host As New Form With {.ClientSize = New Drawing.Size(400, 300), .ShowInTaskbar = False, .StartPosition = FormStartPosition.Manual, .Location = New Drawing.Point(-30000, -30000)}, surface As New Panel With {.Size = New Drawing.Size(1360, 760), .Location = Drawing.Point.Empty}, tabs As New TabControl With {.Dock = DockStyle.Fill}
+                    surface.Controls.Add(tabs)
+                    host.Controls.Add(surface)
                     tabs.TabPages.Add(page)
                     host.Show()
                     Application.DoEvents()
@@ -363,13 +364,13 @@ Module Program
                     For Each retiredField In {"_tradeDiscordConfigure", "_tradeDiscordImport", "_tradeDiscordAuto", "_tradeDiscordCountLabel"}
                         Check(formType.GetField(retiredField, flags).GetValue(form) Is Nothing, "Retired reader control still exists: " & retiredField)
                     Next
-                    Using bitmap As New Drawing.Bitmap(host.Width, host.Height)
-                        host.DrawToBitmap(bitmap, New Drawing.Rectangle(0, 0, host.Width, host.Height))
+                    Using bitmap As New Drawing.Bitmap(surface.Width, surface.Height)
+                        surface.DrawToBitmap(bitmap, New Drawing.Rectangle(0, 0, surface.Width, surface.Height))
                         bitmap.Save(IO.Path.Combine(AppContext.BaseDirectory, "trade-tab.png"))
                     End Using
                     For Each control As Control In New Control() {items, search, selectMatches, unselectAll, startButton, priceGrid, browserCapture}
-                        Dim bounds = host.RectangleToClient(control.RectangleToScreen(control.ClientRectangle))
-                        Check(host.ClientRectangle.Contains(bounds), "Trade control outside the single-view layout: " & control.GetType().Name)
+                        Dim bounds = surface.RectangleToClient(control.RectangleToScreen(control.ClientRectangle))
+                        Check(surface.ClientRectangle.Contains(bounds), "Trade control outside the single-view layout: " & control.GetType().Name)
                     Next
                     Dim searchBounds = search.RectangleToScreen(search.ClientRectangle)
                     Dim selectBounds = selectMatches.RectangleToScreen(selectMatches.ClientRectangle)

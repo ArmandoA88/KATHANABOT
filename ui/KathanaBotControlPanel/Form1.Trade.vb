@@ -26,6 +26,9 @@ Partial Public Class Form1
     Private _tradeCancellation As CancellationTokenSource
     Private _tradeRunning As Boolean
     Private _tradeLoading As Boolean
+    Private _tradeForegroundMaintenanceWindow As IntPtr
+    Private _tradeForegroundMaintenancePid As UInteger
+    Private _tradeForegroundMaintenanceAllowed As Boolean
     Private ReadOnly _tradeStopTimer As New System.Windows.Forms.Timer With {.Interval = 50}
 
     Private NotInheritable Class TradeAnalysisUiProgress
@@ -58,7 +61,7 @@ Partial Public Class Form1
         Next
         body.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
         body.Controls.Add(New Label With {.Text = "TRADE / DISCORD WHISPERS", .AutoSize = True, .Font = New Font("Segoe UI", 17, FontStyle.Bold), .ForeColor = ThemeAccent})
-        body.Controls.Add(New Label With {.Text = "Paste or import posts > Analyze > review checked whispers > Start. Whispers focus the Full game; keep chat closed before Start. Switching apps stops the queue. F12 stops.", .AutoSize = True, .Margin = New Padding(0, 3, 0, 5)})
+        body.Controls.Add(New Label With {.Text = "Paste or import posts > Analyze > review checked whispers > Start. Whispers focus the Full game; keep chat closed before Start. Focus restores between messages. Stop / F12 cancels.", .AutoSize = True, .Margin = New Padding(0, 3, 0, 5)})
         Dim options As New TableLayoutPanel With {.Dock = DockStyle.Fill, .ColumnCount = 3, .RowCount = 1}
         options.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 35))
         options.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 25))
@@ -122,7 +125,7 @@ Partial Public Class Form1
         Dim parse As New Button With {.Text = "Analyze posts with AI", .AutoSize = True}
         AddHandler parse.Click, AddressOf ParseTradeQueue
         Dim help As New Button With {.Text = "Help", .AutoSize = True}
-        AddHandler help.Click, Sub() SilentMessageBox.Show(Me, "Paste character names and messages, or use Browser capture with the local extension and your signed-in Discord web channel. Choose 1 to 10,000 posts in Browser capture, start the local connection and paste its setup into the extension. Capture pauses during analysis, sending, or while checked whispers await review. Review the imported count, then Analyze and review the whisper queue before Start. Discord author names are not verified game character names." & vbCrLf & vbCrLf & "Analyze uses GPT-5 nano with minimal reasoning and the encrypted API key configured in Quiz; the Quiz model setting does not affect Trade. Up to 50 complete posts or 8,000 characters are processed per batch, with up to four requests at once. Completed verified batches are reused during this app session when their exact posts and model are unchanged; cached batches make no API request. Larger imports still take longer. Progress shows processed posts and extracted listings. Sorting, item counts, filtering and queue creation run locally without API charges. There is no automatic fallback to a more expensive model. All batches must complete before results replace your previous reviewed queue; cancellation or errors keep it. Analyze does not send whispers. The app selects the three most common items for Buy/Sell locally, counting distinct characters. Search filters the detected list; checked hidden items stay selected. Select all matches checks visible results; clear the search first to select every item in this mode. Unselect all clears every checked item, including items hidden by the search, and empties the review queue. Repeated posts from one character become one whisper." & vbCrLf & vbCrLf & "{items} inserts matching items per character. Buying matches SELL posts; selling matches BUY posts. Character names are case-sensitive. Edit the queue, then Start whispers (foreground) pauses combat and sends checked rows once in order with the game focused. Switching apps stops the queue, including between messages. Stop / F12 cancels; close any unfinished chat draft before retrying unsent rows. After successful completion the previous combat mode resumes (Full if none was running) only while its original game window is still focused. Background combat keeps its configured keyboard method." & vbCrLf & vbCrLf & "Chat price scanning uses Regions > chat_rect every 3 seconds. Offers are cheapest first; review OCR quotes. Clear offers removes collected prices.", "Trade Help")
+        AddHandler help.Click, Sub() SilentMessageBox.Show(Me, "Paste character names and messages, or use Browser capture with the local extension and your signed-in Discord web channel. Choose 1 to 10,000 posts in Browser capture, start the local connection and paste its setup into the extension. Capture pauses during analysis, sending, or while checked whispers await review. Review the imported count, then Analyze and review the whisper queue before Start. Discord author names are not verified game character names." & vbCrLf & vbCrLf & "Analyze uses GPT-5 nano with minimal reasoning and the encrypted API key configured in Quiz; the Quiz model setting does not affect Trade. Up to 50 complete posts or 8,000 characters are processed per batch, with up to four requests at once. Completed verified batches are reused during this app session when their exact posts and model are unchanged; cached batches make no API request. Larger imports still take longer. Progress shows processed posts and extracted listings. Sorting, item counts, filtering and queue creation run locally without API charges. There is no automatic fallback to a more expensive model. All batches must complete before results replace your previous reviewed queue; cancellation or errors keep it. Analyze does not send whispers. The app selects the three most common items for Buy/Sell locally, counting distinct characters. Search filters the detected list; checked hidden items stay selected. Select all matches checks visible results; clear the search first to select every item in this mode. Unselect all clears every checked item, including items hidden by the search, and empties the review queue. Repeated posts from one character become one whisper." & vbCrLf & vbCrLf & "{items} inserts matching items per character. Buying matches SELL posts; selling matches BUY posts. Character names are case-sensitive. Edit the queue, then Start whispers (foreground) pauses combat and sends checked rows once in order with the game focused. Between complete messages the queue waits for and restores the same selected game. A focus or input failure while typing stops the queue to protect an unfinished draft; sent rows remain unchecked and are never retried automatically. Stop / F12 cancels; close any unfinished chat draft before retrying unsent rows. After successful completion the previous combat mode resumes (Full if none was running) while its original game window and process remain valid. Running combat then restores that game focus automatically; gameplay input is emitted only while the exact game is foreground." & vbCrLf & vbCrLf & "Chat price scanning uses Regions > chat_rect every 3 seconds. Offers are cheapest first; review OCR quotes. Clear offers removes collected prices.", "Trade Help")
         Dim setupActions As New FlowLayoutPanel With {.Dock = DockStyle.Fill, .AutoSize = True}
         setupActions.Controls.AddRange({aiKey, parse, help})
         settings.Controls.Add(setupActions, 0, 3)
@@ -499,15 +502,28 @@ Partial Public Class Form1
     End Function
 
     Private Shared Async Function WaitForTradeForegroundAsync(hwnd As IntPtr, expectedPid As UInteger, delayMs As Integer, cancellation As CancellationToken,
-                                                              Optional foregroundWindow As Func(Of IntPtr) = Nothing) As Task
-        If foregroundWindow Is Nothing Then foregroundWindow = Function() NativeMethods.GetForegroundWindow()
+                                                              Optional foregroundWindow As Func(Of IntPtr) = Nothing,
+                                                              Optional restoreForeground As Func(Of IntPtr, UInteger, Boolean) = Nothing) As Task
+        If foregroundWindow Is Nothing Then
+            foregroundWindow = Function() NativeMethods.GetForegroundWindow()
+            If restoreForeground Is Nothing Then restoreForeground = AddressOf WindowsInput.TryRestoreGameForeground
+        End If
         Dim started = Environment.TickCount64
         Do
             cancellation.ThrowIfCancellationRequested()
             If (GetAsyncKeyState(CInt(Keys.F12)) And &H8000S) <> 0 Then Throw New OperationCanceledException()
             Dim pid As UInteger
-            If NativeMethods.GetWindowThreadProcessId(hwnd, pid) = 0 OrElse pid <> expectedPid OrElse NativeMethods.IsIconic(hwnd) Then Throw New InvalidOperationException("The selected game window closed, changed, or was minimized.")
-            If foregroundWindow() <> hwnd Then Throw New InvalidOperationException("The game lost focus. Whispers stopped; close any unfinished chat draft before retrying the unsent rows.")
+            If hwnd = IntPtr.Zero OrElse expectedPid = 0 OrElse NativeMethods.GetWindowThreadProcessId(hwnd, pid) = 0 OrElse pid <> expectedPid Then
+                Throw New InvalidOperationException("The selected game window closed or its process changed.")
+            End If
+            If foregroundWindow() <> hwnd OrElse NativeMethods.IsIconic(hwnd) Then
+                If restoreForeground Is Nothing Then Throw New InvalidOperationException("The game lost focus. Whispers stopped; close any unfinished chat draft before retrying the unsent rows.")
+                restoreForeground(hwnd, expectedPid)
+                cancellation.ThrowIfCancellationRequested()
+                If (GetAsyncKeyState(CInt(Keys.F12)) And &H8000S) <> 0 Then Throw New OperationCanceledException()
+                Await Task.Delay(50, cancellation)
+                Continue Do
+            End If
             Dim remaining = CLng(delayMs) - (Environment.TickCount64 - started)
             If remaining <= 0 Then Return
             Await Task.Delay(CInt(Math.Min(50L, remaining)), cancellation)
@@ -548,7 +564,7 @@ Partial Public Class Form1
             Next
             If queue.Select(Function(row) row.CharacterName).Distinct(StringComparer.Ordinal).Count() <> queue.Count Then Throw New InvalidOperationException("The queue contains the same exact character name more than once. Combine that character's items into one row.")
             Dim selected = GetSelectedProcessWindowForEdition(BotEdition.Full)
-            If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero OrElse NativeMethods.IsIconic(selected.MainWindowHandle) Then Throw New InvalidOperationException("Select and restore the Full game window first.")
+            If selected Is Nothing OrElse selected.MainWindowHandle = IntPtr.Zero Then Throw New InvalidOperationException("Select the Full game window first.")
             If _quizSolveInProgress OrElse (chkQuizSolverEnabled IsNot Nothing AndAlso chkQuizSolverEnabled.Checked) Then Throw New InvalidOperationException("Stop Quiz and let its current action finish before starting Trade.")
             If _resuRunning OrElse _resuBusy Then Throw New InvalidOperationException("Stop RESU and let its current action finish before starting Trade.")
             resumeEdition = If(_liteEngine.IsRunning(), BotEdition.Lite, BotEdition.Full)
@@ -567,6 +583,9 @@ Partial Public Class Form1
             cancellation = New CancellationTokenSource()
             StopTradeDiscordImport(False)
             _tradeCancellation = cancellation
+            _tradeForegroundMaintenanceWindow = hwnd
+            _tradeForegroundMaintenancePid = pid
+            _tradeForegroundMaintenanceAllowed = False
             _tradeRunning = True
             UpdateTradeBrowserCaptureState()
             _tradeStart.Enabled = False
@@ -574,7 +593,7 @@ Partial Public Class Form1
             _tradeGrid.Enabled = False
             _tradeStopTimer.Start()
             UpdateMainTabIndicators()
-            _tradeStatus.Text = "Stopping combat input before foreground whispers. Keep the game focused while typing; Stop / F12 cancels."
+            _tradeStatus.Text = "Stopping combat input before foreground whispers. Focus restores between complete messages; Stop / F12 cancels."
             ' Retain tasks before Stop clears detached scanner references.
             Dim inputWorkers = _fullEngine.GetInputWorkerTasks().Concat(_liteEngine.GetInputWorkerTasks()).ToArray()
             If _fullEngine.IsRunning() Then StopEdition(BotEdition.Full, False, "starting Trade")
@@ -584,10 +603,14 @@ Partial Public Class Form1
             For i = 0 To queue.Count - 1
                 cancellation.Token.ThrowIfCancellationRequested()
                 If generation <> _tradeAnalysisGeneration Then Throw New OperationCanceledException()
-                If i > 0 Then Await WaitForTradeForegroundAsync(hwnd, pid, 0, cancellation.Token)
+                _tradeForegroundMaintenanceAllowed = True
+                _tradeStatus.Text = $"Waiting for the selected game before whisper {i + 1}/{queue.Count}. Stop / F12 cancels."
+                Await WaitForTradeForegroundAsync(hwnd, pid, 0, cancellation.Token, restoreForeground:=AddressOf TryMaintainGameplayForeground)
+                cancellation.Token.ThrowIfCancellationRequested()
+                _tradeForegroundMaintenanceAllowed = False
                 Dim recipient = queue(i)
                 _tradeStatus.Text = If(i = 0,
-                    $"Starting {recipient.CharacterName}: click the selected Full game within 10 seconds with chat closed. F12 or Stop cancels.",
+                    $"Starting {recipient.CharacterName} with chat closed. F12 or Stop cancels.",
                     $"Typing {i + 1}/{queue.Count}: {recipient.CharacterName}. F12 or Stop cancels.")
                 Dim activateTarget = i = 0
                 Dim sent As Boolean
@@ -603,7 +626,10 @@ Partial Public Class Form1
                 If Not ApplyTradeWhisperSubmission(recipient.CharacterName, generation, cancellation, submittedFailure IsNot Nothing) Then Throw New OperationCanceledException()
                 If submittedFailure IsNot Nothing Then Throw submittedFailure
                 _tradeStatus.Text = $"Sent to game: {recipient.CharacterName} ({i + 1}/{queue.Count})."
-                If i < queue.Count - 1 Then Await WaitForTradeForegroundAsync(hwnd, pid, delay, cancellation.Token)
+                If i < queue.Count - 1 Then
+                    _tradeForegroundMaintenanceAllowed = True
+                    Await WaitForTradeForegroundAsync(hwnd, pid, delay, cancellation.Token, restoreForeground:=AddressOf TryMaintainGameplayForeground)
+                End If
             Next
             cancellation.Token.ThrowIfCancellationRequested()
             If (GetAsyncKeyState(CInt(Keys.F12)) And &H8000S) <> 0 Then Throw New OperationCanceledException()
@@ -618,6 +644,9 @@ Partial Public Class Form1
             End If
         Finally
             If cancellation IsNot Nothing Then
+                _tradeForegroundMaintenanceAllowed = False
+                _tradeForegroundMaintenanceWindow = IntPtr.Zero
+                _tradeForegroundMaintenancePid = 0UI
                 completed = completed AndAlso Not cancellation.IsCancellationRequested
                 _workflowModes.Transition(OperatingMode.Idle, If(completed, "all whispers completed", "whispers cancelled or failed"))
                 _tradeRunning = False
@@ -642,10 +671,9 @@ Partial Public Class Form1
                 Dim selected = GetSelectedProcessWindowForEdition(resumeEdition)
                 Dim currentPid As UInteger
                 If resumeWindow = IntPtr.Zero OrElse selected Is Nothing OrElse selected.MainWindowHandle <> resumeWindow OrElse
-                    NativeMethods.GetWindowThreadProcessId(resumeWindow, currentPid) = 0 OrElse currentPid <> resumePid OrElse NativeMethods.IsIconic(resumeWindow) Then
-                    Throw New InvalidOperationException("The selected game window changed, closed, or was minimized.")
+                    NativeMethods.GetWindowThreadProcessId(resumeWindow, currentPid) = 0 OrElse currentPid <> resumePid Then
+                    Throw New InvalidOperationException("The selected game window changed or closed.")
                 End If
-                If NativeMethods.GetForegroundWindow() <> resumeWindow Then Throw New InvalidOperationException("The game lost focus after the last whisper. Combat remains stopped.")
                 StartEdition(resumeEdition, False)
                 _tradeStatus.Text &= If(IsEditionRunning(resumeEdition), $" {resumeEdition} bot resumed automatically.", " Bot could not restart; check Diagnostics.")
             Catch ex As Exception

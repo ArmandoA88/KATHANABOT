@@ -18,3 +18,9 @@ $destination = Join-Path $PSScriptRoot "KathanaBotControlPanel_Standalone_$versi
 Copy-Item -LiteralPath $source -Destination $destination
 if ((Get-FileHash -LiteralPath $source).Hash -ne (Get-FileHash -LiteralPath $destination).Hash) { throw 'EXE copy verification failed.' }
 Write-Host "Created and verified $destination"
+if ([string]$metadata.Project.PropertyGroup.InputBuildVariant -eq 'Foreground') {
+    $foregroundDestination = Join-Path $PSScriptRoot "KathanaBotControlPanel_Standalone_Foreground_$version.exe"
+    Copy-Item -LiteralPath $source -Destination $foregroundDestination
+    if ((Get-FileHash -LiteralPath $source).Hash -ne (Get-FileHash -LiteralPath $foregroundDestination).Hash) { throw 'Foreground EXE copy verification failed.' }
+    Write-Host "Created and verified $foregroundDestination"
+}

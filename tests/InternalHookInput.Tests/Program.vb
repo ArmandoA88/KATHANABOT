@@ -60,7 +60,8 @@ Module Program
         Try
             WindowsInput.RequireConnection(IntPtr.Zero)
         Catch ex As InvalidOperationException
-            blocked = ex.Message.Contains("Selected game is unavailable")
+            blocked = ex.Message.Contains("Selected", StringComparison.OrdinalIgnoreCase) AndAlso
+                      ex.Message.Contains("foreground", StringComparison.OrdinalIgnoreCase)
         End Try
         Check(blocked, "invalid target reports an input availability error")
         Dim root = New DirectoryInfo(AppContext.BaseDirectory)
@@ -68,12 +69,12 @@ Module Program
             root = root.Parent
         End While
         Dim source = File.ReadAllText(Path.Combine(root.FullName, "ui", "KathanaBotControlPanel", "WindowsInput.vb"))
-        Check(source.Contains("DefaultInput As New SdlBackgroundWindowsInput") AndAlso Not source.Contains("DefaultInput As New InternalHookWindowsInput"), "background keyboard production default bypasses the blocked hook")
-        Dim defaultBackground = TryCast(WindowsInput.Current, SdlBackgroundWindowsInput)
-        Check(defaultBackground IsNot Nothing AndAlso defaultBackground.KeyboardOnly AndAlso defaultBackground.KeyboardMode = BackgroundKeyboardMode.PostedScanCode,
-              "production background backend starts with posted scan-code keys only")
-        Check(Not WindowsInput.UsesInternalHook AndAlso WindowsInput.UsesTargetedInput AndAlso WindowsInput.InputMode = "background-keys-posted-scan",
-              "target-only posted scan-code keyboard backend is selected without a DLL handshake")
+        Check(source.Contains("DefaultInput As New ForegroundWindowsInput") AndAlso Not source.Contains("DefaultInput As New InternalHookWindowsInput") AndAlso
+              Not source.Contains("DefaultInput As New SdlBackgroundWindowsInput"), "foreground production default must not construct a background or hook backend")
+        Check(TypeOf WindowsInput.Current Is ForegroundWindowsInput AndAlso Not WindowsInput.KeyboardOnlyMode,
+              "production foreground backend supports guarded keyboard, mouse and text input")
+        Check(Not WindowsInput.UsesInternalHook AndAlso Not WindowsInput.UsesTargetedInput AndAlso WindowsInput.InputMode = "foreground",
+              "production foreground SendInput requires neither a target message backend nor a DLL handshake")
         Using resource = GetType(NativeHookTransport).Assembly.GetManifestResourceStream("KathanaBotControlPanel.KathanaInputHook.dll")
             Check(resource Is Nothing, "production executable does not require the inaccessible hook DLL")
         End Using
@@ -87,7 +88,7 @@ Module Program
             insufficient = ex.Message.Contains("granted 0x1000")
         End Try
         Check(insufficient, "query-only handles cannot enter the remote loader")
-        Console.WriteLine("PASS: experimental hook routing, coordinates, releases, posted scan-code keyboard-only production default and real native loader-rights validation.")
+        Console.WriteLine("PASS: experimental hook unit routing, coordinates and releases; foreground SendInput production default and real native loader-rights validation.")
     End Sub
     Private Sub InspectLoaderRights(pid As UInteger, access As UInteger)
         Dim flags = BindingFlags.NonPublic Or BindingFlags.Static

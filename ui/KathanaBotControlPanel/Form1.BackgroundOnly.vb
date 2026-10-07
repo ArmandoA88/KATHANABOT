@@ -1,59 +1,6 @@
 Partial Public Class Form1
-    Private _backgroundOnlyButton As Button
-    Private _backgroundKeyboardMenu As ContextMenuStrip
-
-    Private Function BuildBackgroundOnlyButton() As Control
-        _backgroundOnlyButton = CreateResponsiveCenterButton("Background keys", Color.FromArgb(35, 100, 145))
-        _backgroundKeyboardMenu = New ContextMenuStrip()
-        AddHandler Disposed, Sub() _backgroundKeyboardMenu.Dispose()
-        For Each mode In {BackgroundKeyboardMode.PostedScanCode, BackgroundKeyboardMode.SynchronousScanCode,
-                          BackgroundKeyboardMode.PostedZeroScanCode, BackgroundKeyboardMode.SynchronousZeroScanCode}
-            Dim selectedMode = mode
-            Dim item As New ToolStripMenuItem(BackgroundKeyModeLabel(mode)) With {.Tag = mode}
-            AddHandler item.Click, Sub() SelectBackgroundKeyMode(selectedMode)
-            _backgroundKeyboardMenu.Items.Add(item)
-        Next
-        _backgroundOnlyButton.ContextMenuStrip = _backgroundKeyboardMenu
-        AddHandler _backgroundOnlyButton.Click, Sub() _backgroundKeyboardMenu.Show(_backgroundOnlyButton, New System.Drawing.Point(0, _backgroundOnlyButton.Height))
-        UpdateBackgroundOnlyButton()
-        Return _backgroundOnlyButton
-    End Function
-
-    Private Sub UpdateBackgroundOnlyButton()
-        If _backgroundOnlyButton Is Nothing Then Return
-        _backgroundOnlyButton.Text = "Background keys: " & BackgroundKeyModeLabel(WindowsInput.BackgroundKeyMode)
-        _backgroundOnlyButton.BackColor = Color.FromArgb(35, 100, 145)
-        If _backgroundKeyboardMenu IsNot Nothing Then
-            For Each item As ToolStripMenuItem In _backgroundKeyboardMenu.Items
-                item.Checked = DirectCast(item.Tag, BackgroundKeyboardMode) = WindowsInput.BackgroundKeyMode
-            Next
-        End If
-    End Sub
-
-    Private Shared Function BackgroundKeyModeLabel(mode As BackgroundKeyboardMode) As String
-        Select Case mode
-            Case BackgroundKeyboardMode.PostedScanCode : Return "Queued / scan"
-            Case BackgroundKeyboardMode.SynchronousScanCode : Return "Direct / scan"
-            Case BackgroundKeyboardMode.PostedZeroScanCode : Return "Queued / virtual"
-            Case BackgroundKeyboardMode.SynchronousZeroScanCode : Return "Direct / virtual"
-            Case Else : Return "Unknown"
-        End Select
-    End Function
-
-    Private Sub SelectBackgroundKeyMode(mode As BackgroundKeyboardMode)
-        If _fullEngine.IsRunning() OrElse _liteEngine.IsRunning() OrElse _resuRunning OrElse _tradeRunning OrElse
-            _workflowModes.Current <> OperatingMode.Idle Then
-            AppendLog("Stop automation before changing the background key method.")
-            Return
-        End If
-        If Not WindowsInput.TrySetBackgroundKeyMode(mode) Then
-            AppendLog("Background key method unchanged: a key release is still pending.")
-            Return
-        End If
-        UpdateBackgroundOnlyButton()
-        SavePersistedListState(False)
-        AppendLog("Background key method: " & BackgroundKeyModeLabel(mode) & ". Keep the game open and not minimized; other apps can stay active.")
-    End Sub
+    ' Preserve this preference for older background EXEs without enabling it here.
+    Private _legacyBackgroundKeyboardMethod As String = "posted-scan"
 
     Private Sub EnforceBackgroundOnly(showReport As Boolean)
         If Not WindowsInput.BackgroundOnly OrElse _applyingSettings Then Return
