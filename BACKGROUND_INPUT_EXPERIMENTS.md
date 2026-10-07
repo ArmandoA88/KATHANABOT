@@ -2,6 +2,47 @@
 
 Last updated: 2026-10-06. Append each new experiment and update the current status below.
 
+## 2026-10-06 — Background mode: borrow the keyboard per key press (1.0.250)
+
+Request: run the bot with the game window in the background, because every synthetic window-message variant is
+detected and only foreground SendInput works. Findings that shaped the answer: (1) Windows routes hardware-style
+keyboard input only to the foreground window, so an inactive game cannot receive it; (2) the only in-session ways
+to reach an inactive window are the window-message variants already rejected (S01-S04) and code inside the game
+process, which H02-H10 show is not reachable and which is not attempted; (3) separate sessions/VMs stay excluded by
+the user's earlier constraint.
+
+New mechanism, within those limits: keep the accepted foreground SendInput transport unchanged and borrow focus for
+each key press. Before the first key the backend records the active window and the game's place in the window
+stack, activates the game with the existing activation sequence, re-stacks the game behind the user's windows
+without deactivating it, sends and releases the key, and after a 250 ms linger activates the user's window again
+and re-applies the game's stack position. It waits for the user to stop typing (default 1 s), never interrupts
+full-screen apps/presentations, the taskbar/Start/Alt+Tab or a locked screen, stands down when the user clicks or
+switches windows, and never fights for focus. It is keyboard-only; mouse features are paused by the existing
+keyboard-only policy. 1.0.247's keep-the-game-in-front supervisor is bypassed while it is on. Details:
+[docs/BACKGROUND_MODE.md](docs/BACKGROUND_MODE.md).
+
+Measured with throwaway windows on this machine (Windows 11 build 26200; no game window used, no key input sent;
+the lab refused to run unless the user was idle and neither the game nor the bot panel was in front; in-memory
+foreground-lock timeout was 2,147,483,647 ms):
+
+| ID | Check | Result |
+| --- | --- | --- |
+| G01 | Take focus from the user's real foreground application (Chrome, Remote Desktop Mosaic) from a background process using the existing activation sequence | Worked in every cycle (direct request once, then attach-thread-input); about 10 ms |
+| G02 | Re-stack the activated window with `SetWindowPos(... SWP_NOACTIVATE)`, including `HWND_BOTTOM` | Window stayed foreground 8/8 |
+| G03 | Hand focus back to the previous window | 8/8, about 16 ms |
+| G04 | Z-order after a full cycle, anchored on `GW_HWNDPREV` | 7/8 exact; first cycle drifted one slot. Cause: the window directly above the game was its own hidden input-helper window (`MSCTFIME UI`), which Windows keeps above its owner |
+| G05 | Same, anchored on the nearest visible window of another process | Order of all visible windows identical before and after, 8/8 and again after the hand-back |
+
+Automated coverage (fake platform; no native focus or input call): borrow/linger/hand-back, burst sharing, yield
+thresholds, blockers, refusal back-off, user takeover and click handling, held keys, mouse/text never borrowing,
+re-stack fallback, vanished windows, Stop/mode-off hand-back, second game window, watchdog sampling, the
+user-activity tracker, shell-surface classes, supervisor stand-down and settings persistence.
+
+**Not established:** any live Kathana session; how the client reacts to losing and regaining focus every few hundred
+milliseconds; long-session behavior; detection. The input is still injected SendInput, so this does not change
+whatever the game objects to about injected input. Do not describe this as a detection fix. Reported refusals,
+waits and pauses are shown on the Combat Full status line.
+
 ## 2026-10-06 — Default game focus restoration (1.0.247)
 
 The user explicitly requests that running foreground automation restore and
@@ -66,7 +107,8 @@ The user explicitly confirmed after S03 that everything must stay in **this Wind
 
 ## Current status
 
-- **Latest requested behavior:** v1.0.247 automatically restores selected game focus while automation is running and removes the input button/notice. Focus loss does not stop the combat engine; failed activation is retried. Stop/F12 remains available. No live game trial was performed.
+- **Newest (1.0.250):** Background mode borrows the keyboard per key press so the game can stay behind other windows, using the same foreground SendInput. Focus mechanics were measured with dummy windows (G01-G05); no live game input was sent and detection compatibility is unverified. It supersedes the keep-the-game-in-front default of 1.0.247 while it is on (the toggle is on by default; turn it off for 1.0.247 behavior).
+- **Previous requested behavior:** v1.0.247 automatically restores selected game focus while automation is running and removes the input button/notice. Focus loss does not stop the combat engine; failed activation is retried. Stop/F12 remains available. No live game trial was performed.
 - **Latest detection report (S04):** all four background keyboard choices are detected. v1.0.246 switches all game interactions to foreground SendInput as requested, and fixes one-shot launch startup being consumed before success. No new game input was sent during implementation; enforcement compatibility remains unverified.
 - **Latest failure (S03):** the user reports suspicious-activity termination after trying v1.0.231 and supplies another terminated-session screenshot. The running v1.0.231 panel (PID 38048) reported `inputMode=background-keys-posted-scan`, `running=true` and the old selected game PID 7016; the game process snapshot at that point was PID 27772. Posted scan-code background delivery has failed the user's continued-use requirement despite the earlier short inventory successes. The exact detecting component and causal trigger remain unknown. Other variants were not individually identified in this latest report.
 - **Process observation after S03:** the failed panel exited before the attempted stop request could reach it. A later read-only process check found no bot and a restarted game PID 8532. No new game input or restart was performed by the agent in response to S03.

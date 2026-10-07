@@ -77,6 +77,8 @@
             Finally
                 _applyingSettings = False
             End Try
+            ' The clearing pass above also reset these controls; the saved input mode is not a feature setting.
+            SyncBackgroundModeControls()
             _activeProfileName = ""
             UpdateProfilesButtonAppearance()
             UpdateDirectKpButton()

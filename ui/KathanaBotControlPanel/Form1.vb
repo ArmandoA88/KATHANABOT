@@ -2346,6 +2346,9 @@ Partial Public Class Form1
         Public Property LiteDirectKpSelected As Boolean = False
         Public Property BackgroundOnlyEnabled As Boolean = False
         Public Property BackgroundKeyboardMethod As String = "posted-scan"
+        Public Property BackgroundFocusModeEnabled As Boolean = True
+        Public Property BackgroundYieldMs As Integer = FocusBorrowSettings.DefaultYieldMs
+        Public Property BackgroundPauseForFullScreen As Boolean = True
         Public Property WindowTitle As String = DefaultGameWindowTitle
         Public Property PeriodicScreenshotsEnabled As Boolean = False
         Public Property PeriodicScreenshotIntervalMinutes As Decimal = 15D
@@ -2513,6 +2516,7 @@ Partial Public Class Form1
         SeedDefaults()
         SeedFirstRunSettingsFileIfMissing()
         LoadPersistedListState()
+        InitializeBackgroundMode()
         EnforceBackgroundOnly(False)
         ForceLevelingAgentOffForStartup()
         SetupLiveConfigBindings()
@@ -8902,6 +8906,7 @@ Partial Public Class Form1
         Dim controls As Control() = {
             lblFullEdition, lblRunState, lblShortcutHint, lblState, lblSystem, hpMpLayout,
             lblMobName, lblExpRate, lblRupiahsRate, runRow, BuildDirectKpControls(), BuildAutoAssistButton(), btnSaveSettings, btnStopBot,
+            BuildBackgroundModeControls(),
             btnFullSupport, btnBypassStuck, BuildLootAfterKillControls(), btnPartyInviteAutoAccept, btnRessAutoAccept,
             lblPartyAskEvery, nudPartyAskSeconds, lblPartyAskText, txtPartyAskText, partyAskRow, BuildProfileSettingsButtons(), btnHelp,
             chkDeveloperMode
@@ -14289,6 +14294,7 @@ Partial Public Class Form1
         HandlePendingAutoPartyPointCapture()
         HandlePendingAutoRelaunchClickCapture()
         MaintainSelectedGameForeground()
+        RefreshBackgroundModeStatus()
     End Sub
 
     Private Sub CombatChatPauseSettingChanged(_sender As Object, _e As EventArgs)
@@ -17596,6 +17602,8 @@ Partial Public Class Form1
                 _legacyBackgroundKeyboardMethod = WindowsInput.KeyboardModeId(persistedKeyMode)
             End If
             If suppliedJson Is Nothing Then WindowsInput.BackgroundOnly = appState IsNot Nothing AndAlso appState.BackgroundOnlyEnabled
+            ' Profiles and Reset All Settings supply JSON; they never change how input is delivered.
+            If suppliedJson Is Nothing Then LoadBackgroundModeState(appState)
             If suppliedJson Is Nothing AndAlso Not Environment.GetCommandLineArgs().Contains("--background-key-mode") Then
                 Dim mode As BackgroundKeyboardMode
                 If WindowsInput.TryParseKeyboardMode(If(appState?.BackgroundKeyboardMethod, "posted-scan"), mode) Then WindowsInput.TrySetBackgroundKeyMode(mode)
@@ -18032,6 +18040,9 @@ Partial Public Class Form1
                 .LiteDirectKpSelected = _directKpEnabled,
                 .BackgroundOnlyEnabled = WindowsInput.BackgroundOnly,
                 .BackgroundKeyboardMethod = _legacyBackgroundKeyboardMethod,
+                .BackgroundFocusModeEnabled = _backgroundModeEnabled,
+                .BackgroundYieldMs = _backgroundYieldMs,
+                .BackgroundPauseForFullScreen = _backgroundPauseFullScreen,
                 .WindowTitle = GetSelectedWindowTitleForFallback(If(IsLiteModeActive(), BotEdition.Lite, BotEdition.Full)),
                 .PeriodicScreenshotsEnabled = (chkPeriodicScreenshots IsNot Nothing AndAlso chkPeriodicScreenshots.Checked),
                 .PeriodicScreenshotIntervalMinutes = If(nudPeriodicScreenshotMinutes IsNot Nothing, nudPeriodicScreenshotMinutes.Value, 15D),

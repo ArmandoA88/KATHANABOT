@@ -7,10 +7,10 @@
     <StartupObject>Sub Main</StartupObject>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>assets\KathanaBot.ico</ApplicationIcon>
-    <Version>1.0.249</Version>
-    <FileVersion>1.0.249.0</FileVersion>
-    <AssemblyVersion>1.0.249.0</AssemblyVersion>
-    <InputBuildVariant>Foreground</InputBuildVariant>
+    <Version>1.0.250</Version>
+    <FileVersion>1.0.250.0</FileVersion>
+    <AssemblyVersion>1.0.250.0</AssemblyVersion>
+    <InputBuildVariant>FocusBorrow</InputBuildVariant>
     <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
 

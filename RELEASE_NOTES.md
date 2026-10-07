@@ -1,4 +1,11 @@
-﻿## 1.0.249
+﻿## 1.0.250
+- Added **Background mode** (button under Stop Bot on Combat Full, on by default). The Kathana window can stay behind your other windows: for each key press the bot briefly takes the keyboard, keeps the game window where it was in the window stack so nothing is drawn over your work, sends the key with the same foreground SendInput as before, and gives focus back to the window you were using. Keys in a burst share one borrow. While it is on it replaces 1.0.247's keep-the-game-in-front supervisor; turn it off to get that behavior back.
+- The bot waits for you to stop typing before it takes the keyboard (default 1 s, adjustable 0-30 s; 0 never waits), releases its key and hands focus back at once if you start typing during a borrow, and stands down without moving focus when you click or switch windows. Full-screen apps and presentations (optional), the taskbar/Start menu/Alt+Tab and a locked screen are never interrupted. A status line shows borrows, waits, pauses and refusals.
+- Keyboard-only: it never moves your mouse or clicks, so features that need the mouse are paused while it is on (your saved settings are unchanged). Trade whispers still need the game in front. Keep the game open and not minimized.
+- Stop, F12, turning the mode off and closing the app release held keys and give focus back immediately. The in-game bot toggle overlay is hidden during a borrow. `--foreground-mode` / `--background-mode` override the saved choice for one run.
+- This does not make input undetectable: the input is the same injected SendInput as 1.0.249, and no live game session was run. See [Background mode](docs/BACKGROUND_MODE.md) for how it works, what was measured and what was not.
+
+## 1.0.249
 - Combat now keeps the game in focus: while the bot runs it restores a minimized Kathana window and brings it back to the front, retrying if Windows blocks it, without stopping combat. Any held keys or mouse buttons are released whenever the game loses focus.
 - Added a global F12 emergency stop that works during combat and during startup. The default custom skill row now uses F14 instead of F12.
 - Launch auto-start is more reliable: the bot starts Full mode automatically after launch, retries if startup is blocked, and the app always opens on Home.

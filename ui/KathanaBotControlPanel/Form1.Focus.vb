@@ -60,6 +60,12 @@ Partial Public Class Form1
             ResetGameFocusMaintenance()
             Return
         End If
+        ' Background mode borrows the keyboard for each key press instead of pinning the game in front.
+        ' Trade is the exception: it types chat text, so it still asks for the game to stay focused.
+        If WindowsInput.FocusBorrowEnabled AndAlso Not _tradeRunning Then
+            ResetGameFocusMaintenance()
+            Return
+        End If
         If _tradeRunning Then
             If _tradeForegroundMaintenanceAllowed AndAlso _tradeCancellation IsNot Nothing AndAlso Not _tradeCancellation.IsCancellationRequested Then
                 TryMaintainGameplayForeground(_tradeForegroundMaintenanceWindow, _tradeForegroundMaintenancePid)

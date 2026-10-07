@@ -136,8 +136,9 @@ Module Program
         Check(Not losingFocus.Post(game, &H100UI, New IntPtr(65), IntPtr.Zero) AndAlso backend.Events.Count = before, "focus must be rechecked after randomized wait")
         VerifyWindowsInputSelectorAndKeyTiming(game, other)
         count += CommonGameInteractionTests.Verify()
+        count += FocusBorrowTests.Verify()
         AuditNativeImports()
-        Console.WriteLine($"PASS: {count} foreground SendInput routing, selector eligibility, key hold timing, focus, releases, cursor, Unicode and native-import assertions.")
+        Console.WriteLine($"PASS: {count} foreground SendInput routing, selector eligibility, key hold timing, focus, releases, cursor, Unicode, Background-mode focus-borrow and native-import assertions.")
     End Sub
 
     Private Sub VerifyWindowsInputSelectorAndKeyTiming(game As IntPtr, other As IntPtr)
@@ -243,6 +244,62 @@ Friend Class FakePlatform
     Public SendAttempts As Integer
     Public BeforeSend As Action(Of ForegroundInputEvent)
     Public Events As New List(Of ForegroundInputEvent)
+    ' Background mode (borrowed focus) controls. The window stack and the user are simulated here.
+    Public Clock As Long = 100000
+    Public ZAnchor As New ZOrderAnchor(New IntPtr(900), False)
+    Public CaptureCalls As Integer
+    Public RestoreZCalls As Integer
+    Public RestoreZMovesActivationTo As IntPtr
+    Public ActivateOtherCalls As Integer
+    Public ActivateOtherResult As Boolean = True
+    Public LastActivatedOther As IntPtr
+    Public Restorable As Boolean = True
+    Public Blocker As String = ""
+    Public LastIncludeFullScreen As Boolean
+    Public UserIdle As Long = Long.MaxValue
+    Public UserButtonIdle As Long = Long.MaxValue
+    Public SampleCalls As Integer
+    Public LastSampledKeys As Integer() = Array.Empty(Of Integer)()
+    Public NotedActivity As Integer
+    Public Overrides Function NowMs() As Long
+        Return Clock
+    End Function
+    Public Overrides Function CaptureZOrder(hwnd As IntPtr) As ZOrderAnchor
+        CaptureCalls += 1
+        Return ZAnchor
+    End Function
+    Public Overrides Function RestoreZOrder(hwnd As IntPtr, anchor As ZOrderAnchor) As Boolean
+        RestoreZCalls += 1
+        If RestoreZMovesActivationTo <> IntPtr.Zero Then Active = RestoreZMovesActivationTo
+        Return True
+    End Function
+    Public Overrides Function ActivateOther(hwnd As IntPtr) As Boolean
+        ActivateOtherCalls += 1
+        LastActivatedOther = hwnd
+        If ActivateOtherResult Then Active = hwnd
+        Return ActivateOtherResult
+    End Function
+    Public Overrides Function CanRestore(hwnd As IntPtr) As Boolean
+        Return Restorable AndAlso hwnd <> IntPtr.Zero
+    End Function
+    Public Overrides Function BorrowBlocker(foreground As IntPtr, includeFullScreen As Boolean) As String
+        LastIncludeFullScreen = includeFullScreen
+        Return Blocker
+    End Function
+    Public Overrides Function UserIdleMs() As Long
+        Return UserIdle
+    End Function
+    Public Overrides Function UserButtonIdleMs() As Long
+        Return UserButtonIdle
+    End Function
+    Public Overrides Sub SampleUserActivity(botHeldKeys As IReadOnlyCollection(Of Integer))
+        SampleCalls += 1
+        LastSampledKeys = botHeldKeys.ToArray()
+    End Sub
+    Public Overrides Sub NoteUserActivity()
+        NotedActivity += 1
+        UserIdle = 0
+    End Sub
     Public Overrides Function Foreground() As IntPtr
         Return Active
     End Function

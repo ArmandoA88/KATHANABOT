@@ -214,6 +214,12 @@ Friend Class InGameBotToggleForm
             Hide()
             Return
         End If
+        ' Background mode puts the game in front only for the instant a key is pressed. The overlay is
+        ' topmost, so showing it then would flash over whatever the user is working in.
+        If WindowsInput.FocusBorrowActive Then
+            Hide()
+            Return
+        End If
 
         Dim clientRect As NativeMethods.RECT
         Dim origin As New NativeMethods.POINT With {.X = 0, .Y = 0}

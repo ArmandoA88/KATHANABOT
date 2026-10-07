@@ -28,9 +28,38 @@ Public NotInheritable Class WindowsInput
     Private Shared Sub MonitorReleases(state As Object)
         Try
             DefaultInput.ReleaseUnfocused()
+            ' Background mode: hand the keyboard back once the bot has stopped pressing keys.
+            DefaultInput.ServiceFocusLease()
         Catch ex As Exception
             RuntimeJournal.Record("Input release error", ex.Message)
         End Try
+    End Sub
+    ' Background mode borrows the keyboard only while a key is pressed instead of keeping the game in
+    ' front. It reuses the same SendInput path; only the focus handling around each key changes.
+    Public Shared Sub ConfigureFocusBorrow(enabled As Boolean, yieldToUserMs As Integer, Optional pauseForFullScreen As Boolean = True)
+        DefaultInput.FocusBorrow = If(enabled, New FocusBorrowSettings(True, yieldToUserMs, FocusBorrowSettings.DefaultLingerMs, pauseForFullScreen), FocusBorrowSettings.Disabled)
+    End Sub
+    Public Shared ReadOnly Property FocusBorrowEnabled As Boolean
+        Get
+            Dim foreground = TryCast(Current, ForegroundWindowsInput)
+            Return foreground IsNot Nothing AndAlso foreground.BorrowEnabled
+        End Get
+    End Property
+    ' True while the bot has the game in front only for a key press (not because the user chose to).
+    Public Shared ReadOnly Property FocusBorrowActive As Boolean
+        Get
+            Dim foreground = TryCast(Current, ForegroundWindowsInput)
+            Return foreground IsNot Nothing AndAlso foreground.BorrowActive
+        End Get
+    End Property
+    Public Shared Function FocusBorrowStatus() As FocusBorrowSnapshot
+        Dim foreground = TryCast(Current, ForegroundWindowsInput)
+        Return If(foreground Is Nothing, New FocusBorrowSnapshot(), foreground.FocusBorrowStatus())
+    End Function
+    ' Process exit: release anything held and give the keyboard back before the watchdog stops.
+    Public Shared Sub Shutdown()
+        ReleaseAll()
+        TryCast(Current, ForegroundWindowsInput)?.EndFocusLeaseNow()
     End Sub
     Public Shared Sub ReleaseAll()
         Dim foreground = TryCast(Current, ForegroundWindowsInput)
@@ -87,7 +116,10 @@ Public NotInheritable Class WindowsInput
         If background IsNot Nothing Then Return background.CanReceive(hwnd)
         Return True ' Other injected test backends implement their own validation.
     End Function
+    ' Eligible to receive a key now: in front already or, in Background mode, able to borrow the keyboard.
     Public Shared Function TargetCanReceiveInput(hwnd As IntPtr) As Boolean
+        Dim foreground = TryCast(Current, ForegroundWindowsInput)
+        If foreground IsNot Nothing AndAlso foreground.BorrowEnabled Then Return foreground.CanReceiveInput(hwnd)
         Return TargetIsForeground(hwnd)
     End Function
     Public Shared ReadOnly Property UsesInternalHook As Boolean
@@ -100,8 +132,11 @@ Public NotInheritable Class WindowsInput
             Return UsesInternalHook OrElse TypeOf Current Is SdlBackgroundWindowsInput
         End Get
     End Property
+    ' Keyboard-only runtime policy. Background mode never moves the mouse or clicks: the game is not in
+    ' front, so a click would land on whatever window covers it.
     Public Shared ReadOnly Property KeyboardOnlyMode As Boolean
         Get
+            If FocusBorrowEnabled Then Return True
             Dim background = TryCast(Current, SdlBackgroundWindowsInput)
             Return background IsNot Nothing AndAlso background.KeyboardOnly
         End Get
@@ -149,7 +184,7 @@ Public NotInheritable Class WindowsInput
         Get
             If UsesInternalHook Then Return "internal-hook"
             Dim background = TryCast(Current, SdlBackgroundWindowsInput)
-            If background Is Nothing Then Return "foreground"
+            If background Is Nothing Then Return If(FocusBorrowEnabled, "foreground-borrow", "foreground")
             Return If(background.KeyboardOnly, "background-keys-" & KeyboardModeId(background.KeyboardMode), "sdl-background")
         End Get
     End Property

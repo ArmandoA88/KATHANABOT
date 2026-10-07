@@ -19,7 +19,8 @@ Partial Public Class BotEngine
             If _keyOutputPausedWindows.Contains(hwnd) Then Return False
         End SyncLock
         WindowsInput.BindTarget(hwnd)
-        If Not WindowsInput.Current.Activate(hwnd) OrElse Not WindowsInput.TargetIsForeground(hwnd) Then Return False
+        ' Background mode borrows the keyboard when the modifier goes down, so eligibility (not current focus) gates it.
+        If Not WindowsInput.Current.Activate(hwnd) OrElse Not WindowsInput.TargetCanReceiveInput(hwnd) Then Return False
         Return SendPhysicalSkillShortcut(modifier, digit, holdMs, token)
     End Function
 

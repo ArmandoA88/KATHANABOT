@@ -47,7 +47,9 @@ Partial Public Class Form1
 
     Private Function RejectForegroundWorkflow(name As String) As Boolean
         If WindowsInput.KeyboardOnlyMode Then
-            AppendLog(name & " needs mouse or text input and is unavailable in this background keyboard build.")
+            AppendLog(name & " needs mouse or text input" & If(WindowsInput.FocusBorrowEnabled,
+                      " and is unavailable while Background mode is on. Turn Background mode off to use it.",
+                      " and is unavailable in this background keyboard build."))
             Return True
         End If
         If Not WindowsInput.BackgroundOnly Then Return False

@@ -13,7 +13,53 @@ Friend Module FocusMaintenanceTests
         TestMainGraceAndModalSuspension()
         TestTargetChangesStopAndClosing()
         TestFormLifecycleAndCancelledWorkflows()
-        Console.WriteLine($"PASS: {checks} foreground-maintenance assertions: continued focus recovery, 750-ms retry pacing, 3-second panel grace, modal deferral, selected-target changes, stop/closing, and cancelled workflow guards (pure state only; no native focus/input calls).")
+        TestBackgroundModeDoesNotPinTheGame()
+        TestBackgroundModeSettingsPersistence()
+        Console.WriteLine($"PASS: {checks} foreground-maintenance assertions: continued focus recovery, 750-ms retry pacing, 3-second panel grace, modal deferral, selected-target changes, stop/closing, cancelled workflow guards, and Background-mode supervisor/persistence behavior (pure state only; no native focus/input calls).")
+    End Sub
+
+    ' Background mode borrows the keyboard per key press, so the supervisor that pins the game in front
+    ' (and yanks focus back from the user every 750 ms) must stand down while it is on.
+    Private Sub TestBackgroundModeDoesNotPinTheGame()
+        Dim owner = RuntimeHelpers.GetUninitializedObject(GetType(Form1))
+        SetField(owner, "_resuRunning", True) ' any running workflow authorizes focus maintenance
+        Dim schedule = NewSchedule()
+        Attempt(schedule, 0)
+        Check(Waiting(schedule), "fixture starts with a pending focus recovery")
+        SetField(owner, "_gameFocusSchedule", schedule)
+        WindowsInput.ConfigureFocusBorrow(True, FocusBorrowSettings.DefaultYieldMs)
+        Try
+            Check(WindowsInput.FocusBorrowEnabled, "the production input reports Background mode")
+            InvokeForm(owner, "MaintainSelectedGameForeground")
+            Check(Not Waiting(schedule), "Background mode must clear pending focus recovery instead of pulling the game forward")
+            Attempt(schedule, 5000)
+            InvokeForm(owner, "MaintainSelectedGameForeground")
+            Check(Not Waiting(schedule), "and keep doing so on every supervisor tick")
+        Finally
+            WindowsInput.ConfigureFocusBorrow(False, 0)
+            SetField(owner, "_resuRunning", False)
+        End Try
+        Check(Not WindowsInput.FocusBorrowEnabled AndAlso Not WindowsInput.KeyboardOnlyMode, "the test leaves the production input in foreground mode")
+    End Sub
+
+    ' Settings files from earlier versions have none of the Background-mode fields.
+    Private Sub TestBackgroundModeSettingsPersistence()
+        Dim stateType = GetType(Form1).GetNestedType("PersistedAppState", BindingFlags.NonPublic)
+        Check(stateType IsNot Nothing, "persisted app state type is present")
+        Dim fresh = Activator.CreateInstance(stateType, nonPublic:=True)
+        Check(CBool(stateType.GetProperty("BackgroundFocusModeEnabled").GetValue(fresh)), "Background mode defaults to on for new settings")
+        Check(CInt(stateType.GetProperty("BackgroundYieldMs").GetValue(fresh)) = FocusBorrowSettings.DefaultYieldMs, "the wait before borrowing defaults to 1 s")
+        Check(FocusBorrowSettings.DefaultYieldMs = 1000, "the documented default wait is one second")
+        Check(CBool(stateType.GetProperty("BackgroundPauseForFullScreen").GetValue(fresh)), "full-screen apps are not interrupted by default")
+        Dim older = Text.Json.JsonSerializer.Deserialize("{""ActiveProfileName"":""x"",""BackgroundOnlyEnabled"":false}", stateType)
+        Check(CBool(stateType.GetProperty("BackgroundFocusModeEnabled").GetValue(older)) AndAlso
+              CInt(stateType.GetProperty("BackgroundYieldMs").GetValue(older)) = FocusBorrowSettings.DefaultYieldMs,
+              "a settings file written by an earlier version loads with Background mode defaults")
+        Dim saved = Text.Json.JsonSerializer.Deserialize("{""BackgroundFocusModeEnabled"":false,""BackgroundYieldMs"":2500,""BackgroundPauseForFullScreen"":false}", stateType)
+        Check(Not CBool(stateType.GetProperty("BackgroundFocusModeEnabled").GetValue(saved)) AndAlso
+              CInt(stateType.GetProperty("BackgroundYieldMs").GetValue(saved)) = 2500 AndAlso
+              Not CBool(stateType.GetProperty("BackgroundPauseForFullScreen").GetValue(saved)),
+              "saved Background-mode choices round-trip")
     End Sub
 
     Private Sub Check(condition As Boolean, reason As String)

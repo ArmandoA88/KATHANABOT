@@ -60,6 +60,12 @@ Public NotInheritable Class BackgroundModePolicy
         Return disabled
     End Function
 
+    ' Readable name for a feature that ApplyKeyboardOnly disabled (it reports BotConfig property names).
+    Public Shared Function DescribeFeature(propertyName As String) As String
+        Dim label As String = Nothing
+        Return If(DisabledFeatures.TryGetValue(propertyName, label), label, propertyName)
+    End Function
+
     Public Shared Function RequiresForeground(key As String) As Boolean
         Dim value = If(key, "").Trim().ToUpperInvariant()
         Return value.Contains("+") OrElse {"W", "A", "S", "D", "ALT", "LALT", "RALT", "MENU", "LMENU", "RMENU", "CTRL", "CONTROL", "SHIFT"}.Contains(value)

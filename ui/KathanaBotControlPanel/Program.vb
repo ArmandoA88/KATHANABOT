@@ -43,7 +43,7 @@ Friend Module Program
             Try
                 Application.Run(New Form1())
             Finally
-                WindowsInput.ReleaseAll()
+                WindowsInput.Shutdown()
             End Try
         Catch ex As Exception
             LogStartupCrash(ex)

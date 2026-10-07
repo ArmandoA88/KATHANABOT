@@ -67,3 +67,23 @@ Every new key-down (including Unicode and modifiers) and mouse-button-down recei
 Restored this backend after another user-reported termination with the SDL message approach. Short plain keys, Ctrl/Alt shortcuts and manual API keys retain the v1.0.229 randomized range: `max(150, requested)` through 250 ms. Holds of 250 ms or longer stay exact. Eligibility helpers now inspect the selected backend, so foreground test overrides are checked for actual focus/availability rather than being assumed eligible. Production background diagnostic modes are rejected before game activation in this build.
 
 Controlled routing and cleanup tests do not identify the detection trigger or prove enforcement compatibility. No live game input was sent for this change.
+
+## 1.0.250 Background mode (borrowed focus)
+
+The input boundary above is unchanged: every key still goes out through the single `SendInput` entry point of
+`NativeInputPlatform`, and no `PostMessage`, `SendMessage`, `keybd_event`, `mouse_event`, `SetCursorPos` or
+`SendKeys` import exists. Background mode only changes the focus handling around a key:
+
+* `ForegroundWindowsInput` takes the keyboard just before a new key-down (never for text, mouse or releases),
+  under a separate hand-off lock that is never held with the send lock, and hands it back from the 20 ms watchdog.
+* Activation uses the existing sequence (direct request, then attach to the foreground thread). Returning to the
+  user's window uses the same sequence without validating it as a game, because it is not one.
+* The game is re-stacked with `SetWindowPos(... SWP_NOACTIVATE)` anchored on the nearest visible window of another
+  process; if a system moves activation when that is done, re-stacking is disabled for the session.
+* New native imports are window-stack, class and idle queries only: `GetWindow`, `SetWindowPos`,
+  `GetWindowLongPtrW`, `GetClassNameW`, `IsWindowVisible`, `GetAsyncKeyState` (user activity, not game input),
+  `GetLastInputInfo` and `SHQueryUserNotificationState`.
+* Mouse requests never borrow; with Background mode on `WindowsInput.KeyboardOnlyMode` is true so mouse
+  workflows are paused by the existing keyboard-only policy. Trade keeps its own explicit foreground sender.
+* The same limits apply: foreground checking and input dispatch cannot be made atomic, and nothing here makes
+  injected input undetectable. See [Background mode](BACKGROUND_MODE.md).
