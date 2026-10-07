@@ -67,7 +67,7 @@ Partial Public Class Form1
         Dim mosaicButtons As New FlowLayoutPanel With {.Dock = DockStyle.Top, .AutoSize = True, .WrapContents = True}
         Dim download = CreateExtrasButton("Download latest Mosaic")
         download.Name = "ExtrasDownloadMosaic"
-        Dim bundled = CreateExtrasButton("Save bundled Mosaic (1.0.4)")
+        Dim bundled = CreateExtrasButton("Save bundled Mosaic (1.0.5)")
         bundled.Name = "ExtrasBundledMosaic"
         Dim open = CreateExtrasButton("Open Mosaic")
         open.Name = "ExtrasOpenMosaic"
@@ -112,7 +112,7 @@ Partial Public Class Form1
                                    End Sub
         AddHandler bundled.Click, Async Sub()
                                       Await RunExtrasOperationAsync("Saving the bundled Mosaic build…",
-                                          Function(token) Task.Run(Function() "Bundled Mosaic 1.0.4 saved: " & RemoteDesktopMosaicService.ExtractBundled(AppContext.BaseDirectory, token) & ". Click Open Mosaic to launch it.", token), False)
+                                          Function(token) Task.Run(Function() "Bundled Mosaic 1.0.5 saved: " & RemoteDesktopMosaicService.ExtractBundled(AppContext.BaseDirectory, token) & ". Click Open Mosaic to launch it.", token), False)
                                   End Sub
         AddHandler open.Click, AddressOf OpenExtrasMosaic
         AddHandler _extrasCancel.Click, Sub() _extrasCancellation?.Cancel()

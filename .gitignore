@@ -57,6 +57,7 @@ RemoteDesktopNicknames.json
 RemoteDesktopMosaic.settings.json
 RemoteDesktopMosaic*.exe
 !RemoteDesktopMosaic_20260929_AllScreens.exe
+!RemoteDesktopMosaic_20261007_AllScreens.exe
 RemoteDesktopMosaic*.exe.bak*
 tools/RemoteDesktopMosaic/*
 !tools/RemoteDesktopMosaic/*.cs

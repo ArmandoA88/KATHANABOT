@@ -46,7 +46,7 @@ Module MosaicTests
             Dim result = RemoteDesktopMosaicService.ExtractBundled(fixture.BaseFolder)
             Check(result = fixture.Target, "bundled install must stay beside the portable app")
             Using source = File.OpenRead(result)
-                Check(source.Length = 56800882, "the build must contain the supplied complete standalone Mosaic")
+                Check(source.Length = 56707331, "the build must contain the supplied complete standalone Mosaic")
                 Check(source.ReadByte() = &H4D AndAlso source.ReadByte() = &H5A, "bundled output must be an EXE")
                 source.Position = 0
                 Check(Convert.ToHexString(SHA256.HashData(source)).ToLowerInvariant() = RemoteDesktopMosaicService.BundledSha256, "the bundled output must match its verified checksum")

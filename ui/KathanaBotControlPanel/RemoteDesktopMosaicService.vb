@@ -9,8 +9,8 @@ Imports System.Threading
 Imports System.Threading.Tasks
 
 Friend NotInheritable Class RemoteDesktopMosaicService
-    Friend Const BundledFileName As String = "RemoteDesktopMosaic_20260929_AllScreens.exe"
-    Friend Const BundledSha256 As String = "e9ced113b07ae4f1df298cc821b49895aec394c0a5c07afbfa349906f1a9e0ab"
+    Friend Const BundledFileName As String = "RemoteDesktopMosaic_20261007_AllScreens.exe"
+    Friend Const BundledSha256 As String = "6574a359a54afb7609827137f632ede8fa4ea6872e37b859d3eb777e291cd9d1"
     Friend Const MaximumDownloadBytes As Long = 100L * 1024L * 1024L
     Private Const MaximumJsonBytes As Integer = 2 * 1024 * 1024
     Private Const MaximumChecksumBytes As Integer = 4096

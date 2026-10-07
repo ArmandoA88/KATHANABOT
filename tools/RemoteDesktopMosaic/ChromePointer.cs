@@ -39,7 +39,14 @@ internal sealed class ChromePointer : IDisposable
         var lines = await File.ReadAllLinesAsync(file, cancellation);
         if (lines.Length < 2 || !int.TryParse(lines[0], out int port) || port is < 1 or > 65535) return [];
         using var http = new HttpClient(new HttpClientHandler { UseProxy = false }) { Timeout = TimeSpan.FromSeconds(2) };
-        using var json = JsonDocument.Parse(await http.GetStringAsync($"http://127.0.0.1:{port}/json/list", cancellation));
+        string body;
+        // A stale DevToolsActivePort (Chrome no longer running) makes Windows take ~2s to refuse
+        // the loopback connect, so HttpClient's timeout fires first as a TaskCanceledException.
+        // Report it as an IOException so callers don't mistake it for the app shutting down.
+        try { body = await http.GetStringAsync($"http://127.0.0.1:{port}/json/list", cancellation); }
+        catch (OperationCanceledException ex) when (!cancellation.IsCancellationRequested)
+        { throw new IOException("Chrome input endpoint did not respond.", ex); }
+        using var json = JsonDocument.Parse(body);
         return json.RootElement.EnumerateArray()
             .Where(t => t.GetProperty("type").GetString() == "page" && t.TryGetProperty("webSocketDebuggerUrl", out _))
             .Select(t => new Target(t.GetProperty("id").GetString()!, t.GetProperty("url").GetString()!,

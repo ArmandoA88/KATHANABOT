@@ -485,7 +485,7 @@ internal sealed partial class Mosaic : Form, IMessageFilter
             if (openedSource != 0) t.InputStatus = "This screen's input page did not open. Reconnect selected.";
             else t.Status = "Select this tile, then Choose window to attach Chrome.";
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (closing.IsCancellationRequested) { }
         catch (Exception ex) { t.Status = ex.Message; }
         finally { opening = false; if (!IsDisposed) { UpdateTiles(); if (expandedSource == 0) Activate(); } }
     }

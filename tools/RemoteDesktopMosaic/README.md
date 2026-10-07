@@ -1,7 +1,7 @@
 # Remote Desktop Mosaic — per-screen input fix, 2026-09-29
 
-Latest portable Windows build: [RemoteDesktopMosaic 1.0.4](../../RemoteDesktopMosaic_20260929_AllScreens.exe)
-([SHA-256](../../RemoteDesktopMosaic_20260929_AllScreens.exe.sha256)).
+Latest portable Windows build: [RemoteDesktopMosaic 1.0.5](../../RemoteDesktopMosaic_20261007_AllScreens.exe)
+([SHA-256](../../RemoteDesktopMosaic_20261007_AllScreens.exe.sha256)).
 Keep your existing `RemoteDesktopMosaic.settings.json` beside the executable to
 reuse saved computers and hotkeys. Without settings, the app asks you to add a
 computer. Personal settings, session links, browser profiles, logs, and backups

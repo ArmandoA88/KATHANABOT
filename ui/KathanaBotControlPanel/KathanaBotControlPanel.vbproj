@@ -7,7 +7,7 @@
     <StartupObject>Sub Main</StartupObject>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>assets\KathanaBot.ico</ApplicationIcon>
-    <Version>1.0.250</Version>
+    <Version>1.0.251</Version>
     <FileVersion>1.0.250.0</FileVersion>
     <AssemblyVersion>1.0.250.0</AssemblyVersion>
     <InputBuildVariant>FocusBorrow</InputBuildVariant>
@@ -47,10 +47,10 @@
     <EmbeddedResource Include="assets\Extras\engine-x3.cfg">
       <LogicalName>KathanaBotControlPanel.Extras.engine-x3.cfg</LogicalName>
     </EmbeddedResource>
-    <EmbeddedResource Include="..\..\RemoteDesktopMosaic_20260929_AllScreens.exe">
+    <EmbeddedResource Include="..\..\RemoteDesktopMosaic_20261007_AllScreens.exe">
       <LogicalName>KathanaBotControlPanel.Extras.RemoteDesktopMosaic.exe</LogicalName>
     </EmbeddedResource>
-    <EmbeddedResource Include="..\..\RemoteDesktopMosaic_20260929_AllScreens.exe.sha256">
+    <EmbeddedResource Include="..\..\RemoteDesktopMosaic_20261007_AllScreens.exe.sha256">
       <LogicalName>KathanaBotControlPanel.Extras.RemoteDesktopMosaic.exe.sha256</LogicalName>
     </EmbeddedResource>
     <EmbeddedResource Include="DefaultUserSettings.json">
