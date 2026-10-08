@@ -1,3 +1,4 @@
+Imports System.IO
 Imports System.Threading
 Imports System.Threading.Tasks
 
@@ -22,7 +23,13 @@ Partial Public Class Form1
     Private _tradeGrid As DataGridView
     Private _tradeOptions As Control
     Private _tradeStart As Button
+    Private _tradePause As Button
+    Private _tradeAnalysisControl As TradeAnalysisControl
     Private _tradeStatus As Label
+    Private _tradeAnalysisInfo As Label
+    Private _tradeAnalysisClock As Stopwatch
+    Private _tradeAnalysisLastProgress As TradeAnalysisProgress
+    Private _tradeAnalysisInfoFinal As Boolean
     Private _tradeCancellation As CancellationTokenSource
     Private _tradeRunning As Boolean
     Private _tradeLoading As Boolean
@@ -30,6 +37,16 @@ Partial Public Class Form1
     Private _tradeForegroundMaintenancePid As UInteger
     Private _tradeForegroundMaintenanceAllowed As Boolean
     Private ReadOnly _tradeStopTimer As New System.Windows.Forms.Timer With {.Interval = 50}
+
+    ' The analysis options are disabled while a job runs; this label keeps its progress text at full contrast.
+    Private NotInheritable Class TradeProgressLabel
+        Inherits Label
+
+        Protected Overrides Sub OnPaint(e As PaintEventArgs)
+            TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, ForeColor,
+                TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.WordBreak Or TextFormatFlags.NoPrefix)
+        End Sub
+    End Class
 
     Private NotInheritable Class TradeAnalysisUiProgress
         Implements IProgress(Of TradeAnalysisProgress)
@@ -108,10 +125,10 @@ Partial Public Class Form1
         items.Controls.Add(itemFilter, 0, 1)
         items.Controls.Add(_tradeDetectedItems, 0, 2)
         options.Controls.Add(items, 1, 0)
-        Dim settings As New TableLayoutPanel With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 5}
+        Dim settings As New TableLayoutPanel With {.Dock = DockStyle.Fill, .ColumnCount = 2, .RowCount = 6}
         settings.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 112))
         settings.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
-        For i As Integer = 0 To 4
+        For i As Integer = 0 To 5
             settings.RowStyles.Add(New RowStyle(SizeType.AutoSize))
         Next
         settings.Controls.Add(New Label With {.Text = "I want to", .AutoSize = True}, 0, 0)
@@ -125,7 +142,7 @@ Partial Public Class Form1
         Dim parse As New Button With {.Text = "Analyze posts with AI", .AutoSize = True}
         AddHandler parse.Click, AddressOf ParseTradeQueue
         Dim help As New Button With {.Text = "Help", .AutoSize = True}
-        AddHandler help.Click, Sub() SilentMessageBox.Show(Me, "Paste character names and messages, or use Browser capture with the local extension and your signed-in Discord web channel. Choose 1 to 10,000 posts in Browser capture, start the local connection and paste its setup into the extension. Capture pauses during analysis, sending, or while checked whispers await review. Review the imported count, then Analyze and review the whisper queue before Start. Discord author names are not verified game character names." & vbCrLf & vbCrLf & "Analyze uses GPT-5 nano with minimal reasoning and the encrypted API key configured in Quiz; the Quiz model setting does not affect Trade. Up to 50 complete posts or 8,000 characters are processed per batch, with up to four requests at once. Completed verified batches are reused during this app session when their exact posts and model are unchanged; cached batches make no API request. Larger imports still take longer. Progress shows processed posts and extracted listings. Sorting, item counts, filtering and queue creation run locally without API charges. There is no automatic fallback to a more expensive model. All batches must complete before results replace your previous reviewed queue; cancellation or errors keep it. Analyze does not send whispers. The app selects the three most common items for Buy/Sell locally, counting distinct characters. Search filters the detected list; checked hidden items stay selected. Select all matches checks visible results; clear the search first to select every item in this mode. Unselect all clears every checked item, including items hidden by the search, and empties the review queue. Repeated posts from one character become one whisper." & vbCrLf & vbCrLf & "{items} inserts matching items per character. Buying matches SELL posts; selling matches BUY posts. Character names are case-sensitive. Edit the queue, then Start whispers (foreground) pauses combat and sends checked rows once in order with the game focused. Between complete messages the queue waits for and restores the same selected game. A focus or input failure while typing stops the queue to protect an unfinished draft; sent rows remain unchecked and are never retried automatically. Stop / F12 cancels; close any unfinished chat draft before retrying unsent rows. After successful completion the previous combat mode resumes (Full if none was running) while its original game window and process remain valid. Running combat then restores that game focus automatically; gameplay input is emitted only while the exact game is foreground." & vbCrLf & vbCrLf & "Chat price scanning uses Regions > chat_rect every 3 seconds. Offers are cheapest first; review OCR quotes. Clear offers removes collected prices.", "Trade Help")
+        AddHandler help.Click, Sub() SilentMessageBox.Show(Me, "Paste character names and messages, or use Browser capture with the local extension and your signed-in Discord web channel. Choose 1 to 10,000 posts in Browser capture, start the local connection and paste its setup into the extension. Capture pauses during analysis, sending, or while checked whispers await review. Review the imported count, then Analyze and review the whisper queue before Start. Discord author names are not verified game character names." & vbCrLf & vbCrLf & "Analyze uses GPT-5 nano with minimal reasoning and the encrypted API key configured in Quiz; the Quiz model setting does not affect Trade. Up to 50 complete posts or 8,000 characters are processed per batch, with up to four requests at once. Completed verified batches are reused during this app session when their exact posts and model are unchanged; cached batches make no API request. Larger imports still take longer. Progress, shown under Analyze posts with AI, lists processed posts, extracted listings and an approximate time and API cost estimate that refines as batches finish. Sorting, item counts, filtering and queue creation run locally without API charges. There is no automatic fallback to a more expensive model. All batches must complete before results replace your previous reviewed queue; cancellation or errors keep it. Pause / show results (beside Stop) stops sending new batches, lets the ones already sent finish, then shows the items and queue from the completed batches; click Analyze again to continue, reusing the completed batches at no cost. Analyze does not send whispers. The app selects the three most common items for Buy/Sell locally, counting distinct characters. Search filters the detected list; checked hidden items stay selected. Select all matches checks visible results; clear the search first to select every item in this mode. Unselect all clears every checked item, including items hidden by the search, and empties the review queue. Repeated posts from one character become one whisper." & vbCrLf & vbCrLf & "{items} inserts matching items per character. Buying matches SELL posts; selling matches BUY posts. Character names are case-sensitive. Edit the queue, then Start whispers (foreground) pauses combat and sends checked rows once in order with the game focused. Between complete messages the queue waits for and restores the same selected game. A focus or input failure while typing stops the queue to protect an unfinished draft; sent rows remain unchecked and are never retried automatically. Stop / F12 cancels; close any unfinished chat draft before retrying unsent rows. After successful completion the previous combat mode resumes (Full if none was running) while its original game window and process remain valid. Running combat then restores that game focus automatically; gameplay input is emitted only while the exact game is foreground." & vbCrLf & vbCrLf & "Chat price scanning uses Regions > chat_rect every 3 seconds. Offers are cheapest first; review OCR quotes. Clear offers removes collected prices.", "Trade Help")
         Dim setupActions As New FlowLayoutPanel With {.Dock = DockStyle.Fill, .AutoSize = True}
         setupActions.Controls.AddRange({aiKey, parse, help})
         settings.Controls.Add(setupActions, 0, 3)
@@ -133,6 +150,9 @@ Partial Public Class Form1
         Dim privacy As New Label With {.Text = "AI: GPT-5 nano (lowest cost). Completed results are reused during this app session; sorting and filtering are local. Top 3 items start checked; Select all matches includes more. Review before Start.", .AutoSize = True, .Dock = DockStyle.Fill}
         settings.Controls.Add(privacy, 0, 4)
         settings.SetColumnSpan(privacy, 2)
+        _tradeAnalysisInfo = New TradeProgressLabel With {.Text = "", .AutoSize = True, .Dock = DockStyle.Fill, .Margin = New Padding(3, 8, 3, 0), .ForeColor = ThemeAccent}
+        settings.Controls.Add(_tradeAnalysisInfo, 0, 5)
+        settings.SetColumnSpan(_tradeAnalysisInfo, 2)
         options.Controls.Add(settings, 2, 0)
         _tradeGrid = New DataGridView With {.Dock = DockStyle.Top, .Height = 270, .AllowUserToAddRows = True, .AllowUserToDeleteRows = True, .RowHeadersVisible = True, .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill}
         _tradeGrid.Columns.Add(New DataGridViewCheckBoxColumn With {.Name = "Send", .HeaderText = "Send", .FillWeight = 35})
@@ -159,7 +179,17 @@ Partial Public Class Form1
             End Sub
         Dim save As New Button With {.Text = "Save settings", .AutoSize = True, .Height = 34}
         AddHandler save.Click, Sub() SavePersistedListState(True)
-        actions.Controls.AddRange({_tradeStart, stopButton, save})
+        _tradePause = New Button With {.Text = "Pause / show results", .AutoSize = True, .Height = 34, .Enabled = False}
+        AddHandler _tradePause.Click, Sub() PauseTradeAnalysis()
+        Dim saveSession As New Button With {.Text = "Save session...", .AutoSize = True, .Height = 34}
+        AddHandler saveSession.Click, Sub() SaveTradeSession()
+        Dim loadSession As New Button With {.Text = "Load session...", .AutoSize = True, .Height = 34}
+        AddHandler loadSession.Click, Sub() LoadTradeSession()
+        Dim sessionTip As New ToolTip()
+        sessionTip.SetToolTip(saveSession, "Save the posts, detected items, selected items and whisper queue to a file so you can load them later.")
+        sessionTip.SetToolTip(loadSession, "Load a saved session to continue sending whispers without capturing and analyzing again.")
+        AddHandler tab.Disposed, Sub() sessionTip.Dispose()
+        actions.Controls.AddRange({_tradeStart, _tradePause, stopButton, save, saveSession, loadSession})
         body.Controls.Add(actions)
         _tradeStatus = New Label With {.Text = "Ready. Paste posts and click Analyze posts with AI. No item filter is required.", .AutoSize = True, .MaximumSize = New Size(1050, 0), .ForeColor = ThemeAccent}
         body.Controls.Add(_tradeStatus)
@@ -244,6 +274,96 @@ Partial Public Class Form1
             .DiscordChannelUrl = _tradeDiscordChannelUrl, .EncryptedDiscordBotToken = _tradeDiscordEncryptedBotToken,
             .DiscordAutoImport = _tradeDiscordAuto IsNot Nothing AndAlso _tradeDiscordAuto.Checked,
             .DiscordImportMessageCount = _tradeDiscordImportMessageCount}
+    End Function
+
+    Private Function TradeSessionBlockReason() As String
+        If _tradeRunning Then Return "Whispers are running. Stop / F12 first."
+        If _tradeAnalyzing Then Return "Analysis is running. Wait for it, or pause it, first."
+        If _tradeLoading Then Return "Trade is loading. Try again in a moment."
+        Return ""
+    End Function
+
+    Private Sub SaveTradeSession()
+        Dim blocked = TradeSessionBlockReason()
+        If blocked.Length > 0 Then
+            _tradeStatus.Text = "Session not saved. " & blocked
+            Return
+        End If
+        Dim folder = TradeSessionStore.DefaultFolder()
+        Try
+            Directory.CreateDirectory(folder)
+        Catch
+            folder = ""
+        End Try
+        Using dialog As New SaveFileDialog With {.Title = "Save Trade session",
+            .Filter = "Trade session (*" & TradeSessionStore.FileExtension & ")|*" & TradeSessionStore.FileExtension & "|All files (*.*)|*.*",
+            .FileName = $"trade-session-{DateTime.Now:yyyyMMdd-HHmm}{TradeSessionStore.FileExtension}", .OverwritePrompt = True, .AddExtension = False}
+            If folder.Length > 0 Then dialog.InitialDirectory = folder
+            If dialog.ShowDialog(Me) <> DialogResult.OK Then Return
+            SaveTradeSessionTo(dialog.FileName)
+        End Using
+    End Sub
+
+    ' Writes the current posts, detected items, selected items and whisper queue. The Discord token is never saved.
+    Private Function SaveTradeSessionTo(path As String) As Boolean
+        Dim blocked = TradeSessionBlockReason()
+        If blocked.Length > 0 Then
+            _tradeStatus.Text = "Session not saved. " & blocked
+            Return False
+        End If
+        Try
+            Dim state = BuildPersistedTradeState()
+            TradeSessionStore.Save(path, state)
+            _tradeStatus.Text = $"Session saved to {path}: {TradeSessionStore.Summarize(state)}. Load it later with Load session."
+            Return True
+        Catch ex As Exception When TypeOf ex Is IOException OrElse TypeOf ex Is UnauthorizedAccessException OrElse TypeOf ex Is ArgumentException OrElse TypeOf ex Is NotSupportedException
+            _tradeStatus.Text = "Session could not be saved: " & ex.Message
+            Return False
+        End Try
+    End Function
+
+    Private Sub LoadTradeSession()
+        Dim blocked = TradeSessionBlockReason()
+        If blocked.Length > 0 Then
+            _tradeStatus.Text = "Session not loaded. " & blocked
+            Return
+        End If
+        Dim folder = TradeSessionStore.DefaultFolder()
+        Using dialog As New OpenFileDialog With {.Title = "Load Trade session",
+            .Filter = "Trade session (*" & TradeSessionStore.FileExtension & ")|*" & TradeSessionStore.FileExtension & "|JSON files (*.json)|*.json|All files (*.*)|*.*",
+            .CheckFileExists = True}
+            If Directory.Exists(folder) Then dialog.InitialDirectory = folder
+            If dialog.ShowDialog(Me) <> DialogResult.OK Then Return
+            If (_tradeExtracted.Count > 0 OrElse _tradeGrid.Rows.Count > 1 OrElse _tradeSource.TextLength > 0) AndAlso
+                SilentMessageBox.Show(Me, "Loading replaces the current posts, detected items, selected items and whisper queue. Use Save session first if you want to keep them." & vbCrLf & vbCrLf & "Load this session?",
+                    "Load Trade session", MessageBoxButtons.YesNo, MessageBoxIcon.Question) <> DialogResult.Yes Then Return
+            LoadTradeSessionFrom(dialog.FileName)
+        End Using
+    End Sub
+
+    ' Replaces the Trade state with a saved session. The file is fully read and validated before anything changes, so a bad
+    ' file leaves the current state untouched. The current Discord connection (token, channel, count) is kept.
+    Private Function LoadTradeSessionFrom(path As String) As Boolean
+        Dim blocked = TradeSessionBlockReason()
+        If blocked.Length > 0 Then
+            _tradeStatus.Text = "Session not loaded. " & blocked
+            Return False
+        End If
+        Dim settings As TradeSettings
+        Try
+            settings = TradeSessionStore.Load(path)
+        Catch ex As Exception When TypeOf ex Is IOException OrElse TypeOf ex Is UnauthorizedAccessException OrElse TypeOf ex Is InvalidDataException OrElse TypeOf ex Is System.Text.Json.JsonException OrElse TypeOf ex Is NotSupportedException OrElse TypeOf ex Is ArgumentException
+            _tradeStatus.Text = "Session could not be loaded; your current posts and queue are kept. " & ex.Message
+            Return False
+        End Try
+        settings.DiscordChannelUrl = _tradeDiscordChannelUrl
+        settings.EncryptedDiscordBotToken = _tradeDiscordEncryptedBotToken
+        settings.DiscordImportMessageCount = _tradeDiscordImportMessageCount
+        settings.DiscordAutoImport = False
+        ApplyPersistedTradeState(settings)
+        _tradeStatus.Text = $"Session loaded from {System.IO.Path.GetFileName(path)}: {TradeSessionStore.Summarize(settings)}. Review the queue, then Start whispers."
+        SavePersistedListState(False)
+        Return True
     End Function
 
     Private Function ReadTradeRows() As List(Of TradeRecipient)
@@ -390,9 +510,32 @@ Partial Public Class Form1
         _tradeOptions.Enabled = False
         _tradeGrid.Enabled = False
         _tradeStart.Enabled = False
+        _tradeAnalysisControl = New TradeAnalysisControl()
+        If _tradePause IsNot Nothing Then _tradePause.Enabled = True
         _tradeStopTimer.Start()
-        _tradeStatus.Text = "GPT-5 nano is reading all posts, with up to four batches at once. Completed results are reused during this app session. Stop / F12 cancels; your existing review queue is kept until completion."
+        _tradeAnalysisClock = Stopwatch.StartNew()
+        _tradeAnalysisLastProgress = Nothing
+        _tradeAnalysisInfoFinal = False
+        SetTradeAnalysisInfo("GPT-5 nano is reading all posts, with up to four batches at once. Completed results are reused during this app session. Time and cost estimates appear after the first progress update.")
+        _tradeStatus.Text = "Analyzing posts. Progress, estimated time and cost are shown under Analyze posts with AI. Pause / show results shows what is analyzed so far; Stop / F12 cancels and keeps your existing review queue."
     End Sub
+
+    ' Stops sending new batches, lets the ones in flight finish, then shows the listings of every completed batch.
+    Private Sub PauseTradeAnalysis()
+        Dim control = _tradeAnalysisControl
+        If Not _tradeAnalyzing OrElse control Is Nothing OrElse control.PauseRequested Then Return
+        control.RequestPause()
+        If _tradePause IsNot Nothing Then _tradePause.Enabled = False
+        _tradeStatus.Text = "Pausing: finishing the batches already sent, then showing the posts and items analyzed so far. Stop / F12 cancels immediately."
+    End Sub
+
+    Private Sub SetTradeAnalysisInfo(text As String)
+        If _tradeAnalysisInfo IsNot Nothing Then _tradeAnalysisInfo.Text = text
+    End Sub
+
+    Private Function TradeAnalysisElapsedSeconds() As Double
+        Return If(_tradeAnalysisClock Is Nothing, 0, _tradeAnalysisClock.Elapsed.TotalSeconds)
+    End Function
 
     Private Function IsCurrentTradeAnalysis(cancellation As CancellationTokenSource, sourceText As String, generation As Integer,
                                             Optional allowCancelled As Boolean = False) As Boolean
@@ -403,7 +546,10 @@ Partial Public Class Form1
 
     Private Sub ReportTradeAnalysisProgress(progress As TradeAnalysisProgress, cancellation As CancellationTokenSource, sourceText As String, generation As Integer)
         If progress Is Nothing OrElse Not IsCurrentTradeAnalysis(cancellation, sourceText, generation) Then Return
-        _tradeStatus.Text = $"GPT-5 nano: batch {progress.CompletedBatches:N0}/{progress.TotalBatches:N0}; {progress.ProcessedPosts:N0}/{progress.TotalPosts:N0} posts processed; {progress.ListingCount:N0} buy/sell listings. Stop / F12 cancels. Existing review queue is kept until all batches complete."
+        _tradeAnalysisLastProgress = progress
+        Dim text = TradeAiService.DescribeProgress(progress, TradeAnalysisElapsedSeconds())
+        If _tradeAnalysisControl IsNot Nothing AndAlso _tradeAnalysisControl.PauseRequested Then text &= vbCrLf & "Pausing: no new batches are sent; results appear when the batches in flight finish."
+        SetTradeAnalysisInfo(text)
     End Sub
 
     Private Function ApplyCompletedTradeAnalysis(listings As List(Of TradeListing), processedPosts As Integer, cancellation As CancellationTokenSource,
@@ -417,6 +563,18 @@ Partial Public Class Form1
         PopulateTradeItems(chosen)
         SetTradeRows(rows)
         _tradeStatus.Text = TradeAnalysisQueueStatus(rows.Count)
+        Dim control = _tradeAnalysisControl
+        Dim paused = control IsNot Nothing AndAlso control.Paused
+        If paused Then
+            _tradeStatus.Text = $"Paused: showing results from {control.ProcessedPosts:N0} of {control.TotalPosts:N0} posts ({control.CompletedBatches:N0}/{control.TotalBatches:N0} batches). " &
+                "Click Analyze posts with AI to continue; completed batches are reused at no cost. " & _tradeStatus.Text
+        End If
+        Dim last = _tradeAnalysisLastProgress
+        If last IsNot Nothing Then
+            _tradeAnalysisInfoFinal = True
+            SetTradeAnalysisInfo($"{If(paused, "Paused analysis", "Last analysis")}: {last.CompletedBatches:N0}/{last.TotalBatches:N0} batches, {last.ProcessedPosts:N0}/{last.TotalPosts:N0} posts in {TradeAiService.FormatDuration(TradeAnalysisElapsedSeconds())}; " &
+                $"est. API cost ~{TradeAiService.FormatCost(TradeAiService.EstimateCost(last.CompletedBatches, last.CompletedCharacters, listings.Count))} (cached batches cost nothing).")
+        End If
         Return True
     End Function
 
@@ -425,10 +583,17 @@ Partial Public Class Form1
         _tradeAnalyzing = False
         _tradeAnalysisCancellation = Nothing
         If Not IsDisposed AndAlso Not Disposing Then
+            If Not _tradeAnalysisInfoFinal Then
+                Dim last = _tradeAnalysisLastProgress
+                SetTradeAnalysisInfo(If(last Is Nothing, "",
+                    $"Analysis did not finish ({last.CompletedBatches:N0}/{last.TotalBatches:N0} batches in {TradeAiService.FormatDuration(TradeAnalysisElapsedSeconds())}); " &
+                    $"about {TradeAiService.FormatCost(TradeAiService.EstimateCost(last.CompletedBatches, last.CompletedCharacters, last.ListingCount))} of API use (estimate)."))
+            End If
             _tradeStopTimer.Stop()
             _tradeOptions.Enabled = True
             _tradeGrid.Enabled = True
             _tradeStart.Enabled = True
+            If _tradePause IsNot Nothing Then _tradePause.Enabled = False
             Dim analysisStatus = _tradeStatus.Text
             UpdateTradeDiscordPolling()
             UpdateTradeBrowserCaptureState()
@@ -457,13 +622,19 @@ Partial Public Class Form1
         Dim apiKey = _quizApiKey
         BeginTradeAnalysis(cancellation)
         Dim generation = _tradeAnalysisGeneration
+        Dim control = _tradeAnalysisControl
         Dim progress As New TradeAnalysisUiProgress(New Progress(Of TradeAnalysisProgress)(
             Sub(value) ReportTradeAnalysisProgress(value, cancellation, sourceText, generation)))
         Try
             Dim listings = Await Task.Run(Function() TradeAiService.AnalyzeAsync(sourceText, apiKey, model, cancellation.Token,
-                progress:=progress, sourcePosts:=sourcePosts), cancellation.Token)
+                progress:=progress, sourcePosts:=sourcePosts, control:=control), cancellation.Token)
             cancellation.Token.ThrowIfCancellationRequested()
-            ApplyCompletedTradeAnalysis(listings, progress.TotalPosts, cancellation, sourceText, generation)
+            If control.Paused AndAlso control.CompletedBatches = 0 Then
+                ' Nothing finished yet: keep the previous reviewed results rather than replacing them with an empty set.
+                If IsCurrentTradeAnalysis(cancellation, sourceText, generation) Then _tradeStatus.Text = "Paused before any batch finished. Your previous analyzed items and reviewed whispers are kept; click Analyze posts with AI to start again."
+            Else
+                ApplyCompletedTradeAnalysis(listings, If(control.Paused, control.ProcessedPosts, progress.TotalPosts), cancellation, sourceText, generation)
+            End If
         Catch ex As OperationCanceledException
             If IsCurrentTradeAnalysis(cancellation, sourceText, generation, True) Then _tradeStatus.Text = "AI analysis cancelled. Your previous analyzed items and reviewed whispers are kept."
         Catch ex As Exception

@@ -12,6 +12,8 @@ This local, unpacked Chrome/Edge extension collects posts from the electronic-bo
 4. Click **Load unpacked**, then choose this `discord-browser-capture` folder containing `manifest.json`.
 5. Open the browser's Extensions menu and pin **Kathana Discord Capture**.
 
+KathanaBot also carries a copy of this extension inside its EXE. In its **Browser capture** window, click **Install extension...** to unpack that copy to `%LOCALAPPDATA%\KathanaBot\DiscordCaptureExtension` (the path is copied and the folder opens), then use **Load unpacked** on that folder. After a KathanaBot update, click **Install extension...** again and press **Reload** on the extension's card.
+
 No Discord bot token, personal-account token, password, or cookie is entered in this extension.
 
 ## Capture posts
@@ -26,6 +28,25 @@ No Discord bot token, personal-account token, password, or cookie is entered in 
 
 The connection expires after a bounded session and must be copied again for another capture. The extension keeps the connection and captured messages only in service-worker memory; it does not write them to browser storage. The popup can close during capture because Chrome 118+ keeps an attached debugger worker alive.
 
+## Filter with Discord's own search (optional)
+
+In KathanaBot's **Browser capture** window, the box **Search Discord for** takes the item(s) you are looking for, separated by commas (for example `ror asura, d.potra`). Leave it empty to capture every post as described above.
+
+When it has items, the copied setup tells the extension to use **Discord's search box** instead of scrolling:
+
+1. After the channel reloads, the extension focuses the search box (it falls back to Discord's `Ctrl+F` shortcut), clears it, types your first item and presses Enter. Discord, not KathanaBot, decides which posts match, so every captured post is one of Discord's results.
+2. It reads Discord's normal search response bodies for your server, keeps only the **hit** posts that belong to the configured channel (context messages and other channels' results are ignored), and presses Discord's own **Next** page control, at least **1 second** apart, until the last page, the selected count, or 10 consecutive result pages without a post from this channel.
+3. Several items are searched one after another (1 second apart) and merged without duplicates.
+4. The captured hits go to KathanaBot exactly like a normal capture. Review and analyze them separately.
+
+Things to know:
+
+- Discord searches the **whole server** by default. To restrict a search to the channel, put Discord's own operator in the item, for example `in:electronic-board ror asura`. Posts from other channels are always discarded, but a search that matches mostly other channels takes longer.
+- Discord's page layout changes. If the extension cannot find the search box or the Next control it says so and switches to **manual**: search and click through the result pages in Discord yourself (capture keeps listening for the server's search responses), then press **Import now** in the extension popup. It also imports on its own after 3 minutes without new results. **Import now** is available in search captures only.
+- Discord may answer a search with HTTP 202 while it indexes the server; the extension waits for the real answer. 401, 403 and 429 responses stop the capture without retrying.
+- If Discord finds nothing from this channel, nothing is imported and the popup says so.
+- Search results are not guaranteed to be complete: Discord caps how deep a search can page.
+
 ## Limits and status
 
 - The browser must already have access to the source channel. This does not bypass server permissions or publication restrictions.
@@ -38,6 +59,6 @@ The connection expires after a bounded session and must be copied again for anot
 
 ## Offline verification
 
-Run `node --test tests/*.test.mjs` from this folder using Node 22.14 or later. Tests exercise URL/channel boundaries, nonce/count limits, sanitization, UTF-8/base64 bounds, deduplication and newest-message ordering, 10,000-message retention, proven-scroller selection, and mock debugger event/stop behavior. A controlled clock tests fixed pacing, delayed rendering, overlapping requests, network quiet, and Stop during a wait without spending real minutes. Node 22 labels its documented MockTimers API experimental. No live Discord account, browser, or game input is used by these tests. Actual Discord scrolling remains a user-run compatibility check.
+Run `node --test tests/*.test.mjs` from this folder using Node 22.14 or later. Search mode is tested only against mocked Discord responses and a fake page; the real search box and Next control selectors are unverified until you try them on the live site. Tests exercise URL/channel boundaries, nonce/count limits, sanitization, UTF-8/base64 bounds, deduplication and newest-message ordering, 10,000-message retention, proven-scroller selection, and mock debugger event/stop behavior. A controlled clock tests fixed pacing, delayed rendering, overlapping requests, network quiet, and Stop during a wait without spending real minutes. Node 22 labels its documented MockTimers API experimental. No live Discord account, browser, or game input is used by these tests. Actual Discord scrolling remains a user-run compatibility check.
 
 The extension uses current documented [debugger](https://developer.chrome.com/docs/extensions/reference/api/debugger), [scripting](https://developer.chrome.com/docs/extensions/reference/api/scripting), [cross-origin extension requests](https://developer.chrome.com/docs/extensions/develop/concepts/network-requests), and [service-worker lifecycle](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle) APIs. It uses no external JavaScript dependencies or remotely loaded code.

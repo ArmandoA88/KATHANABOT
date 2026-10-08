@@ -7,7 +7,7 @@
     <StartupObject>Sub Main</StartupObject>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>assets\KathanaBot.ico</ApplicationIcon>
-    <Version>1.0.251</Version>
+    <Version>1.0.258</Version>
     <FileVersion>1.0.250.0</FileVersion>
     <AssemblyVersion>1.0.250.0</AssemblyVersion>
     <InputBuildVariant>FocusBorrow</InputBuildVariant>
@@ -61,6 +61,9 @@
     </EmbeddedResource>
     <EmbeddedResource Include="QuizKnowledge.dat">
       <LogicalName>KathanaBotControlPanel.QuizKnowledge.dat</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\..\tools\discord-browser-capture\*.mjs;..\..\tools\discord-browser-capture\*.html;..\..\tools\discord-browser-capture\*.css;..\..\tools\discord-browser-capture\*.json;..\..\tools\discord-browser-capture\README.md">
+      <LogicalName>KathanaBotControlPanel.DiscordCapture.%(Filename)%(Extension)</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
 

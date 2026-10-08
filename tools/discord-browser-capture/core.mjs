@@ -21,6 +21,24 @@ export function parseSourceUrl(value) {
   return { guildId: parts[1], channelId: parts[2], sourceUrl: `https://discord.com/channels/${parts[1]}/${parts[2]}` };
 }
 
+export const MAX_SEARCH_TERMS = 10;
+export const MAX_SEARCH_TERM_LENGTH = 100;
+
+// Optional list of items KathanaBot wants Discord's own search to filter on. Each is typed into Discord's search box.
+export function parseSearchTerms(value) {
+  const invalid = () => new Error("The search items in the connection are invalid. Copy it again from KathanaBot.");
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_SEARCH_TERMS) throw invalid();
+  const terms = [];
+  for (const entry of value) {
+    if (typeof entry !== "string") throw invalid();
+    const term = entry.trim().replace(/\s+/g, " ");
+    if (term.length < 1 || term.length > MAX_SEARCH_TERM_LENGTH || /[\u0000-\u001f\u007f]/.test(term)) throw invalid();
+    if (!terms.includes(term)) terms.push(term);
+  }
+  return terms;
+}
+
 export function parseConnection(text) {
   if (typeof text !== "string" || text.length > 8192) throw new Error("Paste the connection JSON copied from KathanaBot.");
   let input;
@@ -37,7 +55,7 @@ export function parseConnection(text) {
     throw new Error("Use only the temporary 127.0.0.1 connection copied from KathanaBot.");
   }
   const source = parseSourceUrl(input.sourceUrl);
-  return { ...source, receiverUrl: receiver.href, captureId: match[1], messageLimit: input.messageLimit };
+  return { ...source, receiverUrl: receiver.href, captureId: match[1], messageLimit: input.messageLimit, searchTerms: parseSearchTerms(input.searchTerms) };
 }
 
 export function matchesChannelTab(value, connection) {
@@ -55,7 +73,25 @@ export function isMessageRequest(value, method, channelId, resourceType) {
     new RegExp(`^/api/v[0-9]+/channels/${channelId}/messages$`).test(url.pathname);
 }
 
-export function decodeNetworkBody(result) {
+// Discord's own search box queries GET /api/vN/guilds/<server>/messages/search. Only that exact path of the source server qualifies.
+export function isSearchRequest(value, method, guildId, resourceType) {
+  if (method !== "GET" || !isSnowflake(guildId) || !["XHR", "Fetch"].includes(resourceType)) return false;
+  let url;
+  try { url = new URL(value); } catch { return false; }
+  return url.protocol === "https:" && url.hostname === "discord.com" && !url.port && !url.username && !url.password && !url.hash &&
+    new RegExp(`^/api/v[0-9]+/guilds/${guildId}/messages/search$`).test(url.pathname);
+}
+
+export function searchOffset(value) {
+  try {
+    const offset = Number(new URL(value).searchParams.get("offset") ?? 0);
+    return Number.isInteger(offset) && offset >= 0 && offset <= 1000000 ? offset : 0;
+  } catch { return 0; }
+}
+
+export const SEARCH_PAGE_SIZE = 25;
+
+function decodeJsonBody(result) {
   if (!result || typeof result.body !== "string" || typeof result.base64Encoded !== "boolean") {
     throw new Error("The browser did not return a readable Discord history response.");
   }
@@ -73,10 +109,32 @@ export function decodeNetworkBody(result) {
   if (body.length > MAX_RESPONSE_CHARACTERS || new TextEncoder().encode(body).byteLength > MAX_RESPONSE_CHARACTERS) {
     throw new Error("The Discord history response is too large.");
   }
-  let parsed;
-  try { parsed = JSON.parse(body); } catch { throw new Error("The browser returned invalid Discord history JSON."); }
+  try { return JSON.parse(body); } catch { throw new Error("The browser returned invalid Discord history JSON."); }
+}
+
+export function decodeNetworkBody(result) {
+  const parsed = decodeJsonBody(result);
   if (!Array.isArray(parsed) || parsed.length > 100) throw new Error("The Discord history response must contain at most 100 messages.");
   return parsed;
+}
+
+// A search response is { messages: [[hit, ...context], ...], total_results }. Only the flagged hits from the source channel are kept;
+// surrounding context messages and results from other channels are ignored.
+export function decodeSearchBody(result, channelId) {
+  const parsed = decodeJsonBody(result);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !Array.isArray(parsed.messages) || parsed.messages.length > 100) {
+    throw new Error("The Discord search response must contain at most 100 result groups.");
+  }
+  const hits = [];
+  for (const group of parsed.messages) {
+    if (!Array.isArray(group) || group.length > 20) throw new Error("The Discord search response has an invalid result group.");
+    const flagged = group.filter(entry => entry && typeof entry === "object" && entry.hit === true);
+    for (const entry of flagged.length ? flagged : group.length === 1 ? group : []) {
+      if (entry && typeof entry === "object" && entry.channel_id === channelId) hits.push(entry);
+    }
+  }
+  const total = Number.isSafeInteger(parsed.total_results) && parsed.total_results >= 0 ? parsed.total_results : null;
+  return { hits, groups: parsed.messages.length, total };
 }
 
 function textField(value, maximum = 16384) {

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Kathana Discord Capture",
-  "version": "1.0.1",
-  "description": "Collect selected Discord channel history into the local KathanaBot import receiver.",
+  "version": "1.1.1",
+  "description": "Collect selected Discord channel history, or the results of Discord's own search for your items, into the local KathanaBot import receiver.",
   "minimum_chrome_version": "118",
   "permissions": ["activeTab", "scripting", "debugger"],
   "host_permissions": ["http://127.0.0.1/*"],

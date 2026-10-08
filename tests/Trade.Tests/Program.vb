@@ -21,6 +21,7 @@ Module Program
         TradeAiEconomyTests.RunAsync().GetAwaiter().GetResult()
         TradeAiValidationTests.RunAsync().GetAwaiter().GetResult()
         DiscordBrowserCaptureTests.RunAsync().GetAwaiter().GetResult()
+        TradeSessionTests.RunTests()
         DiscordImportTests.RunAsync().GetAwaiter().GetResult()
         DiscordImportTests.RunUiTests()
         DiscordBrowserCaptureTests.RunUiTests()

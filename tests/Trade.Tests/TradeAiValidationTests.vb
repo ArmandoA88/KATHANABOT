@@ -17,6 +17,7 @@ Friend Module TradeAiValidationTests
         TestPostAndIntentOwnership()
         TestFollowDeliveryIdentity()
         TestAdditionalExplicitMarkers()
+        TestSeparatorListsAndUnknownIntent()
         TestInvalidAndMixedCollections()
         Await TestApiNormalizationAndCache()
         Await TestApiRejectionDoesNotRetryOrCache()
@@ -190,9 +191,37 @@ Friend Module TradeAiValidationTests
         Accepted(Post("YunaSkye", mixed), Entry("YunaSkye", "buy", "TIKOY 7d", mixed), "Tikoy 7D", mixed)
         For Each word In {"BUYBACK", "SELLER", "BUYERS", "SELLINGLY"}
             Dim body = word & " Tikoy 7D"
-            Rejected(Post("Cali", body), Entry("Cali", If(word.StartsWith("BUY", StringComparison.Ordinal), "buy", "sell"), "Tikoy 7D", body),
-                "non-marker word prefix was interpreted as an offer/request: " & word)
+            ' A word that merely starts like a marker is not a marker, so the intent is unknown and the model's inferred intent is trusted.
+            Accepted(Post("Cali", body), Entry("Cali", If(word.StartsWith("BUY", StringComparison.Ordinal), "buy", "sell"), "Tikoy 7D", body),
+                "Tikoy 7D", body)
         Next
+    End Sub
+
+    Private Sub TestSeparatorListsAndUnknownIntent()
+        ' | and \ are space savers: every item after B> stays a buy item and after S> a sell item.
+        Dim body = "B> DM1 | DM2 \ YY1 / YY2 || S> LKOA | GK2 (max heart) \ N. Potra +9"
+        Dim raw = Post("Cali", body)
+        For Each item In {"DM1", "DM2", "YY1", "YY2"}
+            Accepted(raw, Entry("Cali", "buy", item, body), item, body)
+            Rejected(raw, Entry("Cali", "sell", item, body), "a buy-list item after a separator became a sell item: " & item)
+        Next
+        For Each item In {"LKOA", "GK2", "N. Potra +9"}
+            Accepted(raw, Entry("Cali", "sell", item, body), item, body)
+            Rejected(raw, Entry("Cali", "buy", item, body), "a sell-list item after a separator became a buy item: " & item)
+        Next
+        ' With no marker the intent is unknown: the inferred intent is accepted for a real whole item of the author's own post,
+        ' but invented items, other authors and explicit trade-only clauses are still rejected.
+        Dim bare = "Sale Yellow Orb | Yellow Orb | PM ME"
+        Accepted(Post("Responder", bare), Entry("Responder", "sell", "Yellow Orb", "Sale Yellow Orb"), "Yellow Orb", "Sale Yellow Orb")
+        Accepted(Post("Prajati", "Looking FOR Prajati 2pcs = 3.5m each"), Entry("Prajati", "buy", "Prajati 2pcs", "Looking FOR Prajati 2pcs"), "Prajati 2pcs", "Looking FOR Prajati 2pcs")
+        Rejected(Post("Responder", bare), Entry("Responder", "sell", "Blue Orb", bare), "an unmarked invented item was accepted")
+        Rejected(Post("Responder", bare), Entry("Other", "sell", "Yellow Orb", bare), "an unmarked item was credited to another author")
+        Rejected(Post("Responder", "Sale Yellow Orb"), Entry("Responder", "sell", "Yell", "Sale Yellow Orb"), "an unmarked partial token was accepted")
+        Dim payload = TradeAiService.BuildPayload("One" & vbLf & "S> Item", "configured-test-model")
+        Dim instructions = payload("instructions").GetValue(Of String)()
+        Check(instructions.Contains("B> DM1 | DM2 \ YY1 / YY2", StringComparison.Ordinal) AndAlso instructions.Contains("space savers", StringComparison.Ordinal),
+              "prompt lacks the | \ separator inheritance rule")
+        Check(instructions.Contains("infer it instead of dropping the item", StringComparison.Ordinal), "prompt lacks the unknown-intent rule")
     End Sub
 
     Private Sub TestInvalidAndMixedCollections()

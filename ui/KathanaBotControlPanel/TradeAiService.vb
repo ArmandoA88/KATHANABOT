@@ -24,8 +24,20 @@ End Class
 Friend NotInheritable Class TradeListingVerificationException
     Inherits InvalidOperationException
 
+    Public ReadOnly Property ListingCount As Integer
+
     Public Sub New(count As Integer)
         MyBase.New($"None of the {count:N0} AI listings matched an original character, item and buy/sell clause. Your posts and reviewed queue are kept; no partial queue was created.")
+        ListingCount = count
+    End Sub
+End Class
+
+' The model stopped before finishing its JSON (normally the output-token cap). A multi-post batch is split and retried.
+Friend NotInheritable Class TradeResponseIncompleteException
+    Inherits InvalidOperationException
+
+    Public Sub New(reason As String)
+        MyBase.New("AI analysis was incomplete" & If(String.IsNullOrEmpty(reason), "", " (" & reason.Replace("_", " ") & ")") & ". No partial queue was created; try a smaller paste.")
     End Sub
 End Class
 
@@ -43,6 +55,33 @@ Public Class TradeAnalysisProgress
     Public Property ProcessedPosts As Integer
     Public Property TotalPosts As Integer
     Public Property ListingCount As Integer
+    Public Property TotalCharacters As Long
+    Public Property CompletedCharacters As Long
+    ' Mean request time of finished batches that actually called the API (cache hits excluded); 0 until one finishes.
+    Public Property AverageBatchSeconds As Double
+End Class
+
+' Lets the UI pause a running analysis: no new batches start, in-flight batches finish, and AnalyzeAsync returns the
+' listings of every completed batch. The outcome fields describe how much of the source those listings cover.
+Public NotInheritable Class TradeAnalysisControl
+    Private _pauseRequested As Integer
+
+    Public ReadOnly Property PauseRequested As Boolean
+        Get
+            Return Volatile.Read(_pauseRequested) <> 0
+        End Get
+    End Property
+
+    ' True when the returned listings cover only part of the source because a pause skipped batches.
+    Public Property Paused As Boolean
+    Public Property CompletedBatches As Integer
+    Public Property TotalBatches As Integer
+    Public Property ProcessedPosts As Integer
+    Public Property TotalPosts As Integer
+
+    Public Sub RequestPause()
+        Volatile.Write(_pauseRequested, 1)
+    End Sub
 End Class
 
 Public NotInheritable Class TradeAiService
@@ -105,6 +144,10 @@ Public NotInheritable Class TradeAiService
     Private Class BatchResult
         Public Property Index As Integer
         Public Property Listings As List(Of TradeListing)
+        ' AI listings that no source post supported in a batch that produced nothing verifiable.
+        Public Property Rejected As Integer
+        ' API request time; 0 for a batch served from the cache.
+        Public Property Seconds As Double
     End Class
 
     Private NotInheritable Class CachedBatch
@@ -170,6 +213,8 @@ Public NotInheritable Class TradeAiService
                 "Imported Discord posts may label a Followed announcement and a Delivery identity (not a game character). Follow delivery metadata may name a server instead of the original seller. Never use a delivery identity, server/channel name, timestamp or message link as CharacterName. For a followed announcement, require an unambiguous game character/IGN or contact name in the post body; omit its listings when that identity is absent.",
                 "Emit one listing per character, item and intent. BUY/BUYING/WTB/B>/B=/B:/B-/B/ mean buy; SELL/SELLING/WTS/S>/S=/S:/S-/S/, prefix for sale and S/T> mean sell (including sell-or-trade). Mixed posts may have both intents. Pure T>/T-/WTT/trade-only statements are not buy/sell, but still extract an explicit B> or S> clause later in the same post. Ignore casual replies with no clear offer/request. Return an empty Listings array when there are no verifiable buy/sell items; never invent listings to fill the schema.",
                 "A selling/S> clause governs subsequent clearly offered goods in the SAME post until another intent begins: S> B.orb || RuMagic || Ror asura has three offered items. Extract every clear offered item, preserving variants. Voucher is an item only when clearly offered or requested; do not turn payment or exchange terms into an item listing.",
+                "The separators | || \ / , + & and the words and, or, w/, also, then, plus are space savers between items, not new clauses: every item after a B>/BUY marker stays a BUY item and every item after an S>/SELL marker stays a SELL item until a different B>/S>/T> marker, a new line or a new post. B> DM1 | DM2 \ YY1 / YY2 has four buy items; S> LKOA | GK2 (max heart) | N. Potra +9 has three sell items. Extract each separated item as its own listing with the governing intent. Price, quantity, PM and option notes (max heart, clean, rush, pcs, 5m) are not items, but a separated item that carries them still is.",
+                "When the intent marker is missing or unclear, infer it instead of dropping the item. A bare item or item list with a price, or with words such as for sale, sale, clean, rush, last call, PM me, selling, offering, is a SELL listing. Words such as looking for, LF, need, wanted, anyone selling, buying, will buy, paying are a BUY listing. Prefer extracting a plausible item with its best-guess intent over omitting it; local code still verifies that ItemText and Evidence are exact text of the same post. Only skip a post that has no item at all or is clearly chat, a reply, a greeting or trade-only.",
                 "ItemText must be an exact contiguous item-name substring of its evidence, excluding price/quantity. Preserve upgrade levels, classes, suffixes and variants. Split comma-separated lists and distinct item codes, e.g. B> DM1 DM2 YY1 YY2 has four items. Avoid merging different variants.",
                 "ItemKey is a consistent display/grouping name for that exact item. Normalize capitalization/spacing and clearly equivalent abbreviations or misspellings only; keep different upgrade levels, classes, suffixes and types separate and never assign different variants the same ItemKey. Use the same ItemKey across all equivalent mentions so local code can count how common it is. Never invent absent items.",
                 "Evidence is an exact contiguous excerpt copied from the relevant post containing ItemText and its buy/sell clause. Copy from the message body without the author header. Do not rewrite spacing, case, punctuation, item word order or upgrade numbers in ItemText or Evidence. Example: HalaAngKABAW followed by S> B.orb || RuMagic || Ror asura produces CharacterName HalaAngKABAW, ItemText Ror asura (not ROR ASURA or an expanded name), ItemKey ROR ASURA, Evidence S> B.orb || RuMagic || Ror asura. Do not include another author's text. Return all unambiguous buy/sell listings; empty Listings if none. Do not estimate popularity or filter to a subset: local code counts distinct characters."})},
@@ -181,7 +226,8 @@ Public NotInheritable Class TradeAiService
                                                Optional transport As HttpClient = Nothing,
                                                Optional progress As IProgress(Of TradeAnalysisProgress) = Nothing,
                                                Optional sourcePosts As IEnumerable(Of DiscordTradeMessage) = Nothing,
-                                               Optional useCache As Boolean = True) As Task(Of List(Of TradeListing))
+                                               Optional useCache As Boolean = True,
+                                               Optional control As TradeAnalysisControl = Nothing) As Task(Of List(Of TradeListing))
         cancellation.ThrowIfCancellationRequested()
         If String.IsNullOrWhiteSpace(raw) Then Throw New ArgumentException("Paste Discord trade posts first.")
         If raw.Length > MaximumAnalysisCharacters Then Throw New ArgumentException("The source exceeds the imported-history limit. Your existing posts and queue are kept; reduce the source text before analyzing.")
@@ -190,7 +236,11 @@ Public NotInheritable Class TradeAiService
         If String.IsNullOrWhiteSpace(apiKey) Then Throw New InvalidOperationException("Configure the OpenAI API key with the button in Trade. Trade shares the encrypted key used by Quiz.")
         Dim effectiveModel = ResolveAnalysisModel(model)
         Dim result As New List(Of TradeListing)()
-        ReportProgress(progress, 0, batches.Count, 0, posts.Count, 0)
+        Dim totalCharacters = batches.Sum(Function(entry) CLng(entry.Text.Length))
+        Dim completedCharacters As Long
+        Dim networkSeconds As Double
+        Dim networkBatches As Integer
+        ReportProgress(progress, 0, batches.Count, 0, posts.Count, 0, totalCharacters, 0, 0)
         Using job = CancellationTokenSource.CreateLinkedTokenSource(cancellation)
             job.CancelAfter(TimeSpan.FromHours(2))
             Dim failure As New AnalysisFailure(job)
@@ -200,9 +250,11 @@ Public NotInheritable Class TradeAiService
             Dim nextBatch As Integer
             Dim completedCount As Integer
             Dim processed As Integer
+            Dim rejectedListings As Integer
             Dim operationError As Exception = Nothing
+            Dim pausing = Function() control IsNot Nothing AndAlso control.PauseRequested
             Try
-                While nextBatch < batches.Count AndAlso pendingWork.Count < MaximumConcurrentBatches
+                While nextBatch < batches.Count AndAlso pendingWork.Count < MaximumConcurrentBatches AndAlso Not pausing()
                     job.Token.ThrowIfCancellationRequested()
                     pendingWork.Add(AnalyzeBatchAsync(nextBatch, batches.Count, batches(nextBatch), effectiveModel,
                         apiKey, transport, job, failure, useCache))
@@ -216,12 +268,19 @@ Public NotInheritable Class TradeAiService
                     job.Token.ThrowIfCancellationRequested()
                     completed(finished.Index) = finished.Listings
                     completedCount += 1
+                    rejectedListings += finished.Rejected
                     processed += batches(finished.Index).Posts.Count
+                    completedCharacters += batches(finished.Index).Text.Length
+                    If finished.Seconds > 0 Then
+                        networkSeconds += finished.Seconds
+                        networkBatches += 1
+                    End If
                     For Each entry In finished.Listings
                         progressIdentities.Add(ListingIdentity(entry))
                     Next
-                    ReportProgress(progress, completedCount, batches.Count, processed, posts.Count, progressIdentities.Count)
-                    While nextBatch < batches.Count AndAlso pendingWork.Count < MaximumConcurrentBatches
+                    ReportProgress(progress, completedCount, batches.Count, processed, posts.Count, progressIdentities.Count,
+                        totalCharacters, completedCharacters, If(networkBatches > 0, networkSeconds / networkBatches, 0))
+                    While nextBatch < batches.Count AndAlso pendingWork.Count < MaximumConcurrentBatches AndAlso Not pausing()
                         job.Token.ThrowIfCancellationRequested()
                         pendingWork.Add(AnalyzeBatchAsync(nextBatch, batches.Count, batches(nextBatch), effectiveModel,
                             apiKey, transport, job, failure, useCache))
@@ -229,10 +288,19 @@ Public NotInheritable Class TradeAiService
                     End While
                 End While
                 job.Token.ThrowIfCancellationRequested()
+                If control IsNot Nothing Then
+                    ' A pause only matters when it actually skipped batches; otherwise the result is complete.
+                    control.Paused = completedCount < batches.Count
+                    control.CompletedBatches = completedCount
+                    control.TotalBatches = batches.Count
+                    control.ProcessedPosts = processed
+                    control.TotalPosts = posts.Count
+                End If
                 Dim identities As New HashSet(Of String)(StringComparer.Ordinal)
                 Dim stableItemKeys As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
                 ' Completion order affects progress only. The source order chooses item aliases and repost winners.
                 For Each entries In completed
+                    If entries Is Nothing Then Continue For ' batch skipped by a pause
                     For Each entry In entries
                         Dim spelling = Normalize(entry.ItemText)
                         Dim stable As String = Nothing
@@ -245,6 +313,7 @@ Public NotInheritable Class TradeAiService
                     Next
                 Next
                 job.Token.ThrowIfCancellationRequested()
+                If result.Count = 0 AndAlso rejectedListings > 0 Then Throw New TradeListingVerificationException(rejectedListings)
             Catch ex As Exception
                 operationError = ex
                 job.Cancel()
@@ -272,6 +341,8 @@ Public NotInheritable Class TradeAiService
                                                     model As String, apiKey As String, transport As HttpClient,
                                                     job As CancellationTokenSource, failure As AnalysisFailure,
                                                     useCache As Boolean) As Task(Of BatchResult)
+        Dim clock As Stopwatch = Nothing
+        Dim splitSeconds As Double
         Try
             job.Token.ThrowIfCancellationRequested()
             Dim payload = BuildPayload(batch.Text, model).ToJsonString()
@@ -285,6 +356,7 @@ Public NotInheritable Class TradeAiService
                     Return New BatchResult With {.Index = index, .Listings = entries}
                 End If
             End If
+            clock = Stopwatch.StartNew()
             Using deadline = CancellationTokenSource.CreateLinkedTokenSource(job.Token)
                 deadline.CancelAfter(TimeSpan.FromSeconds(120))
                 Try
@@ -312,15 +384,37 @@ Public NotInheritable Class TradeAiService
             job.Token.ThrowIfCancellationRequested()
             If useCache Then CacheValidatedBatch(cacheKey, entries, job.Token)
             job.Token.ThrowIfCancellationRequested()
-            Return New BatchResult With {.Index = index, .Listings = entries}
+            Return New BatchResult With {.Index = index, .Listings = entries, .Seconds = clock.Elapsed.TotalSeconds}
+        Catch ex As TradeResponseIncompleteException When batch.Posts.Count > 1
+            ' The answer for this many posts did not fit the output budget. Ask for each half separately (one after the
+            ' other, so the four-request bound holds); only a single post that still cannot finish fails the job.
+            ' (Await is not allowed inside Catch, so the halves are requested after the Try block.)
+            job.Token.ThrowIfCancellationRequested()
+            splitSeconds = clock.Elapsed.TotalSeconds
         Catch ex As TradeListingVerificationException
-            Dim contextual As New InvalidOperationException($"AI batch {index + 1:N0} of {batchCount:N0}: {ex.Message}", ex)
-            failure.Record(contextual)
-            Throw contextual
+            ' One batch of unverifiable AI output must not discard the verified listings of the other batches.
+            ' It is never cached, so retrying the analysis asks the model again. AnalyzeAsync fails the job only
+            ' when no batch produced a single source-supported listing.
+            job.Token.ThrowIfCancellationRequested()
+            Return New BatchResult With {.Index = index, .Listings = New List(Of TradeListing)(), .Rejected = ex.ListingCount,
+                .Seconds = If(clock Is Nothing, 0, clock.Elapsed.TotalSeconds)}
         Catch ex As Exception
             If Not (TypeOf ex Is OperationCanceledException AndAlso job.IsCancellationRequested) Then failure.Record(ex)
             Throw
         End Try
+        ' Only the incomplete-response handler falls through to here: every other path returned or threw.
+        Dim half = batch.Posts.Count \ 2
+        Dim first = Await AnalyzeBatchAsync(index, batchCount, SubBatch(batch, 0, half), model, apiKey, transport, job, failure, useCache).ConfigureAwait(False)
+        Dim second = Await AnalyzeBatchAsync(index, batchCount, SubBatch(batch, half, batch.Posts.Count - half), model, apiKey, transport, job, failure, useCache).ConfigureAwait(False)
+        Return New BatchResult With {.Index = index, .Listings = first.Listings.Concat(second.Listings).ToList(), .Rejected = first.Rejected + second.Rejected,
+            .Seconds = splitSeconds + first.Seconds + second.Seconds}
+    End Function
+
+    Private Shared Function SubBatch(batch As AnalysisBatch, first As Integer, count As Integer) As AnalysisBatch
+        Dim part As New AnalysisBatch()
+        part.Posts.AddRange(batch.Posts.Skip(first).Take(count))
+        part.Text = String.Concat(part.Posts.Select(Function(entry) entry.Raw))
+        Return part
     End Function
 
     Private Shared Function ResolveAnalysisModel(model As String) As String
@@ -396,7 +490,17 @@ Public NotInheritable Class TradeAiService
     Private Shared Function ReadResponse(body As String) As List(Of TradeListing)
         Using document = JsonDocument.Parse(body)
             Dim root = document.RootElement
-            If root.GetProperty("status").GetString() <> "completed" Then Throw New InvalidOperationException("AI analysis was incomplete. No partial queue was created; try a smaller paste.")
+            Dim status = root.GetProperty("status").GetString()
+            If status <> "completed" Then
+                Dim reason As String = Nothing
+                Dim details As JsonElement
+                If root.TryGetProperty("incomplete_details", details) AndAlso details.ValueKind = JsonValueKind.Object Then
+                    Dim reasonElement As JsonElement
+                    If details.TryGetProperty("reason", reasonElement) AndAlso reasonElement.ValueKind = JsonValueKind.String Then reason = reasonElement.GetString()
+                End If
+                If status = "incomplete" Then Throw New TradeResponseIncompleteException(reason)
+                Throw New InvalidOperationException($"AI analysis did not complete (status {status}). No partial queue was created; retry or try a smaller paste.")
+            End If
             For Each output In root.GetProperty("output").EnumerateArray()
                 If output.GetProperty("type").GetString() <> "message" Then Continue For
                 For Each part In output.GetProperty("content").EnumerateArray()
@@ -455,11 +559,17 @@ Public NotInheritable Class TradeAiService
                 Dim originalFinish = view.Finishes(evidenceStart + itemStart + item.Length - 1)
                 Dim location = originalStart - bodyStart
                 Dim governing = markers.LastOrDefault(Function(marker) marker.Index + marker.Length <= location)
-                If location >= 0 AndAlso originalFinish <= bodyStart + post.Body.Length AndAlso governing IsNot Nothing AndAlso
-                    IsWholeItemSpan(post.Raw, originalStart, originalFinish, bodyStart + governing.Index + governing.Length) Then
-                    Dim kind = governing.Groups("kind").Value.ToUpperInvariant()
-                    Dim intent = If(kind.StartsWith("S", StringComparison.Ordinal) OrElse kind = "WTS" OrElse kind.StartsWith("FOR", StringComparison.Ordinal), "sell",
-                        If(kind.StartsWith("B", StringComparison.Ordinal) OrElse kind = "WTB", "buy", "trade"))
+                ' With no explicit marker before the item the intent is unknown, so the model's inferred intent is
+                ' trusted (the item and evidence must still be exact whole-item text of this author's post).
+                Dim markerFinish = If(governing Is Nothing, bodyStart, bodyStart + governing.Index + governing.Length)
+                If location >= 0 AndAlso originalFinish <= bodyStart + post.Body.Length AndAlso
+                    IsWholeItemSpan(post.Raw, originalStart, originalFinish, markerFinish) Then
+                    Dim intent = entry.Intent
+                    If governing IsNot Nothing Then
+                        Dim kind = governing.Groups("kind").Value.ToUpperInvariant()
+                        intent = If(kind.StartsWith("S", StringComparison.Ordinal) OrElse kind = "WTS" OrElse kind.StartsWith("FOR", StringComparison.Ordinal), "sell",
+                            If(kind.StartsWith("B", StringComparison.Ordinal) OrElse kind = "WTB", "buy", "trade"))
+                    End If
                     If intent = entry.Intent Then
                         Dim originalItem = Normalize(post.Raw.Substring(originalStart, originalFinish - originalStart))
                         If originalItem.Length > 90 Then Exit While
@@ -495,9 +605,62 @@ Public NotInheritable Class TradeAiService
             Regex.Escape(name) & "(?![\p{L}\p{N}_-])")
     End Function
 
-    Private Shared Sub ReportProgress(progress As IProgress(Of TradeAnalysisProgress), completed As Integer, batches As Integer, processed As Integer, posts As Integer, listings As Integer)
-        progress?.Report(New TradeAnalysisProgress With {.CompletedBatches = completed, .TotalBatches = batches, .ProcessedPosts = processed, .TotalPosts = posts, .ListingCount = listings})
+    Private Shared Sub ReportProgress(progress As IProgress(Of TradeAnalysisProgress), completed As Integer, batches As Integer, processed As Integer, posts As Integer, listings As Integer,
+                                      totalCharacters As Long, completedCharacters As Long, averageBatchSeconds As Double)
+        progress?.Report(New TradeAnalysisProgress With {.CompletedBatches = completed, .TotalBatches = batches, .ProcessedPosts = processed, .TotalPosts = posts, .ListingCount = listings,
+            .TotalCharacters = totalCharacters, .CompletedCharacters = completedCharacters, .AverageBatchSeconds = averageBatchSeconds})
     End Sub
+
+    ' Approximate GPT-5 nano list prices (USD per million tokens) and request shape. These only feed the on-screen estimate.
+    Private Const InputUsdPerMillionTokens As Decimal = 0.05D
+    Private Const OutputUsdPerMillionTokens As Decimal = 0.4D
+    Private Const InstructionTokensPerBatch As Decimal = 1600D
+    Private Const CharactersPerToken As Decimal = 3.5D
+    Private Const OutputTokensPerListing As Decimal = 70D
+    Private Const OutputTokensPerBatch As Decimal = 40D
+    Private Const AssumedListingsPerPost As Double = 0.25
+    Private Const AssumedBatchSeconds As Double = 20
+
+    Public Shared Function EstimateCost(batchCount As Integer, characters As Long, listings As Integer) As Decimal
+        Dim inputTokens = batchCount * InstructionTokensPerBatch + characters / CharactersPerToken
+        Dim outputTokens = listings * OutputTokensPerListing + batchCount * OutputTokensPerBatch
+        Return (inputTokens * InputUsdPerMillionTokens + outputTokens * OutputUsdPerMillionTokens) / 1000000D
+    End Function
+
+    Public Shared Function EstimateTotalListings(progress As TradeAnalysisProgress) As Integer
+        If progress.ProcessedPosts > 0 Then Return CInt(Math.Ceiling(progress.ListingCount * progress.TotalPosts / CDbl(progress.ProcessedPosts)))
+        Return CInt(Math.Ceiling(progress.TotalPosts * AssumedListingsPerPost))
+    End Function
+
+    ' Remaining time from the measured per-request latency (a 20 s guess before the first batch finishes) and the four-way concurrency.
+    Public Shared Function EstimateRemainingSeconds(progress As TradeAnalysisProgress) As Double
+        Dim remaining = progress.TotalBatches - progress.CompletedBatches
+        If remaining <= 0 Then Return 0
+        Dim seconds = If(progress.AverageBatchSeconds > 0, progress.AverageBatchSeconds, AssumedBatchSeconds)
+        Return Math.Ceiling(remaining / CDbl(Math.Min(MaximumConcurrentBatches, remaining))) * seconds
+    End Function
+
+    Public Shared Function FormatDuration(seconds As Double) As String
+        Dim whole = CInt(Math.Max(0, Math.Round(seconds)))
+        If whole < 90 Then Return $"{whole:N0} s"
+        Dim minutes = CInt(Math.Round(whole / 60.0))
+        If minutes < 90 Then Return $"{minutes:N0} min"
+        Return $"{minutes \ 60:N0} h {minutes Mod 60:N0} min"
+    End Function
+
+    Public Shared Function FormatCost(cost As Decimal) As String
+        Return If(cost < 0.01D, "<$0.01", "$" & cost.ToString("0.00", Globalization.CultureInfo.InvariantCulture))
+    End Function
+
+    ' Text shown under the Analyze button while a job runs; estimates are approximate and revise as batches finish.
+    Public Shared Function DescribeProgress(progress As TradeAnalysisProgress, elapsedSeconds As Double) As String
+        Dim remaining = EstimateRemainingSeconds(progress)
+        Dim totalCost = EstimateCost(progress.TotalBatches, progress.TotalCharacters, EstimateTotalListings(progress))
+        Dim spent = EstimateCost(progress.CompletedBatches, progress.CompletedCharacters, progress.ListingCount)
+        Return $"GPT-5 nano: batch {progress.CompletedBatches:N0}/{progress.TotalBatches:N0}; {progress.ProcessedPosts:N0}/{progress.TotalPosts:N0} posts processed; {progress.ListingCount:N0} buy/sell listings." & vbCrLf &
+            $"Elapsed {FormatDuration(elapsedSeconds)}; about {FormatDuration(remaining)} left (est. total {FormatDuration(elapsedSeconds + remaining)}). Est. cost ~{FormatCost(totalCost)} total, ~{FormatCost(spent)} so far. Estimates are approximate." & vbCrLf &
+            "Stop / F12 cancels. Existing review queue is kept until all batches complete."
+    End Function
 
     Private Shared Function NormalizeNewlines(text As String) As String
         Return If(text, "").Replace(vbCrLf, vbLf).Replace(vbCr, vbLf)

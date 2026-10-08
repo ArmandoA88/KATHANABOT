@@ -35,6 +35,7 @@ Module DiscordImportTests
             TestUiRetiredReaderControls()
             TestUiSavedConfiguration()
             TestUiBatchedAnalysisGuards()
+            TestUiSessionSaveAndLoad()
             TestUiShutdown()
             Check(input.Calls = 0, "Importing posts called the game input backend")
         Finally
@@ -456,9 +457,9 @@ Module DiscordImportTests
             Dim generation = CInt(fixture.Field("_tradeAnalysisGeneration"))
             Check(CBool(fixture.Invoke("IsCurrentTradeAnalysis", cancellation, sourceText, generation, False)) AndAlso CBool(fixture.Field("_tradeAnalyzing")) AndAlso
                   JsonSerializer.Serialize(fixture.Invoke("BuildPersistedTradeState")) = before, "Beginning batched analysis erased reviewed rows, extracted items or selected keys")
-            fixture.Status.Text = "awaiting offline progress"
+            fixture.Info.Text = "awaiting offline progress"
             fixture.Invoke("ReportTradeAnalysisProgress", progress, cancellation, sourceText, generation)
-            Check(fixture.Status.Text <> "awaiting offline progress" AndAlso fixture.Status.Text.Contains("20", StringComparison.Ordinal) AndAlso
+            Check(fixture.Info.Text <> "awaiting offline progress" AndAlso fixture.Info.Text.Contains("20", StringComparison.Ordinal) AndAlso fixture.Info.Text.Contains("cost", StringComparison.Ordinal) AndAlso fixture.Info.Text.Contains("left", StringComparison.Ordinal) AndAlso
                   JsonSerializer.Serialize(fixture.Invoke("BuildPersistedTradeState")) = before, "Current batch progress was not displayed or replaced reviewed data with partial results")
             ' A failed service returns no result, so cleanup must retain the complete previous review.
             fixture.Invoke("EndTradeAnalysis", cancellation)
@@ -551,6 +552,78 @@ Module DiscordImportTests
             fixture.Invoke("EndTradeAnalysis", currentCancellation)
             Check(Not CBool(fixture.Field("_tradeAnalyzing")) AndAlso fixture.Field("_tradeAnalysisCancellation") Is Nothing, "Completed current analysis retained its busy owner")
         End Using
+
+        ' Pause / show results is only available while a job runs and asks the running job (once) to stop sending batches.
+        Using fixture As New UiFixture(), cancellation As New CancellationTokenSource()
+            fixture.Restore()
+            Dim pause = DirectCast(fixture.Field("_tradePause"), Button)
+            Check(pause.Text.Contains("Pause", StringComparison.Ordinal) AndAlso Not pause.Enabled, "Pause button was available with no analysis running")
+            fixture.Invoke("PauseTradeAnalysis")
+            fixture.Invoke("BeginTradeAnalysis", cancellation)
+            Dim control = DirectCast(fixture.Field("_tradeAnalysisControl"), TradeAnalysisControl)
+            Check(pause.Enabled AndAlso Not control.PauseRequested, "Pause button was not enabled by a running analysis")
+            fixture.Invoke("PauseTradeAnalysis")
+            Check(control.PauseRequested AndAlso Not pause.Enabled AndAlso fixture.Status.Text.Contains("Pausing", StringComparison.Ordinal), "Pause did not signal the running analysis")
+            fixture.Invoke("EndTradeAnalysis", cancellation)
+            Check(Not pause.Enabled, "Pause button stayed enabled after the analysis ended")
+        End Using
+    End Sub
+
+    Private Function FindButtons(parent As Control) As List(Of Button)
+        Dim result As New List(Of Button)()
+        For Each child As Control In parent.Controls
+            If TypeOf child Is Button Then result.Add(DirectCast(child, Button))
+            result.AddRange(FindButtons(child))
+        Next
+        Return result
+    End Function
+
+    Private Sub TestUiSessionSaveAndLoad()
+        Dim folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "kathana-ui-session-" & Guid.NewGuid().ToString("N"))
+        Try
+            Using fixture As New UiFixture()
+                fixture.Restore()
+                Dim buttons = FindButtons(fixture.UiPage).Select(Function(button) button.Text).ToList()
+                Check(buttons.Contains("Save session...") AndAlso buttons.Contains("Load session..."), "Trade tab has no Save session / Load session buttons")
+                Dim before = JsonSerializer.Serialize(fixture.Invoke("BuildPersistedTradeState"))
+                Dim file = System.IO.Path.Combine(folder, "saved" & TradeSessionStore.FileExtension)
+                Check(CBool(fixture.Invoke("SaveTradeSessionTo", file)) AndAlso System.IO.File.Exists(file), "session was not saved")
+                Check(fixture.Status.Text.Contains("Session saved", StringComparison.Ordinal) AndAlso fixture.Status.Text.Contains("1 detected listing(s)", StringComparison.Ordinal), "save status did not summarize the session: " & fixture.Status.Text)
+                Using document = JsonDocument.Parse(System.IO.File.ReadAllText(file))
+                    Check(document.RootElement.GetProperty("Settings").GetProperty("EncryptedDiscordBotToken").GetString() = "" AndAlso Not document.RootElement.GetProperty("Settings").GetProperty("DiscordAutoImport").GetBoolean(), "the saved file kept the Discord token or automatic import")
+                End Using
+
+                ' Change everything, then load: the captured posts, detected items, selected items and queue come back.
+                fixture.Source.Text = "SomeoneElse" & vbCrLf & "SELL ROR"
+                Check(fixture.RecipientCount = 0, "test setup: editing the posts did not clear the queue")
+                Check(CBool(fixture.Invoke("LoadTradeSessionFrom", file)), "session did not load: " & fixture.Status.Text)
+                Dim after = JsonSerializer.Serialize(fixture.Invoke("BuildPersistedTradeState"))
+                Check(after = before, "loading did not restore the saved posts, items, selection and whisper queue")
+                Check(fixture.Source.Text = UiFixture.OriginalText AndAlso fixture.RecipientCount = 1 AndAlso fixture.Grid.Rows(0).Cells("Message").Value.ToString() = "reviewed message" AndAlso fixture.Items.Items.Count = 1 AndAlso fixture.Items.CheckedItems.Count = 1, "loaded session did not show its posts, detected/selected items and queue")
+                Check(fixture.Status.Text.Contains("Session loaded", StringComparison.Ordinal), "load status missing: " & fixture.Status.Text)
+
+                ' A damaged or foreign file never touches the current state.
+                Dim damaged = System.IO.Path.Combine(folder, "damaged.json")
+                System.IO.File.WriteAllText(damaged, "{""Format"":""Other""}")
+                Check(Not CBool(fixture.Invoke("LoadTradeSessionFrom", damaged)) AndAlso JsonSerializer.Serialize(fixture.Invoke("BuildPersistedTradeState")) = before AndAlso fixture.Status.Text.Contains("kept", StringComparison.Ordinal), "a bad session file changed or did not report the current state")
+                Check(Not CBool(fixture.Invoke("LoadTradeSessionFrom", System.IO.Path.Combine(folder, "missing.json"))) AndAlso JsonSerializer.Serialize(fixture.Invoke("BuildPersistedTradeState")) = before, "a missing session file changed the current state")
+
+                ' Busy Trade actions block both save and load.
+                For Each fieldName In {"_tradeAnalyzing", "_tradeRunning"}
+                    fixture.SetField(fieldName, True)
+                    Dim other = System.IO.Path.Combine(folder, "blocked.json")
+                    Check(Not CBool(fixture.Invoke("SaveTradeSessionTo", other)) AndAlso Not System.IO.File.Exists(other), "saving while busy was allowed: " & fieldName)
+                    Check(Not CBool(fixture.Invoke("LoadTradeSessionFrom", file)), "loading while busy was allowed: " & fieldName)
+                    fixture.SetField(fieldName, False)
+                Next
+                Check(JsonSerializer.Serialize(fixture.Invoke("BuildPersistedTradeState")) = before, "blocked save/load changed the state")
+            End Using
+        Finally
+            Try
+                System.IO.Directory.Delete(folder, True)
+            Catch
+            End Try
+        End Try
     End Sub
 
     Private Sub TestUiShutdown()
@@ -658,6 +731,11 @@ Module DiscordImportTests
         Public ReadOnly Property Status As Label
             Get
                 Return DirectCast(Field("_tradeStatus"), Label)
+            End Get
+        End Property
+        Public ReadOnly Property Info As Label
+            Get
+                Return DirectCast(Field("_tradeAnalysisInfo"), Label)
             End Get
         End Property
         Public ReadOnly Property UiPage As TabPage

@@ -1,3 +1,5 @@
+Imports System.Diagnostics
+Imports System.IO
 Imports System.Threading
 Imports System.Threading.Tasks
 
@@ -16,6 +18,9 @@ Partial Public Class Form1
     Private _tradeCaptureCompleted As Boolean
     Private _tradeCaptureShutdown As Boolean
     Private _tradeCaptureDialog As DiscordTradeCaptureDialog
+    ' Optional items typed in the capture dialog. The extension types them into Discord's own search box, so Discord filters the
+    ' posts; empty means the channel is captured normally. Kept for this app session only.
+    Private _tradeCaptureFilter As String = ""
 
     Private Function InitializeTradeBrowserCaptureControls() As Button
         _tradeCaptureSourceUrl = DefaultTradeCaptureSourceUrl
@@ -44,8 +49,9 @@ Partial Public Class Form1
             Return
         End If
         Using dialog As New DiscordTradeCaptureDialog(_tradeCaptureSourceUrl, Math.Clamp(_tradeCaptureMessageCount, 1, 10000),
-            AddressOf StartTradeBrowserCapture, AddressOf StopTradeBrowserCaptureFromDialog)
+            AddressOf StartTradeBrowserCapture, AddressOf StopTradeBrowserCaptureFromDialog, _tradeCaptureFilter, Sub(text) _tradeCaptureFilter = If(text, ""))
             _tradeCaptureDialog = dialog
+            dialog.InstallExtension = AddressOf InstallDiscordCaptureExtension
             If _tradeCaptureCompleted Then
                 dialog.ShowCompletedCapture()
             Else
@@ -57,6 +63,39 @@ Partial Public Class Form1
                 _tradeCaptureDialog = Nothing
             End Try
         End Using
+    End Sub
+
+    ' The extension is embedded in this EXE. Unpack it to a stable folder (path copied, folder opened) and explain the
+    ' one-time browser step; after an app update, installing again refreshes the files and Reload updates the browser.
+    Private Sub InstallDiscordCaptureExtension()
+        Dim folder = DiscordCaptureExtensionPackage.DefaultFolder()
+        Try
+            DiscordCaptureExtensionPackage.Extract(folder)
+        Catch ex As Exception When TypeOf ex Is IOException OrElse TypeOf ex Is UnauthorizedAccessException OrElse TypeOf ex Is InvalidOperationException OrElse TypeOf ex Is ArgumentException
+            SetTradeDiscordStatus("The browser extension could not be saved: " & ex.Message)
+            SilentMessageBox.Show(Me, "The browser extension could not be saved to:" & vbCrLf & folder & vbCrLf & vbCrLf & ex.Message, "Install browser extension", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            Return
+        End Try
+        Try
+            Clipboard.SetText(folder)
+        Catch
+            ' The path is also shown below.
+        End Try
+        Try
+            Process.Start(New ProcessStartInfo("explorer.exe", """" & folder & """") With {.UseShellExecute = True})
+        Catch
+            ' Opening the folder is a convenience only.
+        End Try
+        SetTradeDiscordStatus($"Browser extension {DiscordCaptureExtensionPackage.Version()} saved to {folder} (path copied). Load it once in your browser's extensions page.")
+        SilentMessageBox.Show(Me, $"The Kathana Discord Capture extension (version {DiscordCaptureExtensionPackage.Version()}) was saved to:" & vbCrLf & folder & vbCrLf & vbCrLf &
+            "The folder path is copied to your clipboard and the folder is open in Explorer." & vbCrLf & vbCrLf &
+            "Install it once:" & vbCrLf &
+            "1. In Chrome or Edge, open chrome://extensions (or edge://extensions)." & vbCrLf &
+            "2. Turn on Developer mode." & vbCrLf &
+            "3. Click Load unpacked and choose that folder." & vbCrLf &
+            "4. Pin Kathana Discord Capture to the toolbar." & vbCrLf & vbCrLf &
+            "After a KathanaBot update, click Install extension again, then press Reload on the extension's card.",
+            "Install browser extension", MessageBoxButtons.OK, MessageBoxIcon.Information)
     End Sub
 
     Private Sub StopTradeBrowserCaptureFromDialog()
@@ -83,8 +122,9 @@ Partial Public Class Form1
         Dim cancellationToken = cancellation.Token
         _tradeCaptureCancellation = cancellation
         Try
+            Dim searchTerms = DiscordTradeService.ParseSearchTerms(_tradeCaptureFilter)
             Dim server As New DiscordBrowserCaptureServer(_tradeCaptureSourceUrl, _tradeCaptureMessageCount,
-                Function(snapshot) ReceiveTradeBrowserCaptureAsync(snapshot, generation, cancellationToken))
+                Function(snapshot) ReceiveTradeBrowserCaptureAsync(snapshot, generation, cancellationToken), searchTerms)
             _tradeCaptureServer = server
             server.Paused = TradeBrowserCaptureIsBusy()
             server.Start()
@@ -93,7 +133,9 @@ Partial Public Class Form1
             UpdateTradeDiscordPolling()
             SetTradeDiscordStatus(If(_tradeCapturePaused,
                 "Browser capture connected but paused while Trade or checked whispers await review. Copy setup into the extension; Analyze and Start stay separate.",
-                $"Browser capture is ready for up to {_tradeCaptureMessageCount:N0} posts. Copy setup into the extension, then start it on the source channel. Stop or F12 disconnects."))
+                $"Browser capture is ready for up to {_tradeCaptureMessageCount:N0} posts" &
+                If(searchTerms.Count > 0, $", filtered by Discord's own search for {String.Join(", ", searchTerms)}", "") &
+                ". Copy setup into the extension, then start it on the source channel. Stop or F12 disconnects."))
             Return server.ConnectionJson
         Catch
             StopTradeBrowserCapture()

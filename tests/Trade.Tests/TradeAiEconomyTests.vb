@@ -194,7 +194,8 @@ Friend Module TradeAiEconomyTests
 
     Private Async Function TestFailuresAreNotCached() As Task
         For Each mode In {"invalid", "incomplete", "http", "cancel"}
-            Dim posts = CreatePosts(2)
+            ' A multi-post incomplete batch is split and recovers (see TradeAiBatchTests); a single unfinishable post fails once without a retry.
+            Dim posts = CreatePosts(If(mode = "incomplete", 1, 2))
             Using cancellation As New CancellationTokenSource()
                 Dim handler As New ImmediateHandler(
                     Function(raw, callNumber, token)
@@ -224,7 +225,7 @@ Friend Module TradeAiEconomyTests
                     Check(failed AndAlso handler.Calls = 1, mode & " did not fail atomically without retry")
                     Dim retry = Await TradeAiService.AnalyzeAsync(Source(posts), "offline-economy-key", TradeAiService.DefaultAnalysisModel,
                         CancellationToken.None, transport, sourcePosts:=posts)
-                    Check(handler.Calls = 2 AndAlso retry.Count = 2, mode & " failure was cached or skipped instead of re-requested")
+                    Check(handler.Calls = 2 AndAlso retry.Count = posts.Count, mode & " failure was cached or skipped instead of re-requested")
                     Await TradeAiService.AnalyzeAsync(Source(posts), "offline-economy-key", TradeAiService.DefaultAnalysisModel,
                         CancellationToken.None, transport, sourcePosts:=posts)
                     Check(handler.Calls = 2, "Verified success after " & mode & " failure was not cached")

@@ -21,7 +21,7 @@ async function sleep(milliseconds) {
   }
 }
 function reset(count = 2) {
-  fixture = { count, url, requests: [], commands: [], bodies: new Map(), posts: [], attach: 0, detach: 0, scripts: 0, scriptTimes: [], stateTimes: [], headersRead: 0, paused: false, loseReceiver: false, stateReads: 0, initialBatch: null, base64: false, conflictCount: 0, scriptResult: { found: false, reason: "no-observed-chat-scroller" } };
+  fixture = { count, url, requests: [], commands: [], bodies: new Map(), posts: [], attach: 0, detach: 0, scripts: 0, scriptTimes: [], scriptNames: [], scriptByName: null, onCommand: null, stateTimes: [], headersRead: 0, paused: false, loseReceiver: false, stateReads: 0, initialBatch: null, base64: false, conflictCount: 0, scriptResult: { found: false, reason: "no-observed-chat-scroller" } };
 }
 function emitRequest({ requestUrl = api, method = "GET", status = 200, body = [message()], type = "Fetch", tabId = 11, before = false, base64 = false, requestOnly = false } = {}) {
   const requestId = `mock-${++serial}`;
@@ -39,6 +39,15 @@ function emitRequest({ requestUrl = api, method = "GET", status = 200, body = [m
   return { requestId, response, type, tabId };
 }
 
+const searchUrl = (offset = 0) => `https://discord.com/api/v9/guilds/${guild}/messages/search?content=ror%20asura&offset=${offset}`;
+const hitId = index => String(1556808682858086542n - BigInt(index));
+const hit = (id, changes = {}) => ({ ...message(id), hit: true, ...changes });
+const searchConnection = (count, terms) => JSON.stringify({ ...JSON.parse(connection(count)), searchTerms: terms });
+function emitSearch({ offset = 0, groups = [], total = groups.length, status = 200, tabId } = {}) {
+  return emitRequest({ requestUrl: searchUrl(offset), status, body: { messages: groups, total_results: total }, tabId });
+}
+const pressedEnter = (method, args) => method === "Input.dispatchKeyEvent" && args.type === "keyDown" && args.key === "Enter";
+
 function finishRequest(request) {
   listeners.debuggerEvent({ tabId: request.tabId }, "Network.responseReceived", request);
   listeners.debuggerEvent({ tabId: request.tabId }, "Network.loadingFinished", { requestId: request.requestId });
@@ -52,6 +61,7 @@ globalThis.chrome = {
     async sendCommand(target, method, args) {
       fixture.commands.push({ target, method, args });
       if (method === "Network.getResponseBody") return fixture.bodies.get(args.requestId);
+      if (fixture.onCommand) fixture.onCommand(method, args);
       return {};
     }
   },
@@ -62,7 +72,15 @@ globalThis.chrome = {
     async reload() { if (fixture.initialBatch !== null) emitRequest({ body: fixture.initialBatch, base64: fixture.base64 }); },
     async update(tabId, change) { fixture.url = change.url; if (fixture.initialBatch !== null) emitRequest({ body: fixture.initialBatch }); }
   },
-  scripting: { async executeScript() { fixture.scripts++; fixture.scriptTimes.push(Date.now()); if (fixture.onScript) fixture.onScript(); return [{ result: fixture.scriptResult }]; } }
+  scripting: {
+    async executeScript(injection) {
+      fixture.scripts++;
+      fixture.scriptTimes.push(Date.now());
+      fixture.scriptNames.push(injection.func.name);
+      if (fixture.onScript) fixture.onScript(injection.func.name);
+      return [{ result: fixture.scriptByName?.[injection.func.name] ?? fixture.scriptResult }];
+    }
+  }
 };
 globalThis.fetch = async (requestUrl, options) => {
   assert.match(requestUrl, /^http:\/\/127\.0\.0\.1:43123\/kathana-capture\/[A-F0-9]{64}\/(state|capture)$/);
@@ -90,6 +108,7 @@ async function until(predicate, timeout = 5000) {
   assert.equal(predicate(), true, "expected mocked worker condition before timeout");
 }
 async function stopped() { await until(() => fixture.detach > 0); await sleep(20); }
+async function stoppedLater() { await until(() => fixture.detach > 0, 60000); await sleep(20); }
 
 test("mock worker enforces selected tab, event privacy, stop and receiver flow", async t => {
   // Node's documented Date/setTimeout mocks advance the production scheduler
@@ -345,5 +364,208 @@ test("mock worker enforces selected tab, event privacy, stop and receiver flow",
       assert.ok(fixture.scriptTimes[0] - finished >= 3000);
       assert.equal((await state()).phase, "complete");
     } finally { globalThis.fetch = previousFetch; }
+  });
+
+  // ---- Search mode: Discord's own search box filters the channel and its result pages are captured. ----
+  await t.test("search mode types the item into Discord's search box and imports only source-channel hits", async () => {
+    reset(100);
+    fixture.scriptByName = { focusSearchBox: { found: true } };
+    fixture.onCommand = (method, args) => {
+      if (pressedEnter(method, args)) emitSearch({ groups: [
+        [hit(hitId(0))],
+        [hit(hitId(1), { channel_id: "1486808135883555038" })],
+        [message(hitId(2)), hit(hitId(3))]
+      ] });
+    };
+    await command("start", { connection: searchConnection(100, ["ror asura"]) });
+    // Ordinary channel history is ignored in search mode, whatever Discord loads while the page settles.
+    emitRequest({ body: [message(hitId(50))] });
+    await until(() => fixture.detach > 0, 30000);
+    assert.deepEqual(fixture.commands.filter(x => x.method === "Input.insertText").map(x => x.args.text), ["ror asura"]);
+    const methods = fixture.commands.map(x => x.method).filter(x => x.startsWith("Input."));
+    assert.ok(methods.indexOf("Input.insertText") > 0 && methods.lastIndexOf("Input.dispatchKeyEvent") > methods.indexOf("Input.insertText"), "text is typed before Enter");
+    assert.equal(fixture.commands.some(x => x.method === "Input.dispatchKeyEvent" && x.args.commands?.includes("selectAll")), true, "previous search text is cleared first");
+    const envelope = JSON.parse(fixture.posts[0]);
+    assert.deepEqual(envelope.messages.map(x => x.id), [hitId(0), hitId(3)]);
+    assert.equal(envelope.captureStatus, "history-ended");
+    assert.equal(envelope.historyExhausted, true);
+    assert.equal(fixture.posts[0].includes("must-not-forward"), false);
+    assert.equal(fixture.headersRead, 0);
+    assert.equal(fixture.scriptNames.includes("scrollObservedChat"), false, "search mode never scrolls the chat");
+    const finalState = await state();
+    assert.equal(finalState.phase, "complete");
+    assert.match(finalState.message, /found by Discord search for "ror asura"/);
+  });
+
+  await t.test("search result pages are read with the next-page control at least one second apart", async () => {
+    reset(100);
+    fixture.scriptByName = { focusSearchBox: { found: true }, clickNextSearchPage: { found: true } };
+    let enterAt = 0;
+    fixture.onCommand = (method, args) => {
+      if (pressedEnter(method, args)) {
+        enterAt = Date.now();
+        emitSearch({ offset: 0, total: 30, groups: Array.from({ length: 25 }, (_, index) => [hit(hitId(index))]) });
+      }
+    };
+    fixture.onScript = name => {
+      if (name === "clickNextSearchPage") emitSearch({ offset: 25, total: 30, groups: Array.from({ length: 5 }, (_, index) => [hit(hitId(25 + index))]) });
+    };
+    await command("start", { connection: searchConnection(100, ["ror asura"]) });
+    await until(() => fixture.detach > 0, 60000);
+    const clicks = fixture.scriptNames.filter(name => name === "clickNextSearchPage").length;
+    assert.equal(clicks, 1);
+    assert.ok(fixture.scriptTimes[fixture.scriptNames.indexOf("clickNextSearchPage")] - enterAt >= 1000);
+    const envelope = JSON.parse(fixture.posts[0]);
+    assert.equal(envelope.messages.length, 30);
+    assert.equal(envelope.captureStatus, "history-ended");
+  });
+
+  await t.test("search mode stops paging once the selected count is reached", async () => {
+    reset(5);
+    fixture.scriptByName = { focusSearchBox: { found: true }, clickNextSearchPage: { found: true } };
+    fixture.onCommand = (method, args) => {
+      if (pressedEnter(method, args)) emitSearch({ total: 500, groups: Array.from({ length: 25 }, (_, index) => [hit(hitId(index))]) });
+    };
+    await command("start", { connection: searchConnection(5, ["ror asura"]) });
+    await until(() => fixture.detach > 0, 30000);
+    assert.equal(fixture.scriptNames.includes("clickNextSearchPage"), false);
+    const envelope = JSON.parse(fixture.posts[0]);
+    assert.equal(envelope.messages.length, 5);
+    assert.equal(envelope.captureStatus, "limit-reached");
+  });
+
+  await t.test("several items are searched one after another, spaced one second apart, and merged without duplicates", async () => {
+    reset(100);
+    fixture.scriptByName = { focusSearchBox: { found: true } };
+    const enters = [];
+    fixture.onCommand = (method, args) => {
+      if (!pressedEnter(method, args)) return;
+      enters.push(Date.now());
+      emitSearch({ groups: enters.length === 1 ? [[hit(hitId(0))], [hit(hitId(1))]] : [[hit(hitId(1))], [hit(hitId(2))]] });
+    };
+    await command("start", { connection: searchConnection(100, ["ror asura", "d.potra"]) });
+    await until(() => fixture.detach > 0, 60000);
+    assert.deepEqual(fixture.commands.filter(x => x.method === "Input.insertText").map(x => x.args.text), ["ror asura", "d.potra"]);
+    assert.ok(enters[1] - enters[0] >= 1000);
+    assert.deepEqual(JSON.parse(fixture.posts[0]).messages.map(x => x.id), [hitId(0), hitId(1), hitId(2)]);
+  });
+
+  await t.test("a search that finds nothing imports nothing and says so", async () => {
+    reset(100);
+    fixture.scriptByName = { focusSearchBox: { found: true } };
+    fixture.onCommand = (method, args) => { if (pressedEnter(method, args)) emitSearch({ groups: [], total: 0 }); };
+    await command("start", { connection: searchConnection(100, ["ror asura"]) });
+    await stoppedLater();
+    assert.equal(fixture.posts.length, 0);
+    const finalState = await state();
+    assert.equal(finalState.phase, "error");
+    assert.match(finalState.message, /^No readable channel posts matched Discord's search for "ror asura"/);
+  });
+
+  await t.test("an indexing (202) answer is waited out rather than treated as a result or an error", async () => {
+    reset(100);
+    fixture.scriptByName = { focusSearchBox: { found: true } };
+    fixture.onCommand = (method, args) => {
+      if (!pressedEnter(method, args)) return;
+      emitSearch({ status: 202, groups: [] });
+      setTimeout(() => emitSearch({ groups: [[hit(hitId(0))]] }), 4000);
+    };
+    await command("start", { connection: searchConnection(100, ["ror asura"]) });
+    await until(() => fixture.detach > 0, 60000);
+    assert.equal(JSON.parse(fixture.posts[0]).messages.length, 1);
+    assert.equal((await state()).phase, "complete");
+  });
+
+  for (const status of [401, 403, 429]) {
+    await t.test(`${status} on Discord's search stops without retry or partial import`, async () => {
+      reset(100);
+      fixture.scriptByName = { focusSearchBox: { found: true } };
+      fixture.onCommand = (method, args) => { if (pressedEnter(method, args)) emitSearch({ status, groups: [] }); };
+      await command("start", { connection: searchConnection(100, ["ror asura"]) });
+      await stoppedLater();
+      assert.equal(fixture.posts.length, 0);
+      assert.equal((await state()).phase, "error");
+    });
+  }
+
+  await t.test("search requests for another server or tab are ignored", async () => {
+    reset(100);
+    fixture.scriptByName = { focusSearchBox: { found: true } };
+    fixture.onCommand = (method, args) => {
+      if (!pressedEnter(method, args)) return;
+      emitRequest({ requestUrl: searchUrl(0).replace(guild, "1363839027114934316"), body: { messages: [[hit(hitId(9))]], total_results: 1 } });
+      emitSearch({ tabId: 12, groups: [[hit(hitId(8))]] });
+      emitSearch({ groups: [[hit(hitId(0))]] });
+    };
+    await command("start", { connection: searchConnection(100, ["ror asura"]) });
+    await until(() => fixture.detach > 0, 30000);
+    assert.deepEqual(JSON.parse(fixture.posts[0]).messages.map(x => x.id), [hitId(0)]);
+  });
+
+  await t.test("a missing search box falls back to manual searching and Import now sends what Discord loaded", async () => {
+    reset(100);
+    fixture.scriptByName = { focusSearchBox: { found: false, reason: "no-search-box" }, searchBoxFocused: { focused: false } };
+    await command("start", { connection: searchConnection(100, ["ror asura"]) });
+    await sleep(15000);
+    assert.equal(fixture.commands.some(x => x.method === "Input.insertText"), false, "nothing is typed when the box cannot be focused");
+    let current = await state();
+    assert.equal(current.phase, "search-manual");
+    assert.equal(current.canFinish, true);
+    assert.match(current.message, /Search in Discord yourself/);
+    // The user searches by hand; capture keeps listening.
+    emitSearch({ groups: [[hit(hitId(0))], [hit(hitId(1))]] });
+    await sleep(500);
+    assert.equal((await state()).count, 2);
+    assert.equal((await command("finish")).ok, true);
+    await stoppedLater();
+    const envelope = JSON.parse(fixture.posts[0]);
+    assert.deepEqual(envelope.messages.map(x => x.id), [hitId(0), hitId(1)]);
+    assert.equal(envelope.captureStatus, "stalled");
+    assert.equal(envelope.historyExhausted, false);
+    current = await state();
+    assert.equal(current.phase, "complete");
+    assert.match(current.message, /when you pressed Import now/);
+  });
+
+  await t.test("a missing next-page control also falls back to manual paging", async () => {
+    reset(100);
+    fixture.scriptByName = { focusSearchBox: { found: true }, clickNextSearchPage: { found: false, reason: "no-next-button" } };
+    fixture.onCommand = (method, args) => {
+      if (pressedEnter(method, args)) emitSearch({ total: 60, groups: Array.from({ length: 25 }, (_, index) => [hit(hitId(index))]) });
+    };
+    await command("start", { connection: searchConnection(100, ["ror asura"]) });
+    await sleep(40000);
+    assert.equal((await state()).phase, "search-manual");
+    // No new results for three minutes: the loaded page is imported as a partial, clearly marked snapshot.
+    await until(() => fixture.detach > 0, 200000);
+    const envelope = JSON.parse(fixture.posts[0]);
+    assert.equal(envelope.messages.length, 25);
+    assert.equal(envelope.captureStatus, "stalled");
+    assert.match((await state()).message, /result pages stopped loading/);
+  });
+
+  await t.test("Import now is refused outside search mode and Stop still discards a search capture", async () => {
+    reset(5);
+    await command("start", { connection: connection(5) });
+    assert.equal((await command("finish")).ok, false);
+    await command("stop");
+    reset(100);
+    fixture.scriptByName = { focusSearchBox: { found: true } };
+    await command("start", { connection: searchConnection(100, ["ror asura"]) });
+    assert.equal((await state()).canFinish, true);
+    await sleep(9000);
+    await command("stop");
+    await sleep(2000);
+    assert.equal(fixture.posts.length, 0);
+    assert.equal((await state()).phase, "stopped");
+  });
+
+  await t.test("navigating away during a search aborts without importing", async () => {
+    reset(100);
+    fixture.scriptByName = { focusSearchBox: { found: false, reason: "navigation" } };
+    await command("start", { connection: searchConnection(100, ["ror asura"]) });
+    await stoppedLater();
+    assert.equal(fixture.posts.length, 0);
+    assert.equal((await state()).phase, "error");
   });
 });

@@ -1,4 +1,7 @@
-﻿## 1.0.250
+﻿## 1.0.258
+- General reliability and usability improvements.
+
+## 1.0.250
 - Added **Background mode** (button under Stop Bot on Combat Full, on by default). The Kathana window can stay behind your other windows: for each key press the bot briefly takes the keyboard, keeps the game window where it was in the window stack so nothing is drawn over your work, sends the key with the same foreground SendInput as before, and gives focus back to the window you were using. Keys in a burst share one borrow. While it is on it replaces 1.0.247's keep-the-game-in-front supervisor; turn it off to get that behavior back.
 - The bot waits for you to stop typing before it takes the keyboard (default 1 s, adjustable 0-30 s; 0 never waits), releases its key and hands focus back at once if you start typing during a borrow, and stands down without moving focus when you click or switch windows. Full-screen apps and presentations (optional), the taskbar/Start menu/Alt+Tab and a locked screen are never interrupted. A status line shows borrows, waits, pauses and refusals.
 - Keyboard-only: it never moves your mouse or clicks, so features that need the mouse are paused while it is on (your saved settings are unchanged). Trade whispers still need the game in front. Keep the game open and not minimized.

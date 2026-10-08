@@ -37,7 +37,13 @@ Public NotInheritable Class DiscordBrowserCaptureServer
     Private started As Boolean
     Private expiresAt As DateTimeOffset
 
-    Public Sub New(sourceChannelUrl As String, messageLimit As Integer, receive As Func(Of DiscordTradeSnapshot, Task(Of Boolean)))
+    Private ReadOnly searchItems As IReadOnlyList(Of String)
+
+    ' searchTerms: items for the extension to type into Discord's own search box so only matching posts are captured;
+    ' none means the extension captures the channel's normal history.
+    Public Sub New(sourceChannelUrl As String, messageLimit As Integer, receive As Func(Of DiscordTradeSnapshot, Task(Of Boolean)),
+                   Optional searchTerms As IEnumerable(Of String) = Nothing)
+        searchItems = DiscordTradeService.ParseSearchTerms(String.Join(vbLf, If(searchTerms, Enumerable.Empty(Of String)())))
         target = DiscordTradeService.ParseChannel(sourceChannelUrl)
         If target.GuildId.Length = 0 Then Throw New ArgumentException("Enter a complete Discord server/channel link.")
         If messageLimit < 1 OrElse messageLimit > DiscordTradeService.MaximumImportMessageCount Then Throw New ArgumentOutOfRangeException(NameOf(messageLimit))
@@ -64,8 +70,12 @@ Public NotInheritable Class DiscordBrowserCaptureServer
     Public ReadOnly Property ConnectionJson As String
         Get
             If String.IsNullOrEmpty(ReceiverUrl) Then Throw New InvalidOperationException("Start browser capture first.")
+            If searchItems.Count = 0 Then
+                Return JsonSerializer.Serialize(New With {.format = "KathanaCaptureConnection", .version = 1, .receiverUrl = ReceiverUrl,
+                    .sourceUrl = target.ChannelLink, .messageLimit = messageLimit})
+            End If
             Return JsonSerializer.Serialize(New With {.format = "KathanaCaptureConnection", .version = 1, .receiverUrl = ReceiverUrl,
-                .sourceUrl = target.ChannelLink, .messageLimit = messageLimit})
+                .sourceUrl = target.ChannelLink, .messageLimit = messageLimit, .searchTerms = searchItems})
         End Get
     End Property
 

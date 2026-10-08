@@ -32,6 +32,7 @@ Module DiscordBrowserCaptureTests
         TestUiCaptureGuards()
         TestUiCaptureSourceAndLifecycle()
         TestUiCaptureResumesWithoutReplacingAnalysisStatus()
+        TestCaptureSearchItems()
         TestCaptureDialogAndRender()
         Console.WriteLine($"PASS: {checks - initialChecks} offline browser-capture UI assertions: source/generation/count guards, reviewed-queue preservation, edits/profile/stop/close invalidation and connection dialog.")
     End Sub
@@ -63,6 +64,90 @@ Module DiscordBrowserCaptureTests
         checks = 0
         TestCaptureDialogAndRender()
         Console.WriteLine($"PASS: {checks} browser-capture dialog/render assertions.")
+    End Sub
+
+    Private Sub TestCaptureSearchItems()
+        ' Parsing: separators, whitespace, duplicates, bounds, and "no items" meaning no filter.
+        Check(DiscordTradeService.ParseSearchTerms("").Count = 0 AndAlso DiscordTradeService.ParseSearchTerms(Nothing).Count = 0 AndAlso DiscordTradeService.ParseSearchTerms("  , ; " & vbLf).Count = 0, "empty search items were treated as a filter")
+        Dim terms = DiscordTradeService.ParseSearchTerms("  ror   asura, d.potra" & vbLf & "YY2;ROR ASURA ,")
+        Check(terms.SequenceEqual({"ror asura", "d.potra", "YY2"}), "search items were not split, trimmed and de-duplicated: " & String.Join("/", terms))
+        Check(DiscordTradeService.ParseSearchTerms(String.Join(",", Enumerable.Range(0, 15).Select(Function(index) "item" & index))).Count = DiscordTradeService.MaximumSearchTerms, "too many search items were accepted")
+        Check(DiscordTradeService.ParseSearchTerms(New String("x"c, DiscordTradeService.MaximumSearchTermLength + 1)).Count = 0 AndAlso DiscordTradeService.ParseSearchTerms("bad" & ChrW(7) & "item").Count = 0, "oversized or control-character search items were accepted")
+        Check(DiscordTradeService.ParseSearchTerms(New String("x"c, DiscordTradeService.MaximumSearchTermLength)).Count = 1, "a maximum-length search item was rejected")
+
+        ' The copied setup carries the items only when there are some.
+        Using server As New DiscordBrowserCaptureServer(SourceUrl, 10, Function(snapshot) Task.FromResult(True), {" ror  asura ", "d.potra", "ROR ASURA"})
+            server.Start()
+            Using connection = JsonDocument.Parse(server.ConnectionJson)
+                Dim root = connection.RootElement
+                Check(root.GetProperty("searchTerms").EnumerateArray().Select(Function(item) item.GetString()).SequenceEqual({"ror asura", "d.potra"}) AndAlso
+                      root.GetProperty("messageLimit").GetInt32() = 10 AndAlso root.GetProperty("sourceUrl").GetString() = SourceUrl AndAlso root.GetProperty("format").GetString() = "KathanaCaptureConnection", "setup lost its search items or core fields")
+            End Using
+        End Using
+        Using server As New DiscordBrowserCaptureServer(SourceUrl, 10, Function(snapshot) Task.FromResult(True))
+            server.Start()
+            Using connection = JsonDocument.Parse(server.ConnectionJson)
+                Dim ignored As JsonElement
+                Check(Not connection.RootElement.TryGetProperty("searchTerms", ignored), "setup without search items still carried a searchTerms property")
+            End Using
+        End Using
+        Using server As New DiscordBrowserCaptureServer(SourceUrl, 10, Function(snapshot) Task.FromResult(True), {"  ", ","})
+            server.Start()
+            Using connection = JsonDocument.Parse(server.ConnectionJson)
+                Dim ignored As JsonElement
+                Check(Not connection.RootElement.TryGetProperty("searchTerms", ignored), "blank search items produced a search-mode setup")
+            End Using
+        End Using
+
+        ' UI: the typed items reach the setup the extension receives; an empty box keeps normal capture. The app never filters captured posts itself.
+        Using fixture As New CaptureUiFixture()
+            fixture.SetField("_tradeCaptureFilter", "ror asura, d.potra")
+            Dim setup As String
+            Try
+                setup = CStr(fixture.Invoke("StartTradeBrowserCapture", SourceUrl, 10))
+                Using connection = JsonDocument.Parse(setup)
+                    Check(connection.RootElement.GetProperty("searchTerms").EnumerateArray().Select(Function(item) item.GetString()).SequenceEqual({"ror asura", "d.potra"}), "Start capture did not pass the typed items to the extension")
+                End Using
+                Check(DirectCast(fixture.Field("_tradeStatus"), Label).Text.Contains("Discord's own search for ror asura, d.potra", StringComparison.Ordinal), "capture status did not mention the Discord search")
+            Finally
+                fixture.Invoke("StopTradeBrowserCapture")
+            End Try
+            fixture.SetField("_tradeCaptureFilter", "")
+            Try
+                setup = CStr(fixture.Invoke("StartTradeBrowserCapture", SourceUrl, 10))
+                Using connection = JsonDocument.Parse(setup)
+                    Dim ignored As JsonElement
+                    Check(Not connection.RootElement.TryGetProperty("searchTerms", ignored), "an empty search box still started a search-mode capture")
+                End Using
+            Finally
+                fixture.Invoke("StopTradeBrowserCapture")
+            End Try
+        End Using
+        Using fixture As New CaptureUiFixture()
+            fixture.PrepareCapture()
+            fixture.SetField("_tradeCaptureFilter", "ror asura")
+            Dim snapshot = UiSnapshot("NewSeller" & vbLf & "SELL YY2 and other text")
+            Check(fixture.Apply(snapshot) AndAlso fixture.Source.Text = "NewSeller" & vbCrLf & "SELL YY2 and other text", "the app filtered a capture that Discord's search already produced")
+        End Using
+
+        ' Dialog: it shows the saved items, reports edits, and an edit stops an active connection because the setup must be copied again.
+        Dim dialogType = GetType(Form1).Assembly.GetType("KathanaBotControlPanel.DiscordTradeCaptureDialog", throwOnError:=True)
+        Dim reported As String = Nothing, stops As Integer
+        Dim stopAction As Action = Sub() stops += 1
+        Dim starter As Func(Of String, Integer, String) = Function(source, count) "setup"
+        Dim changed As Action(Of String) = Sub(text) reported = text
+        Using dialog = DirectCast(Activator.CreateInstance(dialogType, {SourceUrl, 100, starter, stopAction, "ror asura", changed}), Form)
+            Dim filterBox = DirectCast(dialogType.GetField("_filterBox", PrivateFields).GetValue(dialog), TextBox)
+            Dim connectionBox = DirectCast(dialogType.GetField("_connectionBox", PrivateFields).GetValue(dialog), TextBox)
+            Dim stopButton = DirectCast(dialogType.GetField("_stopButton", PrivateFields).GetValue(dialog), Button)
+            Check(filterBox.Text = "ror asura", "dialog did not show the saved search items")
+            filterBox.Text = "ror asura, yy2"
+            Check(reported = "ror asura, yy2" AndAlso stops = 0, "editing items with no active connection was not reported or stopped something")
+            dialogType.GetMethod("UpdateConnection").Invoke(dialog, {"setup"})
+            Check(stopButton.Enabled AndAlso connectionBox.TextLength > 0, "test setup: connection was not active")
+            filterBox.Text = "yy2, d.potra"
+            Check(reported = "yy2, d.potra" AndAlso stops = 1, "editing items did not stop the active connection")
+        End Using
     End Sub
 
     Private Sub TestUiCaptureGuards()

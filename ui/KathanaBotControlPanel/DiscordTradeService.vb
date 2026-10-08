@@ -437,6 +437,24 @@ Public NotInheritable Class DiscordTradeService
         Return header & vbLf & post.BodyText
     End Function
 
+    Public Const MaximumSearchTerms As Integer = 10
+    Public Const MaximumSearchTermLength As Integer = 100
+
+    ' Items typed in the capture window for Discord's own search box. Commas, semicolons and new lines separate items;
+    ' whitespace collapses, control characters, empty and over-long entries are dropped, duplicates (any case) are merged.
+    ' An empty result means no search filter: every post is captured.
+    Public Shared Function ParseSearchTerms(text As String) As List(Of String)
+        Dim terms As New List(Of String)()
+        For Each part In If(text, "").Split({","c, ";"c, ControlChars.Lf, ControlChars.Cr}, StringSplitOptions.RemoveEmptyEntries)
+            Dim term = Regex.Replace(part, "\s+", " ").Trim()
+            If term.Length = 0 OrElse term.Length > MaximumSearchTermLength OrElse term.Any(Function(ch) Char.IsControl(ch)) Then Continue For
+            If terms.Contains(term, StringComparer.OrdinalIgnoreCase) Then Continue For
+            terms.Add(term)
+            If terms.Count = MaximumSearchTerms Then Exit For
+        Next
+        Return terms
+    End Function
+
     Private Shared Sub AddText(parts As List(Of String), text As String, Optional prefix As String = "")
         If Not String.IsNullOrWhiteSpace(text) Then parts.Add(prefix & text.Replace(vbCrLf, vbLf).Replace(vbCr, vbLf))
     End Sub

@@ -17,6 +17,10 @@ Friend Module TradeAiBatchTests
         Await TestStableKeysAndReposts()
         Await TestLegacyAndEvidence()
         Await TestSourceIntegrityAndPreflight()
+        Await TestRejectedBatchIsSkipped()
+        Await TestEstimates()
+        Await TestIncompleteBatchIsSplit()
+        Await TestPauseShowsPartialResults()
         Await TestFailureAndCancellation()
         Console.WriteLine($"PASS: {assertions:N0} AI batching assertions: complete 1,000/10,000-post coverage, >200k source, whole boundaries, progress, exact source/evidence, stable keys, global repost dedup and atomic failure/cancellation.")
     End Function
@@ -253,6 +257,138 @@ Friend Module TradeAiBatchTests
             Check(countRejected AndAlso handler.Inputs.Count = 0, "10,001 fallback posts reached the API")
             Await TradeAiService.AnalyzeAsync(Source(posts).Replace(vbLf, vbCrLf), "offline-test-key", "configured-test-model", CancellationToken.None, transport, sourcePosts:=posts.AsEnumerable().Reverse(), useCache:=False)
             Check(handler.Inputs.Count = 1, "normalized newline/reversed complete snapshot did not match")
+        End Using
+    End Function
+
+    Private Async Function TestPauseShowsPartialResults() As Task
+        Dim posts = Enumerable.Range(0, TradeAiService.MaximumBatchPosts * 6).Select(Function(index) Post(index)).ToList()
+        ' Pause during the first request: the four batches already sent finish, the last two are never sent.
+        Dim control As New TradeAnalysisControl()
+        Dim handler As New BatchHandler(
+            Async Function(input, callNumber, cancellation)
+                Await Task.Delay(50, cancellation) ' keep all four requests in flight before the pause lands
+                If callNumber = 1 Then control.RequestPause()
+                Dim names = Regex.Matches(input, "(?m)^(Seller[0-9]+)$").Cast(Of Match)().Select(Function(match) match.Groups(1).Value)
+                Return Await Ok(names.Select(Function(name) Entry(name, "S> Tikoy 7D")))
+            End Function)
+        Using transport As New HttpClient(handler)
+            Dim result = Await TradeAiService.AnalyzeAsync(Source(posts), "offline-test-key", "configured-test-model", CancellationToken.None, transport, sourcePosts:=posts, useCache:=False, control:=control)
+            Check(handler.Inputs.Count = 4 AndAlso control.Paused AndAlso control.CompletedBatches = 4 AndAlso control.TotalBatches = 6, "pause did not stop new batches after the in-flight ones")
+            Check(control.ProcessedPosts = 200 AndAlso control.TotalPosts = 300 AndAlso result.Count = 200, "paused result did not cover exactly the completed batches")
+            Check(result.All(Function(entry) Integer.Parse(entry.CharacterName.Substring(6)) < 200), "paused result included a post from an unsent batch")
+        End Using
+        ' A pause that arrives during the final batch skipped nothing, so the result is complete and not marked partial.
+        Dim late As New TradeAnalysisControl()
+        Dim lateHandler As New BatchHandler(
+            Function(input, callNumber, cancellation)
+                If input.Contains("Seller00299", StringComparison.Ordinal) Then late.RequestPause()
+                Dim names = Regex.Matches(input, "(?m)^(Seller[0-9]+)$").Cast(Of Match)().Select(Function(match) match.Groups(1).Value)
+                Return Ok(names.Select(Function(name) Entry(name, "S> Tikoy 7D")))
+            End Function)
+        Using transport As New HttpClient(lateHandler)
+            Dim result = Await TradeAiService.AnalyzeAsync(Source(posts), "offline-test-key", "configured-test-model", CancellationToken.None, transport, sourcePosts:=posts, useCache:=False, control:=late)
+            Check(Not late.Paused AndAlso result.Count = 300 AndAlso late.CompletedBatches = 6, "a pause with nothing left to skip produced a partial result")
+        End Using
+        ' Pausing before any batch starts returns an empty, paused outcome without a request.
+        Dim early As New TradeAnalysisControl()
+        early.RequestPause()
+        Dim idle As New BatchHandler(Function(input, callNumber, cancellation) Ok(Array.Empty(Of TradeListing)()))
+        Using transport As New HttpClient(idle)
+            Dim result = Await TradeAiService.AnalyzeAsync(Source(posts), "offline-test-key", "configured-test-model", CancellationToken.None, transport, sourcePosts:=posts, useCache:=False, control:=early)
+            Check(idle.Inputs.Count = 0 AndAlso early.Paused AndAlso early.CompletedBatches = 0 AndAlso result.Count = 0, "an immediate pause still sent batches")
+        End Using
+    End Function
+
+    Private Async Function TestIncompleteBatchIsSplit() As Task
+        Dim posts = Enumerable.Range(0, TradeAiService.MaximumBatchPosts + 1).Select(Function(index) Post(index)).ToList()
+        Const cutoff As String = "{""status"":""incomplete"",""incomplete_details"":{""reason"":""max_output_tokens""},""output"":[]}"
+        ' Any request for more than 10 posts runs out of output budget; smaller halves finish.
+        Dim handler As New BatchHandler(
+            Function(input, callNumber, cancellation)
+                Dim names = Regex.Matches(input, "(?m)^(Seller[0-9]+)$").Cast(Of Match)().Select(Function(match) match.Groups(1).Value).ToList()
+                If names.Count > 10 Then Return Task.FromResult(New HttpResponseMessage(HttpStatusCode.OK) With {.Content = New StringContent(cutoff, Encoding.UTF8, "application/json")})
+                Return Ok(names.Select(Function(name) Entry(name, "S> Tikoy 7D")))
+            End Function)
+        Using transport As New HttpClient(handler)
+            Dim result = Await TradeAiService.AnalyzeAsync(Source(posts), "offline-test-key", "configured-test-model", CancellationToken.None, transport, sourcePosts:=posts, useCache:=False)
+            Check(result.Count = posts.Count AndAlso result.Select(Function(entry) entry.CharacterName).Distinct().Count() = posts.Count, "split halves lost or duplicated listings")
+            Check(handler.Inputs.Any(Function(input) Regex.Matches(input, "(?m)^(Seller[0-9]+)$").Count <= 10), "the oversized batch was never split")
+            Check(handler.Inputs.All(Function(input) input.Length <= TradeAiService.MaximumBatchCharacters), "a split batch exceeded the character bound")
+            Check(String.Concat(handler.Inputs.Where(Function(input) Regex.Matches(input, "(?m)^(Seller[0-9]+)$").Count <= 10).OrderBy(Function(input) Integer.Parse(Regex.Match(input, "Seller([0-9]+)").Groups(1).Value))) = Source(posts),
+                  "split batches altered or omitted source text")
+        End Using
+        ' One post that still cannot finish fails with the model's real reason, without endless splitting.
+        Dim stuck As New BatchHandler(Function(input, callNumber, cancellation) Task.FromResult(New HttpResponseMessage(HttpStatusCode.OK) With {.Content = New StringContent(cutoff, Encoding.UTF8, "application/json")}))
+        Using transport As New HttpClient(stuck)
+            Dim lone = posts.Take(1).ToList()
+            Dim failed = False
+            Try
+                Await TradeAiService.AnalyzeAsync(Source(lone), "offline-test-key", "configured-test-model", CancellationToken.None, transport, sourcePosts:=lone, useCache:=False)
+            Catch ex As InvalidOperationException
+                failed = ex.Message.Contains("incomplete", StringComparison.Ordinal) AndAlso ex.Message.Contains("max output tokens", StringComparison.Ordinal)
+            End Try
+            Check(failed AndAlso stuck.Inputs.Count = 1, "a single unfinishable post did not fail once with the model's reason")
+        End Using
+    End Function
+
+    Private Async Function TestEstimates() As Task
+        ' Before any batch finishes the estimate uses a conservative per-request guess over four-way concurrency.
+        Dim start As New TradeAnalysisProgress With {.CompletedBatches = 0, .TotalBatches = 200, .ProcessedPosts = 0, .TotalPosts = 10000, .TotalCharacters = 1000000}
+        Check(TradeAiService.EstimateRemainingSeconds(start) = 50 * 20, "initial estimate ignored the four-way concurrency")
+        Dim measured As New TradeAnalysisProgress With {.CompletedBatches = 196, .TotalBatches = 200, .TotalPosts = 10000, .ProcessedPosts = 9800, .AverageBatchSeconds = 12}
+        Check(TradeAiService.EstimateRemainingSeconds(measured) = 12, "measured latency was not used for the final wave")
+        measured.CompletedBatches = 200
+        Check(TradeAiService.EstimateRemainingSeconds(measured) = 0, "a finished job still reported time left")
+        Dim cost = TradeAiService.EstimateCost(200, 1000000, 2500)
+        Check(cost > 0.1D AndAlso cost < 1D, "cost estimate for 10,000 posts on the nano model left its expected range: " & cost)
+        Check(TradeAiService.EstimateCost(0, 0, 0) = 0D AndAlso TradeAiService.EstimateCost(100, 500000, 1000) < TradeAiService.EstimateCost(200, 1000000, 2000), "cost is not monotonic")
+        Check(TradeAiService.FormatDuration(45) = "45 s" AndAlso TradeAiService.FormatDuration(600) = "10 min" AndAlso TradeAiService.FormatDuration(7200) = "2 h 0 min", "duration formatting changed")
+        Check(TradeAiService.FormatCost(0.004D) = "<$0.01" AndAlso TradeAiService.FormatCost(0.284D) = "$0.28", "cost formatting changed")
+        Dim text = TradeAiService.DescribeProgress(New TradeAnalysisProgress With {.CompletedBatches = 4, .TotalBatches = 200, .ProcessedPosts = 200, .TotalPosts = 10000, .ListingCount = 47, .TotalCharacters = 1000000, .CompletedCharacters = 40000, .AverageBatchSeconds = 15}, 70)
+        Check(text.Contains("batch 4/200") AndAlso text.Contains("200/10,000 posts") AndAlso text.Contains("47 buy/sell listings") AndAlso text.Contains("Elapsed 70 s") AndAlso
+              text.Contains("left") AndAlso text.Contains("Est. cost") AndAlso text.Contains("F12"), "progress description lost its figures")
+        ' A real run reports measured request time and character totals to the UI.
+        Dim posts = Enumerable.Range(0, TradeAiService.MaximumBatchPosts + 1).Select(Function(index) Post(index)).ToList()
+        Dim progress As New RecordedProgress()
+        Using transport As New HttpClient(New BatchHandler(Async Function(input, callNumber, cancellation)
+            Await Task.Delay(30, cancellation)
+            Dim names = Regex.Matches(input, "(?m)^(Seller[0-9]+)$").Cast(Of Match)().Select(Function(match) match.Groups(1).Value)
+            Return Await Ok(names.Select(Function(name) Entry(name, "S> Tikoy 7D")))
+        End Function))
+            Await TradeAiService.AnalyzeAsync(Source(posts), "offline-test-key", "configured-test-model", CancellationToken.None, transport, progress, posts, useCache:=False)
+        End Using
+        Dim final = progress.Updates.Last()
+        Check(progress.Updates(0).TotalCharacters = Source(posts).Length AndAlso final.CompletedCharacters = final.TotalCharacters AndAlso final.AverageBatchSeconds > 0.02,
+              "progress did not carry character totals and measured batch time")
+    End Function
+
+    Private Async Function TestRejectedBatchIsSkipped() As Task
+        Dim posts = Enumerable.Range(0, TradeAiService.MaximumBatchPosts + 1).Select(Function(index) Post(index)).ToList()
+        ' The lone-post batch gets only an item that is not in its source; the full batch is fine.
+        Dim mixedBatches As New BatchHandler(
+            Function(input, callNumber, cancellation)
+                Dim names = Regex.Matches(input, "(?m)^(Seller[0-9]+)$").Cast(Of Match)().Select(Function(match) match.Groups(1).Value).ToList()
+                If names.Count = 1 Then Return Ok({Entry(names.Single(), "S> Tikoy 7D", "Invented", "INVENTED")})
+                Return Ok(names.Select(Function(name) Entry(name, "S> Tikoy 7D")))
+            End Function)
+        Using transport As New HttpClient(mixedBatches)
+            Dim result = Await TradeAiService.AnalyzeAsync(Source(posts), "offline-test-key", "configured-test-model", CancellationToken.None, transport, sourcePosts:=posts, useCache:=False)
+            Check(mixedBatches.Inputs.Count = 2, "rejected-batch fixture did not use two batches")
+            Check(result.Count = TradeAiService.MaximumBatchPosts, "one fully rejected batch discarded the verified listings of the other batch")
+        End Using
+        Dim allRejected As New BatchHandler(
+            Function(input, callNumber, cancellation)
+                Dim names = Regex.Matches(input, "(?m)^(Seller[0-9]+)$").Cast(Of Match)().Select(Function(match) match.Groups(1).Value)
+                Return Ok(names.Select(Function(name) Entry(name, "S> Tikoy 7D", "Invented", "INVENTED")))
+            End Function)
+        Using transport As New HttpClient(allRejected)
+            Dim failed = False
+            Try
+                Await TradeAiService.AnalyzeAsync(Source(posts), "offline-test-key", "configured-test-model", CancellationToken.None, transport, sourcePosts:=posts, useCache:=False)
+            Catch ex As InvalidOperationException
+                failed = ex.Message.Contains("original character", StringComparison.OrdinalIgnoreCase) AndAlso ex.Message.Contains($"{TradeAiService.MaximumBatchPosts + 1:N0} AI listings", StringComparison.Ordinal)
+            End Try
+            Check(failed, "an analysis where no batch verified anything did not report a source-verification failure")
         End Using
     End Function
 

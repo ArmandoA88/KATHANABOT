@@ -3,6 +3,7 @@ import { parseConnection } from "./core.mjs";
 const connection = document.getElementById("connection");
 const start = document.getElementById("start");
 const stop = document.getElementById("stop");
+const finish = document.getElementById("finish");
 const status = document.getElementById("status");
 const count = document.getElementById("count");
 let busy = false;
@@ -10,6 +11,7 @@ let busy = false;
 function render(state) {
   start.disabled = Boolean(state.running) || busy;
   stop.disabled = !state.running || busy;
+  finish.disabled = !state.running || !state.canFinish || busy;
   connection.disabled = Boolean(state.running) || busy;
   status.textContent = state.message;
   if (state.requested) count.textContent = `${state.count.toLocaleString()} / ${state.requested.toLocaleString()} posts`;
@@ -47,6 +49,16 @@ start.addEventListener("click", async () => {
     start.disabled = false;
     connection.disabled = false;
     status.textContent = error.message;
+  }
+});
+
+finish.addEventListener("click", async () => {
+  finish.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage({ action: "finish" });
+    if (response?.ok) status.textContent = "Finishing: importing the posts found so far.";
+  } catch {
+    status.textContent = "Could not contact the capture worker.";
   }
 });
 
