@@ -10,13 +10,14 @@ KathanaBot is a self-contained VB WinForms application. Both the Velopack-instal
 
 ## Build / Rebuild
 
-Version 1.0.250 adds **Background mode** (Combat Full, under Stop Bot; on by default). The game window can stay
-behind other windows: for each key press the bot briefly takes the keyboard, keeps the game window where it was
-in the window stack, sends the key with the same foreground SendInput, and gives focus back to the window you
-were using. It waits for you to stop typing (default 1 s), never interrupts full-screen apps or presentations,
-and is keyboard-only (mouse features are paused while it is on). Windows only delivers key presses to the active
-window, so this borrows the keyboard instead of sending to an inactive window; it is not a detection fix and no
-live game session was run. Details, measurements and limits: [Background mode](docs/BACKGROUND_MODE.md).
+Version 1.0.259 improves **Background mode** (Combat Full, under Stop Bot; on by default): continuous
+Windows Graphics Capture supplies the actual game window even when covered. Actions pause when capture is
+unavailable, frames exceed 300 ms, or decisions exceed 500 ms. Combat rotations and Direct KP pairs share short
+focus bursts with a 750 ms deadline, immediate return when finished, and 200 ms between borrows. The bot still
+waits for user inactivity (default 1 s), protects full-screen apps and presentations, and operates keyboard-only.
+Focus failures pause further input instead of quietly leaving the game active. The status line shows capture
+health, keys sent, and longest borrow. Native capture was checked with owned dummy windows; no live game input
+was sent. Details, measurements and limits: [Background mode](docs/BACKGROUND_MODE.md).
 Turn it off for the 1.0.249 behavior below.
 
 Version 1.0.249 fixes Home never becoming visible at launch: the first-run Activity & Setup handler

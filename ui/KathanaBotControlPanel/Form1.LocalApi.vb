@@ -67,6 +67,11 @@ Partial Public Class Form1
                 If selected Is Nothing OrElse selected.ProcessId <> command.ProcessId Then Throw New InvalidOperationException("Selected process does not match processId.")
                 If _fullEngine.IsRunning() OrElse _liteEngine.IsRunning() OrElse _workflowModes.Current <> OperatingMode.Idle OrElse _tradeRunning Then Throw New InvalidOperationException("Stop active automation before manual API input.")
                 If route = "/key" AndAlso (command.Key < 8 OrElse command.Key > 254) Then Throw New InvalidOperationException("key must be a Windows virtual-key code from 8 to 254.")
+                If route = "/key" AndAlso WindowsInput.FocusBorrowEnabled Then
+                    Using frame = BotEngine.CaptureClient(selected.MainWindowHandle)
+                        If frame Is Nothing Then Throw New InvalidOperationException("Waiting for a fresh game-window capture. Retry the key after capture starts.")
+                    End Using
+                End If
                 SyncLock WindowsInput.SequenceLock
                     WindowsInput.BindTarget(selected.MainWindowHandle)
                     If Not WindowsInput.Current.Activate(selected.MainWindowHandle) Then Throw New InvalidOperationException("Selected game is unavailable for input. Restore Kathana and select its window in the foreground.")
@@ -82,15 +87,21 @@ Partial Public Class Form1
                         End If
                         pressed = True
                         ' Games that poll state once per frame can miss an immediate down/up pair.
-                        Threading.Thread.Sleep(If(route = "/key", WindowsInput.KeyPressDurationMs(120), 120))
-                    Finally
-                        If pressed Then
-                            If route = "/key" Then
-                                input.Keyboard(CByte(command.Key), 0, flags Or 2UI, UIntPtr.Zero)
-                            Else
-                                input.Mouse(4UI, 0UI, 0UI, 0UI, UIntPtr.Zero)
-                            End If
+                        If Not WindowsInput.WaitForKeyHold(If(route = "/key", WindowsInput.KeyPressDurationMs(120), 120), Threading.CancellationToken.None) Then
+                            Throw New InvalidOperationException("Manual input was interrupted; the emitted key was released.")
                         End If
+                    Finally
+                        Try
+                            If pressed Then
+                                If route = "/key" Then
+                                    input.Keyboard(CByte(command.Key), 0, flags Or 2UI, UIntPtr.Zero)
+                                Else
+                                    input.Mouse(4UI, 0UI, 0UI, 0UI, UIntPtr.Zero)
+                                End If
+                            End If
+                        Finally
+                            WindowsInput.CompleteKeySequence(selected.MainWindowHandle)
+                        End Try
                     End Try
                 End SyncLock
         End Select
@@ -98,6 +109,8 @@ Partial Public Class Form1
             .processId = If(selected Is Nothing, 0, selected.ProcessId),
             .windowTitle = If(selected Is Nothing, "", selected.WindowTitle),
             .inputMode = WindowsInput.InputMode,
+            .backgroundInput = WindowsInput.FocusBorrowStatus(),
+            .backgroundCapture = BackgroundCapture.StatusText(),
             .inputError = WindowsInput.LastConnectionError, .botProcessId = Environment.ProcessId}
     End Function
 End Class

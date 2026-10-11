@@ -1,6 +1,28 @@
 # Background input experiment log
 
-Last updated: 2026-10-06. Append each new experiment and update the current status below.
+Last updated: 2026-10-10. Append each new experiment and update the current status below.
+
+## 2026-10-10 — Continuous window capture and bounded focus bursts (1.0.259)
+
+Replaced the Windows Graphics Capture placeholder with continuous capture of the selected HWND/PID, one latest
+frame buffer, source timestamps, client cropping, resize handling and black-frame rejection. Background mode
+never falls back to desktop pixels. Current frames expire after 300 ms and decisions after 500 ms. Native key
+dispatch checks the live capture stream independently of the original decision's age, so a healthy stream can
+serve the second key of a pair without extending the decision's deadline.
+
+Combat rotations and Direct KP pairs explicitly share a borrow with a 750 ms total budget and immediate
+completion return, followed by 200 ms before the next borrow. Expired or user-interrupted bursts cannot
+reacquire focus. Held releases retry before hand-back. Focus/stack failures pause new input until mode reset.
+An interrupted action that emitted a down consumes its cooldown without claiming completion. UI/API status
+includes capture health and measured borrowing/input counters. Existing SendInput and keyboard-only policy remain.
+
+The native owned-window fixture passed covered-pixel, client-crop, movement, odd-width resize, black-frame
+pause/recovery, minimized/closed window and PID-mismatch checks. It sent no input and used no game window.
+Simulated regressions cover the new focus and decision behavior; the full offline suite is required by the
+standalone build. Windows scheduling and native focus calls can extend the observed budget. Live Kathana
+capture/rendering, key acceptance, long sessions and enforcement compatibility remain unverified.
+
+Details: [docs/BACKGROUND_MODE.md](docs/BACKGROUND_MODE.md).
 
 ## 2026-10-06 — Background mode: borrow the keyboard per key press (1.0.250)
 
@@ -107,7 +129,7 @@ The user explicitly confirmed after S03 that everything must stay in **this Wind
 
 ## Current status
 
-- **Newest (1.0.250):** Background mode borrows the keyboard per key press so the game can stay behind other windows, using the same foreground SendInput. Focus mechanics were measured with dummy windows (G01-G05); no live game input was sent and detection compatibility is unverified. It supersedes the keep-the-game-in-front default of 1.0.247 while it is on (the toggle is on by default; turn it off for 1.0.247 behavior).
+- **Newest (1.0.259):** Background mode continuously captures the covered game window, expires stale decisions, bounds focus bursts and returns focus immediately on completion. Capture was checked with owned native fixtures and focus/input with simulated platforms. It uses the same foreground SendInput; no live game input or enforcement-compatibility result is claimed. See the 2026-10-10 entry and current background-mode documentation.
 - **Previous requested behavior:** v1.0.247 automatically restores selected game focus while automation is running and removes the input button/notice. Focus loss does not stop the combat engine; failed activation is retried. Stop/F12 remains available. No live game trial was performed.
 - **Latest detection report (S04):** all four background keyboard choices are detected. v1.0.246 switches all game interactions to foreground SendInput as requested, and fixes one-shot launch startup being consumed before success. No new game input was sent during implementation; enforcement compatibility remains unverified.
 - **Latest failure (S03):** the user reports suspicious-activity termination after trying v1.0.231 and supplies another terminated-session screenshot. The running v1.0.231 panel (PID 38048) reported `inputMode=background-keys-posted-scan`, `running=true` and the old selected game PID 7016; the game process snapshot at that point was PID 27772. Posted scan-code background delivery has failed the user's continued-use requirement despite the earlier short inventory successes. The exact detecting component and causal trigger remain unknown. Other variants were not individually identified in this latest report.

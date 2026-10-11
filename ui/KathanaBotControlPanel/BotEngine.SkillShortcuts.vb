@@ -33,12 +33,7 @@ Partial Public Class BotEngine
         Try
             SendKeyboardInput(CByte(modifier), modifierScan, 0, UIntPtr.Zero)
             SendKeyboardInput(CByte(digit), digitScan, 0, UIntPtr.Zero)
-            If token.CanBeCanceled Then
-                token.WaitHandle.WaitOne(pressMs)
-            Else
-                Thread.Sleep(pressMs)
-            End If
-            Return Not token.IsCancellationRequested
+            Return WindowsInput.WaitForKeyHold(pressMs, token)
         Finally
             Try
                 SendKeyboardInput(CByte(digit), digitScan, 2, UIntPtr.Zero)

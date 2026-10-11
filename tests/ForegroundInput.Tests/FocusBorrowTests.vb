@@ -16,6 +16,13 @@ Friend Module FocusBorrowTests
         VerifyEligibilityDoesNotTakeFocus()
         VerifyBorrowCycleAndLinger()
         VerifyBurstSharesOneBorrow()
+        VerifyBoundedExplicitBurst()
+        VerifyImmediateCompletion()
+        VerifyCaptureGateAndDecisionAge()
+        VerifyUserTakeoverBeforeWatchdog()
+        VerifyReleaseFailureDelaysHandBack()
+        VerifyInterruptedActionConsumesCooldown()
+        VerifyDirectKpPairSharesOneBorrow()
         VerifyGameAlreadyInFront()
         VerifyYieldToUser()
         VerifyBlockers()
@@ -123,6 +130,7 @@ Friend Module FocusBorrowTests
         platform.Clock += 400
         input.ServiceFocusLease()
         Check(platform.ActivateOtherCalls = 1 AndAlso platform.Active = Other, "the borrow ends once the bot is quiet")
+        platform.Clock += 200
         Check(Down(input, Game, 68) AndAlso platform.ActivateCalls = 2, "a later key borrows again")
     End Sub
 
@@ -246,13 +254,14 @@ Friend Module FocusBorrowTests
         Dim input = fixture.Input, platform = fixture.Platform
         input.Activate(Game)
         Check(Down(input, Game, 87), "movement key down borrows")
-        platform.Clock += 5000
+        platform.Clock += 749
         input.ServiceFocusLease()
-        Check(platform.Active = Game AndAlso platform.ActivateOtherCalls = 0, "a held key keeps the keyboard however long it is held")
-        Check(Up(input, Game, 87), "release")
-        platform.Clock += 300
+        Check(platform.Active = Game AndAlso platform.ActivateOtherCalls = 0, "held key stays focused within the burst budget")
+        platform.Clock += 1
         input.ServiceFocusLease()
-        Check(platform.Active = Other AndAlso platform.ActivateOtherCalls = 1, "the keyboard goes back once the held key is released")
+        Check(platform.Active = Other AndAlso platform.ActivateOtherCalls = 1 AndAlso platform.Events.Last().Flags = 2,
+              "the burst deadline releases held keys and returns focus")
+        platform.Clock += 200
 
         ' Mid-hold, eligibility is strict: a key that is down cannot continue after focus moved away.
         Down(input, Game, 87)
@@ -277,17 +286,17 @@ Friend Module FocusBorrowTests
         Dim input = fixture.Input, platform = fixture.Platform
         input.Activate(Game)
         platform.RestoreZMovesActivationTo = Third ' this "Windows" moves activation when the window is re-stacked
-        Check(Down(input, Game, 65), "the key is still sent when re-stacking moved activation")
-        Check(platform.ActivateCalls = 2 AndAlso platform.RestoreZCalls = 1 AndAlso platform.Active = Game,
-              "activation is taken again and the key goes to the game")
-        Check(platform.Events.Count = 1 AndAlso platform.Events(0).Key = 65, "exactly one key was sent")
+        Check(Not Down(input, Game, 65), "a failed restack skips input")
+        Check(platform.ActivateCalls = 1 AndAlso platform.RestoreZCalls = 1 AndAlso platform.Active = Third,
+              "the bot does not fight a changed foreground window")
+        Check(platform.Events.Count = 0 AndAlso input.FocusBorrowStatus().RecoveryRequired, "no key is sent and recovery is visible")
         platform.RestoreZMovesActivationTo = IntPtr.Zero
         Up(input, Game, 65)
         platform.Clock += 400
         input.ServiceFocusLease()
-        Check(platform.ActivateOtherCalls = 1, "focus is still handed back")
+        Check(platform.ActivateOtherCalls = 0, "the new foreground choice is preserved")
         Dim restacks = platform.RestoreZCalls
-        Check(Down(input, Game, 66) AndAlso platform.RestoreZCalls = restacks, "once re-stacking proved unsafe it is not attempted again")
+        Check(Not Down(input, Game, 66) AndAlso platform.RestoreZCalls = restacks, "the failure blocks further borrows until the mode is reset")
     End Sub
 
     Private Sub VerifyVanishedPreviousWindow()
@@ -300,9 +309,12 @@ Friend Module FocusBorrowTests
         input.ServiceFocusLease()
         Check(platform.ActivateOtherCalls = 0 AndAlso platform.Active = Game, "when the previous window is gone the game simply keeps the keyboard")
         Check(Not input.FocusBorrowStatus().Active, "the borrow is over either way")
+        input.FocusBorrow = FocusBorrowSettings.Disabled
+        input.FocusBorrow = New FocusBorrowSettings(True, 800, 250, True)
         platform.Restorable = True
         platform.ActivateOtherResult = False
         platform.Active = Other
+        platform.Clock += 200
         Down(input, Game, 66) : Up(input, Game, 66)
         platform.Clock += 400
         input.ServiceFocusLease()
@@ -321,7 +333,7 @@ Friend Module FocusBorrowTests
 
         ' A stop request that found no borrow must not cut a later borrow short.
         input.ReleaseAll()
-        platform.Clock += 10
+        platform.Clock += 200
         Check(Down(input, Game, 66), "borrow after an idle stop request")
         input.ServiceFocusLease()
         Check(platform.Active = Game AndAlso input.FocusBorrowStatus().Active, "a stale stop request does not end the next borrow")
@@ -340,6 +352,8 @@ Friend Module FocusBorrowTests
         input.Activate(Game)
         Down(input, Game, 65) : Up(input, Game, 65)
         input.Activate(Game2)
+        Check(Not Down(input, Game2, 66) AndAlso platform.Active = Other, "switching targets hands focus back before borrowing again")
+        platform.Clock += 200
         Check(Down(input, Game2, 66), "a second game window borrows after the first hands back")
         Check(platform.ActivateOtherCalls = 1 AndAlso platform.LastActivatedOther = Other AndAlso platform.Active = Game2,
               "the first borrow returned the keyboard before the second took it")
@@ -366,6 +380,147 @@ Friend Module FocusBorrowTests
         Check(platform.SampleCalls = before, "no sampling happens when Background mode is off")
     End Sub
 
+    Private Sub VerifyBoundedExplicitBurst()
+        Dim fixture = NewBackground(New FocusBorrowSettings(True, 0, 0, True, 750, 200))
+        Dim input = fixture.Input, platform = fixture.Platform
+        input.Activate(Game)
+        Using input.BeginFocusBurst(Game)
+            For Each key In {65, 66, 67}
+                Check(Down(input, Game, key), "planned burst key accepted")
+                platform.Clock += 200
+                Check(Up(input, Game, key), "planned burst key released")
+                input.ServiceFocusLease()
+                Check(platform.Active = Game, "explicit burst shares focus despite zero linger")
+            Next
+            platform.Clock += 150
+            input.ServiceFocusLease()
+            Check(platform.Active = Other AndAlso Not input.BorrowActive, "total burst duration is bounded even with continuous activity")
+            platform.Clock += 250
+            Check(Not Down(input, Game, 68), "remaining stale burst cannot reacquire focus after its time limit")
+        End Using
+        Check(input.FocusBorrowStatus().LongestBorrowMs = 750 AndAlso input.FocusBorrowStatus().KeysSent = 3,
+              "borrow duration and emitted keys are measured")
+        Using input.BeginFocusBurst(Game)
+            Check(Down(input, Game, 69), "a new decision burst can borrow after the rest interval")
+            Up(input, Game, 69)
+        End Using
+        Check(platform.Active = Other, "disposing a burst returns focus immediately")
+    End Sub
+
+    Private Sub VerifyImmediateCompletion()
+        Dim fixture = NewBackground(New FocusBorrowSettings(True, 0))
+        Dim input = fixture.Input, platform = fixture.Platform
+        input.Activate(Game)
+        Down(input, Game, 65)
+        platform.Clock += 180
+        Up(input, Game, 65)
+        input.CompleteKeySequence(Game)
+        Check(platform.Active = Other AndAlso platform.ActivateOtherCalls = 1, "sequence completion returns focus without a linger or timer tick")
+        Check(Not Down(input, Game, 66), "a rest interval gives the user time between borrows")
+        platform.Clock += 200
+        Check(Down(input, Game, 66), "borrowing resumes after the rest interval")
+        platform.ActivateOtherResult = False
+        Up(input, Game, 66)
+        input.CompleteKeySequence(Game)
+        Check(input.FocusBorrowStatus().RecoveryRequired, "failed hand-back enters recovery")
+        platform.Clock += 500
+        Check(Not Down(input, Game, 67), "failed hand-back cannot quietly keep sending into the game")
+    End Sub
+
+    Private Sub VerifyCaptureGateAndDecisionAge()
+        Dim fixture = NewBackground()
+        fixture.Platform.KeyPause = "game-window capture is unavailable or stale"
+        Check(Not Down(fixture.Input, Game, 65) AndAlso fixture.Platform.ActivateCalls = 0 AndAlso fixture.Platform.Events.Count = 0,
+              "stale capture prevents borrowing and input")
+        fixture.Platform.KeyPause = ""
+        Check(Down(fixture.Input, Game, 65), "fresh capture allows the next decision")
+        Check(BackgroundCapture.DecisionIsFresh(1000, 1500), "decision age boundary is accepted")
+        Check(Not BackgroundCapture.DecisionIsFresh(1000, 1501) AndAlso Not BackgroundCapture.DecisionIsFresh(-1, 1000) AndAlso Not BackgroundCapture.DecisionIsFresh(1001, 1000),
+              "stale, missing and future observations cannot authorize an action")
+        Using BackgroundCapture.BeginDecision()
+            BackgroundCapture.AcceptFrame(Game, Environment.TickCount64 - 501)
+            Check(BackgroundCapture.InputBlocker(Game).Contains("fresh action decision"), "expired observation blocks its decision scope")
+            BackgroundCapture.AcceptFrame(Game, Environment.TickCount64)
+            Check(BackgroundCapture.InputBlocker(Game).Contains("fresh action decision"), "a later capture cannot refresh an already-made decision")
+            Using BackgroundCapture.BeginDecision()
+                BackgroundCapture.AcceptFrame(Game, Environment.TickCount64)
+                Check(Not BackgroundCapture.InputBlocker(Game).Contains("fresh action decision"), "a new scope can decide from a new observation")
+                Check(BackgroundCapture.InputBlocker(Game2).Contains("fresh action decision"), "a decision cannot move to another target window")
+            End Using
+            Check(BackgroundCapture.InputBlocker(Game).Contains("fresh action decision"), "a nested worker scope cannot refresh its parent's observation")
+        End Using
+    End Sub
+
+    Private Sub VerifyUserTakeoverBeforeWatchdog()
+        Dim fixture = NewBackground()
+        Dim input = fixture.Input, platform = fixture.Platform
+        Using input.BeginFocusBurst(Game)
+            Down(input, Game, 65)
+            Up(input, Game, 65)
+            platform.Active = Third
+            Check(Not Down(input, Game, 66) AndAlso platform.Active = Third AndAlso platform.ActivateCalls = 1,
+                  "a user takeover between keys cannot be overwritten before the watchdog samples it")
+        End Using
+    End Sub
+
+    Private Sub VerifyReleaseFailureDelaysHandBack()
+        Dim fixture = NewBackground()
+        Dim input = fixture.Input, platform = fixture.Platform
+        Down(input, Game, 65)
+        platform.FailReleaseKey = 65
+        input.ReleaseAll()
+        input.ServiceFocusLease()
+        Check(platform.Active = Game AndAlso input.BorrowActive AndAlso platform.ActivateOtherCalls = 0,
+              "a failed owned release is retried before focus moves to the user's app")
+        platform.FailReleaseKey = 0
+        input.ServiceFocusLease()
+        Check(platform.Active = Other AndAlso Not input.BorrowActive AndAlso platform.Events.Last().Flags = 2,
+              "successful cleanup returns focus and ends the borrow")
+    End Sub
+
+    Private Sub VerifyInterruptedActionConsumesCooldown()
+        Dim original = WindowsInput.Current
+        Dim fixture = NewBackground()
+        WindowsInput.Current = fixture.Input
+        Try
+            Dim engine As New BotEngine()
+            Dim action As New ActionRule With {.KeyName = "1", .CooldownMs = 10000}
+            fixture.Platform.BeforeSend = Sub(value)
+                                              If value.Keyboard AndAlso value.Flags = 0 Then fixture.Platform.Active = Third
+                                          End Sub
+            Dim flags = BindingFlags.Instance Or BindingFlags.NonPublic
+            Dim dispatch = GetType(BotEngine).GetMethod("SendActionKey", flags)
+            Check(Not CBool(dispatch.Invoke(engine, {Game, action, 12})) AndAlso WindowsInput.LastKeyWasEmitted,
+                  "interrupted action reports uncertainty after its down was emitted")
+            Dim ready = GetType(BotEngine).GetMethod("IsReady", flags, Nothing, {GetType(ActionRule)}, Nothing)
+            Check(Not CBool(ready.Invoke(engine, {action})), "uncertain action consumes its cooldown to prevent duplicate input")
+            fixture.Platform.KeyPause = "capture stale"
+            Dim unsent As New ActionRule With {.KeyName = "2", .CooldownMs = 10000}
+            Check(Not CBool(dispatch.Invoke(engine, {Game, unsent, 12})) AndAlso Not WindowsInput.LastKeyWasEmitted AndAlso CBool(ready.Invoke(engine, {unsent})),
+                  "a skipped action resets the receipt and keeps its cooldown ready")
+        Finally
+            fixture.Input.ReleaseAll()
+            fixture.Input.ServiceFocusLease()
+            WindowsInput.Current = original
+        End Try
+    End Sub
+
+    Private Sub VerifyDirectKpPairSharesOneBorrow()
+        Dim original = WindowsInput.Current
+        Dim fixture = NewBackground(New FocusBorrowSettings(True, 0))
+        WindowsInput.Current = fixture.Input
+        Try
+            Check(DirectKpSequence.SendPair(Function(key) BotEngine.SendKey(Game, key, 5), Function() True,
+                                           Threading.CancellationToken.None, Function() WindowsInput.BeginFocusBurst(Game)),
+                  "Direct KP completes its scoped E/R pair")
+            Check(fixture.Platform.Events.Select(Function(value) CInt(value.Key)).SequenceEqual({69, 69, 82, 82}) AndAlso
+                  fixture.Platform.ActivateCalls = 1 AndAlso fixture.Platform.ActivateOtherCalls = 1 AndAlso fixture.Platform.Active = Other,
+                  "E/R share one borrow and focus is returned as soon as R is released")
+        Finally
+            WindowsInput.Current = original
+        End Try
+    End Sub
+
     Private Sub VerifyFacadeAndEnginePaths()
         Dim original = WindowsInput.Current
         Dim fixture = NewBackground()
@@ -380,11 +535,12 @@ Friend Module FocusBorrowTests
             Check(BotEngine.SendKey(Game, "1", 12), "a normal skill key works with the game behind other windows")
             Check(platform.Events.Count = 2 AndAlso platform.Events.All(Function(item) item.Keyboard AndAlso item.Key = 49) AndAlso platform.ActivateCalls = 1,
                   "the skill key is one owned down/up pair after one borrow")
-            Check(WindowsInput.FocusBorrowActive, "the facade reports an active borrow while the game is only in front for a key")
+            Check(Not WindowsInput.FocusBorrowActive AndAlso platform.Active = Other, "the facade reports immediate focus return after the key sequence")
+            platform.Clock += 200
             platform.Events.Clear()
             Check(BotEngine.SendKey(Game, "CTRL+2", 12), "a Ctrl chord works too")
-            Check(platform.Events.Select(Function(item) CInt(item.Key)).SequenceEqual({17, 50, 50, 17}) AndAlso platform.ActivateCalls = 1,
-                  "the chord shares the existing borrow and releases the digit before its modifier")
+            Check(platform.Events.Select(Function(item) CInt(item.Key)).SequenceEqual({17, 50, 50, 17}) AndAlso platform.ActivateCalls = 2 AndAlso platform.Active = Other,
+                  "the chord uses one borrow and returns focus after releasing the digit and modifier")
             ' The wait applies when the keyboard has to be taken, not mid-borrow: end this borrow first.
             input.ReleaseAll()
             input.ServiceFocusLease()
@@ -394,6 +550,7 @@ Friend Module FocusBorrowTests
             Check(Not BotEngine.SendKey(Game, "1", 12) AndAlso platform.Events.Count = 0 AndAlso platform.Active = Other,
                   "the engine reports a skipped key while the user is typing")
             platform.UserIdle = Long.MaxValue
+            platform.Clock += 200
             Check(BotEngine.SendKey(Game, "1", 12) AndAlso platform.Events.Count = 2, "and sends it once the user has stopped")
         Finally
             input.ReleaseAll()

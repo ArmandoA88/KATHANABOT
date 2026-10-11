@@ -11,7 +11,8 @@ Partial Public Class BotEngine
         If token.IsCancellationRequested OrElse Not Volatile.Read(_config).DirectKpEnabled Then Return
         If _directKpWindow <> hwnd Then StopDirectKpWorker()
         _directKpWindow = hwnd
-        Interlocked.Exchange(_directKpAllowedUntil, Environment.TickCount64 + Math.Max(1000, cfg.LoopMs * 2 + 500))
+        Dim permitMs = If(WindowsInput.FocusBorrowEnabled, BackgroundCapture.MaximumDecisionAgeMs, Math.Max(1000, cfg.LoopMs * 2 + 500))
+        Interlocked.Exchange(_directKpAllowedUntil, Environment.TickCount64 + permitMs)
         If _directKpTask IsNot Nothing AndAlso Not _directKpTask.IsCompleted Then Return
         _directKpCts?.Dispose()
         _directKpCts = CancellationTokenSource.CreateLinkedTokenSource(token)
@@ -31,8 +32,8 @@ Partial Public Class BotEngine
             Async Function()
                 Try
                     Await DirectKpSequence.RunAsync(
-                        Function(key) If(key = "E" AndAlso Volatile.Read(_config).AutoAssistOnlyEnabled, True, SendKey(hwnd, key, 5, forceBackgroundPost:=True)),
-                        allowed, Function() Volatile.Read(_config).DirectKpIntervalMs, runToken)
+                        Function(key) If(key = "E" AndAlso Volatile.Read(_config).AutoAssistOnlyEnabled, True, SendKey(hwnd, key, 5, forceBackgroundPost:=True, cancellationToken:=runToken)),
+                        allowed, Function() Volatile.Read(_config).DirectKpIntervalMs, runToken, Function() New DirectKpBurstScope(hwnd))
                 Catch ex As OperationCanceledException
                     ' Stop/toggle-off cancels the pending R as well as future cycles.
                 Catch ex As Exception
@@ -40,6 +41,28 @@ Partial Public Class BotEngine
                 End Try
             End Function)
     End Sub
+
+    Private NotInheritable Class DirectKpBurstScope
+        Implements IDisposable
+        Private ReadOnly decision As IDisposable
+        Private ReadOnly burst As IDisposable
+        Public Sub New(hwnd As IntPtr)
+            decision = BackgroundCapture.BeginDecision()
+            If WindowsInput.FocusBorrowEnabled Then
+                Using frame = CaptureClient(hwnd)
+                    ' No frame leaves the new decision uninitialized, so the input boundary skips both keys.
+                End Using
+            End If
+            burst = WindowsInput.BeginFocusBurst(hwnd)
+        End Sub
+        Public Sub Dispose() Implements IDisposable.Dispose
+            Try
+                burst?.Dispose()
+            Finally
+                decision.Dispose()
+            End Try
+        End Sub
+    End Class
 
     Public Sub StopDirectKpWorker()
         Interlocked.Exchange(_directKpAllowedUntil, 0)

@@ -8,7 +8,9 @@
 
 ''' <summary>Immutable Background-mode settings shared with the input backend.</summary>
 Public NotInheritable Class FocusBorrowSettings
-    Public Const DefaultLingerMs As Integer = 250
+    Public Const DefaultLingerMs As Integer = 0
+    Public Const DefaultMaximumBurstMs As Integer = 750
+    Public Const DefaultRestMs As Integer = 200
     Public Const DefaultYieldMs As Integer = 1000
     Public Const MaximumYieldMs As Integer = 30000
 
@@ -24,13 +26,18 @@ Public NotInheritable Class FocusBorrowSettings
     Public ReadOnly Property LingerMs As Integer
     ''' <summary>Do not take the keyboard from a full-screen app or while presentation mode is on.</summary>
     Public ReadOnly Property PauseForFullScreen As Boolean
+    Public ReadOnly Property MaximumBurstMs As Integer
+    Public ReadOnly Property RestMs As Integer
 
     Public Sub New(enabled As Boolean, yieldToUserMs As Integer, Optional lingerMs As Integer = DefaultLingerMs,
-                   Optional pauseForFullScreen As Boolean = True)
+                   Optional pauseForFullScreen As Boolean = True,
+                   Optional maximumBurstMs As Integer = DefaultMaximumBurstMs, Optional restMs As Integer = DefaultRestMs)
         Me.Enabled = enabled
         Me.YieldToUserMs = Math.Clamp(yieldToUserMs, 0, MaximumYieldMs)
         Me.LingerMs = Math.Clamp(lingerMs, 0, 5000)
         Me.PauseForFullScreen = pauseForFullScreen
+        Me.MaximumBurstMs = Math.Clamp(maximumBurstMs, 150, 5000)
+        Me.RestMs = Math.Clamp(restMs, 50, 5000)
     End Sub
 End Class
 
@@ -59,6 +66,11 @@ Public NotInheritable Class FocusBorrowSnapshot
     Public Property Paused As Long
     Public Property Refused As Long
     Public Property TakenByUser As Long
+    Public Property BudgetPauses As Long
+    Public Property KeysSent As Long
+    Public Property TotalBorrowedMs As Long
+    Public Property LongestBorrowMs As Long
+    Public Property RecoveryRequired As Boolean
     Public Property LastNote As String = ""
 End Class
 

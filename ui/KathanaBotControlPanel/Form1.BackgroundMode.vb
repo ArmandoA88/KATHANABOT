@@ -14,9 +14,9 @@ Partial Public Class Form1
 
     Private Const BackgroundModeHelp As String =
         "Background mode lets the game stay behind your other windows (keep it open, not minimized). " &
-        "Windows only delivers key presses to the active window, so the bot takes the keyboard for the " &
-        "moment a key is pressed, keeps the game window where it was in the window stack, and gives focus " &
-        "back to what you were using. It never moves your mouse or clicks, so mouse features are paused " &
+        "The bot continuously captures the game window and pauses actions when frames are stale or unavailable. " &
+        "It borrows the keyboard for short bursts (at most 0.75 seconds) and returns it as soon as each " &
+        "key sequence or burst finishes. It never moves your mouse or clicks, so mouse features are paused " &
         "while it is on. Full-screen apps and presentations are not interrupted, and the bot waits for you " &
         "to stop typing first. Turn it off to keep the game in front instead."
 
@@ -121,7 +121,7 @@ Partial Public Class Form1
             Catch ex As Exception
                 RuntimeJournal.Record("Background mode", "Could not list the paused mouse features: " & ex.Message)
             End Try
-            AppendLog("Background mode ON: the game can stay behind other windows; the bot borrows the keyboard for each key press and hands it back." &
+            AppendLog("Background mode ON: continuous window capture, fresh decisions, bounded keyboard bursts and immediate focus return." &
                       If(paused.Count > 0, " Mouse features paused: " & String.Join(", ", paused) & ".", ""))
         Else
             AppendLog("Background mode OFF: the bot keeps the game in front and refocuses it when needed.")
@@ -140,9 +140,10 @@ Partial Public Class Form1
             Return
         End If
         Dim status = WindowsInput.FocusBorrowStatus()
-        Dim line = $"Borrowed {status.Borrowed}x | waited for you {status.WaitedForUser}x | paused {status.Paused}x | refused {status.Refused}x"
+        Dim state = If(status.RecoveryRequired, "Focus recovery needed", If(status.Active, "Sending actions", "Keyboard returned"))
+        Dim line = $"{state} | {BackgroundCapture.StatusText()} | keys sent {status.KeysSent} | longest borrow {status.LongestBorrowMs} ms"
         If status.LastNote <> "" Then line &= Environment.NewLine & status.LastNote
         lblBackgroundModeStatus.Text = line
-        lblBackgroundModeStatus.ForeColor = If(status.Refused > 0 AndAlso status.Borrowed = 0, Color.Gold, Color.LightSteelBlue)
+        lblBackgroundModeStatus.ForeColor = If(status.RecoveryRequired OrElse (status.Refused > 0 AndAlso status.Borrowed = 0), Color.Gold, Color.LightSteelBlue)
     End Sub
 End Class

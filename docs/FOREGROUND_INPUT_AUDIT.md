@@ -87,3 +87,24 @@ The input boundary above is unchanged: every key still goes out through the sing
   workflows are paused by the existing keyboard-only policy. Trade keeps its own explicit foreground sender.
 * The same limits apply: foreground checking and input dispatch cannot be made atomic, and nothing here makes
   injected input undetectable. See [Background mode](BACKGROUND_MODE.md).
+
+## 1.0.259 continuous capture and bounded borrowing
+
+Background mode now uses a continuous Windows Graphics Capture session with a single latest-frame buffer.
+Source age, exact HWND/PID, client geometry and black-frame checks gate decisions and input. It never falls
+back to desktop capture. Full and Lite establish a new observation per loop; Direct KP establishes one per
+pair. Later frames cannot extend an earlier decision's 500 ms expiry. Input independently checks the current
+validated capture stream's 300 ms age limit before and after focus acquisition.
+
+Explicit combat/pair scopes replace implicit linger in production. A borrow has a 750 ms total dispatch
+budget, returns focus immediately on completion, and leaves 200 ms after hand-back before another borrow.
+The watchdog releases owned keys at expiry; remaining expired/user-interrupted burst keys cannot reacquire
+focus. Release failures retry before return. Restacking/hand-back failures pause new input until mode reset.
+Counters include emitted keys and measured borrow durations including hand-back. Interrupted action rules
+consume their cooldown if a down was emitted, without claiming completion. No input transport was added.
+
+The capture component calls Windows capture, imaging, Direct3D device creation, COM/WinRT interop, DWM bounds
+and read-only window queries. It makes no focus or input calls. The optional native fixture checks covered
+source pixels, client cropping, resize, black-frame pause/recovery and window/PID lifecycle using owned dummy
+windows. The automated input suite uses simulated platforms. No live game input or long-session compatibility
+result is established; Windows scheduling and native activation calls can extend observed dispatch budgets.

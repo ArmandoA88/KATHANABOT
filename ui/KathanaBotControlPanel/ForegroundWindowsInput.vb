@@ -1,4 +1,4 @@
-﻿Imports System.Runtime.InteropServices
+Imports System.Runtime.InteropServices
 Imports System.Text
 Imports System.Threading
 Imports System.Drawing
@@ -70,6 +70,9 @@ Public MustInherit Class InputPlatform
     ' The user changed the foreground window themselves during a borrow; treat it as activity.
     Public Overridable Sub NoteUserActivity()
     End Sub
+    Public Overridable Function KeyBlocker(hwnd As IntPtr) As String
+        Return ""
+    End Function
 End Class
 
 Public NotInheritable Class ForegroundWindowsInput
@@ -95,19 +98,38 @@ Public NotInheritable Class ForegroundWindowsInput
     ' The UI thread never waits on leaseLock for long: a hand-off can need the UI thread to respond.
     Private Const RefusedRetryMs As Long = 750
     Private Const LeaseLockWaitMs As Integer = 150
-    Private Const HeldLeaseCapMs As Long = 120000
     Private Const UserEventToleranceMs As Long = 20
     Private ReadOnly leaseLock As New Object
     Private borrow As FocusBorrowSettings = FocusBorrowSettings.Disabled
     Private lease As FocusLease
     Private nextBorrowAttemptMs As Long
-    Private anchorUnsafe As Boolean
     Private borrowedCount As Long
     Private waitedForUserCount As Long
     Private pausedCount As Long
     Private refusedCount As Long
     Private takenByUserCount As Long
     Private lastBorrowNote As String = ""
+    Private budgetPausedCount As Long
+    Private keysSentCount As Long
+    Private totalBorrowedMs As Long
+    Private longestBorrowMs As Long
+    Private recoveryRequired As Boolean
+    Private ReadOnly burst As New AsyncLocal(Of BurstToken)
+    Private Class BurstToken
+        Public Hwnd As IntPtr
+        Public Ended As Boolean
+        Public Blocked As Boolean
+    End Class
+    Private NotInheritable Class BurstScope
+        Implements IDisposable
+        Private callback As Action
+        Public Sub New(finish As Action)
+            callback = finish
+        End Sub
+        Public Sub Dispose() Implements IDisposable.Dispose
+            Interlocked.Exchange(callback, Nothing)?.Invoke()
+        End Sub
+    End Class
     Private Class FocusLease
         Public Owner As Binding
         Public Previous As IntPtr
@@ -116,6 +138,7 @@ Public NotInheritable Class ForegroundWindowsInput
         Public LastActivityMs As Long
         ' Set by Stop/F12/shutdown; belongs to this borrow only, so it can never cut a later one short.
         Public EndRequested As Boolean
+        Public Burst As BurstToken
     End Class
 
     Public Sub New(backend As InputPlatform, Optional delay As Action(Of Integer) = Nothing, Optional allowActivation As Boolean = True)
@@ -142,6 +165,9 @@ Public NotInheritable Class ForegroundWindowsInput
     End Function
     Public Function IsWindowForeground(hwnd As IntPtr) As Boolean
         Return Focused(New Binding With {.Hwnd = hwnd, .Pid = platform.ProcessId(hwnd)})
+    End Function
+    Public Function BoundTargetIsForeground() As Boolean
+        Return Focused(target.Value)
     End Function
     Public Function Activate(hwnd As IntPtr) As Boolean Implements IWindowsInput.Activate
         BindTarget(hwnd)
@@ -195,7 +221,14 @@ Public NotInheritable Class ForegroundWindowsInput
         If (flags And 2UI) = 0 Then actionDelay(NextActionDelayMs())
         ' Background mode takes the keyboard just before a key goes out, outside the send lock. Text
         ' (Unicode) never borrows: typing needs a chat box the user opened, not a hand-off.
-        If (flags And (2UI Or 4UI)) = 0 AndAlso BorrowEnabled Then BorrowFocusForKey(target.Value)
+        If (flags And (2UI Or 4UI)) = 0 AndAlso BorrowEnabled Then
+            Dim blocker = platform.KeyBlocker(target.Value.Hwnd)
+            If blocker <> "" Then
+                SetNote("Background mode: " & blocker & "; key skipped.")
+                Throw New InvalidOperationException(lastBorrowNote)
+            End If
+            BorrowFocusForKey(target.Value)
+        End If
         SyncLock gate
             Dim id = $"key:{If((flags And 4UI) <> 0, "unicode", "vk")}:{If((flags And 4UI) <> 0, scan, key)}"
             Dim up = (flags And 2UI) <> 0
@@ -209,11 +242,17 @@ Public NotInheritable Class ForegroundWindowsInput
                 Return
             End If
             If Not Focused(target.Value) Then Throw New InvalidOperationException("Selected game is not foreground; key skipped.")
+            If BorrowEnabled AndAlso (flags And 4UI) = 0 Then
+                Dim blocker = platform.KeyBlocker(target.Value.Hwnd)
+                If blocker <> "" Then Throw New InvalidOperationException("Background mode: " & blocker & "; key skipped.")
+            End If
             If held.ContainsKey(id) Then Throw New InvalidOperationException("Bot key is already held.")
             Dim value As New ForegroundInputEvent With {.Keyboard = True, .Key = key, .Scan = scan, .Flags = flags, .Extra = extra}
             If Not Emit(value) Then Throw New InvalidOperationException("SendInput key down failed.")
             value.Flags = flags Or 2UI
             held(id) = New HeldInput With {.Owner = target.Value, .Release = value}
+            If BorrowEnabled Then Interlocked.Increment(keysSentCount)
+            If (flags And 4UI) = 0 AndAlso Object.ReferenceEquals(Me, WindowsInput.Current) Then WindowsInput.RecordKeyDown()
             TouchLease()
             afterEmitted?.Invoke()
         End SyncLock
@@ -352,7 +391,13 @@ Public NotInheritable Class ForegroundWindowsInput
         End Get
         Set(value As FocusBorrowSettings)
             Dim updated = If(value, FocusBorrowSettings.Disabled)
+            Dim previous = Volatile.Read(borrow)
             Volatile.Write(borrow, updated)
+            If updated.Enabled AndAlso Not previous.Enabled Then
+                Volatile.Write(recoveryRequired, False)
+                nextBorrowAttemptMs = 0
+                SetNote("")
+            End If
             If Not updated.Enabled Then RequestLeaseEnd(IntPtr.Zero)
         End Set
     End Property
@@ -379,6 +424,11 @@ Public NotInheritable Class ForegroundWindowsInput
             .Paused = Interlocked.Read(pausedCount),
             .Refused = Interlocked.Read(refusedCount),
             .TakenByUser = Interlocked.Read(takenByUserCount),
+            .BudgetPauses = Interlocked.Read(budgetPausedCount),
+            .KeysSent = Interlocked.Read(keysSentCount),
+            .TotalBorrowedMs = Interlocked.Read(totalBorrowedMs),
+            .LongestBorrowMs = Interlocked.Read(longestBorrowMs),
+            .RecoveryRequired = Volatile.Read(recoveryRequired),
             .LastNote = Volatile.Read(lastBorrowNote)}
     End Function
 
@@ -387,6 +437,7 @@ Public NotInheritable Class ForegroundWindowsInput
         Dim current = Volatile.Read(lease)
         If current Is Nothing Then Return
         If hwnd <> IntPtr.Zero AndAlso current.Owner.Hwnd <> hwnd Then Return
+        If current.Burst IsNot Nothing Then Volatile.Write(current.Burst.Blocked, True)
         Volatile.Write(current.EndRequested, True)
     End Sub
 
@@ -400,7 +451,7 @@ Public NotInheritable Class ForegroundWindowsInput
     End Sub
 
     Private Sub BorrowFocusForKey(owner As Binding)
-        If Focused(owner) Then Return ' already in front: the user's own focus, or a borrow in progress
+        If owner Is Nothing Then Throw New InvalidOperationException("Selected game is unavailable; key skipped.")
         Dim reason As String = Nothing
         If Not TryBorrowFocus(owner, reason) Then Throw New InvalidOperationException(reason)
     End Sub
@@ -409,7 +460,7 @@ Public NotInheritable Class ForegroundWindowsInput
         Interlocked.Increment(refusedCount)
         nextBorrowAttemptMs = now + RefusedRetryMs
         ' A failed activation can still have raised the window; put it back where it was.
-        If anchor IsNot Nothing AndAlso Not anchorUnsafe Then platform.RestoreZOrder(owner.Hwnd, anchor)
+        If anchor IsNot Nothing AndAlso Not platform.RestoreZOrder(owner.Hwnd, anchor) Then Volatile.Write(recoveryRequired, True)
         reason = "Background mode: Windows refused to give the game focus; key skipped."
         SetNote(reason)
         Return False
@@ -423,7 +474,6 @@ Public NotInheritable Class ForegroundWindowsInput
             Return False
         End If
         Try
-            If Focused(owner) Then Return True
             Dim settings = Volatile.Read(borrow)
             If Not settings.Enabled Then
                 reason = "Selected game is not foreground; key skipped."
@@ -434,15 +484,53 @@ Public NotInheritable Class ForegroundWindowsInput
                 Return False
             End If
             Dim now = platform.NowMs()
+            If Volatile.Read(recoveryRequired) Then
+                reason = "Background mode paused after a focus failure; switch the mode off and on to retry."
+                Return False
+            End If
+            Dim currentBurst = burst.Value
+            If currentBurst IsNot Nothing AndAlso (Volatile.Read(currentBurst.Ended) OrElse Volatile.Read(currentBurst.Blocked)) Then
+                reason = "Background mode: this burst ended; waiting for a fresh decision."
+                Return False
+            End If
+            Dim activeLease = lease
+            If activeLease IsNot Nothing Then
+                If platform.Foreground() <> activeLease.Owner.Hwnd Then
+                    If activeLease.Burst IsNot Nothing Then Volatile.Write(activeLease.Burst.Blocked, True)
+                    EndLeaseCore(activeLease, False)
+                    platform.NoteUserActivity()
+                    Interlocked.Increment(takenByUserCount)
+                    reason = "Background mode: you switched windows; waiting for a fresh decision."
+                    SetNote(reason)
+                    Return False
+                End If
+                If Volatile.Read(activeLease.EndRequested) OrElse now - activeLease.AcquiredMs >= settings.MaximumBurstMs Then
+                    If activeLease.Burst IsNot Nothing Then Volatile.Write(activeLease.Burst.Blocked, True)
+                    Interlocked.Increment(budgetPausedCount)
+                    EndLeaseCore(activeLease, True)
+                    reason = "Background mode: burst time limit reached; waiting for a fresh decision."
+                    SetNote(reason)
+                    Return False
+                End If
+            End If
+            If Focused(owner) Then Return True ' the user chose the game, or the current borrow is still valid
             If now < nextBorrowAttemptMs Then
-                reason = "Background mode: Windows refused the game focus a moment ago; key skipped."
+                reason = "Background mode: waiting before the next focus borrow; key skipped."
+                SetNote(reason)
                 Return False
             End If
             ' A borrow for another game window must give the keyboard back before this one takes it.
             Dim existing = lease
-            If existing IsNot Nothing AndAlso existing.Owner.Hwnd <> owner.Hwnd Then EndLeaseCore(existing, True)
+            If existing IsNot Nothing AndAlso existing.Owner.Hwnd <> owner.Hwnd Then
+                If existing.Burst IsNot Nothing Then Volatile.Write(existing.Burst.Blocked, True)
+                EndLeaseCore(existing, True)
+                reason = "Background mode: previous target returned focus; waiting before the next borrow."
+                SetNote(reason)
+                Return False
+            End If
 
             Dim front = platform.Foreground()
+            platform.SampleUserActivity(HeldVirtualKeys())
             Dim blocker = platform.BorrowBlocker(front, settings.PauseForFullScreen)
             If blocker <> "" Then
                 Interlocked.Increment(pausedCount)
@@ -461,8 +549,8 @@ Public NotInheritable Class ForegroundWindowsInput
             ' Published before the game is brought forward so overlays that follow the foreground window
             ' (the in-game toggle) never flash over the user's windows during the hand-off.
             Dim pending As New FocusLease With {
-                .Owner = owner, .Previous = If(front = owner.Hwnd, IntPtr.Zero, front), .Anchor = If(anchorUnsafe, Nothing, anchor),
-                .AcquiredMs = now, .LastActivityMs = now}
+                .Owner = owner, .Previous = If(front = owner.Hwnd, IntPtr.Zero, front), .Anchor = anchor,
+                .AcquiredMs = now, .LastActivityMs = now, .Burst = If(currentBurst IsNot Nothing AndAlso currentBurst.Hwnd = owner.Hwnd, currentBurst, Nothing)}
             Volatile.Write(lease, pending)
             If Not platform.Activate(owner.Hwnd) OrElse Not Focused(owner) Then
                 Volatile.Write(lease, Nothing)
@@ -470,18 +558,17 @@ Public NotInheritable Class ForegroundWindowsInput
             End If
             If pending.Anchor IsNot Nothing Then
                 ' Activation raised the window; put it back behind the user's windows without activating it.
-                platform.RestoreZOrder(owner.Hwnd, pending.Anchor)
-                If Not Focused(owner) Then
-                    ' Re-stacking moved activation away on this system. Never do it again, take focus once more.
-                    anchorUnsafe = True
-                    pending.Anchor = Nothing
-                    If Not platform.Activate(owner.Hwnd) OrElse Not Focused(owner) Then
-                        Volatile.Write(lease, Nothing)
-                        Return Refuse(now, owner, Nothing, reason)
-                    End If
+                If Not platform.RestoreZOrder(owner.Hwnd, pending.Anchor) OrElse Not Focused(owner) Then
+                    Volatile.Write(recoveryRequired, True)
+                    If pending.Burst IsNot Nothing Then Volatile.Write(pending.Burst.Blocked, True)
+                    EndLeaseCore(pending, True)
+                    reason = "Background mode paused: the game could not stay behind your windows. Switch the mode off and on to retry."
+                    SetNote(reason)
+                    Return False
                 End If
             End If
             Interlocked.Increment(borrowedCount)
+            SetNote("")
             Return True
         Finally
             Monitor.Exit(leaseLock)
@@ -492,7 +579,6 @@ Public NotInheritable Class ForegroundWindowsInput
     ' chosen where focus should be (they clicked), so it must not be moved again.
     Private Sub EndLeaseCore(current As FocusLease, restorePrevious As Boolean)
         If current Is Nothing Then Return
-        Volatile.Write(lease, Nothing)
         ' Anything still held is released while the game still has the keyboard.
         SyncLock gate
             For Each pair In held.Values
@@ -500,20 +586,44 @@ Public NotInheritable Class ForegroundWindowsInput
             Next
         End SyncLock
         ReleaseUnfocused()
-        If platform.Foreground() <> current.Owner.Hwnd Then Return ' someone else already has the keyboard
-        If Not restorePrevious Then Return
-        Dim destination = current.Previous
-        If Not platform.CanRestore(destination) Then destination = IntPtr.Zero
-        If destination = IntPtr.Zero AndAlso current.Anchor IsNot Nothing AndAlso platform.CanRestore(current.Anchor.Above) Then
-            destination = current.Anchor.Above
-        End If
-        If destination = IntPtr.Zero Then Return ' nowhere sensible to return to; the game keeps the keyboard
-        If platform.ActivateOther(destination) Then
-            If current.Anchor IsNot Nothing AndAlso Not anchorUnsafe Then platform.RestoreZOrder(current.Owner.Hwnd, current.Anchor)
-        Else
-            Interlocked.Increment(refusedCount)
-            SetNote("Background mode: Windows refused to hand focus back; the game kept it.")
-        End If
+        SyncLock gate
+            If held.Values.Any(Function(value) value.Owner.Hwnd = current.Owner.Hwnd) Then
+                Volatile.Write(current.EndRequested, True)
+                SetNote("Background mode: retrying a held-key release before handing focus back.")
+                Return
+            End If
+        End SyncLock
+        Volatile.Write(current.EndRequested, True)
+        Try
+            If platform.Foreground() <> current.Owner.Hwnd Then Return ' someone else already has the keyboard
+            If Not restorePrevious Then Return
+            Dim destination = current.Previous
+            If Not platform.CanRestore(destination) Then destination = IntPtr.Zero
+            If destination = IntPtr.Zero AndAlso current.Anchor IsNot Nothing AndAlso platform.CanRestore(current.Anchor.Above) Then
+                destination = current.Anchor.Above
+            End If
+            If destination = IntPtr.Zero Then
+                Volatile.Write(recoveryRequired, True)
+                SetNote("Background mode paused: the previous window has closed and focus could not be returned.")
+                Return
+            End If
+            If platform.ActivateOther(destination) Then
+                If current.Anchor IsNot Nothing AndAlso Not platform.RestoreZOrder(current.Owner.Hwnd, current.Anchor) Then
+                    Volatile.Write(recoveryRequired, True)
+                    SetNote("Background mode paused: focus returned but the window stack could not be restored.")
+                End If
+            Else
+                Interlocked.Increment(refusedCount)
+                Volatile.Write(recoveryRequired, True)
+                SetNote("Background mode: Windows refused to hand focus back; the game kept it.")
+            End If
+        Finally
+            Volatile.Write(lease, Nothing)
+            Dim duration = Math.Max(0L, platform.NowMs() - current.AcquiredMs)
+            Interlocked.Add(totalBorrowedMs, duration)
+            If duration > Interlocked.Read(longestBorrowMs) Then Interlocked.Exchange(longestBorrowMs, duration)
+            nextBorrowAttemptMs = platform.NowMs() + Volatile.Read(borrow).RestMs
+        End Try
     End Sub
 
     ' 20 ms watchdog: samples user activity and decides when a borrow is over. Never blocks.
@@ -528,7 +638,8 @@ Public NotInheritable Class ForegroundWindowsInput
             Dim now = platform.NowMs()
             If platform.Foreground() <> current.Owner.Hwnd Then
                 ' The user (or another app) took the keyboard: stand down without fighting for it.
-                Volatile.Write(lease, Nothing)
+                If current.Burst IsNot Nothing Then Volatile.Write(current.Burst.Blocked, True)
+                EndLeaseCore(current, False)
                 Interlocked.Increment(takenByUserCount)
                 platform.NoteUserActivity()
                 SetNote("Background mode: you switched windows; the bot waits for you.")
@@ -542,10 +653,12 @@ Public NotInheritable Class ForegroundWindowsInput
                 ' A click while the bot held focus: the user is steering, so focus is not moved again.
                 Interlocked.Increment(takenByUserCount)
                 SetNote("Background mode: you clicked; the bot waits for you.")
+                If current.Burst IsNot Nothing Then Volatile.Write(current.Burst.Blocked, True)
                 EndLeaseCore(current, False)
             ElseIf settings.YieldToUserMs > 0 AndAlso platform.UserIdleMs() < sinceAcquired - UserEventToleranceMs Then
                 Interlocked.Increment(waitedForUserCount)
                 SetNote("Background mode: you started typing; focus handed back.")
+                If current.Burst IsNot Nothing Then Volatile.Write(current.Burst.Blocked, True)
                 EndLeaseCore(current, True)
             Else
                 Dim holding As Boolean
@@ -553,12 +666,41 @@ Public NotInheritable Class ForegroundWindowsInput
                     holding = held.Count > 0
                 End SyncLock
                 Dim quietFor = now - Volatile.Read(current.LastActivityMs)
-                If holding Then
-                    If quietFor >= HeldLeaseCapMs Then EndLeaseCore(current, True)
-                ElseIf quietFor >= settings.LingerMs Then
+                If sinceAcquired >= settings.MaximumBurstMs Then
+                    Interlocked.Increment(budgetPausedCount)
+                    If current.Burst IsNot Nothing Then Volatile.Write(current.Burst.Blocked, True)
+                    SetNote("Background mode: burst time limit reached; focus returned.")
+                    EndLeaseCore(current, True)
+                ElseIf Not holding AndAlso (current.Burst Is Nothing OrElse Volatile.Read(current.Burst.Ended)) AndAlso quietFor >= settings.LingerMs Then
                     EndLeaseCore(current, True)
                 End If
             End If
+        Finally
+            Monitor.Exit(leaseLock)
+        End Try
+    End Sub
+
+    Public Function BeginFocusBurst(hwnd As IntPtr) As IDisposable
+        Dim previous = burst.Value
+        Dim current As New BurstToken With {.Hwnd = hwnd}
+        burst.Value = current
+        Return New BurstScope(Sub()
+                                  Volatile.Write(current.Ended, True)
+                                  burst.Value = previous
+                                  CompleteKeySequence(hwnd)
+                              End Sub)
+    End Function
+
+    Public Sub CompleteKeySequence(hwnd As IntPtr)
+        Dim planned = burst.Value
+        If planned IsNot Nothing AndAlso planned.Hwnd = hwnd AndAlso Not Volatile.Read(planned.Ended) AndAlso Not Volatile.Read(planned.Blocked) Then Return
+        If Not Monitor.TryEnter(leaseLock, LeaseLockWaitMs) Then
+            RequestLeaseEnd(hwnd)
+            Return
+        End If
+        Try
+            Dim current = lease
+            If current IsNot Nothing AndAlso current.Owner.Hwnd = hwnd Then EndLeaseCore(current, True)
         Finally
             Monitor.Exit(leaseLock)
         End Try
@@ -871,6 +1013,10 @@ Friend NotInheritable Class NativeInputPlatform
 
     Public Overrides Function UserIdleMs() As Long
         Return activity.IdleMs(Environment.TickCount64)
+    End Function
+
+    Public Overrides Function KeyBlocker(hwnd As IntPtr) As String
+        Return BackgroundCapture.InputBlocker(hwnd)
     End Function
 
     Public Overrides Function UserButtonIdleMs() As Long

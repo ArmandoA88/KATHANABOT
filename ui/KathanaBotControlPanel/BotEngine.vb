@@ -1080,6 +1080,7 @@ Partial Public Class BotEngine
     Private Const AdaptiveRecoveryLoopConfirmCount As Integer = 14
 
     Private Enum CaptureClientMethod
+        WindowsGraphicsCapture
         PrintClientOnly
         PrintRenderFullContent
         PrintClientAndRenderFullContent
@@ -1946,6 +1947,7 @@ Partial Public Class BotEngine
                 RuntimeJournal.Record("Shutdown", "Loop did not stop cleanly: " & ex.Message)
             End Try
         End If
+        BackgroundCapture.Stop()
         SetChatInputPaused(False, IntPtr.Zero)
         UpdateAutoAssistOutput(IntPtr.Zero, Nothing)
 
@@ -2140,6 +2142,7 @@ Partial Public Class BotEngine
             Dim loopWatch As Stopwatch = Stopwatch.StartNew()
             Dim cfg As BotConfig = Nothing
             Dim loopDelayMs As Integer = 80
+            Dim decisionScope = BackgroundCapture.BeginDecision()
             Try
                 SyncLock _sync
                     cfg = _config
@@ -2232,7 +2235,7 @@ Partial Public Class BotEngine
                          String.Equals(action.Role, "max_health", StringComparison.OrdinalIgnoreCase)))
                 Dim needsLiteMpScan As Boolean = cfg.Actions.Any(
                     Function(action) action.Enabled AndAlso String.Equals(action.Role, "mana", StringComparison.OrdinalIgnoreCase))
-                Dim needsLiteFrame As Boolean = needsLiteHpScan OrElse needsLiteMpScan
+                Dim needsLiteFrame As Boolean = needsLiteHpScan OrElse needsLiteMpScan OrElse WindowsInput.FocusBorrowEnabled
                 Dim liteFrame As Bitmap = Nothing
                 Dim liteScanWarning As String = ""
                 Dim liteFullFrameGlitch As Boolean = False
@@ -2315,19 +2318,21 @@ Partial Public Class BotEngine
                     Dim liteBurst As List(Of ActionRule) = ChooseAttackBurstActions(cfg, liteAttackHpPct, liteAttackMpPct, True, True, False, False, liteReason)
                     If liteBurst.Count > 0 Then
                         Dim sentKeys As New List(Of String)()
-                        For Each attackAction As ActionRule In liteBurst
-                            If sentKeys.Count > 0 Then
-                                Thread.Sleep(AttackBurstGapMs)
-                            End If
+                        Using WindowsInput.BeginFocusBurst(hwnd)
+                            For Each attackAction As ActionRule In liteBurst
+                                If sentKeys.Count > 0 Then
+                                    Thread.Sleep(AttackBurstGapMs)
+                                End If
 
-                            If Not SendKey(hwnd, attackAction.KeyName, FastKeyPressMs) Then
-                                Continue For
-                            End If
+                                If Not SendActionKey(hwnd, attackAction, FastKeyPressMs) Then
+                                    Continue For
+                                End If
 
-                            MarkActionUsed(attackAction)
-                            sentKeys.Add(attackAction.KeyName)
-                            _lastAttackAction = DateTime.UtcNow
-                        Next
+                                MarkActionUsed(attackAction)
+                                sentKeys.Add(attackAction.KeyName)
+                                _lastAttackAction = DateTime.UtcNow
+                            Next
+                        End Using
 
                         If sentKeys.Count > 0 Then
                             SetLastAction(If(sentKeys.Count = 1, $"{sentKeys(0)} ({liteBurst(0).Role})", $"{String.Join("/", sentKeys)} (lite burst)"))
@@ -2447,6 +2452,7 @@ Partial Public Class BotEngine
                 _pendingLootPickupVerifyAt <> DateTime.MinValue AndAlso
                 now >= _pendingLootPickupVerifyAt
             Dim shouldCaptureFullFrame As Boolean = fullFrameDue OrElse pendingLootScannerReady OrElse pendingLootVerifyReady
+            If WindowsInput.FocusBorrowEnabled Then shouldCaptureFullFrame = True
             Dim frame As Bitmap = Nothing
             Dim visionWarning As String = ""
 
@@ -2474,7 +2480,7 @@ Partial Public Class BotEngine
             End If
 
             If frame Is Nothing Then
-                frame = GetLatestLoopFrameClone(Math.Max(1000, fullFrameIntervalMs * 3))
+                If Not WindowsInput.FocusBorrowEnabled Then frame = GetLatestLoopFrameClone(Math.Max(1000, fullFrameIntervalMs * 3))
             End If
 
             Dim hpScanWatch As Stopwatch = Stopwatch.StartNew()
@@ -2488,10 +2494,16 @@ Partial Public Class BotEngine
             Dim localMobHpRegion As RectRegion = Nothing
 
             If frame IsNot Nothing Then
-                hpPct = ComputeClientBarPercent(hwnd, hpRegion, True, cfg, fullHpScanOk)
-                mpPct = ComputeClientBarPercent(hwnd, mpRegion, False, cfg, fullMpScanOk)
-                If Not fullHpScanOk Then hpPct = ComputeBarPercent(frame, hpRegion, True, cfg)
-                If Not fullMpScanOk Then mpPct = ComputeBarPercent(frame, mpRegion, False, cfg)
+                If WindowsInput.FocusBorrowEnabled Then
+                    ' One observation supplies HP, MP and target state; avoid copying the full window for each bar.
+                    hpPct = ComputeBarPercent(frame, hpRegion, True, cfg)
+                    mpPct = ComputeBarPercent(frame, mpRegion, False, cfg)
+                Else
+                    hpPct = ComputeClientBarPercent(hwnd, hpRegion, True, cfg, fullHpScanOk)
+                    mpPct = ComputeClientBarPercent(hwnd, mpRegion, False, cfg, fullMpScanOk)
+                    If Not fullHpScanOk Then hpPct = ComputeBarPercent(frame, hpRegion, True, cfg)
+                    If Not fullMpScanOk Then mpPct = ComputeBarPercent(frame, mpRegion, False, cfg)
+                End If
                 mobHpPct = ComputeMobHpPercent(frame, mobHpRegion, cfg)
             Else
                 hpPct = ComputeClientBarPercent(hwnd, hpRegion, True, cfg, fullHpScanOk)
@@ -3137,32 +3149,34 @@ Partial Public Class BotEngine
                 If attackBurst.Count > 0 Then
                     Dim sentKeys As New List(Of String)()
                     Dim targetSignature As String = If(normMobName <> "", normMobName, If(mobName <> "", mobName, $"{mobHpPct:0.0}"))
-                    For Each attackAction As ActionRule In attackBurst
-                        If sentKeys.Count > 0 Then
-                            Thread.Sleep(AttackBurstGapMs)
-                        End If
+                    Using WindowsInput.BeginFocusBurst(hwnd)
+                        For Each attackAction As ActionRule In attackBurst
+                            If sentKeys.Count > 0 Then
+                                Thread.Sleep(AttackBurstGapMs)
+                            End If
 
-                        If Not SendKey(hwnd, attackAction.KeyName, FastKeyPressMs) Then
-                            Continue For
-                        End If
+                            If Not SendActionKey(hwnd, attackAction, FastKeyPressMs) Then
+                                Continue For
+                            End If
 
-                        MarkActionUsed(attackAction)
-                        sentKeys.Add(attackAction.KeyName)
-                        _lastAttackAction = DateTime.UtcNow
-                        ' Only (re-)establish the lock when this attack was justified by a genuine
-                        ' target-alive signal, not merely by an already-stale hold/lock that let
-                        ' effectiveTargetValid through - otherwise every permitted attack would
-                        ' refresh the very lock that permitted it, sustaining it forever.
-                        If targetHasHpSignal Then
-                            BeginCombatLock(targetSignature, DateTime.UtcNow)
-                            _sessionKillTrackingArmed = True
-                            _sessionKillMissingSignalCount = 0
-                            _sessionKillLastLivingSignalAt = DateTime.UtcNow
-                        End If
-                        _firstHitPending = False
-                        _firstHitWindowUntil = DateTime.MinValue
-                        RecordAttackWithoutDamage(targetSignature)
-                    Next
+                            MarkActionUsed(attackAction)
+                            sentKeys.Add(attackAction.KeyName)
+                            _lastAttackAction = DateTime.UtcNow
+                            ' Only (re-)establish the lock when this attack was justified by a genuine
+                            ' target-alive signal, not merely by an already-stale hold/lock that let
+                            ' effectiveTargetValid through - otherwise every permitted attack would
+                            ' refresh the very lock that permitted it, sustaining it forever.
+                            If targetHasHpSignal Then
+                                BeginCombatLock(targetSignature, DateTime.UtcNow)
+                                _sessionKillTrackingArmed = True
+                                _sessionKillMissingSignalCount = 0
+                                _sessionKillLastLivingSignalAt = DateTime.UtcNow
+                            End If
+                            _firstHitPending = False
+                            _firstHitWindowUntil = DateTime.MinValue
+                            RecordAttackWithoutDamage(targetSignature)
+                        Next
+                    End Using
 
                     If sentKeys.Count > 0 Then
                         Dim actionLabel As String = If(sentKeys.Count = 1, $"{sentKeys(0)} ({attackBurst(0).Role})", $"{String.Join("/", sentKeys)} (attack burst)")
@@ -3332,6 +3346,8 @@ Partial Public Class BotEngine
                           End Sub)
                 RecordLoopCompletion(loopWatch.Elapsed.TotalMilliseconds, loopDelayMs)
                 Thread.Sleep(Math.Max(50, loopDelayMs))
+            Finally
+                decisionScope.Dispose()
             End Try
         End While
 
@@ -11273,7 +11289,7 @@ Partial Public Class BotEngine
             OrderBy(Function(item) item.Priority).
             FirstOrDefault(Function(item) IsReady(item))
         If action Is Nothing OrElse String.IsNullOrWhiteSpace(action.KeyName) Then Return False
-        If Not SendKey(hwnd, action.KeyName, FastKeyPressMs) Then Return False
+        If Not SendActionKey(hwnd, action, FastKeyPressMs) Then Return False
 
         MarkActionUsed(action)
         _lootAfterKillArmed = False
@@ -11496,7 +11512,7 @@ Partial Public Class BotEngine
             If Not IsReady(action) Then
                 Continue For
             End If
-            If Not SendKey(hwnd, action.KeyName, FastKeyPressMs) Then
+            If Not SendActionKey(hwnd, action, FastKeyPressMs) Then
                 Continue For
             End If
 
@@ -11520,7 +11536,7 @@ Partial Public Class BotEngine
             If Not IsReady(action) Then
                 Continue For
             End If
-            If Not SendKey(hwnd, action.KeyName, FastKeyPressMs) Then
+            If Not SendActionKey(hwnd, action, FastKeyPressMs) Then
                 Continue For
             End If
 
@@ -11847,7 +11863,7 @@ Partial Public Class BotEngine
             If Not IsReady(action) Then
                 Continue For
             End If
-            If Not SendKey(hwnd, action.KeyName, FastKeyPressMs) Then
+            If Not SendActionKey(hwnd, action, FastKeyPressMs) Then
                 Continue For
             End If
 
@@ -11893,7 +11909,7 @@ Partial Public Class BotEngine
 
             Dim sentCount As Integer = 0
             For i As Integer = 1 To 3
-                If SendKey(hwnd, action.KeyName, FastKeyPressMs) Then
+                If SendActionKey(hwnd, action, FastKeyPressMs) Then
                     sentCount += 1
                     MarkActionUsed(action)
                 End If
@@ -12550,7 +12566,18 @@ Partial Public Class BotEngine
         Dim bmp As New Bitmap(width, height, PixelFormat.Format24bppRgb)
 
         Try
-            If GetCaptureBackendPreferenceCode() = "wgc" AndAlso TryCaptureWithWindowsGraphicsCapture(hwnd, bmp, width, height) AndAlso AcceptCaptureIfUsable(hwnd, bmp, CaptureClientMethod.CopyFromScreen) Then
+            If WindowsInput.FocusBorrowEnabled Then
+                bmp.Dispose()
+                Dim capturedAt As Long
+                Dim liveFrame = BackgroundCapture.TryCopy(hwnd, width, height, capturedAt)
+                If liveFrame IsNot Nothing AndAlso AcceptCaptureIfUsable(hwnd, liveFrame, CaptureClientMethod.WindowsGraphicsCapture) Then
+                    BackgroundCapture.AcceptFrame(hwnd, capturedAt)
+                    Return liveFrame
+                End If
+                liveFrame?.Dispose()
+                Return Nothing
+            End If
+            If GetCaptureBackendPreferenceCode() = "wgc" AndAlso TryCaptureWithWindowsGraphicsCapture(hwnd, bmp, width, height) AndAlso AcceptCaptureIfUsable(hwnd, bmp, CaptureClientMethod.WindowsGraphicsCapture) Then
                 Return bmp
             End If
 
@@ -12595,9 +12622,14 @@ Partial Public Class BotEngine
     End Function
 
     Private Shared Function TryCaptureWithWindowsGraphicsCapture(hwnd As IntPtr, bmp As Bitmap, width As Integer, height As Integer) As Boolean
-        ' Windows Graphics Capture requires a Direct3D interop capture session. This hook keeps
-        ' the backend selectable while safely falling back to the cached GDI path on unsupported systems.
-        Return False
+        Dim capturedAt As Long
+        Using frame = BackgroundCapture.TryCopy(hwnd, width, height, capturedAt)
+            If frame Is Nothing Then Return False
+            Using g = Graphics.FromImage(bmp)
+                g.DrawImageUnscaled(frame, 0, 0)
+            End Using
+        End Using
+        Return True
     End Function
 
     Private Shared Function TryGetCachedCaptureMethod(hwnd As IntPtr, ByRef method As CaptureClientMethod) As Boolean
@@ -12665,6 +12697,8 @@ Partial Public Class BotEngine
 
     Private Shared Function CaptureMethodName(method As CaptureClientMethod) As String
         Select Case method
+            Case CaptureClientMethod.WindowsGraphicsCapture
+                Return "Windows Graphics Capture"
             Case CaptureClientMethod.PrintClientOnly
                 Return "PrintWindow(PW_CLIENTONLY)"
             Case CaptureClientMethod.PrintRenderFullContent
@@ -12758,6 +12792,8 @@ Partial Public Class BotEngine
 
     Private Shared Function TryCaptureWithMethod(hwnd As IntPtr, bmp As Bitmap, width As Integer, height As Integer, method As CaptureClientMethod) As Boolean
         Select Case method
+            Case CaptureClientMethod.WindowsGraphicsCapture
+                Return TryCaptureWithWindowsGraphicsCapture(hwnd, bmp, width, height)
             Case CaptureClientMethod.PrintClientOnly
                 Return TryCaptureWithPrintWindow(hwnd, bmp, NativeMethods.PW_CLIENTONLY)
             Case CaptureClientMethod.PrintRenderFullContent
@@ -13684,14 +13720,19 @@ Partial Public Class BotEngine
     Public Shared Function SendKey(hwnd As IntPtr, keyName As String, pressMs As Integer, Optional forceBackgroundPost As Boolean = False, Optional forcePhysicalKeyEvent As Boolean = False, Optional cancellationToken As CancellationToken = Nothing) As Boolean
         ' F12 is the user's emergency stop in this foreground build. A saved skill
         ' binding must not synthesize it and stop the running bot itself.
-        If WindowsInput.IsProductionForegroundInput AndAlso String.Equals(If(keyName, "").Trim(), "F12", StringComparison.OrdinalIgnoreCase) Then Return False
         SyncLock WindowsInput.SequenceLock
+            WindowsInput.BeginKeyAttempt()
+            If WindowsInput.IsProductionForegroundInput AndAlso String.Equals(If(keyName, "").Trim(), "F12", StringComparison.OrdinalIgnoreCase) Then Return False
             If cancellationToken.IsCancellationRequested Then Return False
             WindowsInput.BindTarget(hwnd)
             If Not WindowsInput.Current.Activate(hwnd) Then Return False
-            Dim modifier As Integer, digit As Integer
-            If TryParseSkillShortcut(keyName, modifier, digit) Then Return SendSkillShortcut(hwnd, modifier, digit, pressMs, cancellationToken)
-            Return SendKeyCore(hwnd, keyName, pressMs, forceBackgroundPost, forcePhysicalKeyEvent, cancellationToken)
+            Try
+                Dim modifier As Integer, digit As Integer
+                If TryParseSkillShortcut(keyName, modifier, digit) Then Return SendSkillShortcut(hwnd, modifier, digit, pressMs, cancellationToken)
+                Return SendKeyCore(hwnd, keyName, pressMs, forceBackgroundPost, forcePhysicalKeyEvent, cancellationToken)
+            Finally
+                WindowsInput.CompleteKeySequence(hwnd)
+            End Try
         End SyncLock
     End Function
 
@@ -13729,11 +13770,7 @@ Partial Public Class BotEngine
                 ' Down may have been accepted just before focus changed. Cleanup must
                 ' run even when its receipt returns false; the backend releases owned keys only.
                 If Not NativeMethods.SendForegroundInputRequest(hwnd, CUInt(&H100), New IntPtr(vk), New IntPtr(lparamDown)) Then Return False
-                If cancellationToken.CanBeCanceled Then
-                    cancellationToken.WaitHandle.WaitOne(holdMs)
-                Else
-                    Thread.Sleep(holdMs)
-                End If
+                If Not WindowsInput.WaitForKeyHold(holdMs, cancellationToken) Then Return False
             Finally
                 released = NativeMethods.SendForegroundInputRequest(hwnd, CUInt(&H101), New IntPtr(vk), New IntPtr(lparamUp))
             End Try
@@ -13741,6 +13778,20 @@ Partial Public Class BotEngine
         Catch
             Return False
         End Try
+    End Function
+
+    ' A delivered down followed by focus loss is uncertain, not an unsent action. Consume its cooldown
+    ' without claiming completion so the next loop cannot immediately repeat a potion or skill.
+    Private Function SendActionKey(hwnd As IntPtr, action As ActionRule, pressMs As Integer) As Boolean
+        Dim complete As Boolean
+        Try
+            complete = SendKey(hwnd, action.KeyName, pressMs, cancellationToken:=If(_cts Is Nothing, CancellationToken.None, _cts.Token))
+        Catch ex As InvalidOperationException
+            RuntimeJournal.Record("Input skipped", ex.Message)
+        Finally
+            If Not complete AndAlso WindowsInput.LastKeyWasEmitted Then MarkActionUsed(action)
+        End Try
+        Return complete
     End Function
 
     Private Shared Function ReleaseMovementKeys(hwnd As IntPtr) As Boolean

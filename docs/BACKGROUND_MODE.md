@@ -1,98 +1,41 @@
-# Background mode (1.0.250)
+# Background mode (1.0.259)
 
-Background mode lets the Kathana window stay **behind your other windows** while the bot runs.
-It keeps using the same foreground `SendInput` path as 1.0.246–1.0.249. It does not use
-`PostMessage`, `SendMessage`, a hook, an injected DLL or any other way into the game process.
+The game stays behind other applications while the bot continuously observes its window and borrows keyboard focus only for short actions. It uses the existing foreground SendInput transport.
 
-## Why it works this way
+## Observation and decisions
 
-Windows delivers keyboard input only to the active (foreground) window. A window that is not active cannot
-receive hardware-style input, so "background input" in the strict sense is not available without either
-(a) synthetic window messages, which every earlier attempt in
-[BACKGROUND_INPUT_EXPERIMENTS.md](../BACKGROUND_INPUT_EXPERIMENTS.md) shows the game terminating on, or
-(b) code running inside the game process, which that log shows is not reachable and is not attempted here.
+- A Windows Graphics Capture session is bound to the exact HWND and process ID. Capture does not activate the game, inspect its memory, or inject code into it.
+- At most ten frames per second are copied from the GPU. A single latest-frame buffer replaces old frames; processing never accumulates a backlog. Each reader receives its own bitmap.
+- The client image is cropped from the captured window using its current bounds. A move or resize during readback discards the image; a resize recreates the frame pool. Minimized, closed or reused windows cannot supply frames. Source timestamps survive readback rather than being replaced by completion timestamps.
+- Background mode exclusively uses window capture. It never falls back to copying the desktop, which could read an application covering the game. Unsupported or blocked capture pauses actions.
+- Accepted frames must be at most **300 ms** old and pass the existing black-frame check. Each engine iteration records the source timestamp of its first accepted observation. Its decisions expire after **500 ms**; additional captures cannot extend that timestamp. Input checks freshness before and after activation.
+- Full combat reads the latest continuous frame every iteration instead of falling back to old loop frames. Lite observes the window even when only attack keys are enabled. Direct KP obtains a fresh observation for each E/R pair and expires its engine permission after 500 ms.
 
-So the bot borrows the keyboard instead of keeping the game in front:
+## Keyboard bursts
 
-1. Just before a key goes out, it remembers the window you were using and where the game sits in the window stack.
-2. It activates the game (about 10 ms) and immediately puts the game window back behind your windows
-   without deactivating it, so nothing is drawn on top of your work.
-3. It sends the key with the same `SendInput` call as before, holds it for the usual 150–250 ms, and releases it.
-4. After the last key of a burst (250 ms linger) it gives focus back to your window (about 16 ms) and
-   re-applies the game's original position in the window stack.
+1. Wait for user inactivity (default **1 second**) and check shell, locked-screen and full-screen blockers.
+2. Remember the previous foreground window and the game's stack position, activate the game, and restack it behind the user's windows without deactivating it.
+3. Send an owned key-down/up sequence. Combat rotations and Direct KP E/R pairs explicitly share one borrow.
+4. Return focus **as soon as the key sequence or planned burst ends**. Production has no linger delay.
+5. Leave **200 ms** before another borrow. Remaining actions are reconsidered from fresh observations rather than queued for catch-up.
 
-Keys in a burst share one borrow, so a normal combat rotation takes the keyboard briefly rather than once per key.
+The total borrow has a **750 ms budget**, measured from acquisition regardless of ongoing key activity. The 20 ms watchdog releases held keys and ends expired bursts. Remaining keys in the expired burst cannot reacquire focus. Windows scheduling or native activation calls can delay the actual hand-off, so 750 ms is a dispatch budget rather than a guaranteed wall-clock ceiling. Existing key-hold timing is preserved within that budget; hold waits stop early when focus is lost.
 
-## What it does to the game window
+Typing, clicking, switching windows, Stop/F12, mode-off and shutdown end borrowing. A takeover between keys is checked synchronously too, so the next key cannot regain focus before the watchdog sees the change. Owned releases retry before handing focus to another application. A delivered key whose action sequence is interrupted consumes the action's cooldown without recording a completed action, preventing an immediate duplicate.
 
-Only window-management calls, the same kind the focus supervisor in 1.0.247–1.0.249 already made:
-`SetForegroundWindow`/`BringWindowToTop` to take focus, `SetWindowPos` (stack position only, never size or
-position on screen) to put the window back behind yours, and read-only queries (stack order, visibility, process
-and thread IDs, window class). Taking focus from another application and handing it back both use the existing
-sequence: a direct request first, then the calling thread's input is briefly attached to the current foreground
-thread (`AttachThreadInput`) so Windows accepts the request. For the hand-back that foreground thread is the
-game's UI thread for a few milliseconds. This shares input state only; it does not read, write or inject into the
-game process, and it adds no process handle beyond the process-name check 1.0.249 already did. Alternative
-hand-back methods that avoid touching the game's thread were not measured; if you would rather the bot never do
-this, leave Background mode off.
+## Failures and controls
 
-## What it protects you from
+- Activation refusal skips input and retains the existing 750 ms retry pacing.
+- Restacking or hand-back failure pauses new input. Select **Background mode OFF**, then **ON** to retry. If the previous window and its fallback neighbour have closed, the same recovery pause applies.
+- The status line shows capture availability/age, current borrowing state, emitted keys and longest borrow. Emitted keys measure insertion into Windows' input stream, not confirmation by the game.
+- The wait control remains 0–30 seconds; zero gives the bot priority over typing. Full-screen protection remains enabled by default. The game must be open and **not minimized**.
+- It remains keyboard-only. Mouse workflows are paused through the existing runtime policy; saved feature settings are preserved. Trade whispers retain their explicit foreground input handling.
+- Foreground-mode and background-mode command-line overrides and the local API's foreground-borrow mode name are preserved. Turning the mode off restores foreground supervision.
 
-| Situation | Behaviour |
-| --- | --- |
-| You are typing or clicking | The bot waits until you have been idle for the **wait** (default 1 s) before borrowing. If you start typing during a borrow, it releases its key and hands focus back at once. The very first key you press as a borrow begins can still reach the game, so a longer wait lowers that chance. `0` never waits and gives the bot priority. |
-| You click the game, or switch to another window, during a borrow | The bot stands down and does not move focus again. After you switch windows it waits for the **wait** before borrowing again. |
-| A full-screen app, game or presentation is in front | Key presses are skipped instead of taking the keyboard (option on by default). |
-| The taskbar, Start menu, Alt+Tab or task view is in use, or the screen is locked | Skipped. |
-| Windows refuses the focus request | The key is skipped and the bot retries after 750 ms; the window stack is put back as it was. |
-| The previous window has closed | The game simply keeps the keyboard. |
-| Stop, F12, turning the mode off, closing the app | Held keys are released and focus is handed back immediately. |
+Capture sessions close on bot stop, mode-off and application shutdown. Switching targets retires old sessions; the capture registry is bounded. Capture startup and teardown run independently of the UI.
 
-## What it does not do
+## Validation and limits
 
-* It is **keyboard-only**. It never moves your mouse or clicks, because the game is behind other windows and a
-  click would land on whatever covers it. The keyboard-only policy pauses the features that need the mouse (loot
-  scanner and centred pickup, arrow unbundling, party/resurrection macros and accept clicks, support click
-  targeting) and every remaining click is skipped (buff self-click, Quiz, RESU). Movement keys, Ctrl/Alt skill
-  chords, Loot After Kill (F), Direct KP, healing and buffs on keys keep working. Your saved settings are not
-  changed; the pause applies only to the running configuration and lifts when the mode is turned off. The log
-  lists what was paused when you turn the mode on.
-* Trade whispers still need the game in front (they type chat text) and keep their own focus handling.
-* The game must stay **open and not minimized**. A minimized game does not render and is not restored.
-* The in-game bot toggle overlay is hidden during a borrow so it cannot flash over your windows.
-* It does **not** make input undetectable. The input is the same injected `SendInput` as the foreground build;
-  whether Kathana accepts it over long sessions is unverified. No game input was sent while developing this.
+ForegroundInput.Tests simulates input and focus: bounded bursts, immediate return, rest intervals, stale capture/decision rejection, takeover between keys, release retries, hand-back failure, chord routing, interrupted-action cooldowns and Direct KP pairs. WindowCapture.Tests checks buffer ownership, source age, replacement, resize rejection and late callbacks. Its optional --native fixture captures owned dummy windows and verifies that a green covering window does not replace the blue source pixels, including movement, odd-width resize, minimization, PID mismatch and close. The fixture sends no keyboard or mouse input and does not use a game window.
 
-## Controls
-
-On Combat Full, under **Stop Bot**:
-
-* **Background mode: ON/OFF** – the saved switch. New and old settings files default to ON.
-* **wait (s)** – how long you must be idle before the bot may take the keyboard (0–30 s, default 1).
-* **Don't interrupt full-screen apps or presentations** – default on.
-* A status line: borrows, waits for you, pauses, refusals and the last reason a key was skipped.
-
-Command line: `--foreground-mode` or `--background-mode` overrides the saved choice for that run.
-The local API reports `inputMode` as `foreground-borrow` while it is on.
-
-## Verified here (and what was not)
-
-Windows focus mechanics were measured with throwaway windows (no game, no key input) on this machine,
-Windows 11 build 26200, while the system's in-memory foreground-lock timeout was at its maximum:
-
-* 8 of 8 borrow cycles from a background process took focus from another application (about 10 ms) and gave it
-  back (about 16 ms) using the same activation sequence the bot already uses.
-* Re-stacking the activated window without activating it kept it foreground in 8 of 8 cycles.
-* The order of all visible windows was identical before and after in 8 of 8 cycles. The first version anchored on
-  the window directly above the game and drifted by one slot, because Windows keeps hidden input-helper windows
-  directly above their owner; the anchor is now the nearest *visible* window of another process.
-
-Covered by the automated suites (fake platform, no native focus or input calls): the borrow/linger/hand-back cycle,
-burst sharing, yielding and idle thresholds, blockers, refusal back-off, user takeover and click handling, held
-keys, mouse/text never borrowing, the re-stack fallback, vanished windows, Stop and mode-off hand-back, a second
-game window, watchdog sampling, the user-activity tracker, shell-surface classes, supervisor stand-down and
-settings persistence.
-
-**Not verified:** any live Kathana session, game behaviour when it loses and regains focus every few hundred
-milliseconds (for example cursor capture or pausing), interaction with every other application you run, and
-detection. Try it with a short session first and watch the status line.
+No live Kathana trial or long-session result is established. The game may restrict capture or throttle its background rendering; that causes a visible capture pause. Polling and focus switching leave a race in which the first user key can reach the game; the idle wait reduces but cannot eliminate it. The same injected SendInput transport remains, and these changes do not establish enforcement compatibility. The earlier native focus measurements are preserved in [the experiment log](../BACKGROUND_INPUT_EXPERIMENTS.md).

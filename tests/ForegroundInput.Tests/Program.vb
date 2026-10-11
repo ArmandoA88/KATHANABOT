@@ -255,6 +255,10 @@ Friend Class FakePlatform
     Public LastActivatedOther As IntPtr
     Public Restorable As Boolean = True
     Public Blocker As String = ""
+    Public KeyPause As String = ""
+    Public Overrides Function KeyBlocker(hwnd As IntPtr) As String
+        Return KeyPause
+    End Function
     Public LastIncludeFullScreen As Boolean
     Public UserIdle As Long = Long.MaxValue
     Public UserButtonIdle As Long = Long.MaxValue

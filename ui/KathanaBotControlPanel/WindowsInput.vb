@@ -11,6 +11,21 @@ End Interface
 
 Public NotInheritable Class WindowsInput
     Private Shared ReadOnly LocalInput As New AsyncLocal(Of IWindowsInput)
+    Private Shared ReadOnly lastKeyAttempt As New AsyncLocal(Of KeyAttempt)
+    Private Class KeyAttempt
+        Public Emitted As Boolean
+    End Class
+    Public Shared Sub BeginKeyAttempt()
+        lastKeyAttempt.Value = New KeyAttempt()
+    End Sub
+    Public Shared Sub RecordKeyDown()
+        If lastKeyAttempt.Value IsNot Nothing Then lastKeyAttempt.Value.Emitted = True
+    End Sub
+    Public Shared ReadOnly Property LastKeyWasEmitted As Boolean
+        Get
+            Return lastKeyAttempt.Value IsNot Nothing AndAlso lastKeyAttempt.Value.Emitted
+        End Get
+    End Property
     ' This release uses the OS foreground input stream for every gameplay request.
     ' Old profile/command-line background selections cannot change the production backend.
     Private Shared ReadOnly DefaultInput As New ForegroundWindowsInput(
@@ -38,6 +53,7 @@ Public NotInheritable Class WindowsInput
     ' front. It reuses the same SendInput path; only the focus handling around each key changes.
     Public Shared Sub ConfigureFocusBorrow(enabled As Boolean, yieldToUserMs As Integer, Optional pauseForFullScreen As Boolean = True)
         DefaultInput.FocusBorrow = If(enabled, New FocusBorrowSettings(True, yieldToUserMs, FocusBorrowSettings.DefaultLingerMs, pauseForFullScreen), FocusBorrowSettings.Disabled)
+        If Not enabled Then BackgroundCapture.Stop()
     End Sub
     Public Shared ReadOnly Property FocusBorrowEnabled As Boolean
         Get
@@ -60,7 +76,25 @@ Public NotInheritable Class WindowsInput
     Public Shared Sub Shutdown()
         ReleaseAll()
         TryCast(Current, ForegroundWindowsInput)?.EndFocusLeaseNow()
+        BackgroundCapture.Stop()
     End Sub
+    Public Shared Function BeginFocusBurst(hwnd As IntPtr) As IDisposable
+        Return TryCast(Current, ForegroundWindowsInput)?.BeginFocusBurst(hwnd)
+    End Function
+    Public Shared Sub CompleteKeySequence(hwnd As IntPtr)
+        TryCast(Current, ForegroundWindowsInput)?.CompleteKeySequence(hwnd)
+    End Sub
+    Public Shared Function WaitForKeyHold(holdMs As Integer, token As Threading.CancellationToken) As Boolean
+        Dim untilMs = Environment.TickCount64 + holdMs
+        Do
+            If token.IsCancellationRequested Then Return False
+            Dim input = TryCast(Current, ForegroundWindowsInput)
+            If input IsNot Nothing AndAlso input.BorrowEnabled AndAlso Not input.BoundTargetIsForeground() Then Return False
+            Dim remaining = untilMs - Environment.TickCount64
+            If remaining <= 0 Then Return True
+            If token.WaitHandle.WaitOne(CInt(Math.Min(20L, remaining))) Then Return False
+        Loop
+    End Function
     Public Shared Sub ReleaseAll()
         Dim foreground = TryCast(Current, ForegroundWindowsInput)
         If foreground IsNot Nothing Then

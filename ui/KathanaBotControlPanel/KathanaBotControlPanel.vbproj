@@ -7,9 +7,9 @@
     <StartupObject>Sub Main</StartupObject>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>assets\KathanaBot.ico</ApplicationIcon>
-    <Version>1.0.258</Version>
-    <FileVersion>1.0.250.0</FileVersion>
-    <AssemblyVersion>1.0.250.0</AssemblyVersion>
+    <Version>1.0.259</Version>
+    <FileVersion>1.0.259.0</FileVersion>
+    <AssemblyVersion>1.0.259.0</AssemblyVersion>
     <InputBuildVariant>FocusBorrow</InputBuildVariant>
     <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
@@ -32,6 +32,7 @@
 
   <ItemGroup>
     <PackageReference Include="Velopack" Version="1.2.0" />
+    <ProjectReference Include="..\KathanaWindowCapture\KathanaWindowCapture.csproj" />
   </ItemGroup>
 
   <ItemGroup>
