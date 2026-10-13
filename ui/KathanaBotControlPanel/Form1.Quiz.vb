@@ -285,6 +285,7 @@ Partial Public Class Form1
     Private Sub UnlockQuizTab()
         If _quizUnlocked OrElse _quizTab Is Nothing OrElse _mainTabs Is Nothing Then Return
         _quizUnlocked = True
+        UpdatePartyAskEditorMode()
         Try
             System.IO.Directory.CreateDirectory(PersistDirectoryPath)
             System.IO.File.WriteAllText(System.IO.Path.Combine(PersistDirectoryPath, "hidden-tabs-version.txt"), GetType(Form1).Assembly.GetName().Version.ToString())
@@ -305,6 +306,7 @@ Partial Public Class Form1
         _sidebarRailOverlay?.Invalidate()
         UpdateMainTabIndicators()
         UpdateTabIndicatorTarget()
+        PushLiveConfig()
         ' The sequence also reveals RESU, which uses local OCR and needs no API key.
         ' Quiz already exposes its own Configure API Key button.
     End Sub

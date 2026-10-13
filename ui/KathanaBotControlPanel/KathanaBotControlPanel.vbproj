@@ -7,9 +7,9 @@
     <StartupObject>Sub Main</StartupObject>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>assets\KathanaBot.ico</ApplicationIcon>
-    <Version>1.0.259</Version>
-    <FileVersion>1.0.259.0</FileVersion>
-    <AssemblyVersion>1.0.259.0</AssemblyVersion>
+    <Version>1.0.262</Version>
+    <FileVersion>1.0.262.0</FileVersion>
+    <AssemblyVersion>1.0.262.0</AssemblyVersion>
     <InputBuildVariant>FocusBorrow</InputBuildVariant>
     <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
@@ -27,6 +27,9 @@
     </AssemblyAttribute>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>Extras.Tests</_Parameter1>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>FeatureControls.Tests</_Parameter1>
     </AssemblyAttribute>
   </ItemGroup>
 

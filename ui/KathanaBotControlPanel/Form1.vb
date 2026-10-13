@@ -2102,7 +2102,7 @@ Partial Public Class Form1
     Private Shared ReadOnly StatusStoppedOrDeadColor As Color = Color.FromArgb(235, 0, 0)
     Private Shared ReadOnly BotRunningColor As Color = Color.FromArgb(0, 170, 70)
     Private Const DefaultNtfyTopicName As String = "Katana12345"
-    Private Const DefaultPartyAskCommand As String = "add"
+    Private Const DefaultPartyAskCommand As String = PartyAskMessageCollection.DefaultRegularMessage
     Private Const DefaultResurrectAskCommand As String = "need resu pls"
     Private Const DefaultAutoPartyInviteKey As String = "F1"
     Private Const DefaultAutoPartyMessageText As String = "party pls"
@@ -2417,6 +2417,7 @@ Partial Public Class Form1
         Public Property AskForPartyEnabled As Boolean = False
         Public Property AskForPartySeconds As Decimal = 30D
         Public Property AskForPartyText As String
+        Public Property AskForPartyCollectionText As String
         Public Property ChatMessageUseCtrlV As Boolean = True
         Public Property AskForResurrectEnabled As Boolean = False
         Public Property AskForResurrectSeconds As Decimal = 30D
@@ -8798,9 +8799,10 @@ Partial Public Class Form1
         Dim lblPartyAskEvery As Label = CreateResponsiveCenterLabel("Ask Party Every (sec)", Color.White)
         nudPartyAskSeconds = New NumericUpDown() With {.Dock = DockStyle.Fill, .MinimumSize = New Size(0, 28), .Minimum = 5, .Maximum = 600, .Value = 30, .Margin = New Padding(3, 0, 3, 4)}
         Dim lblPartyAskText As Label = CreateResponsiveCenterLabel("Auto Ask Party Text", Color.White)
+        _partyAskTextLabel = lblPartyAskText
         txtPartyAskText = New TextBox() With {.Dock = DockStyle.Fill, .MinimumSize = New Size(0, 28), .Text = DefaultPartyAskCommand, .Margin = New Padding(3, 0, 3, 4)}
         btnPartyAsk = New Button() With {
-            .Text = If(_partyAskEnabled, "Auto Ask Party (add): ON", "Auto Ask Party (add): OFF"),
+            .Text = If(_partyAskEnabled, $"Auto Ask Party ({DefaultPartyAskCommand}): ON", $"Auto Ask Party ({DefaultPartyAskCommand}): OFF"),
             .Dock = DockStyle.Fill,
             .MinimumSize = New Size(0, 38),
             .Margin = New Padding(3, 3, 3, 3),
@@ -8885,6 +8887,7 @@ Partial Public Class Form1
             _scanTimerToolTip = New ToolTip() With {.AutoPopDelay = 15000, .InitialDelay = 300, .ReshowDelay = 300}
         End If
         _scanTimerToolTip.SetToolTip(btnChatMessageInputMode, "Choose how all automated chat messages are entered. Click to switch between Ctrl+V paste and per-character typing.")
+        UpdatePartyAskEditorMode(captureCurrent:=False)
         Dim scanSpeedHint As String = "How often the bot re-checks for mobs and re-runs OCR/combat logic. High = every 200ms (fastest, more CPU). Medium = every 500ms. Low = every 1000ms (lightest load)."
         _scanTimerToolTip.SetToolTip(btnScanSpeedHigh, scanSpeedHint)
         _scanTimerToolTip.SetToolTip(btnScanSpeedMedium, scanSpeedHint)
@@ -9334,9 +9337,7 @@ Partial Public Class Form1
         If nudPartyAskSeconds IsNot Nothing Then
             nudPartyAskSeconds.Value = 30
         End If
-        If txtPartyAskText IsNot Nothing Then
-            txtPartyAskText.Text = DefaultPartyAskCommand
-        End If
+        LoadPartyAskTexts(DefaultPartyAskCommand, PartyAskMessageCollection.DefaultMessage)
         UpdateAttackButtonAppearance(False)
         UpdateAutoPartyPointUi()
         UpdateArrowUnbundleUi()
@@ -12911,20 +12912,21 @@ Partial Public Class Form1
     End Sub
 
     Private Sub UpdatePartyAskButton()
-        UpdatePartyAskButtonCore(btnPartyAsk, _partyAskEnabled, GetPartyAskCommandText())
+        UpdatePartyAskButtonCore(btnPartyAsk, _partyAskEnabled, GetPartyAskCommandText(), _quizUnlocked)
     End Sub
 
     Private Sub UpdateLitePartyAskButton()
         UpdatePartyAskButtonCore(btnLitePartyAsk, _litePartyAskEnabled, GetLitePartyAskCommandText())
     End Sub
 
-    Private Shared Sub UpdatePartyAskButtonCore(target As Button, isEnabled As Boolean, commandText As String)
+    Private Shared Sub UpdatePartyAskButtonCore(target As Button, isEnabled As Boolean, commandText As String, Optional useCollection As Boolean = False)
         If target Is Nothing Then
             Return
         End If
-        Dim commandLabel As String = If(commandText, "").Trim()
-        If commandLabel = "" Then
-            commandLabel = DefaultPartyAskCommand
+        Dim commandLabel As String = PartyAskMessageCollection.NormalizeRegular(commandText)
+        If useCollection Then
+            Dim phrases = PartyAskMessageCollection.Parse(commandText)
+            commandLabel = If(phrases.Count > 1, $"{phrases.Count} phrases", phrases(0))
         End If
         If commandLabel.Length > 14 Then
             commandLabel = commandLabel.Substring(0, 11) & "..."
@@ -12934,6 +12936,7 @@ Partial Public Class Form1
     End Sub
 
     Private Sub PartyAskTextChanged(sender As Object, _e As EventArgs)
+        If _partyAskUpdatingEditor Then Return
         If sender Is txtLitePartyAskText Then
             UpdateLitePartyAskButton()
         Else
@@ -12942,8 +12945,7 @@ Partial Public Class Form1
     End Sub
 
     Private Function GetPartyAskCommandText() As String
-        Dim rawText As String = If(txtPartyAskText IsNot Nothing, txtPartyAskText.Text, DefaultPartyAskCommand)
-        Return NormalizePartyAskUiText(rawText)
+        Return If(_quizUnlocked, GetPartyAskCollectionText(), GetRegularPartyAskText())
     End Function
 
     Private Function GetLitePartyAskCommandText() As String
@@ -13078,7 +13080,7 @@ Partial Public Class Form1
         Return tab
     End Function
 
-    Private Shared Function BuildHelpTextEnglish() As String
+    Private Function BuildHelpTextEnglish() As String
         Return String.Join(Environment.NewLine, New String() {
             "KATHANABOT - COMPLETE FEATURE GUIDE (ENGLISH)",
             "============================================================",
@@ -13126,7 +13128,9 @@ Partial Public Class Form1
             "- Loot After Kill: presses F when an attacked mob reaches zero HP or disappears. Works without the loot scanner; picks up nearby items without its item filter.",
             "- Retarget Now (E): manual retarget key.",
             "- Auto Accept Party/Ress: toggle OCR prompt auto accept.",
-            "- Ask Party Every (sec) + Auto Ask Party Text + Auto Ask Party: periodic custom command.",
+            If(_quizUnlocked,
+               "- Ask Party Every (sec) + Auto Ask Party Text + Auto Ask Party: comma-separated phrases, shuffled without consecutive repeats. Each phrase automatically starts with /all. Each distinct phrase is used once per cycle.",
+               "- Ask Party Every (sec) + Auto Ask Party Text + Auto Ask Party: one regular custom message, repeated at the chosen interval."),
             "- Help (EN/ES/FIL): opens this multilingual guide.",
             "",
             "6) VISION TAB - VISION + WINDOW SETUP",
@@ -13215,7 +13219,7 @@ Partial Public Class Form1
         })
     End Function
 
-    Private Shared Function BuildHelpTextSpanish() As String
+    Private Function BuildHelpTextSpanish() As String
         Return String.Join(Environment.NewLine, New String() {
             "KATHANABOT - GUIA COMPLETA DE FUNCIONES (ESPANOL)",
             "============================================================",
@@ -13259,7 +13263,9 @@ Partial Public Class Form1
             "- Loot After Kill: presiona F apenas la vida del objetivo actual llega a 0, sin esperar el temporizador de Loot Pickup.",
             "- Retarget Now (E): retarget manual.",
             "- Auto Accept Party/Ress: aceptar prompts por OCR.",
-            "- Ask Party Every (sec) + Auto Ask Party Text + Auto Ask Party: comando periodico personalizable.",
+            If(_quizUnlocked,
+               "- Ask Party Every (sec) + Auto Ask Party Text + Auto Ask Party: frases separadas por comas, en orden aleatorio sin repeticiones consecutivas. Cada frase empieza automaticamente con /all y se usa una vez por ciclo.",
+               "- Ask Party Every (sec) + Auto Ask Party Text + Auto Ask Party: un mensaje normal personalizado, repetido en el intervalo elegido."),
             "- Help (EN/ES/FIL): abre esta guia.",
             "",
             "6) PESTANA VISION",
@@ -13337,7 +13343,7 @@ Partial Public Class Form1
         })
     End Function
 
-    Private Shared Function BuildHelpTextFilipino() As String
+    Private Function BuildHelpTextFilipino() As String
         Return String.Join(Environment.NewLine, New String() {
             "KATHANABOT - KUMPLETONG GABAY SA MGA FUNCTION (FILIPINO)",
             "============================================================",
@@ -13381,7 +13387,9 @@ Partial Public Class Form1
             "- Loot After Kill: pinipindot ang F agad pagka-0 na ng life ng kasalukuyang target, hindi na hinihintay ang timer ng Loot Pickup.",
             "- Retarget Now (E): manual retarget.",
             "- Auto Accept Party/Ress: auto accept prompts gamit OCR.",
-            "- Ask Party Every (sec) + Auto Ask Party Text + Auto Ask Party: periodic custom command.",
+            If(_quizUnlocked,
+               "- Ask Party Every (sec) + Auto Ask Party Text + Auto Ask Party: mga parirala na pinaghihiwalay ng kuwit, random ang order at walang magkasunod na pag-ulit. Awtomatikong nagsisimula sa /all ang bawat parirala at ginagamit isang beses bawat cycle.",
+               "- Ask Party Every (sec) + Auto Ask Party Text + Auto Ask Party: isang normal na mensahe, inuulit sa napiling interval."),
             "- Help (EN/ES/FIL): bubuksan ang multilingual guide.",
             "",
             "6) VISION TAB",
@@ -13461,7 +13469,7 @@ Partial Public Class Form1
         })
     End Function
 
-    Private Shared Function BuildScopedHelpTextEnglish(helpScope As String) As String
+    Private Function BuildScopedHelpTextEnglish(helpScope As String) As String
         Select Case NormalizeHelpScope(helpScope)
             Case HelpScopeLite
                 Return String.Join(Environment.NewLine, New String() {
@@ -13594,7 +13602,9 @@ Partial Public Class Form1
                     "- Add lets you insert names, including comma-separated names typed in the box. Remove deletes the selected names.",
                     "- In the center panel, Attack starts Full mode, Save Settings stores the live config, Stop Bot sends the hard-stop flow, FS (Full Support) disables all retargeting for a pure support character, Auto Retarget If Stuck enables stuck-target recovery, and Retarget Now (E) forces a manual retarget (both of the latter are disabled while FS is on).",
                     "- Auto Accept Party/Ress toggles OCR-based prompt acceptance.",
-                    "- Ask Party Every (sec), Auto Ask Party Text, and Auto Ask Party control the repeating party command.",
+                    If(_quizUnlocked,
+                       "- Ask Party Every (sec) controls the interval. Separate Auto Ask Party Text phrases with commas; each phrase automatically starts with /all. Each distinct phrase is sent once in random order before reshuffling, without consecutive repeats.",
+                       "- Ask Party Every (sec), Auto Ask Party Text, and Auto Ask Party control one regular message. Commas are ordinary punctuation; the same message repeats at the chosen interval."),
                     "- The live labels show run state, status, HP, MP, current mob, EXP rate, and rupiahs rate.",
                     "- In the Log panel, Real-time shows engine events, Clear Log clears visible text only, Key Summary tracks rolling key counts, and Reset Key Summary clears that history.",
                     "- Recommended setup order: calibrate Vision first, then build the combat rows, then tune Auto-Pot and Auto-Loot support behavior."
@@ -13602,7 +13612,7 @@ Partial Public Class Form1
         End Select
     End Function
 
-    Private Shared Function BuildScopedHelpTextSpanish(helpScope As String) As String
+    Private Function BuildScopedHelpTextSpanish(helpScope As String) As String
         Select Case NormalizeHelpScope(helpScope)
             Case HelpScopeLite
                 Return String.Join(Environment.NewLine, New String() {
@@ -13730,14 +13740,16 @@ Partial Public Class Form1
                     "- Add agrega nombres, incluso varios separados por coma. Remove elimina los seleccionados.",
                     "- En el panel central, Attack inicia Full, Save Settings guarda la configuracion en vivo, Stop Bot ejecuta hard-stop, FS (Full Support) desactiva todo el retarget para un personaje de soporte puro, Auto Retarget If Stuck activa recuperacion por objetivo atascado y Retarget Now (E) envia retarget manual (estos dos ultimos quedan deshabilitados mientras FS esta activo).",
                     "- Auto Accept Party/Ress maneja prompts detectados por OCR.",
-                    "- Ask Party Every (sec), Auto Ask Party Text y Auto Ask Party controlan el comando repetido de party.",
+                    If(_quizUnlocked,
+                       "- Ask Party Every (sec) controla el intervalo. Separa las frases de Auto Ask Party Text con comas; cada frase empieza automaticamente con /all y se envia una vez por ciclo en orden aleatorio, sin repeticiones consecutivas.",
+                       "- Ask Party Every (sec), Auto Ask Party Text y Auto Ask Party controlan un mensaje normal. Las comas son puntuacion; el mismo mensaje se repite en el intervalo elegido."),
                     "- En Log, Real-time muestra eventos, Clear Log limpia solo el texto visible, Key Summary guarda conteo de teclas y Reset Key Summary limpia ese historial.",
                     "- Orden recomendado: calibra Vision primero, luego arma las filas de combate y despues ajusta Auto-Pot y Auto-Loot."
                 })
         End Select
     End Function
 
-    Private Shared Function BuildScopedHelpTextFilipino(helpScope As String) As String
+    Private Function BuildScopedHelpTextFilipino(helpScope As String) As String
         Select Case NormalizeHelpScope(helpScope)
             Case HelpScopeLite
                 Return String.Join(Environment.NewLine, New String() {
@@ -13865,7 +13877,9 @@ Partial Public Class Form1
                     "- Add puwedeng magdagdag ng isa o maraming comma-separated names. Remove mag-aalis ng selected names.",
                     "- Sa center panel, Attack nagsisimula ng Full mode, Save Settings nagsa-save ng live config, Stop Bot naghihinto sa hard-stop flow, FS (Full Support) nagda-disable ng lahat ng retarget para sa pure support character, Auto Retarget If Stuck nag-o-on ng stuck-target recovery, at Retarget Now (E) ay manual retarget (parehong naka-disable habang naka-on ang FS).",
                     "- Auto Accept Party/Ress ay para sa OCR-based prompt acceptance.",
-                    "- Ask Party Every (sec), Auto Ask Party Text, at Auto Ask Party ay para sa paulit-ulit na party command.",
+                    If(_quizUnlocked,
+                       "- Ask Party Every (sec) ang interval. Paghiwalayin ang mga parirala sa Auto Ask Party Text gamit ang kuwit; awtomatikong nagsisimula sa /all ang bawat parirala at ipinapadala isang beses bawat cycle sa random na order, walang magkasunod na pag-ulit.",
+                       "- Ask Party Every (sec), Auto Ask Party Text, at Auto Ask Party ay para sa isang normal na mensahe. Bantas lang ang mga kuwit; inuulit ang mensahe sa napiling interval."),
                     "- Sa Log panel, Real-time ang live events, Clear Log ang visible text lang ang nililinis, Key Summary ang rolling key counts, at Reset Key Summary ang naglilinis ng history.",
                     "- Recommended order: unahin ang Vision calibration, sunod ang combat rows, tapos i-tune ang Auto-Pot at Auto-Loot."
                 })
@@ -16620,7 +16634,7 @@ Partial Public Class Form1
         cfg.PartyRessAutoAcceptEnabled = _ressAutoAccept
         cfg.PartyAskEnabled = _partyAskEnabled
         cfg.PartyAskIntervalMs = CInt(Math.Round(CDbl(If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D)) * 1000.0))
-        cfg.PartyAskText = GetPartyAskCommandText()
+        ApplyPartyAskConfig(cfg)
         cfg.ChatMessageUseCtrlV = _chatMessageUseCtrlV
         cfg.AskForResurrectEnabled = _askForResurrectEnabled
         cfg.AskForResurrectIntervalMs = CInt(Math.Round(CDbl(If(nudAskForResurrectSeconds IsNot Nothing, nudAskForResurrectSeconds.Value, 30D)) * 1000.0))
@@ -17809,9 +17823,7 @@ Partial Public Class Form1
                 Dim boundedAskSeconds As Decimal = Math.Max(nudPartyAskSeconds.Minimum, Math.Min(nudPartyAskSeconds.Maximum, state.AskForPartySeconds))
                 nudPartyAskSeconds.Value = boundedAskSeconds
             End If
-            If txtPartyAskText IsNot Nothing Then
-                txtPartyAskText.Text = If(state.AskForPartyText, DefaultPartyAskCommand).Trim()
-            End If
+            LoadPartyAskTexts(state.AskForPartyText, state.AskForPartyCollectionText)
             UpdatePartyAskButton()
             UpdateChatMessageInputModeButton()
 
@@ -17979,7 +17991,8 @@ Partial Public Class Form1
                 .PartyRessAutoAcceptEnabled = _ressAutoAccept,
                 .AskForPartyEnabled = _partyAskEnabled,
                 .AskForPartySeconds = If(nudPartyAskSeconds IsNot Nothing, nudPartyAskSeconds.Value, 30D),
-                .AskForPartyText = GetPartyAskCommandText(),
+                .AskForPartyText = GetRegularPartyAskText(),
+                .AskForPartyCollectionText = GetPartyAskCollectionText(),
                 .ChatMessageUseCtrlV = _chatMessageUseCtrlV,
                 .AskForResurrectEnabled = _askForResurrectEnabled,
                 .AskForResurrectSeconds = If(nudAskForResurrectSeconds IsNot Nothing, nudAskForResurrectSeconds.Value, 30D),
@@ -18293,9 +18306,7 @@ Partial Public Class Form1
         _partyAskEnabled = cfg.PartyAskEnabled
         _chatMessageUseCtrlV = cfg.ChatMessageUseCtrlV
         SetNumericControlValue(nudPartyAskSeconds, CDec(Math.Max(1, cfg.PartyAskIntervalMs) / 1000.0))
-        If txtPartyAskText IsNot Nothing Then
-            txtPartyAskText.Text = If(String.IsNullOrWhiteSpace(cfg.PartyAskText), DefaultPartyAskCommand, cfg.PartyAskText.Trim())
-        End If
+        LoadPartyAskTexts(cfg.PartyAskText, cfg.PartyAskCollectionText)
         UpdatePartyAskButton()
         UpdateChatMessageInputModeButton()
 

@@ -405,7 +405,10 @@ Public Class BotConfig
     Public Property PartyRessAutoAcceptEnabled As Boolean = True
     Public Property PartyAskEnabled As Boolean = False
     Public Property PartyAskIntervalMs As Integer = 30000
-    Public Property PartyAskText As String = "add"
+    Public Property PartyAskText As String = PartyAskMessageCollection.DefaultRegularMessage
+    Public Property PartyAskCollectionText As String = Nothing
+    <JsonIgnore>
+    Public Property PartyAskCollectionEnabled As Boolean = False
     Public Property ChatMessageUseCtrlV As Boolean = True
     Public Property AskForResurrectEnabled As Boolean = False
     Public Property AskForResurrectIntervalMs As Integer = 30000
@@ -1235,6 +1238,7 @@ Partial Public Class BotEngine
     Private _partyInviteOcrTaskGeneration As Long = -1L
     Private _lastPartyInviteCandidate As String = ""
     Private _lastPartyAskAt As DateTime = DateTime.MinValue
+    Private ReadOnly _partyAskMessages As New PartyAskMessageCollection()
     Private _partyAskSuppressedInParty As Boolean = False
     Private _partyAskWasEnabled As Boolean = False
     Private _partyAskPauseLogged As Boolean = False
@@ -1716,6 +1720,7 @@ Partial Public Class BotEngine
             _resurrectOcrTask = Nothing
             _lastResurrectCandidate = ""
             _lastPartyAskAt = DateTime.MinValue
+            _partyAskMessages.Reset()
             _partyAskSuppressedInParty = False
             _partyAskWasEnabled = False
             _partyAskPauseLogged = False
@@ -9603,7 +9608,10 @@ Partial Public Class BotEngine
             Return False
         End If
 
-        Dim commandText As String = NormalizePartyAskCommand(cfg.PartyAskText)
+        Dim useCollection = cfg.PartyAskCollectionEnabled
+        Dim commandText As String = If(useCollection,
+            _partyAskMessages.Peek(If(cfg.PartyAskCollectionText, cfg.PartyAskText)),
+            PartyAskMessageCollection.NormalizeRegular(cfg.PartyAskText))
         If Not SendKey(hwnd, "ENTER", FastKeyPressMs) Then
             Return False
         End If
@@ -9618,6 +9626,7 @@ Partial Public Class BotEngine
         End If
         Dim sentFinalEnter As Boolean = SendKey(hwnd, "ENTER", FastKeyPressMs)
         If sentFinalEnter Then
+            If useCollection Then _partyAskMessages.MarkSent()
             _lastPartyAskAt = now
             _partyAskPauseLogged = False
             SetLastAction($"ENTER {commandText} ENTER (party ask)")

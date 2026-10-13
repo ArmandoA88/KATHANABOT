@@ -12,6 +12,7 @@ Module Program
         TestKeyboardOnlyPolicy()
         TestKeysAndHold()
         TestSkillUi()
+        PartyAskMessageTests.Run()
         StartupTests.Run()
         FocusMaintenanceTests.Run()
         Console.WriteLine("PASS: foreground production default, common input routing, retained keyboard-only policy, shortcut sequences, cancellable loot hold, editable skill colors and profile roundtrip.")

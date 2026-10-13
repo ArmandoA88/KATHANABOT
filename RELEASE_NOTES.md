@@ -1,3 +1,6 @@
+## 1.0.262
+- General reliability and usability improvements.
+
 ## 1.0.259
 - Background mode now continuously captures the selected game window using Windows Graphics Capture. Covered-window desktop copying is never used in this mode. Unavailable, black, minimized, resized or stale observations pause input.
 - Combat decisions use frames at most 300 ms old and expire after 500 ms. Each combat burst and Direct KP E/R pair borrows focus for a 750 ms budget, returns it immediately when finished, and leaves 200 ms before another borrow. Windows scheduling and focus-call delays can extend the observed hand-off duration.

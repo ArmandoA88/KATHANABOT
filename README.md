@@ -10,6 +10,8 @@ KathanaBot is a self-contained VB WinForms application. Both the Velopack-instal
 
 ## Build / Rebuild
 
+Version 1.0.262 contains general reliability and usability improvements.
+
 Version 1.0.259 improves **Background mode** (Combat Full, under Stop Bot; on by default): continuous
 Windows Graphics Capture supplies the actual game window even when covered. Actions pause when capture is
 unavailable, frames exceed 300 ms, or decisions exceed 500 ms. Combat rotations and Direct KP pairs share short
