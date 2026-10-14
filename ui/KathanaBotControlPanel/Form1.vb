@@ -2009,6 +2009,7 @@ Partial Public Class Form1
     Private _deadHpFirstSeenUtc As DateTime = DateTime.MinValue
     Private _windowMissingConfirmCount As Integer = 0
     Private _windowMissingFirstSeenUtc As DateTime = DateTime.MinValue
+    Private _windowMissingIsCaptureFailure As Boolean = False
     Private _deathNotificationLatched As Boolean = False
     Private _windowMissingNotificationLatched As Boolean = False
     Private _gameDisconnectedNotificationLatched As Boolean = False
@@ -2094,6 +2095,8 @@ Partial Public Class Form1
     Private Const DeadRecoverThreshold As Double = 2.0
     Private Const CriticalAlertConfirmMs As Integer = 30000
     Private Const CriticalAlertConfirmFrames As Integer = 50
+    Private Const GameCaptureAlertConfirmMs As Integer = 60000
+    Private Const GameCaptureAlertConfirmFrames As Integer = 100
     Private Const DeathNotificationRetryCount As Integer = 3
     Private Const StartupNotificationWarmupSeconds As Integer = 20
     Private Const NotificationProviderNtfy As String = "ntfy"
@@ -14222,7 +14225,7 @@ Partial Public Class Form1
             $"HpZeroAlarm: {_hpZeroAlarmActive}{Environment.NewLine}" &
             $"HpZeroPending: {_hpZeroPending}{Environment.NewLine}" &
             $"HpZeroConfirm: {_deadHpConfirmCount}/{CriticalAlertConfirmFrames} frames, {FormatPendingAlertSeconds(_deadHpFirstSeenUtc)}s/{CriticalAlertConfirmMs \ 1000}s{Environment.NewLine}" &
-            $"WindowMissingConfirm: {_windowMissingConfirmCount}/{CriticalAlertConfirmFrames} frames, {FormatPendingAlertSeconds(_windowMissingFirstSeenUtc)}s/{CriticalAlertConfirmMs \ 1000}s{Environment.NewLine}" &
+            $"WindowMissingConfirm: {_windowMissingConfirmCount}/{GetGameAlertConfirmFrames(_windowMissingIsCaptureFailure)} frames, {FormatPendingAlertSeconds(_windowMissingFirstSeenUtc)}s/{GetGameAlertConfirmMs(_windowMissingIsCaptureFailure) \ 1000}s{Environment.NewLine}" &
             $"Window Found: {st.WindowFound}{Environment.NewLine}" &
             $"HP%: {st.HpPercent:0.0}{Environment.NewLine}" &
             $"MP%: {st.MpPercent:0.0}{Environment.NewLine}" &
@@ -15075,6 +15078,7 @@ Partial Public Class Form1
         _deadHpFirstSeenUtc = DateTime.MinValue
         _windowMissingConfirmCount = 0
         _windowMissingFirstSeenUtc = DateTime.MinValue
+        _windowMissingIsCaptureFailure = False
         _deathNotificationLatched = False
         _windowMissingNotificationLatched = False
         AppendLog($"Startup guard: suppressing death/window alerts for {StartupNotificationWarmupSeconds} seconds.")
@@ -15092,11 +15096,28 @@ Partial Public Class Form1
     End Function
 
     Private Shared Function IsCriticalAlertConfirmed(firstSeenUtc As DateTime, confirmCount As Integer) As Boolean
+        Return IsAlertConfirmed(firstSeenUtc, confirmCount, CriticalAlertConfirmMs, CriticalAlertConfirmFrames, DateTime.UtcNow)
+    End Function
+
+    Private Shared Function GetGameAlertConfirmMs(captureUnavailable As Boolean) As Integer
+        Return If(captureUnavailable, GameCaptureAlertConfirmMs, CriticalAlertConfirmMs)
+    End Function
+
+    Private Shared Function GetGameAlertConfirmFrames(captureUnavailable As Boolean) As Integer
+        Return If(captureUnavailable, GameCaptureAlertConfirmFrames, CriticalAlertConfirmFrames)
+    End Function
+
+    Private Shared Function IsGameWindowAlertConfirmed(firstSeenUtc As DateTime, confirmCount As Integer, captureUnavailable As Boolean, Optional nowUtc As DateTime = Nothing) As Boolean
+        Dim observedAt = If(nowUtc = DateTime.MinValue, DateTime.UtcNow, nowUtc)
+        Return IsAlertConfirmed(firstSeenUtc, confirmCount, GetGameAlertConfirmMs(captureUnavailable), GetGameAlertConfirmFrames(captureUnavailable), observedAt)
+    End Function
+
+    Private Shared Function IsAlertConfirmed(firstSeenUtc As DateTime, confirmCount As Integer, confirmMs As Integer, confirmFrames As Integer, nowUtc As DateTime) As Boolean
         If firstSeenUtc = DateTime.MinValue Then
             Return False
         End If
-        Return confirmCount >= CriticalAlertConfirmFrames OrElse
-               (DateTime.UtcNow - firstSeenUtc).TotalMilliseconds >= CriticalAlertConfirmMs
+        Return confirmCount >= confirmFrames OrElse
+               (nowUtc - firstSeenUtc).TotalMilliseconds >= confirmMs
     End Function
 
     Private Sub BrowseAutoRelaunchExeClicked(sender As Object, e As EventArgs)
@@ -16122,6 +16143,7 @@ Partial Public Class Form1
         If _disconnectRecoveryPending Then
             _windowMissingConfirmCount = 0
             _windowMissingFirstSeenUtc = DateTime.MinValue
+            _windowMissingIsCaptureFailure = False
             Return
         End If
 
@@ -16138,18 +16160,20 @@ Partial Public Class Form1
         If status.Running AndAlso IsNotificationWarmupActive() AndAlso (missingWindow OrElse captureUnavailable) Then
             _windowMissingConfirmCount = 0
             _windowMissingFirstSeenUtc = DateTime.MinValue
+            _windowMissingIsCaptureFailure = False
             Return
         End If
 
         If missingWindow OrElse captureUnavailable Then
-            If _windowMissingFirstSeenUtc = DateTime.MinValue Then
+            If _windowMissingFirstSeenUtc = DateTime.MinValue OrElse _windowMissingIsCaptureFailure <> captureUnavailable Then
                 _windowMissingFirstSeenUtc = DateTime.UtcNow
                 _windowMissingConfirmCount = 0
-                AppendLog($"Game-window alert pending: waiting {CriticalAlertConfirmMs \ 1000} seconds or {CriticalAlertConfirmFrames} consecutive status samples before notification.")
+                _windowMissingIsCaptureFailure = captureUnavailable
+                AppendLog($"Game-window alert pending: waiting {GetGameAlertConfirmMs(captureUnavailable) \ 1000} seconds or {GetGameAlertConfirmFrames(captureUnavailable)} consecutive status samples before notification.")
             End If
             _windowMissingConfirmCount += 1
 
-            If Not _windowMissingNotificationLatched AndAlso IsCriticalAlertConfirmed(_windowMissingFirstSeenUtc, _windowMissingConfirmCount) Then
+            If Not _windowMissingNotificationLatched AndAlso IsGameWindowAlertConfirmed(_windowMissingFirstSeenUtc, _windowMissingConfirmCount, captureUnavailable) Then
                 _windowMissingNotificationLatched = True
                 ' Hidden/minimized windows and temporary capture failures look identical to a crash
                 ' from the vision loop. Never stop a healthy running bot on that ambiguous signal.
@@ -16179,6 +16203,7 @@ Partial Public Class Form1
             End If
             _windowMissingConfirmCount = 0
             _windowMissingFirstSeenUtc = DateTime.MinValue
+            _windowMissingIsCaptureFailure = False
             _windowMissingNotificationLatched = False
         End If
     End Sub
@@ -19735,6 +19760,7 @@ Partial Public Class Form1
         _lastWindowMissingNotification = DateTime.MinValue
         _windowMissingConfirmCount = 0
         _windowMissingFirstSeenUtc = DateTime.MinValue
+        _windowMissingIsCaptureFailure = False
         _windowMissingNotificationLatched = False
         AppendLog(reason)
     End Sub
@@ -19761,6 +19787,7 @@ Partial Public Class Form1
         _lastWindowMissingNotification = DateTime.MinValue
         _windowMissingConfirmCount = 0
         _windowMissingFirstSeenUtc = DateTime.MinValue
+        _windowMissingIsCaptureFailure = False
         _windowMissingNotificationLatched = False
         If reason <> "" Then
             AppendLog(reason)
@@ -19791,10 +19818,7 @@ Partial Public Class Form1
         End If
 
         _lastWindowMissingNotification = now
-        Dim body As String =
-            If(captureUnavailable,
-               $"Game capture failed for {CriticalAlertConfirmMs \ 1000} seconds or {CriticalAlertConfirmFrames} consecutive status samples. The game may be hidden, black-screened, minimized, or the screen is unavailable. The bot remains running and will retry automatically.",
-               $"Game window was not found for {CriticalAlertConfirmMs \ 1000} seconds or {CriticalAlertConfirmFrames} consecutive status samples. The game may be hidden, minimized, crashed, or closed. The bot remains running unless the selected game process is verified as exited.")
+        Dim body As String = BuildGameWindowAlertBody(captureUnavailable)
         Dim title As String = WithCharacterName("KathanaBot Game Alert", characterName)
         Task.Run(
             Async Function()
@@ -19804,6 +19828,12 @@ Partial Public Class Form1
                 End If
             End Function)
     End Sub
+
+    Private Shared Function BuildGameWindowAlertBody(captureUnavailable As Boolean) As String
+        Return If(captureUnavailable,
+            $"Game capture failed for {GetGameAlertConfirmMs(True) \ 1000} seconds or {GetGameAlertConfirmFrames(True)} consecutive status samples. The game may be hidden, black-screened, minimized, or the screen is unavailable. The bot remains running and will retry automatically.",
+            $"Game window was not found for {GetGameAlertConfirmMs(False) \ 1000} seconds or {GetGameAlertConfirmFrames(False)} consecutive status samples. The game may be hidden, minimized, crashed, or closed. The bot remains running unless the selected game process is verified as exited.")
+    End Function
 
     ''' <summary>
     ''' Appends " - &lt;CharacterName&gt;" to a notification title when a character name is known.
