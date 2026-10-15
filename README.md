@@ -10,6 +10,8 @@ KathanaBot is a self-contained VB WinForms application. Both the Velopack-instal
 
 ## Build / Rebuild
 
+Version 1.0.264 contains general reliability and usability improvements.
+
 Version 1.0.263 confirms **Game capture failed** alerts only after **60 seconds or 100 consecutive
 failed status samples**. A healthy capture cancels the pending alert. Capture failures and missing-window
 samples use separate streaks, and the log, diagnostics and notification text show the applicable threshold.

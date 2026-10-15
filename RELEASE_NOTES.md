@@ -1,3 +1,6 @@
+## 1.0.264
+- General reliability and usability improvements.
+
 ## 1.0.263
 - Raised Game capture failed notification confirmation from 30 seconds/50 samples to 60 seconds or 100 consecutive failed status samples. Healthy capture resets confirmation, and changing failure categories starts a new streak.
 - Updated pending logs, diagnostics and notification text to match the capture threshold. Other critical alerts retain their existing timing.

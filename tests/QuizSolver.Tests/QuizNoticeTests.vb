@@ -8,11 +8,12 @@ Imports System.Windows.Forms
 Module QuizNoticeTests
     Public Sub Run()
         Detection()
+        CharacterIdentity()
         Persistence()
         NoticeUiAndTimer()
         Delivery().GetAwaiter().GetResult()
         LocalOcr()
-        Console.WriteLine("PASS quiz/raffle keyword matching, time extraction, saved default-on toggle, global-topic delivery, deduplication, retry, cancellation and local OCR (no live notifications).")
+        Console.WriteLine("PASS quiz keywords, prize-reveal-only raffles, character names, time extraction, saved default-on toggle, global-topic delivery, per-character deduplication, retry, cancellation and local OCR (no live notifications).")
     End Sub
 
     Private Sub NoticeUiAndTimer()
@@ -74,25 +75,48 @@ Module QuizNoticeTests
         Check(QuizNoticeDetector.Detect(Nothing).Count = 0, "empty text")
         Check(QuizNoticeDetector.Detect({"Skill cooldown 00:30", "Damage 1234", "Quizmaster traded rafflecoins"}).Count = 0, "keyword boundaries")
         Expect("[GM] Quiz starts in 5 minutes!", "Quiz", "starts in 5 minutes")
-        Expect("RAFFLE begins in 30 seconds", "Raffle", "begins in 30 seconds")
+        Expect("RAFFLE begins in 30 seconds (prizes are revealed)", "Raffle", "begins in 30 seconds")
         Expect("Quizzes in ten minutes", "Quiz", "in ten minutes")
         Expect("Quiz in thirty-five minutes", "Quiz", "in thirty-five minutes")
-        Expect("Raffle in 5m30s", "Raffle", "in 5m30s")
+        Expect("Raffle in 5m30s (prizes are revealed)", "Raffle", "in 5m30s")
         Expect("Quizes in 2 mins", "Quiz", "in 2 mins")
-        Expect("Raffles after 1 hour and 30 minutes", "Raffle", "after 1 hour and 30 minutes")
+        Expect("Raffles after 1 hour and 30 minutes (prizes are revealed)", "Raffle", "after 1 hour and 30 minutes")
         Expect("Quiz in 01:30", "Quiz", "in 01:30")
-        Expect("Raffle starts at 20:30", "Raffle", "starts at 20:30")
+        Expect("Raffle starts at 20:30 (prizes are revealed)", "Raffle", "starts at 20:30")
         Expect("Quiz at 8 PM", "Quiz", "at 8 PM")
         Expect("Quiz: 45 seconds left", "Quiz", "45 seconds left")
         Expect("Quiz prize: 500 rupiah", "Quiz", "")
         Expect("Quiz notice. Buff duration 5 minutes", "Quiz", "")
-        Dim both = QuizNoticeDetector.Detect({"Quiz in 5 minutes and raffle in 30 seconds"})
+        Dim both = QuizNoticeDetector.Detect({"Quiz in 5 minutes and raffle in 30 seconds (prizes are revealed)"})
         Check(both.Count = 2 AndAlso both(0).Timing = "in 5 minutes" AndAlso both(1).Timing = "in 30 seconds", "times mixed between events")
-        Dim wrapped = QuizNoticeDetector.Detect({"[GM] Raffle", "starts in 2 minutes", "HP 1000"})
+        Dim wrapped = QuizNoticeDetector.Detect({"[GM] Raffle prizes are revealed", "starts in 2 minutes", "HP 1000"})
         Check(wrapped.Single().Timing = "starts in 2 minutes", "wrapped notice")
-        Dim unrelated = QuizNoticeDetector.Detect({"Quiz notification", "Buff time left 10 minutes", "Raffle in 1 minute"})
+        Dim unrelated = QuizNoticeDetector.Detect({"Quiz notification", "Buff time left 10 minutes", "Raffle in 1 minute (prizes are revealed)"})
         Check(unrelated.First().Timing = "" AndAlso unrelated.Last().Timing = "in 1 minute", "unrelated timer copied")
         Check(unrelated.First().Body.Contains("No time mentioned") AndAlso unrelated.Last().Title = "Raffle notice", "notification text")
+        Expect("prizes are revealed", "Raffle", "")
+        Expect("Prizes are revealed when the timer ends", "Raffle", "")
+        Expect("PRIZES   ARE   REVEALED WHEN THE TIMER ENDS", "Raffle", "")
+        For Each ordinary In {"Raffle", "Raffles start in 1 minute", "Raffle winners announced", "prizes will be revealed", "prizes are not revealed", "prizes are revealedness", "surprizes are revealed"}
+            Check(QuizNoticeDetector.Detect({ordinary}).Count = 0, "ordinary/nonmatching raffle triggered: " & ordinary)
+        Next
+        Dim phraseWrap = QuizNoticeDetector.Detect({"Prizes are", "revealed when", "the timer ends"})
+        Check(phraseWrap.Single().Kind = "Raffle" AndAlso phraseWrap.Single().TriggerPhrase = "Prizes are revealed when the timer ends", "wrapped qualifying phrase was lost")
+        Dim noBorrow = QuizNoticeDetector.Detect({"Prizes are", "revealed", "Buff time left 10 minutes"})
+        Check(noBorrow.Single().Timing = "", "wrapped phrase borrowed an unrelated timer")
+        Check(QuizNoticeDetector.Detect({"Prizes", "Other UI text", "are revealed"}).Count = 0, "unrelated lines were merged into a qualifying phrase")
+        Check(QuizNoticeDetector.Detect({"Quiz in 5 minutes", "Raffle in 30 seconds"}).Single().Kind = "Quiz", "raffle filtering changed quiz detection")
+    End Sub
+
+    Private Sub CharacterIdentity()
+        Dim notice As New QuizRaffleNotice("Raffle", "", "prizes are revealed", "  AccountOne  ")
+        Check(notice.Title = "Raffle notice - AccountOne" AndAlso notice.Body.Contains("Character: AccountOne."), "character name missing from raffle title/body")
+        Check(notice.Body.Contains("prizes are revealed"), "notification omitted the qualifying phrase")
+        Dim gameTitle = "Kathana - The Reign of Shadow"
+        Check(BotEngine.ResolveCharacterNameForNotice("AccountOne", gameTitle, gameTitle) = "AccountOne", "same-frame character OCR was not used")
+        Check(BotEngine.ResolveCharacterNameForNotice("", "AccountTwo - Kathana", gameTitle) = "AccountTwo", "selected-window title fallback failed")
+        Check(BotEngine.ResolveCharacterNameForNotice("", gameTitle, gameTitle) = "", "generic game title was presented as a character name")
+        Check(New QuizRaffleNotice("Raffle", "", "prizes are revealed", "unknown").CharacterName = "", "unknown placeholder treated as an account")
     End Sub
 
     Private Sub Persistence()
@@ -118,13 +142,22 @@ Module QuizNoticeTests
             End Function
         Dim now As New DateTime(2026, 9, 29, 12, 0, 0, DateTimeKind.Utc)
         Check(Await monitor.ProcessAsync("window-1", {"Unrelated game message"}, "global-fixture", now, send, CancellationToken.None) = 0, "sent without a keyword")
-        Check(Await monitor.ProcessAsync("window-1", {"Quiz in 5 minutes", "Raffle in 30 seconds"}, "global-fixture", now, send, CancellationToken.None) = 2, "missing event delivery")
+        Check(Await monitor.ProcessAsync("window-1", {"Quiz in 5 minutes", "Raffle in 30 seconds (prizes are revealed)"}, "global-fixture", now, send, CancellationToken.None, "AccountOne") = 2, "missing event delivery")
         Check(topics.All(Function(t) t = "global-fixture"), "did not use configured global topic")
+        Check(delivered.Single(Function(n) n.Kind = "Quiz").Title = "Quiz notice", "raffle character labels changed existing quiz notices")
         For elapsedSeconds As Integer = 2 To 200 Step 2
-            Check(Await monitor.ProcessAsync("window-1", {"Quiz in " & (300 - elapsedSeconds).ToString() & " seconds", "Raffle in 30 seconds"}, "global-fixture", now.AddSeconds(elapsedSeconds), send, CancellationToken.None) = 0, "visible countdown caused notification spam")
+            Check(Await monitor.ProcessAsync("window-1", {"Quiz in " & (300 - elapsedSeconds).ToString() & " seconds", "Raffle in 30 seconds (prizes are revealed)"}, "global-fixture", now.AddSeconds(elapsedSeconds), send, CancellationToken.None, "AccountOne") = 0, "visible countdown caused notification spam")
         Next
-        Check(Await monitor.ProcessAsync("window-1", {"Quiz in 2 minutes"}, "global-fixture", now.AddSeconds(240), send, CancellationToken.None) = 1, "new notice did not rearm after disappearance")
+        Check(Await monitor.ProcessAsync("window-1", {"Quiz in 2 minutes"}, "global-fixture", now.AddSeconds(240), send, CancellationToken.None, "AccountOne") = 1, "new notice did not rearm after disappearance")
         Check(Await monitor.ProcessAsync("window-2", {"Quiz in 5 minutes"}, "global-fixture", now.AddSeconds(241), send, CancellationToken.None) = 1, "other game window was suppressed")
+
+        Dim named As New QuizNoticeMonitor()
+        Check(Await named.ProcessAsync("window", {"Raffle in 1 minute"}, "global-fixture", now, send, CancellationToken.None, "AccountOne") = 0, "ordinary raffle reached the sender")
+        Check(Await named.ProcessAsync("window", {"Prizes are revealed"}, "global-fixture", now, send, CancellationToken.None) = 0, "unnamed raffle was sent")
+        Check(Await named.ProcessAsync("window", {"Prizes are revealed"}, "global-fixture", now.AddSeconds(1), send, CancellationToken.None, "AccountOne") = 1, "waiting for a name consumed the delivery state")
+        Check(delivered.Last().Title = "Raffle notice - AccountOne" AndAlso delivered.Last().Body.Contains("Character: AccountOne."), "sender received an unnamed raffle")
+        Check(Await named.ProcessAsync("window", {"Prizes are revealed when the timer ends"}, "global-fixture", now.AddSeconds(12), send, CancellationToken.None, "ACCOUNTONE") = 0, "case/phrase variation bypassed duplicate suppression")
+        Check(Await named.ProcessAsync("window", {"Prizes are revealed"}, "global-fixture", now.AddSeconds(13), send, CancellationToken.None, "AccountTwo") = 1 AndAlso delivered.Last().CharacterName = "AccountTwo", "another character in the same window was suppressed or mislabeled")
 
         Dim enrich As New QuizNoticeMonitor()
         Check(Await enrich.ProcessAsync("window", {"Quiz"}, "global-fixture", now, send, CancellationToken.None) = 1, "notice without time")
@@ -138,10 +171,10 @@ Module QuizNoticeTests
                 attempts += 1
                 Return Task.FromResult(attempts > 1)
             End Function
-        Check(Await retry.ProcessAsync("window", {"Raffle"}, "global-fixture", now, flaky, CancellationToken.None) = 0, "failed delivery counted as sent")
-        Await retry.ProcessAsync("window", {"Raffle"}, "global-fixture", now.AddSeconds(2), flaky, CancellationToken.None)
+        Check(Await retry.ProcessAsync("window", {"Prizes are revealed"}, "global-fixture", now, flaky, CancellationToken.None, "AccountOne") = 0, "failed delivery counted as sent")
+        Await retry.ProcessAsync("window", {"Prizes are revealed"}, "global-fixture", now.AddSeconds(2), flaky, CancellationToken.None, "AccountOne")
         Check(attempts = 1, "delivery retry storm")
-        Check(Await retry.ProcessAsync("window", {"Raffle"}, "global-fixture", now.AddSeconds(61), flaky, CancellationToken.None) = 1, "failed notification not retried")
+        Check(Await retry.ProcessAsync("window", {"Prizes are revealed"}, "global-fixture", now.AddSeconds(61), flaky, CancellationToken.None, "AccountOne") = 1, "failed notification not retried")
         Using cancel As New CancellationTokenSource()
             cancel.Cancel()
             Try
@@ -158,7 +191,7 @@ Module QuizNoticeTests
                     Return Task.FromResult(True)
                 End Function
             Try
-                Await New QuizNoticeMonitor().ProcessAsync("window", {"Quiz", "Raffle"}, "global-fixture", now, cancelDuring, cancel.Token)
+                Await New QuizNoticeMonitor().ProcessAsync("window", {"Quiz", "Prizes are revealed"}, "global-fixture", now, cancelDuring, cancel.Token, "AccountOne")
                 Throw New Exception("cancellation did not stop remaining alerts")
             Catch ex As OperationCanceledException
                 Check(calls = 1, "sent another alert after toggle-off")
@@ -167,14 +200,20 @@ Module QuizNoticeTests
     End Function
 
     Private Sub LocalOcr()
-        Using bitmap As New Bitmap(1050, 210), canvas = Graphics.FromImage(bitmap), font As New Font("Segoe UI", 28.0F)
+        Using bitmap As New Bitmap(1400, 210), canvas = Graphics.FromImage(bitmap), font As New Font("Segoe UI", 28.0F)
             canvas.Clear(Color.White)
             canvas.DrawString("Quiz starts in 5 minutes", font, Brushes.Black, 25, 25)
-            canvas.DrawString("Raffle begins in 30 seconds", font, Brushes.Black, 25, 100)
+            canvas.DrawString("Raffle in 30 seconds - prizes are revealed", font, Brushes.Black, 25, 100)
             Dim lines = OcrReader.ReadScreenTextRegions(bitmap).Select(Function(r) r.Text).ToArray()
             Dim notices = QuizNoticeDetector.Detect(lines)
             Check(notices.Count = 2 AndAlso notices.Any(Function(n) n.Kind = "Quiz" AndAlso n.Timing.Contains("5 minutes")) AndAlso
                 notices.Any(Function(n) n.Kind = "Raffle" AndAlso n.Timing.Contains("30 seconds")), "local OCR fixture failed: " & String.Join(" | ", lines))
+        End Using
+        Using bitmap As New Bitmap(600, 120), canvas = Graphics.FromImage(bitmap), font As New Font("Segoe UI", 20.0F)
+            canvas.Clear(Color.White)
+            canvas.DrawString("RaffleAccount", font, Brushes.Black, 30, 10)
+            Dim name = BotEngine.ReadCharacterNameForNotice(bitmap, New RectRegion(35, 50, 260, 30), IntPtr.Zero, "Kathana - The Reign of Shadow")
+            Check(name = "RaffleAccount", "character name local OCR fixture failed: " & name)
         End Using
     End Sub
 End Module

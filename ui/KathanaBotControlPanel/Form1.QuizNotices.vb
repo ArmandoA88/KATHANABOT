@@ -11,6 +11,12 @@ Partial Public Class Form1
     Private _quizNoticeNextScanUtc As DateTime = DateTime.MinValue
     Private _quizNoticeLastErrorUtc As DateTime = DateTime.MinValue
     Private _quizNoticeLastDelivery As String = ""
+    Private Const QuizNoticeWatchingText As String = "On — watching for quiz notices or prize-reveal raffles."
+
+    Private NotInheritable Class QuizNoticeScanResult
+        Public Property Lines As String()
+        Public Property CharacterName As String
+    End Class
 
     Private Function BuildQuizNoticeControls() As Control
         Dim card As New TableLayoutPanel With {.Dock = DockStyle.Top, .AutoSize = True, .ColumnCount = 1, .RowCount = 3,
@@ -18,8 +24,8 @@ Partial Public Class Form1
         chkQuizNoticesEnabled = New CheckBox With {.Text = "Quiz / raffle notice alerts", .Checked = True, .AutoSize = True,
             .Dock = DockStyle.Top, .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold), .ForeColor = ThemeTextPrimary}
         card.Controls.Add(chkQuizNoticesEnabled)
-        card.Controls.Add(New Label With {.Text = "Always watches the selected Full game window for quiz or raffle keywords. Sends the event and any time mentioned to ntfy Channel (Global). No API key or calibration needed; works with the solver off.",
-            .Dock = DockStyle.Top, .Height = 48, .ForeColor = ThemeTextSecondary, .Margin = New Padding(0, 8, 0, 4)})
+        card.Controls.Add(New Label With {.Text = "Watches the selected Full game window. Raffle alerts require 'prizes are revealed' (including 'when the timer ends') and include the character name. Quiz alerts also run with the solver off. Sends to ntfy Channel (Global).",
+            .Dock = DockStyle.Top, .Height = 64, .ForeColor = ThemeTextSecondary, .Margin = New Padding(0, 8, 0, 4)})
         lblQuizNoticeStatus = New Label With {.Text = "On — waiting for a game window.", .Dock = DockStyle.Top, .Height = 24, .ForeColor = ThemeAccent, .AutoEllipsis = True}
         card.Controls.Add(lblQuizNoticeStatus)
         AddHandler chkQuizNoticesEnabled.CheckedChanged,
@@ -50,7 +56,7 @@ Partial Public Class Form1
         Dim interval = If(nudQuizScanMs IsNot Nothing, CInt(nudQuizScanMs.Value), 350)
         _quizScanTimer.Interval = If(noticesOn, Math.Min(interval, 2000), interval)
         If _quizScannerStarted AndAlso (noticesOn OrElse solverOn) Then _quizScanTimer.Start() Else _quizScanTimer.Stop()
-        If lblQuizNoticeStatus IsNot Nothing Then lblQuizNoticeStatus.Text = If(noticesOn, "On — watching for quiz / raffle keywords.", "Notice alerts are off.")
+        If lblQuizNoticeStatus IsNot Nothing Then lblQuizNoticeStatus.Text = If(noticesOn, QuizNoticeWatchingText, "Notice alerts are off.")
     End Sub
 
     Private Async Function RunQuizNoticeScanAsync() As Task
@@ -67,28 +73,38 @@ Partial Public Class Form1
         Dim cancellation = _quizNoticeCancellation.Token
         _quizNoticeScanInProgress = True
         Try
+            Dim cfg = BuildConfig()
             ' Share the existing game capture and local Windows OCR pipeline.
             ' Scan the whole client: announcement/chat banners can sit outside
             ' the quiz-answer calibration. Never switch modes or send game input.
-            Dim lines = Await Task.Run(Function()
+            Dim scan = Await Task.Run(Function() As QuizNoticeScanResult
                                            cancellation.ThrowIfCancellationRequested()
                                            Using frame = BotEngine.CaptureClient(hwnd)
                                                If frame Is Nothing Then Return Nothing
-                                               Return OcrReader.ReadScreenTextRegions(frame).Select(Function(line) line.Text).ToArray()
+                                               Dim lines = OcrReader.ReadScreenTextRegions(frame).Select(Function(line) line.Text).ToArray()
+                                               Dim name = ""
+                                               If QuizNoticeDetector.Detect(lines).Any(Function(notice) notice.Kind = "Raffle") Then
+                                                   name = BotEngine.ReadCharacterNameForNotice(frame, cfg.HpBar, hwnd, cfg.WindowTitle)
+                                               End If
+                                               Return New QuizNoticeScanResult With {.Lines = lines, .CharacterName = name}
                                            End Using
                                        End Function, cancellation)
             cancellation.ThrowIfCancellationRequested()
             If IsDisposed OrElse Not _quizScannerStarted Then Return
             Dim current = GetSelectedProcessWindowForEdition(BotEdition.Full)
             If current Is Nothing OrElse current.ProcessId <> processId OrElse current.MainWindowHandle <> hwnd Then Return
-            If lines Is Nothing Then
+            If scan Is Nothing Then
                 lblQuizNoticeStatus.Text = "On — waiting for a readable game image."
                 Return
             End If
-            Await _quizNoticeMonitor.ProcessAsync(processId.ToString() & ":" & hwnd.ToInt64().ToString(), lines,
-                GetNtfyTopicName(), DateTime.UtcNow, AddressOf SendQuizNoticeAsync, cancellation)
+            Await _quizNoticeMonitor.ProcessAsync(processId.ToString() & ":" & hwnd.ToInt64().ToString(), scan.Lines,
+                GetNtfyTopicName(), DateTime.UtcNow, AddressOf SendQuizNoticeAsync, cancellation, scan.CharacterName)
             cancellation.ThrowIfCancellationRequested()
-            lblQuizNoticeStatus.Text = If(_quizNoticeLastDelivery.Length > 0, "On — last alert: " & _quizNoticeLastDelivery, "On — watching for quiz / raffle keywords.")
+            If scan.CharacterName.Length = 0 AndAlso QuizNoticeDetector.Detect(scan.Lines).Any(Function(notice) notice.Kind = "Raffle") Then
+                lblQuizNoticeStatus.Text = "Raffle found — waiting for a readable character name."
+            Else
+                lblQuizNoticeStatus.Text = If(_quizNoticeLastDelivery.Length > 0, "On — last alert: " & _quizNoticeLastDelivery, QuizNoticeWatchingText)
+            End If
         Catch ex As OperationCanceledException
         Catch ex As Exception
             If Not IsDisposed AndAlso _quizScannerStarted Then
@@ -108,7 +124,7 @@ Partial Public Class Form1
         Dim delivered = Await SendPhoneNotificationToTopicAsync(notice.Title, notice.Body, topic,
             priority:="high", tags:="bell,gamepad", forceNtfy:=True, cancellationToken:=cancellation)
         If delivered Then
-            _quizNoticeLastDelivery = notice.Kind & If(notice.Timing.Length > 0, " — " & notice.Timing, " — no time mentioned") & " (" & DateTime.Now.ToString("HH:mm") & ")"
+            _quizNoticeLastDelivery = notice.Kind & If(notice.CharacterName.Length > 0, " - " & notice.CharacterName, "") & If(notice.Timing.Length > 0, " — " & notice.Timing, " — no time mentioned") & " (" & DateTime.Now.ToString("HH:mm") & ")"
             AppendLog("Quiz/raffle notice sent to ntfy Channel (Global): " & notice.Body)
         End If
         Return delivered

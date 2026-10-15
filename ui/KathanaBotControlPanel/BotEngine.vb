@@ -14310,6 +14310,18 @@ Partial Public Class BotEngine
             End Function)
     End Sub
 
+    Friend Shared Function ReadCharacterNameForNotice(frame As Bitmap, hpRegion As RectRegion, hwnd As IntPtr, configuredTitle As String) As String
+        Return ResolveCharacterNameForNotice(ReadCharacterInfoFromHpBar(frame, hpRegion), GetWindowTitle(hwnd), configuredTitle)
+    End Function
+
+    Friend Shared Function ResolveCharacterNameForNotice(rawOcrText As String, actualWindowTitle As String, configuredTitle As String) As String
+        Dim titleName = ExtractCharacterNameFromWindowTitle(actualWindowTitle, configuredTitle)
+        Dim name = ResolveVisionStatsCharacterName(rawOcrText, titleName, actualWindowTitle, configuredTitle)
+        Dim normalized = NormalizeForLooseTextMatch(name)
+        If normalized.Contains("kathana") AndAlso normalized.Contains("reign") AndAlso normalized.Contains("shadow") Then Return ""
+        Return If(IsKnownCharacterName(name), name, "")
+    End Function
+
     Private Shared Function ReadCharacterInfoFromHpBar(frame As Bitmap, hpRegion As RectRegion) As String
         If frame Is Nothing OrElse hpRegion Is Nothing Then
             Return ""
